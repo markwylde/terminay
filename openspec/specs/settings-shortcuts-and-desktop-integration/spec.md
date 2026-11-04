@@ -508,15 +508,15 @@ requirement of the running application. Update metadata and payloads SHALL be
 fetched over HTTPS from the project's GitHub releases only.
 
 The title-bar action for a downloaded update SHALL read **Restart to update**
-and name the version. Choosing it SHALL quit Terminay through the normal quit
-path, install the update, and relaunch. A downloaded update that has not been
+and name the version. Choosing it SHALL quit Terminay without the application close confirmation,
+keep retained terminal sessions running, install the update, and relaunch. A downloaded update that has not been
 installed SHALL be installed when the user next quits Terminay.
 
 #### Scenario: Restart to update
 
 - **WHEN** the user chooses Restart to update
-- **THEN** Terminay quits through its normal quit path, including any
-  confirmation that path requires
+- **THEN** Terminay quits without the application close confirmation, keeping
+  retained terminal sessions running
 - **AND** relaunches as the downloaded version
 
 #### Scenario: Update installed on quit
@@ -777,27 +777,32 @@ defaults when a file is absent or malformed.
 
 ### Requirement: Native menu bar only on project windows
 
-On Windows and Linux, Terminay Desktop SHALL attach the native application menu bar only to project-host workspace windows. Every other Desktop window SHALL have no native menu bar. That includes auxiliary settings, macros, recordings and edit windows, terminal pop-out windows, and transient helper windows. This SHALL hold for the whole life of each window, including after the application menu is rebuilt because settings or keyboard shortcuts changed. A window with no menu bar SHALL still dispatch configured application keyboard shortcuts and the terminal copy accelerator. On macOS, the single global application menu SHALL be unchanged.
+On Windows and Linux, Terminay Desktop SHALL attach the native application menu only to project-host workspace windows. On Linux a project-host window SHALL show it as a menu bar. On Windows, where Terminay draws the title bar, a project-host window SHALL reach the same menu from its title-bar menu button and from a bare Alt press. Every other Desktop window SHALL have no native menu. That includes auxiliary settings, macros, recordings and edit windows, terminal pop-out windows, and transient helper windows. This SHALL hold for the whole life of each window, including after the application menu is rebuilt because settings or keyboard shortcuts changed. A window with no menu SHALL still dispatch configured application keyboard shortcuts and the terminal copy accelerator. On macOS, the single global application menu SHALL be unchanged.
 
 #### Scenario: Project window shows the menu bar
 
-- **WHEN** a project-host workspace window opens on Windows or Linux
-- **THEN** it shows the native File, Terminal, Edit, View, Window and Help menu bar
+- **WHEN** a project-host workspace window opens on Linux
+- **THEN** it shows the native Terminay, Edit, View, Window and Help menu bar
+
+#### Scenario: Project window on Windows reaches the menu
+
+- **WHEN** a project-host workspace window opens on Windows
+- **THEN** its title bar has a menu button that opens the native application menu, with the same menus Linux shows in its menu bar
 
 #### Scenario: Settings window has no menu bar
 
 - **WHEN** the Settings auxiliary window opens on Windows or Linux
-- **THEN** it has no native menu bar
+- **THEN** it has no native menu bar and no menu button
 
 #### Scenario: Other secondary windows have no menu bar
 
 - **WHEN** a macros, recordings, edit-tab or terminal pop-out window opens on Windows or Linux
-- **THEN** it has no native menu bar
+- **THEN** it has no native menu bar and no menu button
 
 #### Scenario: Menu rebuild does not re-attach the bar
 
 - **WHEN** a keyboard shortcut or other setting changes while a secondary window is open on Windows or Linux, and the application menu is rebuilt
-- **THEN** project-host windows show the rebuilt menu bar and the secondary window still has no menu bar
+- **THEN** project-host windows reach the rebuilt menu and the secondary window still has no menu
 
 #### Scenario: Shortcuts in a window without a menu bar
 
@@ -891,3 +896,107 @@ Settings SHALL offer a **Let programs set tab titles** toggle among the terminal
 
 - **WHEN** a user turns the setting off on one device
 - **THEN** every device connected to that server sees program titles stop
+
+### Requirement: Auxiliary windows fit their display and close by shortcut
+
+Terminay Desktop SHALL open each native auxiliary window (Settings, Remote Control, Recordings, Performance Log) no larger than the work area of the display that holds the project window it was opened from, centred in that work area, so its title bar and window controls are on screen. A display with room SHALL show the window at its preferred 1180×820 size. The close-terminal command, from its keyboard shortcut or the Terminal menu, SHALL close a focused auxiliary window. Unsaved macro edits SHALL still be confirmed before the window closes.
+
+#### Scenario: Settings on a small display
+
+- **WHEN** a user opens Settings from a project window on a display whose work area is smaller than 1180×820
+- **THEN** the Settings window fits inside that work area and its close button is visible
+
+#### Scenario: Settings from a full-screen window
+
+- **WHEN** a user opens Settings from a full-screen project window on macOS and presses ⌘W
+- **THEN** the Settings window closes
+
+#### Scenario: Close shortcut with unsaved macro edits
+
+- **WHEN** Settings holds unsaved macro edits and the user presses the close-terminal shortcut
+- **THEN** Terminay asks whether to discard the changes before closing Settings
+
+### Requirement: Auxiliary windows reserve the macOS traffic-light band only while it is shown
+
+On macOS, a native auxiliary window SHALL keep its header below the traffic lights while they are shown. While the window is full screen, when macOS hides the traffic lights, it SHALL NOT reserve that band, and SHALL reserve it again when the window leaves full screen.
+
+#### Scenario: Settings in full screen
+
+- **WHEN** Settings is full screen on macOS
+- **THEN** its sidebar and content headers start at the top of the window with no empty band above them
+
+#### Scenario: Settings leaves full screen
+
+- **WHEN** Settings leaves full screen on macOS
+- **THEN** its headers sit below the traffic lights again
+
+### Requirement: Updates declare the oldest system they run on
+
+Every macOS update metadata file Terminay publishes, on every channel, SHALL declare the oldest macOS the update runs on, as the Darwin kernel version electron-updater compares with the running system. Publication SHALL fail when that declaration is missing or differs from the supported matrix's macOS floor. A Desktop running on a system below an update's declared floor SHALL keep its installed version, SHALL NOT download or install that update, and SHALL NOT show an update action for it.
+
+#### Scenario: Mac below the floor
+
+- **WHEN** a Desktop on a Mac older than the update's declared floor checks for updates
+- **THEN** it does not download or install that update and keeps running its installed version
+
+#### Scenario: Mac at or above the floor
+
+- **WHEN** a Desktop on a supported macOS checks for an update that declares the floor
+- **THEN** it updates as it would for any other update
+
+#### Scenario: Metadata without the floor
+
+- **WHEN** a release or beta job produces macOS update metadata without the floor, or with a different floor
+- **THEN** publication fails before the metadata becomes visible to installed clients
+
+### Requirement: Windows title-bar menu button
+
+On Windows, a project-host Desktop window SHALL draw a menu button at the left end of its title bar, before the sidebar and home controls. Pressing it SHALL open the native application menu as a dropdown anchored below the button, with every menu and command the application menu holds, including native-only commands. Pressing and releasing Alt with no other key between SHALL open the same dropdown, and pressing Alt or Escape while it is open SHALL close it. A key chord that includes Alt, such as Alt+B sent to a shell, SHALL NOT open the menu. The request to open the menu SHALL carry no command. Main SHALL open its own application menu in the window that asked, so the renderer never names or runs a native command through this path.
+
+#### Scenario: Open the menu from the button
+
+- **WHEN** a user presses the menu button in a Windows project window
+- **THEN** the native application menu opens below the button, listing Terminay, Edit, View, Window and Help
+
+#### Scenario: Open the menu with Alt
+
+- **WHEN** a user presses and releases Alt alone in a Windows project window, including while a terminal has focus
+- **THEN** the same menu opens, and the terminal receives no input
+
+#### Scenario: An Alt chord is not a menu request
+
+- **WHEN** a user presses Alt+B in a focused terminal on Windows
+- **THEN** the terminal receives Alt+B and no menu opens
+
+#### Scenario: Not on other platforms
+
+- **WHEN** a project window opens on macOS or Linux, or in a browser host
+- **THEN** no title-bar menu button is drawn
+
+### Requirement: One scrollbar style
+
+Every scrollable surface the shared renderer draws, in Desktop and browser hosts alike, SHALL use one thin scrollbar style with a thumb and no arrow buttons, the same style the terminal's scrollbar uses. No surface SHALL show the platform's default scrollbar arrows, on Windows or any other platform.
+
+#### Scenario: Terminal scrollbar on Windows
+
+- **WHEN** a terminal on Windows has scrollback
+- **THEN** its scrollbar shows a thumb and no arrow at either end
+
+#### Scenario: Other panes
+
+- **WHEN** a sidebar, settings page, file viewer or menu list overflows
+- **THEN** its scrollbar has the same thin arrowless style as the terminal's
+
+### Requirement: Windows secondary windows have a native frame
+
+On Windows, only a project-host workspace window SHALL draw its own title bar. Settings, Macros, Recordings, edit windows, terminal pop-outs and About SHALL use the ordinary Windows frame, with the system title bar and its minimise, maximise and close buttons above the page, and the page SHALL reserve no band at its top for caption buttons.
+
+#### Scenario: Settings on Windows
+
+- **WHEN** Settings opens on Windows
+- **THEN** it has the Windows title bar and caption buttons above its content, and its sidebar and header start at the top of the page with no empty band
+
+#### Scenario: A project window keeps its own title bar
+
+- **WHEN** a project window opens on Windows
+- **THEN** its tab row is the title bar, with the caption buttons drawn over its right end

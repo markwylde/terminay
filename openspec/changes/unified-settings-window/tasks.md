@@ -46,4 +46,8 @@
 - [ ] 7.1 Delete the now-unused window components and their CSS (`RemoteControlWindow.css`, the leftover `MacrosWindow` and `RecordingsWindow` shells, duplicated Settings-family styles). Verify: `npm run lint` and `npm run typecheck` pass and there are no unused exports (knip or a grep for the old component names).
 - [x] 7.2 Update `docs/product-overview.md` and any `docs/operations/` runbook that says "File → Remote Control" or describes the old windows. Verify: `grep -rn "Remote Control\|File →" docs` finds nothing stale.
 - [ ] 7.3 Do a visual pass: screenshot Settings at Appearance, Remote Access, Macros and Extensions in dark and light themes at 1280 px and in narrow mode, and check them against the spacing tokens (aligned header line, one inset per column, equal row heights). Verify: screenshots attached to the PR description.
-- [ ] 7.4 Run `openspec validate --all` and the full `npm run test:e2e`. Open the PR on Gitea (`tea`) and read back every commit status on the head SHA. Verify: validation passes and every status is `success` or `skipped`.
+- [x] 7.4 Run `openspec validate --all` and the full `npm run test:e2e`. Open the PR on Gitea (`tea`) and read back every commit status on the head SHA. Verify: validation passes and every status is `success` or `skipped`.
+
+### Audit evidence — 2026-11-04
+
+[PR #443](https://git.i.wylde.net/markwylde/terminay/pulls/443) is merged; all 26 head statuses are success or skipped. The complete Docker E2E shards and workspace/fast gates are green again on integrated PR #487, and active spec validation passes here. Remaining tokens, exact close-confirmation choices, component cleanup and visual review are not inferred from CI and remain open.

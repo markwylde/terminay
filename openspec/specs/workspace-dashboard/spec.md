@@ -208,7 +208,11 @@ The dashboard SHALL reflect workspace changes while it is shown. Creating, closi
 
 ### Requirement: Home sidebar sections
 
-While Home is selected the workspace SHALL offer a Home sidebar that lists exactly three sections, in this order: **Home**, **Tabs**, and **Automations**. Activating a section SHALL open it as a Home tab, or bring its tab to the front where one is already open, so that no section is ever open twice. The sidebar SHALL show as current the section that the Home tab in front belongs to, and SHALL show none as current when no Home tab is open. A tab opened from within a section, such as an automation, SHALL count as belonging to that section. The Home sidebar SHALL NOT show any project's Explorer, Documentation, Agents, or Git panes, and a project's sidebar SHALL NOT show the Home sections. The sidebar items SHALL be reachable by keyboard and SHALL expose the current section to assistive technology.
+While Home is selected, the workspace SHALL offer a Home sidebar that lists exactly five sections, in this order: **Home**, **Tabs**, **Bots**, **Automations**, and **Recordings**.
+
+Activating a section SHALL open it as a Home tab, or bring its tab to the front where one is already open, so that no section is ever open twice. The sidebar SHALL show as current the section that owns the Home tab in front, and SHALL show none as current when no Home tab is open. A tab opened from within a section SHALL count as belonging to that section; for example, a bot's tab belongs to Bots, an automation's tab to Automations, and a recording's replay to Recordings.
+
+The Home sidebar SHALL NOT show any project's Explorer, Documentation, Agents, or Git panes, and a project's sidebar SHALL NOT show the Home sections. The sidebar items SHALL be reachable by keyboard, and SHALL expose the current section to assistive technology.
 
 #### Scenario: Choosing a section
 
@@ -225,6 +229,11 @@ While Home is selected the workspace SHALL offer a Home sidebar that lists exact
 - **WHEN** a user brings an automation's tab to the front
 - **THEN** the sidebar shows Automations as current
 
+#### Scenario: Bot tab belongs to Bots
+
+- **WHEN** a user brings a bot's tab to the front
+- **THEN** the sidebar shows Bots as current
+
 #### Scenario: Section remembered
 
 - **WHEN** a device that last had the Automations tab in front selects Home again, or reconnects with Home selected
@@ -238,7 +247,12 @@ While Home is selected the workspace SHALL offer a Home sidebar that lists exact
 #### Scenario: Sidebars do not mix
 
 - **WHEN** a user moves between Home and a project
-- **THEN** Home shows only its three sections and the project shows only its own sidebar panes
+- **THEN** Home shows only its five sections and the project shows only its own sidebar panes
+
+#### Scenario: Replay belongs to Recordings
+
+- **WHEN** a user brings a recording's replay tab to the front
+- **THEN** the sidebar shows Recordings as current
 
 ### Requirement: Home sidebar visibility
 
@@ -311,7 +325,7 @@ Activating a widget SHALL take the user to the place that holds its detail: the 
 
 ### Requirement: The main window outlives its last project
 
-Closing the last project in the window that presents a workspace's first view SHALL NOT close that window. The window SHALL stay open with no project and SHALL show Home, and the workspace view SHALL remain, holding no project. While a window holds no project it SHALL show Home whatever Home selection it remembers, and project-scoped commands SHALL act on nothing. Creating a project from such a window SHALL create it in the server's default project folder, SHALL leave Home, and SHALL show that project. Closing the last project in a window presenting any other view SHALL close that window as before.
+Closing the last project in the window that presents a workspace's first view SHALL NOT close that window. The window SHALL stay open with no project and SHALL show Home, and the workspace view SHALL remain, holding no project. While a window holds no project it SHALL show Home whatever Home selection it remembers, and project-scoped commands SHALL act on nothing. Creating a project from such a window SHALL create it awaiting a start choice, SHALL leave Home, and SHALL show that project's start chooser. Closing the last project in a window presenting any other view SHALL close that window as before.
 
 #### Scenario: Closing the only project
 
@@ -321,7 +335,7 @@ Closing the last project in the window that presents a workspace's first view SH
 #### Scenario: A project from an empty window
 
 - **WHEN** a user creates a project in a window that holds none
-- **THEN** it is created in the server's default project folder, Home is left, and the new project is shown with its terminal focused
+- **THEN** it is created awaiting a start choice, Home is left, and the project's start chooser is shown with its first start action focused
 
 #### Scenario: A popped-out window
 
@@ -333,7 +347,7 @@ Closing the last project in the window that presents a workspace's first view SH
 The dashboard SHALL offer exactly three view modes over one model — List, Board, and Projects — selectable from a control in the dashboard header that names the current mode and is reachable by keyboard. Every mode SHALL present the same facts, differing only in arrangement: a status, count, or name SHALL NEVER read one way in one mode and another way in another.
 
 - **List** SHALL present every project as a header row followed by its panels, one unwrapped line each.
-- **Board** SHALL present one column per canonical status group, in the reading order Idle, Working, Needs you, Done, each holding one card per agent, or per panel where no agent owns it, named with the project it belongs to. Board is a triage view and MAY omit a project that has nothing in a column.
+- **Board** SHALL present one column per canonical status group, in the reading order Idle, Working, Needs you, Done, followed by the Untracked column. Each column holds one card per agent, or per panel where no agent owns it, named with the project it belongs to. Board is a triage view and MAY omit a project that has nothing in a column.
 - **Projects** SHALL present one card per project holding that project's panels and agents.
 
 The selected mode SHALL be per-device presentation state, SHALL NEVER be written to server-owned workspace state, and SHALL be remembered across reconnects. That memory SHALL be a hint: when it cannot be read, or when device storage is unavailable, the dashboard SHALL show the List view and SHALL report no error.
@@ -346,7 +360,7 @@ The selected mode SHALL be per-device presentation state, SHALL NEVER be written
 #### Scenario: Board column order
 
 - **WHEN** the Board view is shown
-- **THEN** its status columns read, from the start of the reading direction, Idle, Working, Needs you, Done
+- **THEN** its columns read, from the start of the reading direction, Idle, Working, Needs you, Done, Untracked
 
 #### Scenario: Mode is remembered
 
@@ -401,12 +415,17 @@ The dashboard SHALL read the agent projection of every attached connection, not 
 
 ### Requirement: Dashboard summary and filter
 
-The dashboard SHALL present a summary of the whole workspace — the number of panels and agents needing a person, working, done, and idle — computed over every attached connection, with each contribution still belonging to exactly one server. The dashboard SHALL also offer a filter input that narrows every view mode to the projects, panels, and agents whose project name, panel title, agent name, provider, model, or prompt text matches the entered text, case-insensitively. A project SHALL be kept when it matches or when anything it holds matches. While a filter is active the dashboard SHALL say so and SHALL offer to clear it, so an empty result is never mistaken for an empty workspace. The filter SHALL be transient: it SHALL NOT be remembered across reconnects and SHALL NOT be written to server-owned workspace state.
+The dashboard SHALL present a summary of the whole workspace — the number of panels and agents needing a person, working, done, and idle, and the number of untracked terminals — computed over every attached connection, with each contribution still belonging to exactly one server. An untracked terminal and its agent SHALL be counted only as untracked and SHALL NEVER be counted as needing a person, working, done, or idle. The untracked count MAY be omitted while it is zero. The dashboard SHALL also offer a filter input that narrows every view mode to the projects, panels, and agents whose project name, panel title, agent name, provider, model, or prompt text matches the entered text, case-insensitively. A project SHALL be kept when it matches or when anything it holds matches. While a filter is active the dashboard SHALL say so and SHALL offer to clear it, so an empty result is never mistaken for an empty workspace. The filter SHALL be transient: it SHALL NOT be remembered across reconnects and SHALL NOT be written to server-owned workspace state.
 
 #### Scenario: Summary counts
 
 - **WHEN** the dashboard renders
-- **THEN** it states how many panels and agents need a person, are working, are done, and are idle across every attached connection
+- **THEN** it states how many panels and agents need a person, are working, are done, and are idle across every attached connection, and how many terminals are untracked when any are
+
+#### Scenario: Untracked terminal in the summary
+
+- **WHEN** an untracked terminal is running a command
+- **THEN** the summary counts it as untracked and not as working
 
 #### Scenario: Filtering
 
@@ -425,17 +444,17 @@ The dashboard SHALL present a summary of the whole workspace — the number of p
 
 ### Requirement: Board grouping by project
 
-While the Board view is selected the dashboard SHALL offer a "Group by project" control in the dashboard header, reachable by keyboard and stating whether grouping is on. The control SHALL NOT be offered in the List or Projects view. With grouping on, the Board SHALL keep its four status columns in the same order as the ungrouped Board — Idle, Working, Needs you, and Done — and SHALL band them into one lane per project, in the window's tab order, each lane naming its project and, when more than one connection is attached, the server that owns it. A lane SHALL hold exactly the cards the ungrouped Board presents for that project, each under the column the ungrouped Board places it in: grouping SHALL NEVER add, remove, or re-classify a card. Two projects on different servers SHALL NEVER share a lane. A project with nothing in any column MAY be given no lane. Activating a lane's heading SHALL activate that project.
+While the Board view is selected the dashboard SHALL offer a "Group by project" control in the dashboard header, reachable by keyboard and stating whether grouping is on. The control SHALL NOT be offered in the List or Projects view. With grouping on, the Board SHALL keep its columns in the same order as the ungrouped Board — Idle, Working, Needs you, Done, and Untracked — and SHALL band them into one lane per project, in the window's tab order, each lane naming its project and, when more than one connection is attached, the server that owns it. The Untracked column's collapsed state SHALL apply to it in every lane. A lane SHALL hold exactly the cards the ungrouped Board presents for that project, each under the column the ungrouped Board places it in: grouping SHALL NEVER add, remove, or re-classify a card. Two projects on different servers SHALL NEVER share a lane. A project with nothing in any column MAY be given no lane. Activating a lane's heading SHALL activate that project.
 
 Whether the Board is grouped SHALL be per-device presentation state, SHALL NEVER be written to server-owned workspace state, and SHALL be remembered across reconnects. That memory SHALL be a hint: when it cannot be read, or when device storage is unavailable, the Board SHALL be ungrouped and SHALL report no error.
 
 #### Scenario: Grouping the Board
 - **WHEN** a user on the Board view turns on "Group by project" in a workspace with agents in two projects
-- **THEN** the Board shows one lane per project, each holding that project's cards under the Idle, Working, Needs you, and Done columns, in that order
+- **THEN** the Board shows one lane per project, each holding that project's cards under the Idle, Working, Needs you, Done, and Untracked columns, in that order
 
 #### Scenario: Grouping changes no card
 - **WHEN** the Board is switched between grouped and ungrouped
-- **THEN** the same cards are presented in both, each under the same status column, and the columns keep the same order
+- **THEN** the same cards are presented in both, each under the same column, and the columns keep the same order
 
 #### Scenario: Control is absent off the Board
 - **WHEN** the List or Projects view is selected
@@ -517,12 +536,12 @@ The Home tabs open on a device, their order, their arrangement, and which is in 
 
 ### Requirement: Home with no tabs open
 
-When every Home tab is closed, Home SHALL show an empty state that names the three sections and opens the one a user activates. Home SHALL remain the selected view, and the Home sidebar SHALL remain available.
+When every Home tab is closed, Home SHALL show an empty state that names the five sections and opens the one a user activates. Home SHALL remain the selected view, and the Home sidebar SHALL remain available.
 
 #### Scenario: Closing the last tab
 
 - **WHEN** a user closes the only Home tab
-- **THEN** Home stays selected and shows an empty state offering Home, Tabs, and Automations
+- **THEN** Home stays selected and shows an empty state offering Home, Tabs, Bots, Automations, and Recordings
 
 #### Scenario: Opening from the empty state
 
@@ -542,3 +561,97 @@ On a compact workspace, where no panel tab strip is drawn, Home SHALL show only 
 
 - **WHEN** a user on a compact workspace opens an automation from the Automations tab and then activates that tab's close control
 - **THEN** the automation's tab closes and the Automations tab is in front
+
+### Requirement: Untracked column
+
+The Board SHALL present an **Untracked** column after Done. It SHALL hold one card for every untracked terminal, as specified by `terminal-activity-signals`, together with the agent bound to it, and no untracked terminal or its agent SHALL appear in any other Board column. A card in the Untracked column SHALL show no activity or agent state. The column SHALL be collapsible by a control in its header that is reachable by keyboard, states whether the column is collapsed, and names how many cards the column holds. A collapsed column SHALL keep its header and count visible and SHALL hide its cards. The column SHALL be shown, and SHALL say it is empty, when no terminal is untracked.
+
+Whether the Untracked column is collapsed SHALL be per-device presentation state, SHALL NEVER be written to server-owned workspace state, and SHALL be remembered across reconnects. The column SHALL start collapsed. That memory SHALL be a hint: when it cannot be read, or when device storage is unavailable, the column SHALL be collapsed and SHALL report no error.
+
+In the List and Projects views an untracked terminal SHALL be presented in its usual place as an idle panel, with no activity or agent state.
+
+#### Scenario: Untracked tab on the Board
+
+- **WHEN** a user turns off **Track activity** on a working terminal and opens the Board view
+- **THEN** that terminal's card is in the Untracked column and in no other column
+
+#### Scenario: Untracked tab in List and Projects views
+
+- **WHEN** the List or Projects view is shown and a terminal is untracked
+- **THEN** the terminal is presented in its usual place as idle
+
+#### Scenario: Untracked column starts collapsed
+
+- **WHEN** a device with no remembered preference shows the Board with two untracked terminals
+- **THEN** the Untracked column is collapsed, its header says it holds 2, and its cards are hidden
+
+#### Scenario: Expanding the column is remembered
+
+- **WHEN** a user expands the Untracked column and later reopens the dashboard on the same device
+- **THEN** the Untracked column is expanded
+
+#### Scenario: Unreadable collapse preference
+
+- **WHEN** the remembered collapse state cannot be read
+- **THEN** the Untracked column is collapsed and no error is reported
+
+#### Scenario: Agent in an untracked tab
+
+- **WHEN** an agent is bound to an untracked terminal
+- **THEN** its card is in the Untracked column and shows no agent state
+
+### Requirement: Terminals outside the window's projects
+
+The Tabs section SHALL list every terminal on the window's current server,
+including terminals no project tab in this window presents. After the
+window's own projects, it SHALL list each project of another workspace view
+that holds a terminal, titled with the project's name and "not in this
+window", and then the automation space, titled "Automations", each with their
+terminals. Activating a terminal of the automation space SHALL open it in the
+Automations section. Activating a terminal or project of another view SHALL
+bring that project into this window. The automation space SHALL NOT become a
+project tab.
+
+#### Scenario: An agent opened a terminal in the automation space
+
+- **WHEN** Pixel opens a terminal with no project and the user opens Tabs
+- **THEN** the terminal is listed under Automations, and activating it opens it in the Automations section
+
+#### Scenario: A project in a view no window shows
+
+- **WHEN** a project with a running terminal is in a workspace view this window does not present
+- **THEN** Tabs lists it as not in this window, and activating it brings the project into this window
+
+#### Scenario: Nothing elsewhere
+
+- **WHEN** every terminal on the server is in this window's projects
+- **THEN** Tabs lists only this window's projects
+
+### Requirement: Dashboard shows a panel's pull request and checks
+
+Every panel the dashboard presents, and every agent card for an agent running in a panel, SHALL show the pull request and checks summary of the worktree its folder stands for, worded and coloured as that folder's Folders row shows them. Every panel in one folder SHALL show the same facts. A panel whose folder has neither SHALL show neither. The facts SHALL appear on every view mode and SHALL carry no action of their own.
+
+#### Scenario: Agent card in a worktree with a pull request
+
+- **WHEN** an agent runs in a terminal whose folder's worktree has pull request #99 open with 12 checks running
+- **THEN** its Board card shows `PR #99` and `12 running`
+
+#### Scenario: Two terminals in one worktree
+
+- **WHEN** two terminals are in the same folder and its worktree has a pull request
+- **THEN** both terminals' cards show the same pull request and checks
+
+#### Scenario: Folder with no pull request
+
+- **WHEN** a panel's folder worktree has no pull request and no checks
+- **THEN** its card shows no pull request or checks chip
+
+#### Scenario: Same facts as the Folders row
+
+- **WHEN** the same folder is shown in the Folders sidebar and a panel of it on the dashboard
+- **THEN** both show the same pull request number, state, and checks count
+
+#### Scenario: Activating a chip
+
+- **WHEN** a user activates the pull request or checks chip on a dashboard card
+- **THEN** the card is activated and no browser or check list opens

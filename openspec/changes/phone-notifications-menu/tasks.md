@@ -7,5 +7,9 @@
 ## 2. Verification
 
 - [x] 2.1 End-to-end: the bell counts, the sheet lists a sent notification with its title and message, Clear all empties it, choosing a row goes to the terminal and clears it, and the sheet and the switcher are never shown together
-- [ ] 2.2 Pull request checks green
+- [x] 2.2 Pull request checks green
 - [ ] 2.3 Confirmed on a phone
+
+### Audit evidence — 2026-11-04
+
+Read back every head status on [PR #388](https://git.i.wylde.net/markwylde/terminay/pulls/388), `f7cd0f16e8515a428d5c88197c13663d58572a96`: all 26 are success or skipped. Separate unchecked manual or external-repository checks remain open.

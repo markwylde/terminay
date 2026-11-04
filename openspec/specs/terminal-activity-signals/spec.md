@@ -312,7 +312,7 @@ In the raw-output tier, PTY output that arrives within one second of user input 
 
 ### Requirement: Fallback activity display language
 
-Terminal fallback activity SHALL use the existing tab-activity language: amber or yellow for working or recent activity, green for finished unviewed activity, red for fallback attention, and no indicator after acknowledgement. Working indicators SHALL remain while the terminal is working, including on the focused tab. Finished and attention indicators SHALL be unviewed signals and SHALL NOT remain once the terminal is viewed. Canonical agent RAG indicators SHALL use the same broad colour vocabulary but SHALL remain a different model, in which an agent's operational state and its acknowledgement flag are orthogonal and viewing an agent acknowledges it without changing `working`, `waiting`, `blocked`, `done`, or `idle`.
+Terminal fallback activity SHALL use the existing tab-activity language: amber or yellow for working or recent activity, green for finished unviewed activity, red for fallback attention, and no indicator after acknowledgement. Working indicators SHALL remain while the terminal is working, including on the focused tab. Finished and attention indicators SHALL be unviewed signals and SHALL NOT remain once the terminal is viewed. Canonical agent RAG indicators SHALL use the same colour vocabulary and the same viewing rule: an agent's operational state and its acknowledgement flag are separate, viewing an agent acknowledges it, and a viewed `done` root becomes `idle` exactly as a viewed finished terminal loses its green indicator. Viewing SHALL NOT change `working`, `waiting`, `blocked`, or `idle`.
 
 #### Scenario: Working fallback activity
 
@@ -327,7 +327,7 @@ Terminal fallback activity SHALL use the existing tab-activity language: amber o
 #### Scenario: Viewing an agent
 
 - **WHEN** a user views a terminal with a canonical agent entry
-- **THEN** the agent is acknowledged and its operational state is unchanged
+- **THEN** the agent is acknowledged, a `done` root becomes `idle`, and any other operational state is unchanged
 
 ### Requirement: Fallback acknowledgement
 
@@ -498,7 +498,7 @@ The server reducer SHALL fence every session to its first immutable project bind
 
 ### Requirement: Activity settings
 
-Existing tab-indicator settings SHALL govern fallback terminal activity: **Use terminal signals for activity** enables structured-signal detection, **Progress signal timeout** controls `OSC 9;4` staleness, and **Show indicator for active tabs**, **Show indicator for finished tabs**, and the timing settings control fallback tab indicators. Disabling terminal-signal detection SHALL restore raw-output-based terminal activity and SHALL NOT change the **Agent status and sidebar** setting, provider lifecycle journals, or canonical agent status. The persisted **Agent status and sidebar** setting SHALL govern the agent feature as a whole, including journal discovery and its status surfaces, independently of the terminal-fallback settings.
+Existing tab-indicator settings SHALL govern every terminal's tab, project, and header activity indicators alike, whether the state comes from fallback activity or from a canonical agent: **Show indicator for active tabs** governs working, **Show indicator for finished tabs** governs done, and a terminal's own **Activity indicators** switch hides all of them for that terminal. An agent's `working` SHALL be treated as active, its `done` as finished, and its `waiting` and `blocked` as attention. These settings SHALL NOT change canonical agent state or what the Agents pane shows. **Use terminal signals for activity** enables structured-signal detection, **Progress signal timeout** controls `OSC 9;4` staleness, and the timing settings control fallback activity. Disabling terminal-signal detection SHALL restore raw-output-based terminal activity and SHALL NOT change the **Agent status and sidebar** setting, provider lifecycle journals, or canonical agent status. The persisted **Agent status and sidebar** setting SHALL govern the agent feature as a whole, including journal discovery and its status surfaces, independently of the terminal-fallback settings. A pending MCP approval SHALL always show on its terminal's tab.
 
 #### Scenario: Terminal-signal detection disabled
 
@@ -515,6 +515,27 @@ Existing tab-indicator settings SHALL govern fallback terminal activity: **Use t
 
 - **WHEN** the **Agent status and sidebar** setting is changed
 - **THEN** journal discovery and agent status surfaces change without altering the terminal-fallback settings
+
+#### Scenario: Finished indicators off for an agent
+
+- **WHEN** **Show indicator for finished tabs** is off and a background terminal's agent root becomes `done`
+- **THEN** its tab shows no green indicator and neither its project badge nor the header Notifications number counts it, exactly as for a plain terminal that finishes
+- **AND** the Agents pane still shows the root as `done`
+
+#### Scenario: Active indicators off for an agent
+
+- **WHEN** **Show indicator for active tabs** is off and a terminal's agent root is `working`
+- **THEN** its tab shows no working indicator and its project badge and the header do not count it as working
+
+#### Scenario: A terminal's own indicators off
+
+- **WHEN** a terminal's **Activity indicators** switch is off and its agent root is `waiting`
+- **THEN** its tab, its project badge, and the header show no indicator for it
+
+#### Scenario: MCP approval with indicators off
+
+- **WHEN** a terminal's indicators are off and an MCP approval is pending for it
+- **THEN** its tab still shows the approval indicator
 
 ### Requirement: Error and recovery behaviour
 
@@ -584,7 +605,9 @@ The activity snapshot SHALL identify foreground observation as `available` or `l
 
 ### Requirement: Compact switcher activity presentation
 
-Terminal rows in the unified compact switcher SHALL present activity using the same vocabulary and priority as the terminal tab, the header activity menu, the project tab badge, and the dashboard, so no surface reads a state differently. A row SHALL indicate `working`, `waiting`, `blocked`, and `done` under the same acknowledgement rules those surfaces use, and SHALL stay neutral for `idle`. A project group heading SHALL carry that project's activity count badge with the same count, colour, and zero-hiding behaviour as that project's tab.
+Terminal rows in the unified compact switcher SHALL present activity using the same vocabulary and priority as the terminal tab, the header activity menu, the project tab badge, and the dashboard, so no surface reads a state differently. A row SHALL indicate `working`, `waiting`, `blocked`, and `done` under the same acknowledgement rules those surfaces use, and SHALL stay neutral for `idle`.
+
+A project header SHALL carry a status summary counted from the states that project's own terminal rows present, so a header and the rows beneath it never disagree. The summary SHALL group terminals as needing the user (`waiting` or `blocked`), `working`, `done`, and `idle`, and SHALL state each non-empty group as a count followed by its word: `needs you` or `need you`, `working`, `done`, `idle`. Groups SHALL be ordered most urgent first, in that order, and the summary SHALL show at most the two most urgent non-empty groups. The most urgent group shown SHALL be drawn in the same colour its rows use for that state, and an `idle` group SHALL be drawn neutral. The summary SHALL count only terminals of that header's own project on its own server and SHALL NOT count file or folder panels. Its accessible text SHALL state every non-empty group, including any not shown.
 
 #### Scenario: Row state matches the tab
 
@@ -599,7 +622,27 @@ Terminal rows in the unified compact switcher SHALL present activity using the s
 #### Scenario: Group heading carries the project badge
 
 - **WHEN** a project has two working terminals
-- **THEN** its switcher group heading shows the same amber badge reading `2` that its project tab shows
+- **THEN** its switcher header reads `2 working` in the colour its working rows use, and shows no separate numeric badge
+
+#### Scenario: Header summarises its rows
+
+- **WHEN** a project has two working terminals and one idle terminal
+- **THEN** its switcher header reads `2 working · 1 idle`
+
+#### Scenario: Attention comes first
+
+- **WHEN** a project has one terminal that is `waiting`, one that is `working`, and three that are `idle`
+- **THEN** its header reads `1 needs you · 1 working`, and its accessible text also states the three idle terminals
+
+#### Scenario: Summary follows acknowledgement
+
+- **WHEN** a project's only non-idle terminal has an unacknowledged `done` entry and that terminal is viewed
+- **THEN** the header stops counting it as `done` and counts it as `idle`, as its row does
+
+#### Scenario: Same project id on two servers
+
+- **WHEN** two attached servers each hold a project with the same id and only one of them has a working terminal
+- **THEN** only that server's project header counts a working terminal
 
 ### Requirement: Compact switcher preview line
 
@@ -667,3 +710,77 @@ When the last working agent bound to a terminal stops working, the quiet period 
 
 - **WHEN** a terminal exits while a wait on it is held open by a working agent
 - **THEN** the wait resolves immediately
+
+### Requirement: Untracked terminals
+
+Each terminal tab SHALL carry a **Track activity** setting, offered in that tab's Edit Tab window and on by default. Its description SHALL say that turning it off stops the tab's activity being shown on its tab, its project, the sidebar, Home, notifications, and phone notifications. A terminal whose **Track activity** is off is **untracked**. The setting SHALL be per panel, SHALL be stored with the panel in server-owned workspace state, and SHALL travel with the panel when it moves between projects or windows.
+
+An untracked terminal SHALL present no activity state on any surface a person reads activity from: its terminal tab, its project-tab activity dot, project switcher rows, the header Notifications list, the application icon badge, phone push notifications, the left-column tree and its collapsed-folder dots, the compact switcher, the Agents pane, and the Home dashboard. This SHALL hold for raw-output activity, terminal signals, bell and OSC notifications, and the canonical state of an agent bound to the terminal. Wherever such a surface lists the terminal or its agent, it SHALL present it as idle and SHALL still list it. The Home dashboard Board is the one exception: there, an untracked terminal is placed in the Untracked column rather than read as idle.
+
+The server SHALL NOT raise, publish, or push a notification record from an untracked terminal's activity, including the state of its bound agent, and turning **Track activity** off SHALL withdraw any activity record the terminal holds. A notification a process in the terminal sends deliberately through the control endpoint is a message, not activity, and SHALL still be delivered. Activity that arose while a terminal was untracked SHALL NOT be reported once tracking is turned back on: turning tracking on SHALL acknowledge the terminal's current activity, and only state that arises after that SHALL be reported.
+
+Untracked status SHALL govern presentation only. It SHALL NOT change activity detection, agent lifecycle observation, or canonical agent state, and the MCP terminal status tools SHALL keep reporting an untracked terminal's real activity.
+
+#### Scenario: Long-running command in an untracked tab
+
+- **WHEN** a user turns off **Track activity** for a tab and runs `caffeinate` in it
+- **THEN** the tab, its project-tab dot, the left-column tree, the compact switcher, and the Home dashboard List and Projects views all show the tab as idle, and the Home dashboard Board places it in the Untracked column
+
+#### Scenario: Bell in an untracked tab
+
+- **WHEN** an unfocused untracked terminal rings a bell or emits an OSC notification
+- **THEN** no attention state is shown for it, no header notification is listed, the application icon badge does not count it, and no phone push is sent
+
+#### Scenario: Agent in an untracked tab
+
+- **WHEN** an agent bound to an untracked terminal becomes working, waiting, blocked, or done
+- **THEN** no surface shows that state, the Agents pane still lists the agent without a state glyph, and no notification is raised for it
+
+#### Scenario: Turning tracking off withdraws a notification
+
+- **WHEN** a terminal has an unread finished notification and a user turns off its **Track activity**
+- **THEN** that notification is removed from the header Notifications list and the icon badge
+
+#### Scenario: Process sends a notification from an untracked tab
+
+- **WHEN** a process in an untracked terminal sends a notification through the control endpoint
+- **THEN** that notification is delivered like any other
+
+#### Scenario: Turning tracking back on
+
+- **WHEN** an untracked terminal finished a command while untracked and a user then turns **Track activity** back on
+- **THEN** no finished state or notification is shown for that earlier command, and activity that starts afterwards is shown as for any tracked terminal
+
+#### Scenario: MCP still sees real activity
+
+- **WHEN** an MCP client calls `get_terminal_status` or `wait_for_idle` on an untracked terminal that is running a command
+- **THEN** it receives the terminal's real activity state
+
+#### Scenario: Setting moves with the panel
+
+- **WHEN** an untracked terminal is moved to another project or window
+- **THEN** it stays untracked
+
+### Requirement: Focus and same-size resizes are not activity
+
+Focusing a terminal, leaving it, or making it the presentation that controls it SHALL NOT change its activity state on any platform. A resize request for the size a terminal's PTY already has SHALL be authorized as any resize is, and SHALL then reach neither the PTY nor any resize observer, so a pseudo-console that repaints on every resize produces no output for it.
+
+#### Scenario: Clicking between idle terminals on Windows
+
+- **WHEN** a user on Windows clicks back and forth between two idle PowerShell terminals in the raw-output tier
+- **THEN** neither terminal's tab shows an amber or green indicator
+
+#### Scenario: Same-size resize
+
+- **WHEN** a client with write access asks to resize an 80×24 terminal to 80×24
+- **THEN** the PTY receives no resize and emits no repaint
+
+#### Scenario: Changed size still resizes
+
+- **WHEN** a client with write access asks to resize an 80×24 terminal to 100×30
+- **THEN** the PTY is resized to 100×30
+
+#### Scenario: Unauthorized same-size resize
+
+- **WHEN** a client without write access to a terminal asks to resize it to its current size
+- **THEN** the request is refused as any unauthorized resize is

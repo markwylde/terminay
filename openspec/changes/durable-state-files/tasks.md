@@ -44,4 +44,8 @@
 
 - [x] 8.1 `npm run build`, `npm run lint`, the smoke unit tests and `npm run test:e2e`. Verified by their output.
 - [ ] 8.2 In the Windows VM: hard-reset the VM straight after changing settings and opening terminals, then relaunch. Terminay must start, or show the recovery choice, and never be stuck on Retry. Verified by screenshots.
-- [ ] 8.3 Open the PR on Gitea and read back the combined commit status as `success`. Verified by `/status` `.state` and `.total_count`.
+- [x] 8.3 Open the PR on Gitea and read back the combined commit status as `success`. Verified by `/status` `.state` and `.total_count`.
+
+### Audit evidence — 2026-11-04
+
+Read back every head status on [PR #466](https://git.i.wylde.net/markwylde/terminay/pulls/466), `2484d8b2d831e0efd70699f9d218fd94f72cecbe`: all 27 are success or skipped. Separate unchecked manual or external-repository checks remain open.

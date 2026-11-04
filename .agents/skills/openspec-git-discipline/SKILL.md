@@ -1,61 +1,58 @@
 ---
 name: openspec-git-discipline
-description: Use when running OpenSpec propose, continue, apply, verify, archive, or worktree workflows where proposal artifacts, branches, merges, or archive timing affect git history.
+description: Apply Terminay’s worktree and pull-request conventions when proposing, implementing, verifying, syncing, or archiving an OpenSpec change. Use alongside the relevant OpenSpec workflow.
 license: MIT
-compatibility: Requires git and OpenSpec workflow artifacts.
 ---
 
 # OpenSpec Git Discipline
 
-## Core Rule
+## One change, one worktree and pull request
 
-Every OpenSpec state change must cross `main` before the next lifecycle phase depends on it.
+Never write changes in the main clone. Use a git worktree, and keep a change’s
+proposal, design, ADR, delta specs, tasks, implementation, verification, and
+spec sync together on its branch. A separate proposal-only pull request is
+optional when the user requests it; it is not a prerequisite for implementation.
 
-- Propose/continue artifacts may be drafted on a branch, but must be committed and merged to `main` before apply starts.
-- Apply may run on `main`, a branch, or a worktree only if that exact proposal change is already available on `main`.
-- Archive may run only from `main` after implementation is merged back.
+Prepare the planning artifacts before implementing product behavior, following
+the selected schema’s dependencies and the user’s requested scope. Apply can
+read artifacts from the current worktree, including uncommitted artifacts.
+They do not need to exist on `main`, be committed, or be merged first. Do not
+insert a commit or merge checkpoint between artifacts or lifecycle phases.
+A request to plan or explore alone does not authorize implementation.
 
-Never create commits, branches, or merges unless the user explicitly asks.
+Before editing, inspect `git status --short` and the current worktree and branch.
+Preserve unrelated changes. Use the same worktree and branch for subsequent
+phases unless the user asks otherwise. Follow existing authorization for branch
+creation, commits, pushes, pull requests, and merges; changing phase does not
+require asking for that authorization again.
 
-## Gates
+## Verification, sync, and archive
 
-| Moment | Gate |
-| --- | --- |
-| Before propose | Prefer `main`; if not, warn and ask whether to continue intentionally. |
-| During continue | Before creating the next artifact, ask the user to commit completed artifact changes or explicitly continue without that checkpoint. |
-| After propose | Ask the user to commit proposal artifacts; offer to create a PR branch for review. |
-| Before apply | Confirm the proposal change is committed on `main`; then apply may run from `main`, a branch, or a worktree. |
-| Before archive | Stop unless implementation is merged back to `main` and archive is running from `main`. |
-| After archive | Ask the user to commit archive/spec sync changes. |
+Keep task checkboxes grounded in their stated verification. Do not mark tests,
+manual checks, or CI complete merely because the implementation exists or the
+specs validate.
 
-## Required Checks
+Spec sync and archive can run in the change’s worktree before the pull request
+merges. They do not require a checkout of `main` or a prior implementation merge.
+Follow the selected workflow’s completion and sync checks. Resolve overlapping
+deltas in dependency order, preserve independent requirements and scenarios,
+and leave incomplete work explicit. Do not archive unfinished work merely to
+make the active-change list shorter.
 
-Before apply:
+Run `openspec validate --all`; use `--archived` as a separate check when archive
+content is affected. Report pre-existing failures separately from new failures.
 
-1. Run `git status --short`.
-2. Verify `openspec/changes/<change>/` has no uncommitted proposal files.
-3. Verify the proposal change exists on `main` before applying from any branch/worktree.
+## Repository delivery
 
-Use this language if the proposal has not reached `main`:
+Use `origin` (Gitea) and the `tea` CLI for pull requests and CI. The `github`
+remote is a mirror. If pull-request delivery is requested, read back every head
+commit status and require `success` or `skipped` before reporting it complete.
+Do not automatically push or merge merely because an OpenSpec phase finished.
 
-> I should not apply this yet because the proposal change has not reached `main`. A proposal can be drafted on a branch, but apply must start only after that proposal state is available on `main`. Please merge or commit the proposal to `main` first, then I can apply from `main`, a branch, or a worktree.
+## Updating the generated skills
 
-Before archive:
-
-1. Run `git branch --show-current` and `git status --short`.
-2. Stop if not on `main`.
-3. Stop if implementation work has not been merged back to `main`.
-
-Use this language:
-
-> I should not archive this yet because archive must run from `main` after implementation is merged back. Verify makes a change eligible to merge; it does not replace the merge.
-
-## Red Flags
-
-- Applying a proposal that exists only on the current branch/worktree.
-- Treating worktree visibility as proof that the proposal reached `main`.
-- Creating the next continue artifact without asking about committing the previous one.
-- Archiving from a feature branch or before implementation is merged to `main`.
-- Auto-committing, branching, or merging without explicit user approval.
-
-All of these mean: pause, explain the boundary, and ask the user to make the git state explicit.
+Refreshing OpenSpec’s generated instructions means running `openspec update`
+from the selected worktree, using the current stable CLI. It does not mean
+syncing or rewriting product specifications. Keep upstream-generated skills
+under OpenSpec’s generator; this file contains the repository-specific git
+conventions and is maintained separately.

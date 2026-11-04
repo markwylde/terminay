@@ -8,13 +8,18 @@ Each project presents a sidebar with three groups — Explorer, Documentation, a
 
 ### Requirement: Sidebar group tab bar
 
-The sidebar tab bar SHALL sit above the pane stack and SHALL use the same project chrome as the active project tab and panel tab strip so the colour continues across that band. It SHALL have three tabs, in order: Explorer with a file/folder icon, Documentation, and Agents. The Explorer group SHALL contain Files and Git; Documentation SHALL contain Documentation; Agents SHALL contain Agents. Additional panes SHALL join one of these groups rather than becoming a fourth top-level tab.
+The sidebar tab bar SHALL sit above the pane stack and SHALL use the same project chrome as the active project tab and panel tab strip so the colour continues across that band. It SHALL have two tabs, in order: Explorer with a file/folder icon, and Documentation. The Explorer group SHALL contain Files and Changes; Documentation SHALL contain Documentation. Every pane of the sidebar SHALL be scoped to the folder in front; a list that belongs to the whole project SHALL be a tab of the left column rather than a sidebar group. Additional panes SHALL join one of these groups rather than becoming a further top-level tab.
 
 #### Scenario: Switching groups
 
-- **WHEN** a user selects Explorer, Documentation, or Agents in the tab bar
-- **THEN** Explorer shows Files and Git, Documentation shows Documentation, and Agents shows Agents
+- **WHEN** a user selects Explorer or Documentation in the tab bar
+- **THEN** Explorer shows Files and Changes, and Documentation shows Documentation
 - **AND** panes from another group are not visible
+
+#### Scenario: Two groups at every width
+
+- **WHEN** the sidebar renders side by side with the content or as a narrow-layout drawer
+- **THEN** the tab bar offers Explorer and Documentation and no other tab
 
 #### Scenario: Tab bar chrome
 
@@ -30,16 +35,6 @@ Selecting a tab SHALL show only that group's panes. Hidden groups SHALL retain t
 - **WHEN** a user leaves a group and later returns to it
 - **THEN** its stored pane heights, collapse choices, and order are presented unchanged
 
-### Requirement: Agents tab availability
-
-The Agents tab SHALL be omitted when agent integration is disabled. If that tab was selected, Explorer SHALL be shown instead without rewriting the stored selection.
-
-#### Scenario: Agent integration disabled
-
-- **WHEN** agent integration is disabled and Agents was the selected group
-- **THEN** the Agents tab is omitted and Explorer is shown
-- **AND** the stored group selection is not rewritten
-
 ### Requirement: Selected group is a device preference
 
 The selected group SHALL be a device-local preference keyed by the selected server and project, like sidebar open/closed visibility. It SHALL NOT sync to another device and SHALL NOT belong to canonical project layout.
@@ -51,11 +46,11 @@ The selected group SHALL be a device-local preference keyed by the selected serv
 
 ### Requirement: Reorder confined to the active group
 
-Pane reorder SHALL be confined to the active group. Files SHALL NOT be dragged into Documentation or Agents.
+Pane reorder SHALL be confined to the active group. Files SHALL NOT be dragged into Documentation, and no pane SHALL be dragged between the sidebar and the left column.
 
 #### Scenario: Dragging across groups
 
-- **WHEN** a user drags the Files pane toward Documentation or Agents
+- **WHEN** a user drags the Files pane toward Documentation
 - **THEN** the reorder is not accepted and Files remains in Explorer
 
 ### Requirement: Sidebar stack occupies available height without outer scrolling
@@ -64,7 +59,7 @@ The sidebar stack SHALL occupy its available height below the group tab bar with
 
 #### Scenario: Overflowing pane content
 
-- **WHEN** the Files, Agents, Git, or Documentation body content overflows
+- **WHEN** the Files, Changes, or Documentation body content overflows
 - **THEN** that body scrolls and the sidebar element itself never scrolls vertically
 - **AND** no pane title moves
 
@@ -249,7 +244,7 @@ Pane dimensions, order, and collapse state SHALL belong to the project. Switchin
 
 ### Requirement: Device-scoped visibility and group preferences
 
-Sidebar open/closed visibility and the selected group SHALL belong to the current device and project. They SHALL be stored with device preferences under the selected server and opaque project id, so toggling a sidebar or switching Explorer, Documentation, or Agents affects neither another device nor another project. A device that has no preference for a project SHALL present the sidebar closed and the Explorer group.
+Sidebar open/closed visibility and the selected group SHALL belong to the current device and project. They SHALL be stored with device preferences under the selected server and opaque project id, so toggling a sidebar or switching between Explorer and Documentation affects neither another device nor another project. A device that has no preference for a project, or whose stored selection names no group the sidebar offers, SHALL present the Explorer group; a device that has no visibility preference SHALL present the sidebar closed.
 
 #### Scenario: First visit to a project on a device
 
@@ -265,6 +260,11 @@ Sidebar open/closed visibility and the selected group SHALL belong to the curren
 
 - **WHEN** the same device restarts or reloads
 - **THEN** its sidebar visibility and selected group for each project are restored
+
+#### Scenario: Stored selection names no offered group
+
+- **WHEN** a device's stored selection for a project is not Explorer or Documentation
+- **THEN** the Explorer group is presented
 
 ### Requirement: Preview and commit boundary for resizing
 
@@ -394,3 +394,129 @@ Reconnecting or opening another client SHALL restore the committed project layou
 
 - **WHEN** pointer or keyboard resizing runs in the desktop or web renderer
 - **THEN** the same geometry, persistence, and accessibility behaviour applies
+
+### Requirement: Sidebar placement
+
+At or above the narrow layout breakpoint, the project sidebar SHALL sit to the right of the project's panel area, and the Folders tree SHALL sit to its left. Each SHALL have its own resize separator on the edge that faces the panel area and its own visibility toggle in the project bar: the Folders tree toggle at the leading end and the sidebar toggle at the trailing end. Hiding either SHALL give its width to the panel area. The sidebar SHALL NOT offer a choice of side.
+
+#### Scenario: Wide layout
+
+- **WHEN** a project renders at or above the narrow layout breakpoint with both columns visible
+- **THEN** the Folders tree is on the left, the panel area is in the middle, and the sidebar is on the right
+
+#### Scenario: Hiding one column
+
+- **WHEN** a user hides the Folders tree
+- **THEN** the panel area extends to the left edge and the sidebar is unchanged
+
+#### Scenario: Resizing
+
+- **WHEN** a user drags the sidebar's separator
+- **THEN** the sidebar and the panel area resize and the Folders tree keeps its width
+
+### Requirement: Folders tree visibility
+
+Folders tree open/closed visibility SHALL belong to the current device and project, stored with device preferences under the selected server and opaque project id, independently of the sidebar's visibility. A device that has no preference for a project SHALL present the Folders tree open.
+
+#### Scenario: First visit to a project on a device
+
+- **WHEN** a device has no stored preference for a project
+- **THEN** the Folders tree is presented open
+
+#### Scenario: Toggling on one device
+
+- **WHEN** a user hides the Folders tree on one device
+- **THEN** no other device and no other project is affected, and the sidebar's visibility is unchanged
+
+### Requirement: Left column chrome band
+
+The left column SHALL draw a band of project chrome above its content, the same height and colour as the panel tab strip and the sidebar's group tab bar, so the colour continues across all three columns. The band SHALL carry no title. It SHALL hold the left column's tab bar at its leading end. While the Tabs tab is selected it SHALL hold the **Tabs actions** control at its trailing end; while another tab is selected that control SHALL be absent.
+
+#### Scenario: Band without a title
+
+- **WHEN** the left column renders
+- **THEN** the band shows the project chrome colour, the tab icons, and no text
+
+#### Scenario: Tabs actions
+
+- **WHEN** the Tabs tab is selected and a user activates the control at the trailing end of the band
+- **THEN** the Tabs actions menu opens
+
+#### Scenario: Actions control follows the Tabs tab
+
+- **WHEN** the Agents tab is selected
+- **THEN** the band shows no Tabs actions control
+
+### Requirement: Left column tabs
+
+At or above the narrow layout breakpoint, a project's left column SHALL present one list at a time, selected from a tab bar of two icon tabs, in order: **Tabs** and **Agents**. Tabs SHALL show the Folders tree with each folder's terminals. Agents SHALL show the project's Agents pane. The selected list SHALL fill the column beneath the band and SHALL own any scrolling its content needs; the column itself SHALL NOT scroll. A list SHALL carry no title row, collapse control, reorder grip, or resize separator, and the Agents tab SHALL carry no count. A tab icon SHALL match a sidebar group tab in size, spacing, and selected, hover, and focus presentation. A list that is not selected SHALL keep its scroll position and its expanded and collapsed rows for when it is selected again.
+
+The tab bar SHALL be a tab list: each tab SHALL be named Tabs or Agents to assistive technology and by its tooltip, Arrow Left and Arrow Right SHALL move between tabs, and the selected list SHALL be the corresponding tab panel.
+
+The Agents tab SHALL be omitted when agent integration is disabled. The column SHALL then show the Tabs list with no tab bar, and a stored selection of Agents SHALL NOT be rewritten.
+
+#### Scenario: Reading the left column
+
+- **WHEN** a project renders at or above the narrow layout breakpoint with the left column visible and agent integration enabled
+- **THEN** the band shows a Tabs icon and an Agents icon, and the column shows exactly one of the two lists
+
+#### Scenario: Switching tabs
+
+- **WHEN** a user selects the Agents tab
+- **THEN** the project's agents fill the column and the Folders tree is not visible
+- **AND** selecting Tabs shows the Folders tree again and the agents are not visible
+
+#### Scenario: No pane chrome
+
+- **WHEN** either list is shown
+- **THEN** it has no title row, no collapse control, no reorder grip, and no separator, and the Agents tab icon shows no count
+
+#### Scenario: Returning to a list
+
+- **WHEN** a user scrolls the Folders tree, selects Agents, and selects Tabs again
+- **THEN** the Folders tree is at the scroll position it was left at
+
+#### Scenario: Overflowing list
+
+- **WHEN** the Folders tree or the Agents list is taller than the column
+- **THEN** that list scrolls and neither the band nor the column moves
+
+#### Scenario: Keyboard navigation
+
+- **WHEN** a keyboard user focuses the tab bar and presses Arrow Right
+- **THEN** the next tab is selected and its list is exposed as the tab panel
+
+#### Scenario: Agent integration disabled
+
+- **WHEN** agent integration is disabled and Agents was the selected tab
+- **THEN** the column shows the Tabs list with no tab bar
+- **AND** the stored selection is not rewritten
+
+### Requirement: Left column selected tab is a device preference
+
+The left column's selected tab SHALL belong to the current device and project, stored with device preferences under the selected server and opaque project id beside the column's width and visibility. It SHALL NOT sync to another device and SHALL NOT belong to canonical project layout. A device with no preference for a project, or whose stored value names neither tab, SHALL present Tabs.
+
+#### Scenario: First visit to a project on a device
+
+- **WHEN** a device has no stored left column tab for a project
+- **THEN** the Tabs tab is selected
+
+#### Scenario: Selecting on one device
+
+- **WHEN** a user selects Agents in one project on one device
+- **THEN** no other device and no other project is affected
+
+#### Scenario: Restart or reload
+
+- **WHEN** the same device restarts or reloads
+- **THEN** each project's left column shows the tab that was selected for it
+
+#### Scenario: Switching projects
+
+- **WHEN** a user switches to another project
+- **THEN** the left column shows that project's own selected tab
+
+#### Scenario: Malformed stored value
+
+- **WHEN** the stored value for a project names neither Tabs nor Agents
+- **THEN** the Tabs tab is selected

@@ -107,3 +107,133 @@ The extension SHALL contribute MCP install targets for Claude Code, Codex, Curso
 
 - **WHEN** a target installs the registration
 - **THEN** the `terminay` entry it writes carries the executable, arguments, and environment the host supplied and nothing else
+
+### Requirement: Built-in chat providers
+
+The extension SHALL contribute two chat providers:
+
+- **Claude Code** (`claude-code`) SHALL run each session as one long-lived `claude` process in print mode, with streaming-JSON input and output. It SHALL be started with built-in tools disabled, only the host-supplied MCP server loaded under strict MCP configuration, the Terminay MCP tools allowed, every other permission prompt denied, session persistence off, the host's working directory, and the host's instruction appended to the system prompt.
+- **Codex** (`codex`) SHALL run each session as one `codex app-server` process speaking its JSON-RPC protocol over stdio. It SHALL hold one ephemeral thread started in the host's working directory, with a read-only sandbox, the approval policy that asks before running anything that is not trusted, the host-supplied MCP server as the only MCP server with its tools pre-approved so that Terminay's own permission policy decides them, its browser, computer-use and app features off, and the host's instruction as developer instructions. It SHALL decline every command-execution, file-change and permission approval request the app server sends.
+
+Each provider SHALL map its agent's streamed output to the platform's chat events: reply text deltas, tool activity with MCP server and tool names, and failures, and SHALL resolve each turn's prompt when the agent finishes it. Each SHALL cancel a turn through its protocol's own interrupt, and SHALL end the process when the session closes. The providers SHALL NOT depend on the session source or on any harness switch.
+
+#### Scenario: Claude Code session
+
+- **WHEN** the host opens a Claude Code session with a Terminay MCP entry and the user asks to read a terminal
+- **THEN** the provider's `claude` process calls the Terminay `read_terminal` tool, the chat shows the activity, and the reply streams back
+
+#### Scenario: Codex declines a shell command
+
+- **WHEN** a Codex session's app server asks for approval to run a command
+- **THEN** the provider declines it and the command does not run
+
+#### Scenario: Harness switched off
+
+- **WHEN** the Claude Code harness switch for agent status is off
+- **THEN** the Claude Code chat provider is still available
+
+### Requirement: Locating the agent CLIs
+
+Each provider SHALL locate its agent executable on the server account in this order:
+
+1. an absolute path set in `TERMINAY_CLAUDE_CODE_COMMAND` or `TERMINAY_CODEX_COMMAND`;
+2. the server environment's `PATH`;
+3. the PATH that the account's login shell reports, read once per extension activation with a bounded timeout;
+4. the agent's documented per-user install locations, including Node version manager directories, newest first.
+
+A provider whose executable is not found SHALL report `not_installed`. A provider whose agent reports that it is not signed in SHALL report `not_signed_in`, and the agent's error SHALL name the sign-in command (`claude` or `codex login`). A located executable SHALL be invoked directly, never through a shell.
+
+#### Scenario: Desktop launched from the Dock
+
+- **WHEN** Terminay Desktop is launched from the Dock, `claude` is installed only in `~/.local/bin`, and the server environment's PATH lacks that directory
+- **THEN** the Claude Code provider finds `claude` through the login shell PATH or the per-user install location, and reports available
+
+#### Scenario: Codex not installed
+
+- **WHEN** no `codex` executable can be found
+- **THEN** the Codex provider reports `not_installed`
+
+### Requirement: Built-in terminal launchers
+
+The extension SHALL declare the `agent-launch` permission and two terminal launchers:
+
+| Launcher | Display name | Harness |
+|---|---|---|
+| `com.terminay.builtin-agents/launch-claude-code` | Claude Code | `claude-code` |
+| `com.terminay.builtin-agents/launch-codex` | Codex | `codex` |
+
+Each launcher's `resolve` SHALL locate its agent executable the way its chat provider does, under "Locating the agent CLIs", and SHALL report available with that executable's absolute path, or `not_installed` when it is not found. The extension SHALL list Claude Code before Codex. It SHALL NOT pass the agent arguments, environment, or input, and SHALL NOT write to the agent's configuration.
+
+#### Scenario: Claude Code installed
+
+- **WHEN** the Claude Code harness is switched on and `claude` is installed in `~/.local/bin`
+- **THEN** the Claude Code launcher is available and resolves to that executable's absolute path
+
+#### Scenario: Codex not installed
+
+- **WHEN** no `codex` executable can be found
+- **THEN** the Codex launcher reports `not_installed` and is not offered
+
+#### Scenario: Harness switched off
+
+- **WHEN** the Claude Code harness is switched off
+- **THEN** the Claude Code launcher is not offered, whether or not `claude` is installed
+
+### Requirement: Built-in bot agents
+
+The extension SHALL contribute two bot agents:
+
+- **Claude Code** (`claude-code`):
+  - its image install step SHALL pin `@agentclientprotocol/claude-agent-acp` to an exact version;
+  - its ACP command SHALL be that adapter;
+  - its device sign-in SHALL be labelled **Sign in with Claude**, running the adapter SDK’s compatible native `claude auth login --claudeai` and `claude auth logout` in the bot’s home; the terminal SHALL show the browser URL and accept a returned authorization code, and Claude SHALL own saved-login refresh;
+  - its credential secrets SHALL be a sign-in token, `CLAUDE_CODE_OAUTH_TOKEN`, whose help text names `claude setup-token`, and an API key, `ANTHROPIC_API_KEY`;
+  - it SHALL be able to ask permission;
+  - its launch environment SHALL set `CLAUDE_CODE_MAX_RETRIES` low enough that a rejected credential is reported within seconds, and SHALL set `CLAUDE_CODE_SHELL_PREFIX` to the image's `terminay-tool-shell`, so that tool commands run without the bot's credential variables.
+- **Codex** (`codex`):
+  - its image install step SHALL pin `@agentclientprotocol/codex-acp`, which brings its own compatible Codex, to an exact version, and SHALL put that Codex on the `PATH` as `codex`;
+  - its ACP command SHALL be that adapter;
+  - its device sign-in SHALL be labelled **Sign in with ChatGPT**, with the sign-in command `codex login --device-auth`, the sign-out command `codex logout`, and its own `.codex/config.toml` that keeps the login in the bot's `~/.codex` (`cli_auth_credentials_store = "file"`) and keeps credential variables out of tool shells;
+  - its credential secret SHALL be an API key, `CODEX_API_KEY`, which needs ACP `authenticate` with the method id `api-key`;
+  - it SHALL be Autonomous only, because its own sandbox cannot run inside a bot container;
+  - its bot config file `.codex/config.toml` SHALL keep credentials in memory only (`cli_auth_credentials_store = "ephemeral"`), so that an API key never reaches the bot's disk, and SHALL keep credential variables out of tool shells (`shell_environment_policy.exclude`).
+
+The extension SHALL NOT install agent CLIs separately from their adapters. Each agent's `models` SHALL return the models that its pinned adapter accepts. Each agent's `launch` SHALL return the adapter's model setting only when the adapter does not offer model selection through ACP session configuration, and SHALL return nothing for Default.
+
+The bot agents SHALL NOT depend on the session source, on any harness switch, or on the chat providers. Each SHALL carry a conformance test that runs its pinned adapter in the bot image against a fake model endpoint. That test SHALL cover:
+
+- initialization;
+- a new session;
+- a streamed prompt;
+- tool use;
+- a permission request, for an agent that can ask permission;
+- model selection;
+- cancellation;
+- loading a session after the process restarts, where the adapter supports it;
+- that the declared sign-in command prints a browser URL and guides approval through a device code or a browser-returned authorization code, and that the bot config file still behaves as declared;
+- that a credential secret reaches neither the bot's disk nor a tool shell's environment.
+
+#### Scenario: Codex bot signs in with ChatGPT
+
+- **WHEN** a user chooses Sign in with ChatGPT for a Codex bot and approves the code in their browser
+- **THEN** the bot's sessions run signed in, and the login is saved only in that bot's `~/.codex`
+
+#### Scenario: Claude Code sign-in
+
+- **WHEN** a user opens Sign-in for a Claude Code bot, on any platform
+- **THEN** it offers Sign in with Claude through its own sign-in terminal, a sign-in token from `claude setup-token`, and an API key
+
+#### Scenario: Codex bot with an API key
+
+- **WHEN** a Codex bot whose Sign-in is an API key runs a session that uses its shell tool
+- **THEN** the agent is signed in, the key is in no file in the bot's home, and the tool's shell has no credential variable
+
+#### Scenario: Model chosen
+
+- **WHEN** a Codex bot's model is set to one of the listed models
+- **THEN** its sessions run with that model selected
+
+#### Scenario: Harness switched off
+
+- **WHEN** the Codex harness switch for agent status is off
+- **THEN** the Codex bot agent is still available

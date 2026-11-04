@@ -2,7 +2,7 @@
 
 ### Requirement: Supported runtime matrix
 
-Terminay Desktop SHALL support macOS 12 Monterey or newer on Apple silicon through an arm64 DMG, 64-bit GNU/Linux on x64 through an AppImage, and Windows 10 22H2 or Windows 11 on x64 through a per-user NSIS installer. Terminay Server SHALL support 64-bit GNU/Linux on x64 and arm64 through self-contained archives that contain the pinned Node runtime, server code, matching responsive UI, and target-native dependencies, and SHALL require no system Node, npm, compiler, display server, or browser. Supported GNU/Linux hosts, for Desktop and Server alike, SHALL provide a glibc userspace of version 2.31 or newer, such as Debian 11, Ubuntu 20.04, or anything newer. Windows Desktop SHALL require no WSL, Node, npm, compiler, or Git to start terminals. macOS x64, Linux arm64 Desktop, Windows on ARM, standalone macOS and Windows Server, and Alpine/musl Linux are outside the supported matrix.
+Terminay Desktop SHALL support macOS 13 Ventura or newer on Apple silicon through an arm64 DMG, 64-bit GNU/Linux on x64 through an AppImage, and Windows 10 22H2 or Windows 11 on x64 through a per-user NSIS installer. Terminay Server SHALL support 64-bit GNU/Linux on x64 and arm64 through self-contained archives that contain the pinned Node runtime, server code, matching responsive UI, and target-native dependencies, and SHALL require no system Node, npm, compiler, display server, or browser. Supported GNU/Linux hosts, for Desktop and Server alike, SHALL provide a glibc userspace of version 2.31 or newer, such as Debian 11, Ubuntu 20.04, or anything newer. Windows Desktop SHALL require no WSL, Node, npm, compiler, or Git to start terminals. macOS x64, Linux arm64 Desktop, Windows on ARM, standalone macOS and Windows Server, and Alpine/musl Linux are outside the supported matrix.
 
 #### Scenario: Installing the standalone archive
 
@@ -29,7 +29,10 @@ Terminay Desktop SHALL support macOS 12 Monterey or newer on Apple silicon throu
 - **WHEN** the runtime is used on a platform outside the supported matrix
 - **THEN** it is not covered by this contract
 
-## ADDED Requirements
+#### Scenario: Desktop on the oldest supported macOS
+
+- **WHEN** the Desktop DMG is installed on an Apple silicon Mac running macOS 13
+- **THEN** it launches and starts terminals
 
 ### Requirement: Windows Desktop starts terminals on Windows before publication
 
