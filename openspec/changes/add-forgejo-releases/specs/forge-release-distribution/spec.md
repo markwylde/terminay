@@ -2,11 +2,11 @@
 
 ### Requirement: Independent canonical-forge desktop releases
 
-The canonical forge SHALL offer a manually dispatched Trigger Release workflow that builds macOS arm64 and Linux x64 desktop binaries from one immutable commit, with a stable vMAJOR.MINOR.PATCH tag supplied by the operator. It SHALL NOT obtain binaries from GitHub or require a Windows runner.
+The canonical forge SHALL offer a manually dispatched Trigger Release workflow that builds macOS arm64 and Linux x64 desktop binaries from one immutable commit, with a stable vMAJOR.MINOR.PATCH tag derived automatically using the same Conventional Commit version rules as GitHub. It SHALL NOT obtain binaries from GitHub or require a Windows runner.
 
 #### Scenario: Independent release
 
-- **WHEN** an operator dispatches a stable version on main
+- **WHEN** an operator dispatches Trigger Release on main without inputs
 - **THEN** both desktop platforms build from the selected commit and release assets are attached to that tag on the canonical forge
 
 #### Scenario: Conflicting tag
@@ -36,3 +36,22 @@ GitHub SHALL retain its existing release workflow including Windows binaries and
 
 - **WHEN** the canonical-forge workflow runs
 - **THEN** GitHub release workflows and application update configuration retain their existing behaviour
+
+### Requirement: Automatic version selection and repeat dispatches
+
+The workflow SHALL reuse the repository release-version helper to select major, minor or patch versions from commits since the latest stable tag. A stable tag already at the selected source commit SHALL be reused to resume its workflow-owned draft. A workflow-owned release already published for that commit SHALL make a repeat dispatch succeed without rebuilding or mutating it.
+
+#### Scenario: Feature commit
+
+- **WHEN** commits since v1.2.3 include a feature and no breaking change
+- **THEN** the workflow selects v1.3.0 without operator version input
+
+#### Scenario: Retrying a draft
+
+- **WHEN** a prior attempt tagged the selected source commit and left a matching draft
+- **THEN** the workflow selects that same tag and resumes the draft
+
+#### Scenario: Already published
+
+- **WHEN** the selected source commit already has its workflow-owned published release
+- **THEN** release preparation succeeds and dependent build and publication jobs are skipped
