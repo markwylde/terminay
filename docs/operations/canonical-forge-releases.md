@@ -26,14 +26,18 @@ forge on 2026-11-04. Their validity still needs a real signed build.
 
 ## Dispatch
 
-Once the workflow is on `main`, select **Trigger Release → Run workflow**, choose
-`main`, and supply `tag` as a stable semantic version such as `v1.2.3`.
-Choose the intended version explicitly: this workflow does not automatically bump
-versions or coordinate version selection with GitHub. It rejects dispatches on
-other branches. It creates the tag at the selected main commit if absent; an
-existing tag must identify that exact commit. Tags can propagate through the
-repository's existing mirroring, so select versions with that shared namespace
-in mind. No GitHub release is created or changed by this workflow.
+Select **Trigger Release → Run workflow** and choose `main`. No version input
+is required. The workflow reuses `getNextVersion` from `scripts/release-utils.mjs`,
+the same Conventional Commit rules used by GitHub: breaking changes bump major,
+`feat` bumps minor, and other new commits bump patch. The latest stable tag is
+the baseline; prerelease tags are excluded.
+
+Both platform builds use the selected main commit. A tag already at that commit
+is reused for its matching draft. If this workflow already published that commit's
+release, preparation succeeds and the build/publication jobs are skipped.
+Conflicting tags and releases owned by a different workflow still fail closed.
+Tags can propagate through the existing repository mirroring; release publication
+remains independent and this workflow does not mutate GitHub releases.
 
 The release stays a draft while both platform builds run. Published assets are:
 
@@ -53,7 +57,7 @@ their checksums and exact inventory, and publishes the draft with the source SHA
 
 Inspect the failed job and repair the runner or credentials. Re-run the original
 workflow run to preserve its source SHA. A fresh dispatch after `main` advances
-cannot reuse the old tag. Existing identical draft attachments are reused;
+derives its own next version. Existing identical draft attachments are reused;
 different bytes under the same filename are rejected rather than overwritten.
 Signed/notarized rebuilds can produce different bytes, so partial drafts may need
 operator cleanup before a full rebuild. Review the draft and remove only the
