@@ -262,11 +262,13 @@ state, UI DTOs, logs, or errors. See the
 [scoped brokers reference](https://terminay.com/developers/reference/scoped-brokers)
 for cancellation, zeroization, pending removal, and crash-cleanup obligations.
 
-## Bot agents (API 3.5)
+## Bot agents (API 3.6)
 
 Declare `contributes.botAgents` and require `agent-bots`. Each contribution has
 `id`, `displayName`, `imageInstall: { npm, debian? }` (exact npm versions only),
-`acpCommand: { executable, args }`, and `autonomousOnly`. Optional fields are
+`runtimeProtocol: "native-cli-v1"`, `nativeDriver`, exact `runtimeVersion`, and
+`autonomousOnly`. The host owns native CLI arguments; `launch` returns an empty
+argument list. Supported drivers are `codex-cli` and `claude-code-cli`. Optional fields are
 `deviceSignIn`, `credentialSecrets`, `botConfigFiles`, and `launchEnvironment`.
 See the complete [bot agent author example](examples/bot-agent).
 
@@ -278,7 +280,7 @@ required. Paths must be relative to `/home/bot` and cannot contain `..`. The hos
 with `HOME=/home/bot`; the login it saves stays in the bot's home, and the host
 never reads it. Config paths cannot use `memories/` or host-reserved `.terminay/`.
 Credential metadata declares `environmentVariable`, `kind` (`sign-in-token` or
-`api-key`), optional `authenticateMethodId`, `label`, and `help`. Credential
+`api-key`), `label`, and `help`. Credential
 values have no manifest or runtime field. Neither fixed nor runtime environment
 may set declared credential variables; the host supplies them.
 

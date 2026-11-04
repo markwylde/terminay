@@ -7,7 +7,7 @@
 		".": "./extension.js"
 	},
 	"peerDependencies": {
-		"@terminay/extension-api": "^3.5.0"
+		"@terminay/extension-api": "^3.6.0"
 	},
 	"terminay": {
 		"manifestVersion": 1,

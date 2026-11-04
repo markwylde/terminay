@@ -44,7 +44,7 @@
 		"@markwylde/all-your-agents": "1.4.4"
 	},
 	"peerDependencies": {
-		"@terminay/extension-api": "^3.5.0"
+		"@terminay/extension-api": "^3.6.0"
 	},
 	"peerDependenciesMeta": {
 		"@terminay/extension-api": {
@@ -52,7 +52,7 @@
 		}
 	},
 	"devDependencies": {
-		"@terminay/extension-api": "^3.5.0",
+		"@terminay/extension-api": "^3.6.0",
 		"@types/node": "^24.0.0",
 		"typescript": "^7.0.2"
 	},
