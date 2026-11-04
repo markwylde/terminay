@@ -490,8 +490,12 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			cleaning = undefined;
 		});
 	};
+	let sourcesEngineAvailable = engine.availability.available;
 	const resumeSources = () => {
-		if (engine.availability.available) service.triggers.resumeSources();
+		const available = engine.availability.available;
+		const restored = available && !sourcesEngineAvailable;
+		sourcesEngineAvailable = available;
+		if (restored) service.triggers.resumeSources();
 	};
 	engine.on('availability', resumeSources);
 	engine.on('availability', cleanup);
