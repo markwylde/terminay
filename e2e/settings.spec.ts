@@ -79,7 +79,7 @@ test('Group order: the sidebar groups categories, with counts for collections', 
   await expect(groups).toHaveText(['General', 'Terminal', 'Connections', 'Automation', 'Extensions', 'System'])
   const section = (label: string) => settings.locator('.settings-nav-section').filter({ has: settings.locator('.settings-nav-section-title', { hasText: label }) })
   await expect(section('Connections').locator('.settings-nav-label')).toHaveText(['Remote Access'])
-  await expect(section('Automation').locator('.settings-nav-label')).toHaveText(['Macros', 'Recording'])
+  await expect(section('Automation').locator('.settings-nav-label')).toHaveText(['Macros', 'Workflows', 'Recording'])
   await expect(navItem(settings, 'Macros').locator('.settings-nav-count')).toHaveText(/^3/u)
 })
 
