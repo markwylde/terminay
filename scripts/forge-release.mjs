@@ -3,6 +3,7 @@ import { createReadStream, openAsBlob } from 'node:fs';
 import { appendFile, lstat, readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { selectForgeReleaseTag } from './forge-release-version.mjs';
 
 export function assetNames(tag, platform) {
 	if (!/^v\d+\.\d+\.\d+$/u.test(tag ?? ''))
@@ -114,6 +115,23 @@ export class ForgeRelease {
 		return this.draft();
 	}
 
+	async prepareAutomatic() {
+		const existing = await this.api(
+			`/releases/tags/${encodeURIComponent(this.tag)}`,
+			{ missing: true },
+		);
+		if (
+			existing &&
+			!existing.draft &&
+			existing.body?.split('\n')[0] === this.marker()
+		) {
+			await this.verifyTag();
+			return false;
+		}
+		await this.prepare();
+		return true;
+	}
+
 	async download(asset) {
 		let url = new URL(asset.browser_download_url);
 		for (let redirects = 0; redirects < 5; redirects++) {
@@ -221,20 +239,35 @@ if (
 	import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
 	const [command, platform, directory] = process.argv.slice(2);
+	const tag =
+		command === 'prepare'
+			? await selectForgeReleaseTag({ commit: process.env.RELEASE_COMMIT })
+			: process.env.RELEASE_TAG;
+	if (command === 'prepare' && !tag) {
+		if (process.env.GITHUB_OUTPUT)
+			await appendFile(process.env.GITHUB_OUTPUT, 'no_release=true\n');
+		console.log('No release needed');
+		process.exit(0);
+	}
 	const client = new ForgeRelease({
 		server: process.env.FORGE_SERVER_URL,
 		repository: process.env.FORGE_REPOSITORY,
 		token: process.env.FORGE_TOKEN,
-		tag: process.env.RELEASE_TAG,
+		tag,
 		commit: process.env.RELEASE_COMMIT,
 	});
 	if (command === 'prepare') {
-		await client.prepare();
+		const needed = await client.prepareAutomatic();
 		if (process.env.GITHUB_OUTPUT)
 			await appendFile(
 				process.env.GITHUB_OUTPUT,
-				`tag=${client.tag}\nsource_commit=${client.commit}\n`,
+				`tag=${client.tag}\nsource_commit=${client.commit}\nno_release=${!needed}\n`,
 			);
+		console.log(
+			needed
+				? `Prepared release ${client.tag}`
+				: `Release ${client.tag} is already published`,
+		);
 	} else if (command === 'upload' && platform && directory)
 		await client.upload(platform, directory);
 	else if (command === 'publish') await client.publish();
