@@ -1,3 +1,4 @@
+import { BuildBanner } from './BotBuildProgress';
 /**
  * Home › Bots: the fleet dashboard.
  *
@@ -350,13 +351,17 @@ export function EngineSummary({
 	engine,
 	label,
 	compact = false,
+	hideReady = false,
 }: Readonly<{
 	engine: BotEngineView;
 	label: string | undefined;
 	compact?: boolean;
+	hideReady?: boolean;
 }>) {
 	const { status } = engine;
 	const [switching, setSwitching] = useState<string>();
+	const building =
+		status?.image.state === 'building' || status?.image.state === 'failed';
 	const name =
 		status?.engine === 'podman'
 			? 'Podman'
@@ -365,12 +370,19 @@ export function EngineSummary({
 				: 'No engine';
 	return (
 		<section data-terminay-bots-engine={status?.available ? 'ready' : 'setup'}>
-			{!compact ? (
+			<BuildBanner engine={engine} label={label} />
+			{!compact && !building ? (
 				<h3 className="bots-lab">
 					Container engine{label === undefined ? '' : ` · ${label}`}
 				</h3>
 			) : null}
-			<div className="bots-card bots-engine">
+			<div
+				className="bots-card bots-engine"
+				hidden={
+					building ||
+					(hideReady && status?.available && status.image.state === 'current')
+				}
+			>
 				<div className="bots-kv">
 					<span>Engine</span>
 					<span>
@@ -435,7 +447,7 @@ export function EngineSummary({
 						<button
 							type="button"
 							className="bots-btn bots-btn--sm bots-btn--primary"
-							disabled={engine.busy || status.image.state === 'building'}
+							disabled={engine.busy}
 							onClick={engine.buildImage}
 						>
 							Build image

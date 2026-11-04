@@ -1,6 +1,3 @@
-import { containerSourceRunner } from './sourceRunner.js';
-import { BotDeletions } from './deletions.js';
-import { createBotMessageOperations } from './messageProtocol.js';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,9 +12,10 @@ import {
 import type { ExtensionInstaller } from '../extensions/installer.js';
 import type { PtyFactory } from '../terminalService/types.js';
 import type { OperationRegistries } from '../types.js';
-import type { BotCredentialLease } from './acp.js';
-import { noBotCredentials } from './acp.js';
 import { createBotCredentialOperations } from './credentialProtocol.js';
+import type { BotCredentialLease } from './credentials.js';
+import { noBotCredentials } from './credentials.js';
+import { BotDeletions } from './deletions.js';
 import { BotEngine, type EnginePin } from './engine.js';
 import { BotEngineService, validateEnginePin } from './engineService.js';
 import { BotEnvironmentService } from './environment.js';
@@ -26,12 +24,14 @@ import type { BotAgentInstall } from './image.js';
 import { readBotImage } from './images.js';
 import { BotIoProtocol } from './ioProtocol.js';
 import { BotMemories, type BotMemoryHelper } from './memories.js';
+import { createBotMessageOperations } from './messageProtocol.js';
 import { EngineProcess } from './process.js';
 import { createBotEnvironmentOperations } from './protocol.js';
 import { BotDesktopService } from './rfb.js';
 import { type BotAgents, BotService, botAgentConfigFiles } from './service.js';
 import { BotSessionStore } from './sessions.js';
 import { BotShellService } from './shell.js';
+import { containerSourceRunner } from './sourceRunner.js';
 import { BotError, BotStore } from './store.js';
 import {
 	type BotTokenLease,
@@ -104,6 +104,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			fileURLToPath(new URL('./image-context/', import.meta.url)),
 		() => options.agents.botAgentInstalls(),
 		options.serverId,
+		join(root, 'image-build.json'),
 	);
 	const deletions = new BotDeletions(
 		join(root, 'deletions.json'),
@@ -305,11 +306,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 						'unavailable',
 						'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.',
 					);
-				return credentialLease(
-					await tokenLease(id, snapshot),
-					snapshot,
-					agent(snapshot.agentId),
-				);
+				return credentialLease(await tokenLease(id, snapshot));
 			},
 		},
 		agentInfo: async () => {
@@ -505,20 +502,11 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	return service;
 }
 
-function credentialLease(
-	token: BotTokenLease,
-	snapshot: BotSessionSnapshot,
-	agent: ReturnType<BotAgents['botAgentContributions']>[number]['contribution'],
-): Promise<BotCredentialLease> {
+function credentialLease(token: BotTokenLease): Promise<BotCredentialLease> {
 	return token.withEnvironment((values) => {
 		const environment = { ...values } as Record<string, string>;
 		return {
 			environment,
-			authenticateMethodId: agent.credentialSecrets?.find(
-				(s) =>
-					snapshot.signIn.kind === 'token' &&
-					s.environmentVariable === snapshot.signIn.environmentVariable,
-			)?.authenticateMethodId,
 			redact: (value: string) => {
 				const r = token.redactor();
 				return Buffer.concat([r.push(value), r.finish()]).toString('utf8');

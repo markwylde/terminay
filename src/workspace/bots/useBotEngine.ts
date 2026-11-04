@@ -4,11 +4,15 @@
  */
 
 import { BotEngineClient } from '@terminay/client-core';
-import type { BotEngineReason, BotEngineStatus } from '@terminay/protocol';
+import type {
+	BotBuildProgress,
+	BotEngineReason,
+	BotEngineStatus,
+} from '@terminay/protocol';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { refusalText, type ServerBots } from './useServerBots';
 
-export type { BotEngineReason, BotEngineStatus };
+export type { BotBuildProgress, BotEngineReason, BotEngineStatus };
 export type BotEngineCandidate = BotEngineStatus['candidates'][number];
 
 /** What each refusal means, in the user's words. */
@@ -36,6 +40,8 @@ export type BotEngineView = Readonly<{
 	/** Pins a candidate. Replacing an existing pin needs `confirmed`. */
 	useEngine: (candidate: BotEngineCandidate, confirmed: boolean) => void;
 	buildImage: () => void;
+	readBuildLog: () => Promise<string>;
+	readBuildProgress: () => Promise<BotBuildProgress | null>;
 }>;
 
 export function useBotEngine(server: ServerBots | undefined): BotEngineView {
@@ -109,8 +115,23 @@ export function useBotEngine(server: ServerBots | undefined): BotEngineView {
 		[load, client],
 	);
 
+	const readBuildLog = useCallback(
+		() =>
+			client ? client.log() : Promise.reject(new Error('Server unavailable')),
+		[client],
+	);
+	const readBuildProgress = useCallback(
+		() =>
+			client
+				? client.progress()
+				: Promise.reject(new Error('Server unavailable')),
+		[client],
+	);
+
 	return {
 		status,
+		readBuildLog,
+		readBuildProgress,
 		error,
 		busy,
 		checkAgain: () => run((c) => c.check()),

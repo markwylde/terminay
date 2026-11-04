@@ -8,7 +8,7 @@ import { activeHome, frontHomeTab } from './support/home-tabs';
 
 /**
  * Home › Bots, end to end. The suite runs against a Docker-compatible socket API fixture
- * whose containers host a fake ACP agent, so it
+ * whose containers host a fake native agent, so it
  * needs no container engine, image, or agent account. Writing `engine-down`
  * into the fake root makes the engine unreachable. A message containing
  * `hold` keeps its turn open until it is
@@ -143,6 +143,72 @@ async function openBotChat(page: Page, name: string): Promise<Locator> {
 }
 
 test.describe('Home › Bots', () => {
+	test('image build opens a compact banner and a live step timeline with failure and retry', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await prepareWindow(mainWindow);
+		await mkdir(fakeRoot(tempDir), { recursive: true });
+		await writeFile(path.join(fakeRoot(tempDir), 'build-delay'), '2000');
+		await writeFile(path.join(fakeRoot(tempDir), 'build-fail'), '');
+		const dashboard = await openBots(mainWindow);
+		await dashboard.getByRole('button', { name: 'Check again' }).click();
+		await dashboard.getByRole('button', { name: 'Build image' }).click();
+		const banner = dashboard.locator('[data-terminay-build-banner]');
+		await expect(banner).toBeVisible();
+		expect((await banner.boundingBox())!.height).toBeLessThanOrEqual(40);
+		await banner.click();
+		const progress = mainWindow.locator('[data-terminay-build-page]');
+		await expect(
+			progress.getByRole('heading', { name: 'Building your bot environment' }),
+		).toBeVisible();
+		await expect(
+			progress.locator('[data-terminay-build-step="cached"]'),
+		).toBeVisible();
+		await expect(
+			progress.getByRole('heading', {
+				name: 'Image build failed',
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			progress.locator('[data-terminay-build-step="failed"]').first(),
+		).toBeVisible();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('image-build-failed.png'),
+		});
+		await rm(path.join(fakeRoot(tempDir), 'build-fail'));
+		await writeFile(path.join(fakeRoot(tempDir), 'build-delay'), '6000');
+		await progress.getByRole('button', { name: 'Retry build' }).click();
+		await expect(
+			progress.getByRole('heading', { name: 'Building your bot environment' }),
+		).toBeVisible();
+		await progress.getByRole('button', { name: 'Back to Bots' }).click();
+		await expect(progress).toHaveCount(0);
+		await dashboard.locator('[data-terminay-build-banner]').click();
+		const buildId = await progress.getAttribute('data-terminay-build-id');
+		await mainWindow.reload();
+		await openBots(mainWindow);
+		await mainWindow.locator('[data-terminay-build-banner]').click();
+		await expect(progress).toHaveAttribute('data-terminay-build-id', buildId!);
+		await expect(
+			progress.getByRole('heading', { name: 'Your bot image is ready' }),
+		).toBeVisible({ timeout: 30000 });
+		await expect(
+			progress.getByRole('heading', { name: 'Publishing the local bot image' }),
+		).toBeVisible();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('image-build-completed.png'),
+		});
+		await mainWindow.setViewportSize({ width: 430, height: 850 });
+		expect(
+			await progress.evaluate((el) => el.scrollWidth <= el.clientWidth),
+		).toBe(true);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('image-build-mobile.png'),
+		});
+	});
+
 	test('a bot is created while Docker is down, and chats once Docker is up', async ({
 		mainWindow,
 		tempDir,
@@ -215,6 +281,15 @@ test.describe('Home › Bots', () => {
 			{ timeout: 30_000 },
 		);
 		await expect(tab.locator('[data-terminay-bot-typing]')).toHaveCount(0);
+		// Completion is visible before supervisor/relay cleanup finishes. Reset
+		// the fixture only after the original execution has released its processes.
+		await expect
+			.poll(
+				async () =>
+					(await readdir(fakeRoot(tempDir))).filter((n) => n.startsWith('pid-'))
+						.length,
+			)
+			.toBe(0);
 		await setEngineDown(tempDir, true);
 		for (const file of await readdir(fakeRoot(tempDir))) {
 			if (/^(container|volume|network|image)-/.test(file))
@@ -264,10 +339,20 @@ test.describe('Home › Bots', () => {
 		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
 			'old bot recovered',
 		);
-		await expect(tab.locator('.bots-sess__m').first()).toContainText(
-			'Completed',
-			{ timeout: 30_000 },
-		);
+		await expect(tab.locator('.bots-sess')).toHaveCount(2);
+		const recoveredOutcome = tab.locator('.bots-sess__m').first();
+		await expect(recoveredOutcome).toContainText(/Completed|Failed/, {
+			timeout: 30_000,
+		});
+		if ((await recoveredOutcome.textContent())?.includes('Failed')) {
+			await tab.locator('.bots-sess').first().click();
+			const detail = tab.locator('[data-terminay-bot-session]');
+			await expect(detail).toBeVisible();
+			throw new Error(
+				`Recovered execution failed: ${await detail.textContent()}`,
+			);
+		}
+		await expect(recoveredOutcome).toContainText('Completed');
 		expect(await mainWindow.content()).not.toContain('query failed');
 		await mainWindow.screenshot({
 			path: testInfo.outputPath('engine-reset-recovered.png'),

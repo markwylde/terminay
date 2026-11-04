@@ -1,9 +1,11 @@
+import { type BotBuildProgress, parseBotBuildProgress } from './botBuild.js';
 export const BOT_ENGINE_OPERATIONS = Object.freeze({
 	status: 'bots.engine.status',
 	check: 'bots.engine.check',
 	use: 'bots.engine.use',
 	build: 'bots.image.build',
 	log: 'bots.image.log',
+	progress: 'bots.image.progress',
 });
 export const BOT_ENGINE_CHANGED = 'bots.engine.changed';
 export type BotEngineKind = 'docker' | 'podman';
@@ -16,6 +18,7 @@ export type BotEngineReason =
 	| 'unsupported-platform'
 	| 'engine-changed';
 export interface BotEngineStatus {
+	readonly build?: BotBuildProgress | null;
 	readonly engine: BotEngineKind | null;
 	readonly available: boolean;
 	readonly reason: BotEngineReason | null;
@@ -93,5 +96,6 @@ export function parseBotEngineStatus(value: unknown): BotEngineStatus {
 		!(image.error === null || typeof image.error === 'string')
 	)
 		throw new TypeError('invalid bot engine status');
+	if (r.build !== undefined) parseBotBuildProgress(r.build);
 	return structuredClone(r) as unknown as BotEngineStatus;
 }

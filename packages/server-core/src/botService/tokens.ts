@@ -100,10 +100,6 @@ export interface BotTokenLease {
 	withEnvironment<T>(
 		callback: (env: NodeJS.ProcessEnv) => T | Promise<T>,
 	): Promise<T>;
-	/** Invoke after ACP initialize, before session/new or session/load. */
-	authenticate(
-		call: (params: { readonly methodId: string }) => Promise<unknown>,
-	): Promise<void>;
 	redactor(): BotTokenRedactor;
 	release(): void;
 }
@@ -153,8 +149,7 @@ export class BotTokenService {
 			declarations.length
 		)
 			throw new TypeError('duplicate credential variable');
-		const tokens: { name: string; token: RetainedToken; method?: string }[] =
-			[];
+		const tokens: { name: string; token: RetainedToken }[] = [];
 		const redactors = new Set<BotTokenRedactor>();
 		let released = false;
 		const release = () => {
@@ -189,7 +184,6 @@ export class BotTokenService {
 					tokens.push({
 						name,
 						token,
-						method: declaration.authenticateMethodId,
 					});
 				});
 			}
@@ -211,15 +205,6 @@ export class BotTokenService {
 					return await callback(env);
 				} finally {
 					for (const name of Object.keys(env)) delete env[name];
-				}
-			},
-			authenticate: async (call) => {
-				check();
-				for (const methodId of new Set(
-					tokens.map((t) => t.method).filter((m): m is string => Boolean(m)),
-				)) {
-					check();
-					await call({ methodId });
 				}
 			},
 			redactor: () => {
