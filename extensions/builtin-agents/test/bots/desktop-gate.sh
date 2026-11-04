@@ -1,4 +1,5 @@
 set -euo pipefail
+trap 'result=$?; if [ "$result" -ne 0 ]; then for log in /tmp/x.log /tmp/desktop.log /tmp/browser.log /tmp/terminay-browser.log; do if [ -f "$log" ]; then printf "\n%s\n" "$log"; tail -n 100 "$log"; fi; done; fi; exit "$result"' EXIT
 export HOME=/home/bot DISPLAY=:1
 mkdir -p /tmp/.X11-unix
 Xvnc :1 -rfbport 5901 -SecurityTypes None -localhost yes -geometry 1440x900 -depth 24 >/tmp/x.log 2>&1 &

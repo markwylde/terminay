@@ -13,7 +13,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl git jq ripgrep python3 inotify-tools procps less openssh-client \
       tigervnc-standalone-server tigervnc-tools xfwm4 xfce4-panel xfce4-settings xfce4-terminal xfdesktop4 x11-xserver-utils x11-apps dbus-x11 fonts-dejavu-core fonts-noto-color-emoji adwaita-icon-theme \
-      chromium docker-cli docker-compose xdotool wmctrl scrot \
+      chromium chromium-sandbox docker-cli docker-compose xdotool wmctrl scrot \
  && rm -rf /var/lib/apt/lists/*
 
 # Keep the large application layer independent of runtime helper changes.

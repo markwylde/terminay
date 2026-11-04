@@ -13,6 +13,7 @@ import {
 	type BotAgentContribution,
 	validateBotAgentContribution,
 } from '@terminay/extension-api';
+import { BOT_BROWSER_SECCOMP } from './browserSandbox.js';
 import type { EngineDriver } from './engine.js';
 
 /** Image inputs copied from validated bot-agent declarations. */
@@ -106,6 +107,7 @@ export async function planBotImage(
 		throw new TypeError('bot uid and gid must be positive');
 	const layer = agentLayer(agents);
 	const hash = createHash('sha256');
+	hash.update(JSON.stringify(BOT_BROWSER_SECCOMP));
 	async function hashDirectory(relative: string): Promise<void> {
 		const entries = await readdir(path.join(contextPath, relative), {
 			withFileTypes: true,
