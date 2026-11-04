@@ -119,3 +119,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0093](./0093-bots-communicate-through-a-durable-message-log.md) | Bots communicate through a durable message log and scoped runtime tools | accepted, supersedes 0089 (execution and communication only) | 2026-11-02 |
 | [0094](./0094-bots-attribute-engine-workloads-through-per-bot-proxies.md) | Bots attribute engine workloads through per-bot socket proxies | accepted, supersedes 0089 and 0092 (socket exposure and attribution only) | 2026-11-02 |
 | [0096](./0096-bots-use-terminay-owned-native-cli-drivers.md) | Bots use Terminay-owned native CLI drivers adapted from Atlas | accepted, supersedes ACP and adapter installation choices in part | 2026-11-04 |
+| [0098](./0098-project-reach-may-curate-workflow-templates-behind-an-asking-group.md) | Project reach may curate the server's workflow templates, behind a group that asks | accepted, supersedes ADR-0072 in part | 2026-11-04 |

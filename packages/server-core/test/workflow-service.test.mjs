@@ -164,6 +164,26 @@ test("an empty category persists, and a command without categories keeps the sto
   assert.deepEqual((await reloaded.load()).categories, ["Shipping", "Empty"]);
 });
 
+test("a template that would add a category beyond the bound is refused, never stripped of it", async () => {
+  const repository = new WorkflowTemplateRepository(createMemoryWorkflowTemplateBackend());
+  const full = Array.from({ length: WORKFLOW_LIMITS.maxCategories }, (_, index) => `Category ${index}`);
+  await repository.apply({ command: { type: "replace", templates: [], categories: full.slice(0, -1) } });
+  // The 64th category is added by name.
+  const last = await repository.apply({ command: { type: "upsert", template: template({ id: "tpl-a", category: full.at(-1) }) } });
+  assert.equal(last.state.categories.length, WORKFLOW_LIMITS.maxCategories);
+  assert.equal(last.state.templates[0].category, full.at(-1));
+  // An existing name, matched ignoring case, adds nothing.
+  const same = await repository.apply({ command: { type: "upsert", template: template({ id: "tpl-b", category: "category 0" }) } });
+  assert.equal(same.state.templates[1].category, "Category 0");
+  await assert.rejects(
+    repository.apply({ command: { type: "upsert", template: template({ id: "tpl-c", category: "One too many" }) } }),
+    code("invalid_workflow"),
+  );
+  const state = await repository.load();
+  assert.deepEqual(state.templates.map((item) => item.id), ["tpl-a", "tpl-b"]);
+  assert.equal(state.revision, same.revision);
+});
+
 test("a repeated command id returns the first outcome", async () => {
   const repository = new WorkflowTemplateRepository(createMemoryWorkflowTemplateBackend());
   const envelope = { commandId: "cmd-1", command: { type: "upsert", template: template() } };

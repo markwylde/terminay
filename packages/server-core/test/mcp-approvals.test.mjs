@@ -49,6 +49,7 @@ test("defaults keep terminal tools frictionless and ask before managing automati
     projectsWindows: "allow",
     settingsRead: "allow",
     settingsChange: "ask",
+    workflowTemplates: "ask",
     appWindows: "allow",
     notifications: "allow",
     connectedServerTools: "allow",
@@ -68,6 +69,7 @@ test("defaults keep terminal tools frictionless and ask before managing automati
   assert.equal(stored.projectsWindows, "allow");
   assert.equal(stored.settingsRead, "allow");
   assert.equal(stored.settingsChange, "ask");
+  assert.equal(stored.workflowTemplates, "ask");
   assert.equal(stored.terminalsRead, "ask");
   assert.equal(
     mcpPermissionsFromSettings({ terminayMcp: { permissions: { settingsChange: "allow", projectsWindows: "ask" } } }).settingsChange,
