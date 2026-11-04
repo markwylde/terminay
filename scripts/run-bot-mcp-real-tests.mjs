@@ -25,6 +25,7 @@ try {
 	execFileSync(
 		'python3',
 		[
+			'-B',
 			'-m',
 			'unittest',
 			'discover',
