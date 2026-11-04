@@ -20,7 +20,7 @@ Applications from both forges continue to use the GitHub update feed.
   npm 12.2.1 is installed under
   `$HOME/.local` so the runner does not require a globally writable npm prefix.
 - Repository secrets: `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`,
-  `APPLE_APP_SPECIFIC_PASSWORD`.
+  `APPLE_APP_SPECIFIC_PASSWORD`, and `OPENROUTER_API_KEY` for AI release notes.
 - Repository variables: `APPLE_ID`, `APPLE_TEAM_ID`.
 - The forge-provided workflow token needs repository tag/release write access.
   No GitHub token, Windows runner, or separate artifact service is required.
@@ -55,7 +55,17 @@ The macOS lane verifies signing, notarization, microphone entitlements, DMG star
 and the update ZIP. Linux verifies the glibc floor and terminal execution. Generated
 update metadata is checked locally; the forge is not a separate application update
 feed. After both jobs pass, the publisher downloads all eight attachments, verifies
-their checksums and exact inventory, and publishes the draft with the source SHA.
+their checksums and exact inventory, and publishes the draft with the source SHA
+and release notes.
+
+The publication job uses `scripts/generate-release-notes.mjs` and the shared
+`.github/prompts/github-create-release.md` prompt, matching GitHub’s AI notes. It
+sends the selected release range’s commit subjects, changed filenames and diff
+statistics to OpenRouter using the repository secret. If the key is absent or
+generation fails, `generate-fallback-release-notes.mjs --desktop-only` writes
+commit-based fallback notes instead. An AI outage does not block verified binaries;
+missing or blank notes do prevent publication. Existing published releases are
+not rewritten by the workflow.
 
 ## Failed runs and retries
 

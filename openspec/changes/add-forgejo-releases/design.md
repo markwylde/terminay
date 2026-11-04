@@ -14,6 +14,8 @@ Non-goals: moving hosts, Windows VMs, changing GitHub releases/updaters, rolling
 - Use a small Node API client scoped to the current repository and workflow token. This crosses the release-publication boundary only. The client creates a draft, uploads only reviewed filenames with SHA-256 sidecars, compares duplicate uploads for safe retries, and publishes after downloading and verifying the complete macOS/Linux asset inventory. Do not depend on GitHub artifact services or gh.
 - GitHub remains the updater provider inside both independently built apps. Generated metadata is validated during packaging but is not advertised as a separate update feed on the canonical forge.
 
+- Generate RELEASE.md in the publication job using the existing generate-release-notes.mjs and shared prompt, with the already configured OPENROUTER_API_KEY secret. If the key is absent or generation fails, run the existing fallback generator with desktop-only distribution context. Read a non-empty bounded notes file before any publication mutation, keep the source marker first for draft ownership checks, and append the retained GitHub update-feed information. The publication boundary and complete-asset checks remain unchanged. No GitHub workflow changes are needed.
+
 ## Risks / Trade-offs
 
 - Missing Apple secrets or native runner tools block release → fail with explicit preflight checks; document setup.
