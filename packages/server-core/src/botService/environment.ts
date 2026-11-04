@@ -14,6 +14,7 @@ import {
 	parseBotEnvironmentSetSettings,
 	protocolError,
 } from '@terminay/protocol';
+import { BOT_BROWSER_SECURITY_OPT } from './browserSandbox.js';
 import type { BotEngine, EngineDriver, EngineResource } from './engine.js';
 import { ownedResource } from './engine.js';
 import {
@@ -257,6 +258,10 @@ export class BotEnvironmentService extends EventEmitter {
 			'--entrypoint',
 			'terminay-init',
 		];
+		// Docker blocks Chromium's namespace sandbox by default. Podman's API
+		// accepts daemon paths rather than inline profiles; keep its native policy.
+		if (driver.details.pin.kind === 'docker')
+			args.push('--security-opt', BOT_BROWSER_SECURITY_OPT);
 		if (driver.details.platform === 'linux')
 			args.push('--add-host', 'host.docker.internal:host-gateway');
 		if (driver.details.pin.kind === 'podman' && driver.details.rootless)

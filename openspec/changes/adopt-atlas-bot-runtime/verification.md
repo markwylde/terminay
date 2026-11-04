@@ -34,3 +34,9 @@ Tasks 3.3, 3.4, 3.5, 6.2, 6.3 and 6.4 remain unchecked. Do not archive or descri
 4. Validate every remaining scenario with final CI evidence before checking task 6.4.
 
 Archive validation has four pre-existing failures unrelated to this change: `2026-09-06-agent-provider-status-conformance` (8 unfinished tasks), `2026-10-07-notifications-icon-and-project-dot` (1), `2026-10-10-macros-script-editor` (1), `2026-10-27-github-worktree-status` (1). `openspec validate --all --archived` reports 204 passed, 4 failed. These historical records were left unchanged.
+
+## Pull-request CI and Docker sandbox correction
+
+PR #488 run 23301 on `8bb52450` passed 27 checks, including all eighteen E2E shards, packaging, lint/unit/workspace, glibc, WebRTC and container/MCP compatibility checks. Both pinned native CLIs passed the real amd64 Docker conformance tests. The desktop portion exposed missing `chromium-sandbox` and Docker's namespace seccomp restrictions. A local isolated Docker daemon reproduced both errors; installing the package and using the vendored Playwright deny-by-default seccomp profile passed the visible desktop, shared-browser screenshot/CDP and all thirteen app renders. The same package with Podman's native profile also passed all thirteen app renders. Production Docker container creation now supplies that scoped profile inline, without privileged mode or new capabilities; Podman keeps its native profile. Final PR-head statuses must still be read back after this correction.
+
+The profile is copied from microsoft/playwright commit `ae935a43d9e376e4759548f6b3c6905c7b282333`, `utils/docker/seccomp_profile.json`, with its Apache-2.0 license retained in server-core and staged alongside the packaged profile. See https://playwright.dev/docs/next/docker and https://docs.docker.com/engine/security/seccomp/.

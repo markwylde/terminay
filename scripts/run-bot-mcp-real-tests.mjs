@@ -1,4 +1,7 @@
+import { BOT_BROWSER_SECCOMP } from '../packages/server-core/dist/botService/browserSandbox.js';
+
 #!/usr/bin/env node
+
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -107,6 +110,8 @@ try {
 		`FROM ${image}\nCOPY test.mjs /test.mjs\nCOPY bots /tmp/bots\nENTRYPOINT ["node", "--test", "/test.mjs"]\n`,
 	);
 	docker('build', '-t', harness, runnerContext);
+	const seccompPath = path.join(context, 'browser-seccomp.json');
+	await writeFile(seccompPath, JSON.stringify(BOT_BROWSER_SECCOMP));
 	for (const agent of ['codex', 'claude-code'])
 		docker(
 			'run',
@@ -132,6 +137,8 @@ try {
 		'bot',
 		'--env',
 		'HOME=/home/bot',
+		'--security-opt',
+		`seccomp=${seccompPath}`,
 		'--entrypoint',
 		'bash',
 		harness,
