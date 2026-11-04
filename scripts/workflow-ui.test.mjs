@@ -105,6 +105,13 @@ test('the rail shows each status in its colour, fill, and glyph, in step order, 
 	assert.equal(model.markerStyle('not_started').glyph, 'none');
 });
 
+test('the rail shows the workflow name at its foot, as text', () => {
+	const markup = render({ view: attached([step('a', 'done')]) });
+	assert.match(markup, /<\/ol><span class="workflow-rail-name" title="Standard flow">Standard flow<\/span>/);
+	const unrestorable = render({ view: { sessionId: 'session-a', state: 'unrestorable' } });
+	assert.ok(!unrestorable.includes('workflow-rail-name'));
+});
+
 test('a step with an icon shows it, and a done step without one shows a check', () => {
 	const withIcon = render({ view: attached([step('a', 'done', { icon: 'wrench' })]) });
 	assert.ok(withIcon.includes(icons.WORKFLOW_ICON_PATHS.wrench));
@@ -193,6 +200,9 @@ test('below 60 columns beside the expanded panel the panel stays a rail, and the
 	assert.equal(model.panelMode('expanded', 60 + lost, cell), 'expanded');
 	assert.equal(model.panelMode('expanded', 59 + lost, cell), 'forced-collapsed');
 	assert.equal(model.panelMode('collapsed', 200, cell), 'collapsed');
+	// Narrowness is the pane's whatever the setting, so expanding opens the overlay.
+	assert.equal(model.panelMode('collapsed', 59 + lost, cell), 'forced-collapsed');
+	assert.equal(model.panelMode('collapsed', undefined, undefined), 'collapsed');
 	// Forced collapsed reserves only the rail, so the overlay never resizes the terminal.
 	assert.equal(model.reservedWidth('forced-collapsed'), model.WORKFLOW_RAIL_WIDTH);
 	assert.equal(model.reservedWidth('expanded'), model.WORKFLOW_PANEL_WIDTH);
@@ -334,6 +344,21 @@ test('the editor shows the size against 56 KiB and the exact launch text', () =>
 	assert.ok(preview.startsWith('/goal Ship <b>it</b>.'));
 	assert.ok(markup.includes(preview.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#x27;')));
 	assert.ok(!/collapse|expanded/i.test(markup), 'no template field chooses how the panel opens');
+	assert.match(markup, /<fieldset class="workflow-editor-fieldset">/);
+});
+
+test('while a save is in flight the editor takes no edits', () => {
+	const template = library.emptyTemplate(1, '');
+	const markup = renderToStaticMarkup(
+		React.createElement(category.WorkflowsCategory, {
+			editor: {
+				draft: { templates: [template], categories: [] }, isReady: true, isSaving: true, isDirty: true, saveState: 'Saving…',
+				unsavedIds: new Set(), filter: '', setFilter() {}, selected: template, selectedId: template.id, select() {}, focusNameFor: { current: null },
+			},
+			render: ({ detail }) => detail,
+		}),
+	);
+	assert.match(markup, /<fieldset class="workflow-editor-fieldset" disabled="">/);
 });
 
 test('an incompatible or missing connection shows its state instead of templates', () => {

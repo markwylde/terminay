@@ -954,7 +954,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'get_workflow',
 		{
-			description: `Read the workflow attached to a terminal: its id, name, opening prompt, and each step's id, title, prompt, status, and note, plus resume_step_id, the step to continue from (the step left running or waiting on the user if there is one, otherwise the first step that is not done; null when every step is done). Returns workflow: null when the terminal has none. ${WORKFLOW_TERMINAL_NOTE}`,
+			description: `Read the workflow attached to a terminal: its id, name, opening prompt, and each step's id, title, prompt, icon, status, note, started_at and ended_at, plus resume_step_id, the step to continue from (the step left running or waiting on the user if there is one, otherwise the first step that is not done; null when every step is done). Fails with no_workflow when the terminal has none. ${WORKFLOW_TERMINAL_NOTE}`,
 			inputSchema: { terminal },
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},

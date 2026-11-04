@@ -214,7 +214,7 @@ A terminal with a workflow SHALL show a workflow panel along the right edge of i
 
 ### Requirement: Collapsed workflow rail
 
-Collapsed, the panel SHALL be a narrow rail of one marker per step, in step order, joined by a line. A marker SHALL show the step's icon, or, when the step has none, a check for `done`, a dot for `running`, a cross for `failed`, an exclamation mark for `needs_input`, and nothing for `not_started`. The marker SHALL be filled green for `done`, outlined amber for `running`, filled red for `failed` and `needs_input`, and outlined grey for `not_started`. Each marker SHALL have an accessible name made of the step's title and status.
+Collapsed, the panel SHALL be a narrow rail of one marker per step, in step order, joined by a line. A marker SHALL show the step's icon, or, when the step has none, a check for `done`, a dot for `running`, a cross for `failed`, an exclamation mark for `needs_input`, and nothing for `not_started`. The marker SHALL be filled green for `done`, outlined amber for `running`, filled red for `failed` and `needs_input`, and outlined grey for `not_started`. Each marker SHALL have an accessible name made of the step's title and status. At the foot of the rail, below the markers, the rail SHALL show the workflow's name rotated to read from bottom to top, shortened with an ellipsis when the rail is too short for it.
 
 #### Scenario: Collapsed rail
 

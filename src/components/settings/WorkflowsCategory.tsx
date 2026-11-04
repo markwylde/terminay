@@ -168,6 +168,7 @@ export function WorkflowsCategory({
             </p>
           </div>
         ) : (
+          <fieldset className="workflow-editor-fieldset" disabled={isSaving}>
           <TemplateDetail
             editor={editor}
             template={selected}
@@ -177,6 +178,7 @@ export function WorkflowsCategory({
             confirmingDelete={confirmingDelete}
             setConfirmingDelete={setConfirmingDelete}
           />
+          </fieldset>
         )}
       </>
     )

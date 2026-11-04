@@ -110,6 +110,12 @@ function WorkflowRail({
 					))}
 				</ol>
 			)}
+			{view.state === 'attached' ? (
+				// The workflow's name, read bottom to top along the foot of the rail.
+				<span className="workflow-rail-name" title={view.workflow.name}>
+					{view.workflow.name}
+				</span>
+			) : null}
 		</div>
 	);
 }

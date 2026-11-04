@@ -144,13 +144,13 @@ export function panelMode(
 	columnsBesideRail: number | undefined,
 	cellWidth: number | undefined,
 ): WorkflowPanelMode {
-	if (setting === 'collapsed') return 'collapsed';
-	if (columnsBesideRail === undefined || cellWidth === undefined || cellWidth <= 0)
-		return 'expanded';
-	const lost = Math.ceil((WORKFLOW_PANEL_WIDTH - WORKFLOW_RAIL_WIDTH) / cellWidth);
-	return columnsBesideRail - lost < WORKFLOW_MIN_TERMINAL_COLUMNS
-		? 'forced-collapsed'
-		: 'expanded';
+	// Narrowness is the pane's, whatever the setting: expanding a narrow pane
+	// always opens the overlay and never changes the setting.
+	if (columnsBesideRail !== undefined && cellWidth !== undefined && cellWidth > 0) {
+		const lost = Math.ceil((WORKFLOW_PANEL_WIDTH - WORKFLOW_RAIL_WIDTH) / cellWidth);
+		if (columnsBesideRail - lost < WORKFLOW_MIN_TERMINAL_COLUMNS) return 'forced-collapsed';
+	}
+	return setting;
 }
 
 /** Pixels the pane reserves at its right edge for the panel. */

@@ -113,7 +113,7 @@ test("the parsers bound every field and keep the service's limits", () => {
 
 test("the tools default to the calling terminal and drive a workflow through its steps", async () => {
   const { call } = service();
-  assert.deepEqual(await call("get_workflow"), { terminal: "session-a", workflow: null });
+  failure(await call("get_workflow"), "no_workflow");
   const created = await call("create_workflow", { name: "Flow", opening_prompt: "Go.", steps });
   assert.equal(created.terminal, "session-a");
   assert.deepEqual(created.workflow.steps.map((step) => step.status), ["not_started", "not_started"]);
@@ -124,6 +124,13 @@ test("the tools default to the calling terminal and drive a workflow through its
   failure(await call("update_workflow_step", { step_id: "step-missing", status: "done" }), "step_not_found");
   const done = await call("update_workflow_step", { step_id: first.id, status: "done", note: "proposal written" });
   assert.equal(done.workflow.steps[0].note, "proposal written");
+  // An agent reading back gets every step's icon and times.
+  const read = await call("get_workflow");
+  assert.equal(read.workflow.steps[1].icon, "wrench");
+  assert.equal("icon" in read.workflow.steps[0], false);
+  assert.match(read.workflow.steps[0].started_at, /^\d{4}-\d\d-\d\dT/);
+  assert.match(read.workflow.steps[0].ended_at, /^\d{4}-\d\d-\d\dT/);
+  assert.deepEqual([read.workflow.steps[1].started_at, read.workflow.steps[1].ended_at], [null, null]);
   assert.equal(done.resume_step_id, second.id);
   assert.equal(done.unfinished, true);
 });
@@ -254,8 +261,14 @@ test("a 56 KiB workflow of prose or of escapes travels in full, and 56 KiB + 1 b
 
 test("a workflow refusal reaches the agent through stdio with its code and id", async () => {
   await withStdio(async (client) => {
+    const none = await client.callTool({ name: "get_workflow", arguments: {} });
+    assert.equal(none.isError, true);
+    assert.match(none.content[0].text, /^no_workflow: /);
     const created = parsed(await client.callTool({ name: "create_workflow", arguments: { name: "Flow", steps } }));
     const [first, second] = created.workflow.steps;
+    const roundTrip = parsed(await client.callTool({ name: "get_workflow", arguments: {} }));
+    assert.equal(roundTrip.workflow.steps[1].icon, "wrench");
+    assert.deepEqual([roundTrip.workflow.steps[0].started_at, roundTrip.workflow.steps[0].ended_at], [null, null]);
     await client.callTool({ name: "update_workflow_step", arguments: { step_id: first.id, status: "needs_input", note: "Which branch?" } });
     const refused = await client.callTool({ name: "update_workflow_step", arguments: { step_id: second.id, status: "running" } });
     assert.equal(refused.isError, true);
