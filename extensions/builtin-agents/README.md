@@ -161,19 +161,15 @@ inspects the real npm tarball and activates it against a real process.
 
 ## Bot adapters
 
-Bots use adapters installed only when the server builds its local bot image:
+Bots use pinned native CLIs installed only when the server builds its local image:
 
-- `@agentclientprotocol/codex-acp@2.5.0` (including its compatible Codex).
-- `@agentclientprotocol/claude-agent-acp@0.99.1` (including the Claude Agent SDK).
+- `@openai/codex@0.165.0`
+- `@anthropic-ai/claude-code@2.1.312`
 
-No separate agent CLI is installed. The image exposes the adapter's Codex as
-`codex` and resolves its Claude Agent SDK's native Linux executable as `claude`
-for both amd64 and arm64. Image builds verify the Claude login/logout commands. Models are selected through ACP session configuration; Default supplies
-no fallback launch arguments. Bot registrations are independent of observation,
-harness switches, terminal launchers, and chat providers.
+The API 3.6 `native-cli-v1` contribution names a supported driver and exact runtime version. Terminay owns command assembly, model flags, event translation and process lifecycle. Default leaves model selection to the CLI. Codex runs Autonomous only; Claude supports both Autonomous and native host-controlled Ask me. These registrations are independent of observation, harness switches, terminal launchers and chat providers.
 
 Every bot signs in with its own credential; nothing is shared with the server
-account's logins. Codex declares API-key authentication through ACP `api-key`,
+account's logins. Codex declares native API-key authentication,
 Autonomous-only operation, an ephemeral credential store with credential
 variables excluded from shell environments, and a device sign-in, **Sign in with
 ChatGPT** (`codex login --device-auth`, `codex logout`), whose own

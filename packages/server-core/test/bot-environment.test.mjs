@@ -70,6 +70,21 @@ test('4.3 lazy creation, defaults, bootstrap stdin and config restoration before
 		create.includes(`type=volume,source=${name}-home,target=/home/bot`),
 	);
 	assert.ok(create.includes('--network'));
+	const profile = create.find((arg) => arg.startsWith('seccomp='));
+	assert.ok(profile);
+	const policy = JSON.parse(profile.slice('seccomp='.length));
+	assert.equal(policy.defaultAction, 'SCMP_ACT_ERRNO');
+	assert.ok(
+		policy.syscalls.some(
+			(s) =>
+				s.names.includes('pidfd_open') &&
+				s.names.includes('pidfd_send_signal') &&
+				s.action === 'SCMP_ACT_ALLOW',
+		),
+	);
+	assert.deepEqual(policy.syscalls[0].names, ['clone', 'setns', 'unshare']);
+	assert.equal(create.includes('--privileged'), false);
+	assert.equal(create.includes('--cap-add'), false);
 	assert.ok(create.includes('terminay.server=server'));
 	assert.equal(
 		driver.calls.filter(
@@ -171,7 +186,10 @@ test('4.3 adoption refuses another server and reconciliation follows external re
 	t.after(unfollow);
 	driver.resources.delete(`container:${name}`);
 	const changed = once(service, 'changed');
-	engine.emit('container-event', { Type: 'container', Actor: { Attributes: { name } } });
+	engine.emit('container-event', {
+		Type: 'container',
+		Actor: { Attributes: { name } },
+	});
 	await changed;
 	assert.equal(service.state(botId), 'not-created');
 	engine.availability = { available: false };
@@ -192,7 +210,7 @@ test('4.7 default proxy uses the private engine-side socket and gid for Docker/r
 		await t.test(JSON.stringify(options), async (t) => {
 			const { service, driver } = setup(t, options);
 			await service.start(botId);
-			let create = driver.calls.find(
+			const create = driver.calls.find(
 				(args) => args[1] === 'create' && args[0] === 'container',
 			);
 			assert.ok(
@@ -300,8 +318,16 @@ test('4.13 workload list and actions exclude bot, helpers, probes and other bots
 	driver.resources.set('container:database', sibling);
 	driver.resources.set('container:workload-with-image-labels', {
 		...sibling,
-		Id: 'd'.repeat(64), Name: '/workload-with-image-labels',
-		Config: {Labels: {'terminay.bot':botId,'terminay.workload':'1','terminay.managed':'0','terminay.helper':'inherited-image-label'}},
+		Id: 'd'.repeat(64),
+		Name: '/workload-with-image-labels',
+		Config: {
+			Labels: {
+				'terminay.bot': botId,
+				'terminay.workload': '1',
+				'terminay.managed': '0',
+				'terminay.helper': 'inherited-image-label',
+			},
+		},
 	});
 	driver.resources.set('container:other', {
 		...sibling,
@@ -322,7 +348,9 @@ test('4.13 workload list and actions exclude bot, helpers, probes and other bots
 		driver.resources.set(`container:${container.Name}`, container);
 	const list = await service.containers(botId);
 	assert.equal(list.length, 2);
-	assert.ok(list.some(container=>container.name==='workload-with-image-labels'));
+	assert.ok(
+		list.some((container) => container.name === 'workload-with-image-labels'),
+	);
 	assert.equal(list[0].name, 'database');
 	assert.equal(list[0].image, 'postgres');
 	assert.match(list[0].ports, /5432/);
@@ -441,76 +469,163 @@ test('4.7 discovers socket gid inside the engine namespace using a bounded local
 	assert.equal(create[create.indexOf('--group-add') + 1], '999');
 });
 
-test('unchanged reconciliation publishes nothing and does not postpone idle stop', async t => {
- const {service, driver, clock} = setup(t);
- await service.start(botId);
- let changed=0;service.on('changed',()=>changed++);
- const timers=[...clock.timers.entries()];
- clock.tick(1000);
- await service.reconcile(botId); await service.reconcile(botId);
- assert.equal(changed,0);
- assert.deepEqual([...clock.timers.entries()],timers);
- assert.equal(driver.calls.filter(c=>c[0]==='run').length,0);
+test('unchanged reconciliation publishes nothing and does not postpone idle stop', async (t) => {
+	const { service, driver, clock } = setup(t);
+	await service.start(botId);
+	let changed = 0;
+	service.on('changed', () => changed++);
+	const timers = [...clock.timers.entries()];
+	clock.tick(1000);
+	await service.reconcile(botId);
+	await service.reconcile(botId);
+	assert.equal(changed, 0);
+	assert.deepEqual([...clock.timers.entries()], timers);
+	assert.equal(driver.calls.filter((c) => c[0] === 'run').length, 0);
 });
 
-test('two-bot overview helpers and workloads cannot invalidate summaries or grow reconciliation work', async t => {
- const {service,driver}=setup(t); const other='fed654cba321';service.register({id:other});
- await service.start(botId);await service.start(other);
- const engine=new EventEmitter();engine.availability={available:true};t.after(service.follow(engine));
- let changed=0;service.on('changed',()=>changed++);
- const run=driver.run;driver.run=async(args,options)=>{
-  const result=await run(args,options);
-  if(args[0]==='run') for(const action of ['create','init','attach','start','die','destroy'])
-   engine.emit('container-event',{Type:'container',Action:action,Actor:{Attributes:{name:'random-helper','terminay.server':'server','terminay.bot':botId,'terminay.role':'helper'}}});
-  return result;
- };
- await service.overview(botId);
- const before=driver.calls.length;
- for(const event of [
-  {},{Name:'unknown'},
-  {Name:name,Attributes:{'terminay.server':'foreign'}},
-  {Actor:{Attributes:{name,'terminay.workload':'1'}}},
-  {Name:name,Attributes:{'terminay.role':'helper'}},
- ]) engine.emit('container-event',event);
- await new Promise(setImmediate);
- assert.equal(changed,0);assert.equal(driver.calls.length,before);
- assert.equal(driver.calls.filter(c=>c[0]==='run').length,1);
- driver.resources.delete(`container:${name}`);
- const observed=once(service,'changed');
- for(let i=0;i<100;i++)engine.emit('container-event',{Type:'container',Actor:{Attributes:{name,'terminay.server':'server','terminay.bot':botId}}});
- await observed;await new Promise(setImmediate);
- assert.equal(changed,1);
- assert.equal(driver.calls.slice(before).filter(c=>c[0]==='inspect'&&c[1]==='container').length,2);
- assert.ok(driver.calls.slice(before).every(c=>c[2]===name));
+test('two-bot overview helpers and workloads cannot invalidate summaries or grow reconciliation work', async (t) => {
+	const { service, driver } = setup(t);
+	const other = 'fed654cba321';
+	service.register({ id: other });
+	await service.start(botId);
+	await service.start(other);
+	const engine = new EventEmitter();
+	engine.availability = { available: true };
+	t.after(service.follow(engine));
+	let changed = 0;
+	service.on('changed', () => changed++);
+	const run = driver.run;
+	driver.run = async (args, options) => {
+		const result = await run(args, options);
+		if (args[0] === 'run')
+			for (const action of [
+				'create',
+				'init',
+				'attach',
+				'start',
+				'die',
+				'destroy',
+			])
+				engine.emit('container-event', {
+					Type: 'container',
+					Action: action,
+					Actor: {
+						Attributes: {
+							name: 'random-helper',
+							'terminay.server': 'server',
+							'terminay.bot': botId,
+							'terminay.role': 'helper',
+						},
+					},
+				});
+		return result;
+	};
+	await service.overview(botId);
+	const before = driver.calls.length;
+	for (const event of [
+		{},
+		{ Name: 'unknown' },
+		{ Name: name, Attributes: { 'terminay.server': 'foreign' } },
+		{ Actor: { Attributes: { name, 'terminay.workload': '1' } } },
+		{ Name: name, Attributes: { 'terminay.role': 'helper' } },
+	])
+		engine.emit('container-event', event);
+	await new Promise(setImmediate);
+	assert.equal(changed, 0);
+	assert.equal(driver.calls.length, before);
+	assert.equal(driver.calls.filter((c) => c[0] === 'run').length, 1);
+	driver.resources.delete(`container:${name}`);
+	const observed = once(service, 'changed');
+	for (let i = 0; i < 100; i++)
+		engine.emit('container-event', {
+			Type: 'container',
+			Actor: {
+				Attributes: {
+					name,
+					'terminay.server': 'server',
+					'terminay.bot': botId,
+				},
+			},
+		});
+	await observed;
+	await new Promise(setImmediate);
+	assert.equal(changed, 1);
+	assert.equal(
+		driver.calls
+			.slice(before)
+			.filter((c) => c[0] === 'inspect' && c[1] === 'container').length,
+		2,
+	);
+	assert.ok(driver.calls.slice(before).every((c) => c[2] === name));
 });
 
-test('cheap state query validates bot authority without engine or measurement work', async t => {
- const {service,driver}=setup(t);
- const registry=createBotEnvironmentOperations(service);
- const handler=registry.queries['bots.environment.state'];
- const request={context:{authScope:'write',connectionId:'c',clientId:'u',signal:new AbortController().signal},envelope:{payload:{botId}}};
- assert.equal(await handler(request),'not-created');assert.equal(driver.calls.length,0);
- await assert.rejects(handler({...request,context:{...request.context,authScope:'read'}}),e=>e.code==='forbidden');
- await assert.rejects(handler({...request,envelope:{payload:{botId:'fed654cba321'}}}),/not found/);
+test('cheap state query validates bot authority without engine or measurement work', async (t) => {
+	const { service, driver } = setup(t);
+	const registry = createBotEnvironmentOperations(service);
+	const handler = registry.queries['bots.environment.state'];
+	const request = {
+		context: {
+			authScope: 'write',
+			connectionId: 'c',
+			clientId: 'u',
+			signal: new AbortController().signal,
+		},
+		envelope: { payload: { botId } },
+	};
+	assert.equal(await handler(request), 'not-created');
+	assert.equal(driver.calls.length, 0);
+	await assert.rejects(
+		handler({ ...request, context: { ...request.context, authScope: 'read' } }),
+		(e) => e.code === 'forbidden',
+	);
+	await assert.rejects(
+		handler({ ...request, envelope: { payload: { botId: 'fed654cba321' } } }),
+		/not found/,
+	);
 });
 
-test('a stopped container whose home was lost is recreated with an owned home before session startup', async t => {
- const {service,driver}=setup(t);await service.start(botId);await service.stop(botId);
- driver.resources.delete(`volume:${name}-home`);
- await service.prepareSession(botId);
- assert.equal(driver.resources.get(`volume:${name}-home`).Labels['terminay.bot'],botId);
- assert.equal(service.state(botId),'running');
- assert.ok(driver.calls.some(c=>c[0]==='container'&&c[1]==='rm'));
+test('a stopped container whose home was lost is recreated with an owned home before session startup', async (t) => {
+	const { service, driver } = setup(t);
+	await service.start(botId);
+	await service.stop(botId);
+	driver.resources.delete(`volume:${name}-home`);
+	await service.prepareSession(botId);
+	assert.equal(
+		driver.resources.get(`volume:${name}-home`).Labels['terminay.bot'],
+		botId,
+	);
+	assert.equal(service.state(botId), 'running');
+	assert.ok(driver.calls.some((c) => c[0] === 'container' && c[1] === 'rm'));
 });
 
-test('disposing an event follower and closing environments cancels pending repair and cannot rearm idle', async t => {
- const {service,driver,clock}=setup(t);
- const engine=new EventEmitter();engine.availability={available:true};const detach=service.follow(engine);
- let release;driver.inspect=async()=>new Promise(resolve=>{release=resolve;});
- let changed=0;service.on('changed',()=>changed++);
- engine.emit('container-event',{Actor:{Attributes:{name}}});
- await new Promise(setImmediate);detach();service.close();
- release({Config:{Labels:{'terminay.server':'server','terminay.bot':botId,'terminay.managed':'1'}},State:{Running:true}});
- await new Promise(setImmediate);engine.emit('container-event',{Actor:{Attributes:{name}}});
- assert.equal(changed,0);assert.equal(clock.timers.size,0);
+test('disposing an event follower and closing environments cancels pending repair and cannot rearm idle', async (t) => {
+	const { service, driver, clock } = setup(t);
+	const engine = new EventEmitter();
+	engine.availability = { available: true };
+	const detach = service.follow(engine);
+	let release;
+	driver.inspect = async () =>
+		new Promise((resolve) => {
+			release = resolve;
+		});
+	let changed = 0;
+	service.on('changed', () => changed++);
+	engine.emit('container-event', { Actor: { Attributes: { name } } });
+	await new Promise(setImmediate);
+	detach();
+	service.close();
+	release({
+		Config: {
+			Labels: {
+				'terminay.server': 'server',
+				'terminay.bot': botId,
+				'terminay.managed': '1',
+			},
+		},
+		State: { Running: true },
+	});
+	await new Promise(setImmediate);
+	engine.emit('container-event', { Actor: { Attributes: { name } } });
+	assert.equal(changed, 0);
+	assert.equal(clock.timers.size, 0);
 });

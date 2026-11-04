@@ -153,10 +153,8 @@ test('validated botAgent manifests feed the image layer without unrelated metada
 		for (const pin of contribution.imageInstall.npm)
 			assert.ok(layer.includes(pin));
 	}
-	assert.match(
-		layer,
-		/ln -s .*codex-acp\/node_modules\/@openai\/codex\/bin\/codex.js \/usr\/local\/bin\/codex/,
-	);
+	assert.match(layer, /@openai\/codex@0\.165\.0/);
+	assert.doesNotMatch(layer, /agentclientprotocol|install-claude|ln -s/);
 	assert.doesNotMatch(layer, /credentials|AUTH_TOKEN|API_KEY|config.toml/);
 	const original = installs[0].install.npm[0];
 	contributions[0].imageInstall.npm[0] = 'x@latest';
@@ -177,54 +175,16 @@ test('validated botAgent manifests feed the image layer without unrelated metada
 	assert.deepEqual(manager.botAgentInstalls(), []);
 });
 
-test('Claude sign-in resolves the adapter SDK native runtime for both Linux architectures', async (t) => {
-	const { createRequire } = await import('node:module');
-	const require = createRequire(import.meta.url);
-	const {
-		claudeExecutable,
-	} = require('../../../docker/terminay-bot/install-claude.cjs');
-	const directory = await mkdtemp(path.join(tmpdir(), 'bot-claude-runtime-'));
-	t.after(() => rm(directory, { force: true, recursive: true }));
-	const { mkdir, realpath } = await import('node:fs/promises');
-	const adapter = path.join(directory, 'package.json');
-	await writeFile(adapter, '{}');
-	const sdk = path.join(
-		directory,
-		'node_modules/@anthropic-ai/claude-agent-sdk',
-	);
-	await mkdir(sdk, { recursive: true });
-	await writeFile(
-		path.join(sdk, 'package.json'),
-		JSON.stringify({ main: 'sdk.mjs' }),
-	);
-	await writeFile(path.join(sdk, 'sdk.mjs'), '');
-	for (const arch of ['arm64', 'x64']) {
-		const native = path.join(
-			directory,
-			`node_modules/@anthropic-ai/claude-agent-sdk-linux-${arch}`,
-		);
-		await mkdir(native, { recursive: true });
-		await writeFile(path.join(native, 'claude'), 'native fixture');
-		assert.equal(
-			claudeExecutable(adapter, arch),
-			await realpath(path.join(native, 'claude')),
-		);
-	}
-	assert.throws(() => claudeExecutable(adapter, 'riscv64'), /Unsupported/);
-	await rm(path.join(directory, 'node_modules'), { recursive: true });
-	assert.throws(
-		() => claudeExecutable(path.join(directory, 'missing/package.json')),
-		/Cannot find module/,
-	);
+test('native image installs public pinned CLIs directly', async () => {
 	const layer = agentLayer([
 		{
 			id: 'builtin/claude',
-			install: { npm: ['@agentclientprotocol/claude-agent-acp@0.99.1'] },
+			install: { npm: ['@anthropic-ai/claude-code@2.1.312'] },
 		},
 	]);
-	assert.match(
+	assert.match(layer, /@anthropic-ai\/claude-code@2\.1\.312/);
+	assert.doesNotMatch(
 		layer,
-		/install-claude.cjs && claude --version && claude auth login --help && claude auth logout --help/,
+		/adapter|agent-sdk|install-claude|agentclientprotocol/,
 	);
-	assert.doesNotMatch(agentLayer([agent]), /install-claude/);
 });

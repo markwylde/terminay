@@ -200,10 +200,13 @@ export class SocketDriver implements EngineDriver {
 				false,
 				archive as unknown as Readable,
 			);
+			const decoder = new StringDecoder('utf8');
 			let buffer = '',
 				tail = '';
 			for await (const chunk of response) {
-				buffer += chunk.toString();
+				buffer += decoder.write(
+					Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+				);
 				if (buffer.length > 1024 * 1024) {
 					response.destroy();
 					throw new EngineCommandError('output-limit', 'build frame too large');
@@ -212,14 +215,28 @@ export class SocketDriver implements EngineDriver {
 				while (end >= 0) {
 					const line = buffer.slice(0, end).trim();
 					buffer = buffer.slice(end + 1);
-					if (!line) continue;
+					if (!line) {
+						end = buffer.indexOf('\n');
+						continue;
+					}
 					const event = JSON.parse(line) as {
 						stream?: string;
 						error?: string;
 						errorDetail?: unknown;
 					};
-					if (event.error || event.errorDetail)
+					options.onBuildEvent?.(event);
+					if (event.error || event.errorDetail) {
+						const detail = event.errorDetail as
+							| { message?: unknown }
+							| undefined;
+						const message =
+							event.error ??
+							(typeof detail?.message === 'string'
+								? detail.message
+								: 'image build failed');
+						options.onOutput?.(`${message}\n`, 'stderr');
 						throw new EngineCommandError('build-failed', 'image build failed');
+					}
 					const text = event.stream ?? '';
 					options.onOutput?.(text, 'stdout');
 					tail = (tail + text).slice(-(options.maxBytes ?? 256 * 1024));
@@ -586,8 +603,11 @@ export class SocketDriver implements EngineDriver {
 					controller.signal,
 				);
 				let buffer = '';
+				const decoder = new StringDecoder('utf8');
 				for await (const chunk of source) {
-					buffer += chunk.toString();
+					buffer += decoder.write(
+						Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+					);
 					if (buffer.length > 1024 * 1024)
 						throw new EngineCommandError(
 							'output-limit',

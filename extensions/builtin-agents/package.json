@@ -44,7 +44,7 @@
 		"@markwylde/all-your-agents": "1.4.4"
 	},
 	"peerDependencies": {
-		"@terminay/extension-api": "^3.5.0"
+		"@terminay/extension-api": "^3.6.0"
 	},
 	"peerDependenciesMeta": {
 		"@terminay/extension-api": {
@@ -52,7 +52,7 @@
 		}
 	},
 	"devDependencies": {
-		"@terminay/extension-api": "^3.5.0",
+		"@terminay/extension-api": "^3.6.0",
 		"@types/node": "^24.0.0",
 		"typescript": "^7.0.2"
 	},
@@ -61,7 +61,7 @@
 		"id": "com.terminay.builtin-agents",
 		"displayName": "Built-in Agents",
 		"description": "Shows Claude Code, Codex, Grok, and oh-my-pi sessions in the Agents panel, registers the Terminay MCP server with coding-agent CLIs, runs Claude Code and Codex chats, starts Claude Code and Codex in new terminals, and runs Codex without its shared background server in Terminay terminals.",
-		"api": "^3.5.0",
+		"api": "^3.6.0",
 		"engines": {
 			"terminay": ">=1.0.0",
 			"node": ">=24"
@@ -211,12 +211,8 @@
 					"displayName": "Claude Code",
 					"imageInstall": {
 						"npm": [
-							"@agentclientprotocol/claude-agent-acp@0.99.1"
+							"@anthropic-ai/claude-code@2.1.312"
 						]
-					},
-					"acpCommand": {
-						"executable": "claude-agent-acp",
-						"args": []
 					},
 					"deviceSignIn": {
 						"command": {
@@ -255,19 +251,18 @@
 					"launchEnvironment": {
 						"CLAUDE_CODE_MAX_RETRIES": "0",
 						"CLAUDE_CODE_SHELL_PREFIX": "/usr/local/bin/terminay-tool-shell"
-					}
+					},
+					"nativeDriver": "claude-code-cli",
+					"runtimeVersion": "2.1.312",
+					"runtimeProtocol": "native-cli-v1"
 				},
 				{
 					"id": "com.terminay.builtin-agents/codex",
 					"displayName": "Codex",
 					"imageInstall": {
 						"npm": [
-							"@agentclientprotocol/codex-acp@2.5.0"
+							"@openai/codex@0.165.0"
 						]
-					},
-					"acpCommand": {
-						"executable": "codex-acp",
-						"args": []
 					},
 					"deviceSignIn": {
 						"command": {
@@ -296,7 +291,6 @@
 						{
 							"environmentVariable": "CODEX_API_KEY",
 							"kind": "api-key",
-							"authenticateMethodId": "api-key",
 							"label": "API key",
 							"help": "Create an API key in the OpenAI API dashboard."
 						}
@@ -307,7 +301,10 @@
 							"path": ".codex/config.toml",
 							"contents": "cli_auth_credentials_store = \"ephemeral\"\n\n[shell_environment_policy]\nexclude = [\"CODEX_API_KEY\", \"OPENAI_API_KEY\"]\n"
 						}
-					]
+					],
+					"nativeDriver": "codex-cli",
+					"runtimeVersion": "0.165.0",
+					"runtimeProtocol": "native-cli-v1"
 				}
 			]
 		}

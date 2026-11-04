@@ -1,0 +1,19 @@
+# Bot native runtime and desktop
+
+Terminay builds its bot image on the owning server from the shipped Dockerfile and public upstream packages. It needs no Atlas checkout, private package or private image registry. The copied source record is in `docker/terminay-bot/PORTING.md` and `port-source.json`.
+
+Codex and Claude run as the bot user inside that bot's persistent container, through the existing session supervisor. The server owns native protocol parsing, permissions, model flags and execution cleanup. CLI output is diagnostic; bots communicate explicitly through `chat_post`. A stopped/interrupted execution is never resumed as a conversation.
+
+Each bot signs in separately. Codex offers ChatGPT device sign-in or an API key and runs Autonomous only. Claude offers its browser/code-paste sign-in, setup token or API key, with Autonomous and Ask me. The selected method governs the next execution. Saved logins remain in that bot's home; vault keys are injected into execution environments and excluded from tool shells. Processes of one bot share a user and are not hostile security domains.
+
+The XFCE desktop provides a menu, taskbar, terminal, a persistent Chromium profile and Downloads, plus the thirteen ArtCraft apps. Chromium remains sandboxed. Docker bot containers receive a bundled deny-by-default seccomp profile that permits Chromium's namespace calls; Podman uses its native policy. The image includes Debian's chromium-sandbox package. No bot receives privileged mode or SYS_ADMIN. Hosts must allow user namespaces; a blocked browser fails visibly. Desktop/browser MCP tools attach to that same display/browser and check active execution/shared-work ownership. VNC remains password-protected on container loopback and is relayed through Terminay; no desktop or control port is published. The bot's shared-engine proxy still provides unrestricted engine access with workload attribution.
+
+During an image build, the one-line status opens Build progress. Its timeline shows observed engine steps, cache hits, active work, failures and final local-tag publication. Expand a step for its bounded output or use All build output for the retained 256 KiB tail. Leaving the page does not stop work. Reconnecting restores server state; an unconfirmed build at server restart is shown as interrupted. Retry starts a new attempt. Failed builds preserve the previous successful image. Running containers still require explicit recreation to adopt a rebuilt image; homes are retained.
+
+## Extending and verifying
+
+Bot contributions require extension API 3.6 and `runtimeProtocol: "native-cli-v1"`, a supported `nativeDriver` (`codex-cli` or `claude-code-cli`), exact `runtimeVersion` and pinned public CLI install packages. The host assembles all command arguments; `launch` returns an empty argument list and non-secret environment. ACP declarations are rejected with an update reason. See `packages/extension-api/examples/bot-agent/`.
+
+Build shared packages, then run the targeted server/extension suites. Opt-in native conformance uses `TERMINAY_BOT_CONFORMANCE=1`, `TERMINAY_BOT_ENGINE=docker|podman`, and `TERMINAY_BOT_CONFORMANCE_IMAGE=<fresh image>` with `extensions/builtin-agents/test/bot-conformance.test.mjs`. `scripts/run-bot-mcp-real-tests.mjs` builds the production image and exercises native conformance, the desktop/apps, and real private MCP relay in CI. Electron checks run only through `npm run test:e2e`.
+
+An amd64 image can be built on an arm64 machine, but QEMU success is not a substitute for native runtime evidence. In particular, the pinned Claude binary embeds Bun/JavaScriptCore, whose virtual-address reservations may fail under QEMU even for `claude --version`. Record this as an emulation limitation and run the same gates on a native amd64 Docker runner; do not disable the browser sandbox, skip approvals or change production pins to make emulation pass.

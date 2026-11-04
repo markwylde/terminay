@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { MessageChannel } from 'node:worker_threads';
+
 const root = process.env.TERMINAY_FAKE_BOT_ROOT;
 const calls = path.join(root, 'calls.jsonl');
 let args = process.argv.slice(2);
@@ -138,7 +139,7 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 } else if (action === 'rm') {
 	fs.rmSync(file(kind, args.at(-1)), { force: true });
 } else if (kind === 'run' && args.includes('stat')) {
- process.stdout.write('999\n');
+	process.stdout.write('999\n');
 } else if (kind === 'run' && args.includes('terminay-files')) {
 	await import('./bot-files-helper.mjs');
 } else if (kind === 'exec') {
@@ -154,7 +155,19 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 	if (command[0] === 'terminay-run' && command[1].startsWith('--kill')) {
 		const names =
 			command[1] === '--kill-all'
-				? fs.readdirSync(root).filter((n) => n.startsWith('pid-'))
+				? fs.readdirSync(root).filter((n) => {
+						if (!n.startsWith('pid-')) return false;
+						try {
+							return (
+								fs.readFileSync(
+									path.join(root, `owner-${n.slice(4)}`),
+									'utf8',
+								) === args[index]
+							);
+						} catch {
+							return false;
+						}
+					})
 				: [`pid-${command[2]}`];
 		for (const name of names) {
 			try {
@@ -164,21 +177,41 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 				);
 			} catch {}
 			fs.rmSync(path.join(root, name), { force: true });
+			fs.rmSync(path.join(root, `owner-${name.slice(4)}`), { force: true });
 		}
 	} else if (command[0] === 'terminay-run') {
 		const sid = command[1];
 		fs.writeFileSync(path.join(root, `pid-${sid}`), String(process.pid));
+		fs.writeFileSync(path.join(root, `owner-${sid}`), args[index]);
+		process.once('exit', () => {
+			fs.rmSync(path.join(root, `pid-${sid}`), { force: true });
+			fs.rmSync(path.join(root, `owner-${sid}`), { force: true });
+		});
 		if (sid.startsWith('mcp-')) {
-            process.execve('/usr/bin/env',['env','python3',new URL('./bot-relay-host.py',import.meta.url).pathname,sid.slice(4)],process.env);
-        } else if (sid.startsWith('signin-')) {
+			process.execve(
+				'/usr/bin/env',
+				[
+					'env',
+					'python3',
+					new URL('./bot-relay-host.py', import.meta.url).pathname,
+					sid.slice(4),
+				],
+				process.env,
+			);
+		} else if (sid.startsWith('signin-')) {
 			const config = read('config', args[index]);
-			const claude = JSON.stringify(command.slice(3)) === JSON.stringify(['claude', 'auth', 'login', '--claudeai']);
-			if (!claude && !config?.some((f) => f.content.includes('"file"'))) process.exit(3);
+			const claude =
+				JSON.stringify(command.slice(3)) ===
+				JSON.stringify(['claude', 'auth', 'login', '--claudeai']);
+			if (!claude && !config?.some((f) => f.content.includes('"file"')))
+				process.exit(3);
 			out('Open https://example.invalid/device and enter TEST-CODE');
 			const mode = read('device-mode', 'next') ?? 'success';
 			if (claude && mode === 'success') {
 				out('Paste code here:');
-				for await (const line of readline.createInterface({ input: process.stdin })) {
+				for await (const line of readline.createInterface({
+					input: process.stdin,
+				})) {
 					process.exit(line.trim() === 'TEST-CODE' ? 0 : 1);
 				}
 			}
@@ -207,7 +240,7 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 				calls,
 				`${JSON.stringify({ agent: true, config: read('config', args[index]), keyPresent: Boolean(process.env.FAKE_KEY) })}\n`,
 			);
-			await import('./bot-acp.mjs');
+			await import('./bot-native.mjs');
 		}
 	} else {
 		let input = '';

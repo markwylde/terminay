@@ -40,3 +40,8 @@ An extension SHALL supply session facts, MCP registration knowledge, declared la
 
 - **WHEN** a bot extension declares an unknown native driver or an arbitrary protocol implementation
 - **THEN** contribution validation rejects it before a bot execution starts
+
+#### Scenario: Chat provider responsibilities
+
+- **WHEN** a chat provider is authored
+- **THEN** it reports availability and runs sessions and turns, and cannot read or change a chat's conversation, reach or approvals

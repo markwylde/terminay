@@ -7,7 +7,7 @@ export default defineExtension({
 			context.agents.registerBotAgent('com.example.bot/example', {
 				async models(signal) {
 					signal.throwIfAborted();
-					return [{ id: 'small', displayName: 'Small' }];
+					return [{ id: 'gpt-6-luna', displayName: 'GPT-6 Luna' }];
 				},
 				async status(signal) {
 					signal.throwIfAborted();
@@ -17,11 +17,11 @@ export default defineExtension({
 						detail: 'Sign in with the Example CLI or configure a bot API key.',
 					};
 				},
-				async launch({ modelId }, signal) {
+				async launch(_request, signal) {
 					signal.throwIfAborted();
-					// The host uses this only when ACP has no session model configuration.
+					// The host assembles native CLI arguments, including the selected model.
 					return {
-						args: modelId === null ? [] : ['--model', modelId],
+						args: [],
 						env: {},
 					};
 				},
