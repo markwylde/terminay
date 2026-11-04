@@ -630,11 +630,25 @@ test('distinct firings from one busy trigger wait instead of being skipped and r
 	assert.ok(r.triggers.firings(r.bot.id).every((f) => f.outcome === 'pending'));
 	for (let n = 0; n < 19; n++) await r.triggers.runNow(r.bot.id, trigger.id);
 	assert.equal(r.service.queue.list(r.bot.id).length, 20);
-	assert.equal(r.triggers.observations.pending(r.bot.id).filter(e=>!r.sessions.list(r.bot.id).some(s=>s.id===e.sessionId)).length,1);
+	assert.equal(
+		r.triggers.observations
+			.pending(r.bot.id)
+			.filter(
+				(e) => !r.sessions.list(r.bot.id).some((s) => s.id === e.sessionId),
+			).length,
+		1,
+	);
 	await finish(r, active[0].sessionId);
 	await flush();
 	assert.ok(r.turns[4].text.includes(trigger.prompt));
-	assert.equal(r.triggers.observations.pending(r.bot.id).filter(e=>!r.sessions.list(r.bot.id).some(s=>s.id===e.sessionId)).length,0);
+	assert.equal(
+		r.triggers.observations
+			.pending(r.bot.id)
+			.filter(
+				(e) => !r.sessions.list(r.bot.id).some((s) => s.id === e.sessionId),
+			).length,
+		0,
+	);
 });
 
 test('6.1 trigger and subsequent user messages use fresh executions', async (t) => {
@@ -1042,12 +1056,18 @@ test('restart restores queued accepted events with the same session and skips on
 	first.engine.stop();
 	const second = await setup(t, { root, keepRoot: true, at: start + MINUTE });
 	await flush();
- const firings = second.triggers.firings(second.bot.id);
- assert.equal(firings.length,2);
- assert.equal(firings.find(f=>f.id==='a'.repeat(24)).outcome,'skipped');
- const restored=firings.find(f=>f.id===pending.id);assert.equal(restored.sessionId,pending.sessionId);
- assert.equal(second.sessions.list(second.bot.id).filter(s=>s.id===pending.sessionId).length,1);
- assert.equal(second.turns.length,1);
+	const firings = second.triggers.firings(second.bot.id);
+	assert.equal(firings.length, 2);
+	assert.equal(firings.find((f) => f.id === 'a'.repeat(24)).outcome, 'skipped');
+	const restored = firings.find((f) => f.id === pending.id);
+	assert.equal(restored.sessionId, pending.sessionId);
+	assert.equal(
+		second.sessions
+			.list(second.bot.id)
+			.filter((s) => s.id === pending.sessionId).length,
+		1,
+	);
+	assert.equal(second.turns.length, 1);
 });
 
 test('all legacy project event kinds are rejected and stored definitions are retained disabled', async (t) => {
@@ -1194,4 +1214,44 @@ test('bot Disable persists, pauses checks and manual operations; Enable skips di
 	await r.triggers.idle();
 	assert.equal(count, 1);
 	assert.equal(r.turns.length, 0);
+});
+
+test('a source disabled during asynchronous redaction cannot accept a late result; disabled-trigger Run now remains explicit', async (t) => {
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		run: async (_b, _s, _o, observe) =>
+			observe({ stdout: 'ready', exitCode: 0 }),
+	};
+	const r = await setup(t, { sources });
+	const trigger = r.triggers.create(
+		r.bot.id,
+		draft({
+			kind: 'command',
+			command: 'check',
+			intervalMs: 60000,
+			match: { kind: 'contains', text: 'ready' },
+		}),
+	);
+	const original = r.service.redactMessage.bind(r.service);
+	let release, entered;
+	const arrived = new Promise((resolve) => (entered = resolve));
+	const paused = new Promise((resolve) => (release = resolve));
+	r.service.redactMessage = async (...args) => {
+		entered();
+		await paused;
+		return original(...args);
+	};
+	const work = r.time.advance(start + MINUTE, r.engine);
+	await arrived;
+	r.triggers.enable(r.bot.id, trigger.id, false);
+	release();
+	await work;
+	await r.triggers.idle();
+	assert.equal(r.triggers.memory(r.bot.id, trigger.id).total, 0);
+	assert.equal(r.sessions.list(r.bot.id).length, 0);
+	r.service.redactMessage = original;
+	await r.triggers.runNow(r.bot.id, trigger.id);
+	await flush();
+	assert.equal(r.sessions.list(r.bot.id).length, 1);
+	assert.equal(r.bots.trigger(r.bot.id, trigger.id).enabled, false);
 });

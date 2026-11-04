@@ -33,4 +33,4 @@ These capabilities are not yet in `openspec/specs/`; this change's MODIFIED delt
 - UI: `src/workspace/bots/{BotTriggersPanel,BotTriggerEditor,triggersModel,BotTab,BotsSection}` and related styles/lifecycle controls.
 - Verification: bot trigger, runtime, queue, persistence and engine tests; UI model tests; Docker-isolated `e2e/bots.spec.ts`; real Docker/Podman source-worker smoke tests.
 - Architecture: record the owner-approved one-minute-minimum command/HTTP polling scope under ADR-0028 and preserve server ownership, container execution, scoped runtime authority and durable replace. No change to project automation or host credential access.
-- Planning only. The proposal must be committed and reach `main` before apply; implementation must reconcile the active prerequisite deltas and any separately proposed bot-runtime replacement.
+- The owner explicitly approved keeping proposal and implementation together in PR #489. Capability deltas remain active until the implementation is merged; archive must reconcile prerequisite deltas in dependency order.

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { BotObservationSource } from '@terminay/protocol';
 import type { EngineDriver } from './engine.js';
-import type { Observation } from './sourceState.js';
+import { type Observation, parseObservation } from './sourceState.js';
 import { BotError } from './store.js';
 import type { BotTokenVault } from './tokens.js';
 export interface SourceRunOptions {
@@ -145,7 +145,7 @@ export function containerSourceRunner(hooks: {
 							throw new BotError('validation', 'Invalid source frame');
 						const v = clean(raw) as Observation & { error?: string };
 						if (v.error) throw new BotError('unavailable', v.error);
-						await observe(v);
+						await observe(parseObservation(v));
 						seen = true;
 						if (continuous && !(v.status === 'connected' && !v.snapshot))
 							child.stdin.write('ack\n');
@@ -155,7 +155,7 @@ export function containerSourceRunner(hooks: {
 				if (childError) throw childError;
 				if (options.signal.aborted)
 					throw new BotError('conflict', 'Source cancelled');
-				if (!seen && !options.test)
+				if (!seen)
 					throw new BotError(
 						'unavailable',
 						'Source worker unavailable; recreate bot to update its image',

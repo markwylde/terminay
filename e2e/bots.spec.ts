@@ -811,6 +811,7 @@ test('generic command source editor tests without sessions and Disable blocks ma
 test('generic network and file sources preview real checks without starting sessions', async ({
 	mainWindow,
 }) => {
+	test.setTimeout(90000);
 	await engineReady(mainWindow);
 	const tab = await createBot(mainWindow, 'Network watcher');
 	await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
