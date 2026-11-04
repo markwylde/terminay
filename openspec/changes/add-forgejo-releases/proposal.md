@@ -4,7 +4,7 @@ Users need independently built macOS and Linux downloads on git.i.wylde.net so r
 
 ## What Changes
 
-- Add a manually dispatched Trigger Release workflow on the canonical forge, accepting a stable version tag and building the selected main commit independently.
+- Add a manually dispatched Trigger Release workflow on the canonical forge, deriving a stable version from Conventional Commits with the existing release helper and building the selected main commit independently.
 - Build signed/notarized macOS arm64 DMG and ZIP assets and a Linux x64 AppImage using the existing packaging and verification steps.
 - Stage a draft release, attach checksummed assets, and publish only after both platforms succeed and downloaded assets verify.
 - Document runner labels, credentials, dispatch, retry, and the retained GitHub update source.

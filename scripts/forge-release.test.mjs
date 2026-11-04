@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 import { assetNames, ForgeRelease } from './forge-release.mjs';
+import { selectForgeReleaseTag } from './forge-release-version.mjs';
 
 const commit = 'a'.repeat(40);
 const tag = 'v1.2.3';
@@ -121,6 +124,72 @@ test('conflicting source tags and foreign drafts are rejected without writes', a
 	assert.equal(state.writes, 0);
 });
 
+test('automatic preparation resumes drafts and skips only matching published releases', async () => {
+	const { client, state } = harness();
+	assert.equal(await client.prepareAutomatic(), true);
+	const writes = state.writes;
+	assert.equal(await client.prepareAutomatic(), true);
+	assert.equal(state.writes, writes);
+	state.release.draft = false;
+	assert.equal(await client.prepareAutomatic(), false);
+	assert.equal(state.writes, writes);
+	state.tag = 'b'.repeat(40);
+	await assert.rejects(client.prepareAutomatic(), /source commit/);
+	state.tag = commit;
+	state.release.body = 'Some other workflow';
+	await assert.rejects(client.prepareAutomatic(), /workflow-owned/);
+});
+
+test('automatic versions use GitHub commit rules and reuse tags at the selected commit', async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), 'forge-version-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const execute = promisify(execFile);
+	const git = async (...args) =>
+		(await execute('git', args, { cwd: directory })).stdout.trim();
+	await git('init');
+	await git('config', 'user.name', 'Release Test');
+	await git('config', 'user.email', 'release@example.test');
+	await git(
+		'-c',
+		'commit.gpgsign=false',
+		'commit',
+		'--allow-empty',
+		'-m',
+		'feat: initial release',
+	);
+	let revision = await git('rev-parse', 'HEAD');
+	assert.equal(
+		await selectForgeReleaseTag({ cwd: directory, commit: revision }),
+		'v0.1.0',
+	);
+	await git('tag', 'v1.2.3');
+	for (const [message, expected] of [
+		['fix: repair startup', 'v1.2.4'],
+		['feat: add a command', 'v1.3.0'],
+		['feat!: replace protocol', 'v2.0.0'],
+	]) {
+		await git(
+			'-c',
+			'commit.gpgsign=false',
+			'commit',
+			'--allow-empty',
+			'-m',
+			message,
+		);
+		revision = await git('rev-parse', 'HEAD');
+		assert.equal(
+			await selectForgeReleaseTag({ cwd: directory, commit: revision }),
+			expected,
+		);
+	}
+	await git('tag', 'v2.0.0');
+	await git('tag', 'v999.0.0-beta.1');
+	assert.equal(
+		await selectForgeReleaseTag({ cwd: directory, commit: revision }),
+		'v2.0.0',
+	);
+});
+
 test('corrupted remote bytes and unexpected assets keep release draft', async (t) => {
 	const { client, state } = harness();
 	const directory = await fixtures(t);
@@ -225,6 +294,11 @@ test('forge workflow retains platform verification and no Windows build or GitHu
 	}
 	assert.match(forge, /darwin:arm64/);
 	assert.match(forge, /linux:x64/);
+	assert.doesNotMatch(forge, /inputs\.tag|required: true/);
+	assert.match(
+		forge,
+		/no_release: \$\{\{ steps\.prepare\.outputs\.no_release \}\}/,
+	);
 	assert.match(forge, /needs:\n\s+- release\n\s+- build-binaries/);
 	assert.doesNotMatch(
 		forge,

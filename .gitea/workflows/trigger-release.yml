@@ -2,11 +2,6 @@
 name: Trigger Release
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Stable release version, e.g. v1.2.3 (builds selected main commit)
-        required: true
-        type: string
 permissions:
   contents: read
 defaults:
@@ -25,6 +20,7 @@ jobs:
     outputs:
       tag: ${{ steps.prepare.outputs.tag }}
       source_commit: ${{ steps.prepare.outputs.source_commit }}
+      no_release: ${{ steps.prepare.outputs.no_release }}
     steps:
     - name: Check out code
       uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -62,7 +58,6 @@ jobs:
         FORGE_SERVER_URL: ${{ github.server_url }}
         FORGE_REPOSITORY: ${{ github.repository }}
         FORGE_TOKEN: ${{ github.token }}
-        RELEASE_TAG: ${{ inputs.tag }}
         RELEASE_COMMIT: ${{ github.sha }}
       run: node scripts/forge-release.mjs prepare
   build-binaries:
@@ -70,6 +65,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     needs: release
+    if: needs.release.outputs.no_release != 'true'
     permissions:
       contents: write
     strategy:
