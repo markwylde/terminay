@@ -429,6 +429,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 			projectsWindows: 'allow',
 			settingsRead: 'allow',
 			settingsChange: 'ask',
+			workflowTemplates: 'ask',
 			appWindows: 'allow',
 			notifications: 'allow',
 			connectedServerTools: 'allow',
@@ -897,6 +898,17 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'select',
 				options: TERMINAY_MCP_PERMISSION_OPTIONS,
 				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent', 'settings', 'shell', 'profile'],
+			}),
+			makeField({
+				key: 'terminayMcp.permissions.workflowTemplates',
+				label: 'Workflow Templates',
+				description:
+					'Save, edit, and delete the reusable workflow templates in Settings > Workflows. Templates are shared by every project on this server, including from an agent in a project terminal.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'select',
+				options: TERMINAY_MCP_PERMISSION_OPTIONS,
+				keywords: ['mcp', 'permission', 'approval', 'ask', 'allow', 'deny', 'agent', 'workflow', 'template'],
 			}),
 			makeField({
 				key: 'terminayMcp.permissions.appWindows',
@@ -2465,6 +2477,7 @@ function normalizeTerminayMcpPermissions(value: unknown): TerminayMcpPermissions
 		projectsWindows: policy('projectsWindows'),
 		settingsRead: policy('settingsRead'),
 		settingsChange: policy('settingsChange'),
+		workflowTemplates: policy('workflowTemplates'),
 		appWindows: policy('appWindows'),
 		notifications: policy('notifications'),
 		connectedServerTools: policy('connectedServerTools'),

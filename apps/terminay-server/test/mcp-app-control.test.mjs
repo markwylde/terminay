@@ -52,6 +52,8 @@ const SPEC_GROUPS = {
 		'wait_for_command',
 		'wait_for_attention',
 		'get_workflow',
+		'list_workflow_templates',
+		'get_workflow_template',
 	],
 	terminalsManage: [
 		'open_terminal',
@@ -125,6 +127,11 @@ const SPEC_GROUPS = {
 		'dismiss_notification',
 	],
 	connectedServerTools: ['call_connected_tool'],
+	workflowTemplates: [
+		'create_workflow_template',
+		'update_workflow_template',
+		'delete_workflow_template',
+	],
 };
 
 /** The tools the mcp-app-control delta reserves for workspace reach,

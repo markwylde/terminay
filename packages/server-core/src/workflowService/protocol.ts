@@ -284,8 +284,32 @@ export function createWorkflowOperationRegistry(
 				payload.replaceWorkflowId,
 				'workflow id',
 			);
-			const content = validateWorkflowInput(objectPayload(payload.workflow));
-			const workflow = instantiateWorkflow(content, null, Date.now());
+			const templateId = optionalId(payload.templateId, 'template id');
+			if (templateId === undefined) {
+				const content = validateWorkflowInput(objectPayload(payload.workflow));
+				const workflow = instantiateWorkflow(content, null, Date.now());
+				return asJson(
+					store.attach(where.sessionId, workflow, replaceWorkflowId),
+				);
+			}
+			if (payload.workflow !== undefined && payload.workflow !== null)
+				throw new WorkflowServiceError(
+					'invalid_workflow',
+					'give a template id or a workflow, not both',
+				);
+			// A copy of the template, as a launch makes, but nothing is typed:
+			// the caller is the agent that will work through it.
+			const template = await templates.template(templateId);
+			// The terminal may have moved, or ended, while the template was read.
+			target(request);
+			if (template === undefined)
+				throw new WorkflowServiceError(
+					'template_not_found',
+					'that workflow template does not exist',
+					{ templateId },
+				);
+			store.assertReplaceable(where.sessionId, replaceWorkflowId);
+			const workflow = instantiateWorkflow(template, template.id, Date.now());
 			return asJson(store.attach(where.sessionId, workflow, replaceWorkflowId));
 		} catch (error) {
 			throw toProtocolError(error);

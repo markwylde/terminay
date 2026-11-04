@@ -105,6 +105,11 @@ export const CONTROL_OPERATIONS = [
 	'get_workflow',
 	'create_workflow',
 	'update_workflow_step',
+	'list_workflow_templates',
+	'get_workflow_template',
+	'create_workflow_template',
+	'update_workflow_template',
+	'delete_workflow_template',
 	'show_window',
 	'close_window',
 	'list_windows',
@@ -331,6 +336,7 @@ export type ControlErrorCode =
 	| 'no_workflow'
 	| 'step_not_found'
 	| 'step_active'
+	| 'template_not_found'
 	| 'internal';
 
 export interface ControlError {
@@ -516,6 +522,7 @@ const controlErrorCodes = new Set<ControlErrorCode>([
 	'no_workflow',
 	'step_not_found',
 	'step_active',
+	'template_not_found',
 	'internal',
 ]);
 const CONTROL_ERROR_MESSAGE_BYTES = 4 * 1024;

@@ -70,6 +70,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 			projectsWindows: 'allow',
 			settingsRead: 'allow',
 			settingsChange: 'ask',
+			workflowTemplates: 'ask',
 			appWindows: 'allow',
 			notifications: 'allow',
 			connectedServerTools: 'allow',

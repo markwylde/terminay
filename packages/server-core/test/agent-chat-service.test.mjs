@@ -392,6 +392,9 @@ test("activity notes for Terminay calls use titles and the agent's own input", a
   assert.equal(describeChatMcpCall("run_command", { terminal: "t_build", command: "npm test" }, titles), "Running `npm test` in build");
   assert.equal(describeChatMcpCall("write_terminal", { terminal: "t_unknown", text: "yes" }, titles), "Typing into a terminal");
   assert.equal(describeChatMcpCall("get_mcp_capabilities", {}, titles), undefined);
+  assert.equal(describeChatMcpCall("create_workflow_template", { name: "Review" }, titles), "Saving a workflow template");
+  assert.equal(describeChatMcpCall("delete_workflow_template", { template_id: "tpl-1" }, titles), "Deleting a workflow template");
+  assert.equal(describeChatMcpCall("list_workflow_templates", {}, titles), "Looking at the workflow templates");
   assert.equal(describeChatMcpCall("create_automation", { name: "Digest" }, titles), "Creating the automation “Digest”");
 });
 
