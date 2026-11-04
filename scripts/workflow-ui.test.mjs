@@ -144,7 +144,8 @@ test('the expanded panel shows name, progress, brief, times and notes, and highl
 	});
 	assert.match(full, /1 of 3 done/);
 	assert.match(full, /<details class="workflow-brief"><summary>Brief<\/summary><p class="workflow-text">Ship it\.<\/p><\/details>/);
-	assert.match(full, /done · 1m/);
+	assert.match(full, /<span class="workflow-step-title">Step a<span class="workflow-visually-hidden">, done<\/span><\/span>/);
+	assert.match(full, /<span class="workflow-step-time">1m<\/span>/);
 	assert.match(full, /proposal written/);
 	assert.match(full, /class="workflow-step workflow-step--active" data-status="needs_input" aria-current="step"/);
 	assert.match(full, /Keep workflows per terminal\?/);

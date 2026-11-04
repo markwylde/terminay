@@ -11,7 +11,7 @@ import type {
 } from '@terminay/client-core';
 
 /** Width the collapsed rail reserves at the pane's right edge. */
-export const WORKFLOW_RAIL_WIDTH = 28;
+export const WORKFLOW_RAIL_WIDTH = 36;
 /** Width the expanded panel reserves. */
 export const WORKFLOW_PANEL_WIDTH = 264;
 /** A terminal narrower than this beside the expanded panel keeps the rail. */

@@ -11,6 +11,7 @@ import type {
 	WorkflowClient,
 	WorkflowTarget,
 } from '@terminay/client-core';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { WorkflowStepMarker } from './workflowIcons';
 import {
@@ -88,7 +89,7 @@ function WorkflowRail({
 				title="Expand workflow"
 				onClick={onExpand}
 			>
-				<span aria-hidden="true">‹</span>
+				<ChevronLeft size={14} strokeWidth={2} aria-hidden="true" />
 			</button>
 			{view.state === 'unrestorable' ? (
 				<span
@@ -126,6 +127,13 @@ function ExpandedWorkflow(
 	return (
 		<div className="workflow-expanded">
 			<header className="workflow-header">
+				{props.view.state === 'unrestorable' ? (
+					<div className="workflow-summary">
+						<span className="workflow-eyebrow">Workflow</span>
+					</div>
+				) : (
+					<WorkflowSummary workflow={props.view.workflow} />
+				)}
 				<button
 					type="button"
 					className="workflow-toggle"
@@ -133,13 +141,8 @@ function ExpandedWorkflow(
 					title="Collapse workflow"
 					onClick={props.onCollapse}
 				>
-					<span aria-hidden="true">›</span>
+					<ChevronRight size={14} strokeWidth={2} aria-hidden="true" />
 				</button>
-				{props.view.state === 'unrestorable' ? (
-					<span className="workflow-name">Workflow</span>
-				) : (
-					<WorkflowSummary workflow={props.view.workflow} />
-				)}
 			</header>
 			{props.view.state === 'unrestorable' ? (
 				<p className="workflow-unrestorable" role="status">
@@ -158,10 +161,13 @@ function WorkflowSummary({ workflow }: { readonly workflow: Workflow }) {
 	const since = elapsed(workflow, now);
 	return (
 		<div className="workflow-summary">
+			<span className="workflow-eyebrow" aria-hidden="true">
+				Workflow
+			</span>
 			<span className="workflow-name">{workflow.name}</span>
 			<span className="workflow-progress">
 				{doneCount(workflow)} of {workflow.steps.length} done
-				{since === undefined ? null : ` · ${since}`}
+				{since === undefined ? null : ` · ${since} elapsed`}
 			</span>
 		</div>
 	);
@@ -189,10 +195,11 @@ function WorkflowSteps({ workflow }: { readonly workflow: Workflow }) {
 						>
 							<WorkflowStepMarker step={step} labelled={false} />
 							<div className="workflow-step-body">
-								<span className="workflow-step-title">{step.title}</span>
-								<span className="workflow-step-meta">
-									{statusLabel(step.status)}
-									{time === undefined ? null : ` · ${time}`}
+								<span className="workflow-step-title">
+									{step.title}
+									<span className="workflow-visually-hidden">
+										{`, ${statusLabel(step.status)}`}
+									</span>
 								</span>
 								{step.note === '' ? null : (
 									<span className="workflow-step-note workflow-text">
@@ -200,6 +207,9 @@ function WorkflowSteps({ workflow }: { readonly workflow: Workflow }) {
 									</span>
 								)}
 							</div>
+							{time === undefined ? null : (
+								<span className="workflow-step-time">{time}</span>
+							)}
 						</li>
 					);
 				})}
