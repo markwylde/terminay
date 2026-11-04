@@ -200,14 +200,22 @@ const linkedFolders = (authority, projectId) =>
 /** Wait for something the server does to its workspace on its own, after an
  * event: `read` is asked now and again on every workspace commit, and the
  * first value it gives is the answer. */
-function whenWorkspace(authority, read) {
-	return new Promise((resolve) => {
+function whenWorkspace(authority, read, timeoutMs = 20_000) {
+	return new Promise((resolve, reject) => {
 		let found = false;
+		// A server that cannot watch (EMFILE on a crowded host) never commits
+		// the change; fail with that rather than holding the run open.
+		const timer = setTimeout(() => {
+			found = true;
+			stop?.();
+			reject(new Error(`the workspace did not change within ${timeoutMs} ms`));
+		}, timeoutMs);
 		const check = () => {
 			const value = read();
 			if (found || value === undefined || value === false || value === null)
 				return;
 			found = true;
+			clearTimeout(timer);
 			stop?.();
 			resolve(value);
 		};
