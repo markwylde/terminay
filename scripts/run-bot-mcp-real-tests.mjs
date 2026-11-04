@@ -17,6 +17,24 @@ const harness = `terminay-bot-mcp-harness:${suffix}`;
 const docker = (...args) =>
 	execFileSync('docker', args, { stdio: 'inherit', cwd: root });
 try {
+	execFileSync(
+		process.execPath,
+		['--test', 'scripts/bot-runtime-public-inputs.test.mjs'],
+		{ stdio: 'inherit', cwd: root },
+	);
+	execFileSync(
+		'python3',
+		[
+			'-m',
+			'unittest',
+			'discover',
+			'-s',
+			'docker/terminay-bot',
+			'-p',
+			'test_desktop_control.py',
+		],
+		{ stdio: 'inherit', cwd: root },
+	);
 	docker('info');
 	const pkg = JSON.parse(
 		await readFile(

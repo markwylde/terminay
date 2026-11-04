@@ -288,8 +288,8 @@ Register with `context.agents.registerBotAgent(id, runtime)` during activation.
 `models(signal)` returns up to 64 `{ id, displayName }` entries and is cached
 per activation. `status(signal)` returns `{ state: 'ready' }` or
 `{ state: 'not_signed_in', detail? }`. `launch({ modelId }, signal)` receives
-`null` for Default and returns `{ args, env }`. It supplies only the fallback
-when ACP session configuration cannot select the model. Every result is closed
+`null` for Default and returns `{ args: [], env }`. The host passes the selected
+model through its native driver. Every result is closed
 and bounded. A failed or timed-out call makes the registration unavailable for
 that activation. Disposal or deactivation aborts outstanding calls and clears
 the model cache. `createAgentExtensionHarness` drives all three methods and
@@ -297,7 +297,7 @@ accepts `botAgentDeadlineMs` to test deadlines. The harness rejects invalid bot
 declarations before activating the extension.
 
 The permission grants description and registration only. Bots, containers,
-images, ACP, sessions, transcripts, credential sharing and injection, and UI
+images, native protocols, sessions, transcripts, credential sharing and injection, and UI
 belong to the host. The extension receives no bot or session input and no bot
 credential, even when it has other secret permissions. Only the host may place
 a bot credential in the engine client's environment, passing its name rather
