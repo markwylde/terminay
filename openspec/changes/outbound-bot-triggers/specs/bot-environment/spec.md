@@ -35,4 +35,3 @@ A bot's environment SHALL be in one of these states: not created, building, star
 
 - **WHEN** a user stops an enabled bot container and its next check becomes due
 - **THEN** the check can start that container again, while Disable bot would have prevented that wake
-
