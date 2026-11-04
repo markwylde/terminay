@@ -82,6 +82,10 @@ const CONTROL_ERROR_CODES: ReadonlySet<ControlErrorCode> = new Set([
 	'approval_queue_full',
 	'out_of_scope',
 	'busy',
+	'workflow_exists',
+	'no_workflow',
+	'step_not_found',
+	'step_active',
 	'internal',
 ]);
 const READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
@@ -500,6 +504,7 @@ function registerTools(
 	registerAppControlTools(server, call);
 	registerSettingsTools(server, call);
 	registerMacroTools(server, call);
+	registerWorkflowTools(server, call);
 	registerWindowTools(server, call);
 	registerNotificationTools(server, call);
 }
@@ -926,6 +931,77 @@ function registerMacroTools(
 			inputSchema: { run_id: z.string().regex(ID_PATTERN) },
 		},
 		async (params, extra) => call('cancel_macro', params, extra.signal),
+	);
+}
+
+const WORKFLOW_TERMINAL_NOTE =
+	'terminal is optional and defaults to the terminal you are running in; from a chat, name one from list_terminals.';
+
+/**
+ * Workflows (ADR-0097): a checklist attached to a terminal that you work
+ * through and report on. Terminay shows it beside the terminal and never
+ * runs a step itself.
+ */
+function registerWorkflowTools(
+	server: McpServer,
+	call: (
+		operation: ControlOperation,
+		params: Record<string, unknown>,
+		signal?: AbortSignal,
+	) => Promise<CallToolResult>,
+): void {
+	const terminal = z.string().min(1).max(MAX_TERMINAL_REF_CHARS).optional();
+	server.registerTool(
+		'get_workflow',
+		{
+			description: `Read the workflow attached to a terminal: its id, name, opening prompt, and each step's id, title, prompt, icon, status, note, started_at and ended_at, plus resume_step_id, the step to continue from (the step left running or waiting on the user if there is one, otherwise the first step that is not done; null when every step is done). Fails with no_workflow when the terminal has none. ${WORKFLOW_TERMINAL_NOTE}`,
+			inputSchema: { terminal },
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (params, extra) => call('get_workflow', params, extra.signal),
+	);
+	server.registerTool(
+		'create_workflow',
+		{
+			description: `Attach a new workflow to a terminal: a name, an optional opening prompt, and 1 to 50 steps, each a title with an optional prompt and icon (lightbulb, eye, wrench, code, flask, archive, pull-request, terminal, checklist, bug, camera, flag; anything else shows none). Every step starts not_started and the server assigns each an id. A terminal holds one workflow; one that is unfinished is replaced only when replace_workflow_id names it, otherwise this fails with workflow_exists carrying its id. Names and titles are at most 120 characters, prompts at most 8 KiB, and the whole workflow at most 56 KiB as JSON. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: {
+				terminal,
+				name: z.string().min(1).max(120),
+				opening_prompt: z.string().optional(),
+				steps: z
+					.array(
+						z.object({
+							title: z.string().min(1).max(120),
+							prompt: z.string().optional(),
+							icon: z.string().max(64).optional(),
+						}),
+					)
+					.min(1)
+					.max(50),
+				replace_workflow_id: z.string().regex(ID_PATTERN).optional(),
+			},
+		},
+		async (params, extra) => call('create_workflow', params, extra.signal),
+	);
+	server.registerTool(
+		'update_workflow_step',
+		{
+			description: `Report a workflow step's status: not_started, running, done, failed, or needs_input (you need the user to decide or do something). Set a step to running before you work on it. Any status may follow any other, but at most one step is running or needs_input at a time; starting another fails with step_active naming the active step's id. note is one line of at most 200 characters: given, it replaces the step's note; empty, it clears it; left out, it keeps it. not_started clears the note. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
+			inputSchema: {
+				terminal,
+				step_id: z.string().regex(ID_PATTERN),
+				status: z.enum([
+					'not_started',
+					'running',
+					'done',
+					'failed',
+					'needs_input',
+				]),
+				note: z.string().max(200).optional(),
+			},
+		},
+		async (params, extra) =>
+			call('update_workflow_step', params, extra.signal),
 	);
 }
 

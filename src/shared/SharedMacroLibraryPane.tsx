@@ -26,6 +26,10 @@ export function moveSharedMacro(
 
 type DropTarget = Readonly<{ beforeMacroId: string } | { category: string }>
 
+/** What a library lists, in its user-facing words. */
+export type LibraryNoun = Readonly<{ one: string; many: string; title: string }>
+const MACRO_NOUN: LibraryNoun = Object.freeze({ one: 'macro', many: 'macros', title: 'Macros' })
+
 const MACRO_DRAG_TYPE = 'application/x-terminay-macro'
 const CATEGORY_DRAG_TYPE = 'application/x-terminay-macro-category'
 
@@ -89,6 +93,7 @@ export function SharedMacroLibraryPane({
   onReorderCategories,
   onSelect,
   embedded = false,
+  noun = MACRO_NOUN,
 }: Readonly<{
   activeMacroId: string | null
   /** False against a server that does not store categories; the list is then flat. */
@@ -112,6 +117,8 @@ export function SharedMacroLibraryPane({
   onSelect: (macroId: string) => void
   /** Drawn inside a Settings list column, which owns the title and the New macro action. */
   embedded?: boolean
+  /** What the list holds, as its words say it; macros unless told otherwise. */
+  noun?: LibraryNoun
 }>) {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameText, setRenameText] = useState('')
@@ -218,7 +225,7 @@ export function SharedMacroLibraryPane({
       <div className={embedded ? 'settings-list-toolbar' : 'settings-sidebar-header'}>
         {embedded ? null : (
           <div className="settings-brand macro-library-brand">
-            <h1>Macros</h1>
+            <h1>{noun.title}</h1>
             <span className="settings-status" title={`${macros.length} macros`}>{isLoading ? '' : macros.length}</span>
           </div>
         )}
@@ -226,15 +233,15 @@ export function SharedMacroLibraryPane({
           <input
             className="settings-search-input"
             type="search"
-            placeholder="Filter macros"
-            aria-label="Filter macros"
+            placeholder={`Filter ${noun.many}`}
+            aria-label={`Filter ${noun.many}`}
             value={filter}
             onChange={(event) => onFilterChange(event.target.value)}
           />
         </div>
       </div>
       <p id="shared-macro-reorder-help" className="sr-only">
-        Drag a macro to reorder it or to move it to another category, or use Alt+Up Arrow and Alt+Down Arrow on a macro.
+        Drag a {noun.one} to reorder it or to move it to another category, or use Alt+Up Arrow and Alt+Down Arrow on a {noun.one}.
         Drag a category by its handle to reorder it, or use Alt+Up Arrow and Alt+Down Arrow on the handle.
       </p>
       <div
@@ -322,13 +329,13 @@ export function SharedMacroLibraryPane({
                         <span className="macro-library-category-count">{group.macros.length}</span>
                         {isNamed ? (
                           <span className="macro-library-category-actions">
-                            <button type="button" aria-label={`New macro in ${group.category}`} title={`New macro in ${group.category}`} onClick={() => onCreate(group.category)}>
+                            <button type="button" aria-label={`New ${noun.one} in ${group.category}`} title={`New ${noun.one} in ${group.category}`} onClick={() => onCreate(group.category)}>
                               <Plus size={13} aria-hidden="true" />
                             </button>
                             <button type="button" aria-label={`Rename category ${group.category}`} title="Rename category" onClick={() => startRename(group.category)}>
                               <Pencil size={12} aria-hidden="true" />
                             </button>
-                            <button type="button" aria-label={`Remove category ${group.category}`} title="Remove category and keep its macros" onClick={() => onRemoveCategory(group.category)}>
+                            <button type="button" aria-label={`Remove category ${group.category}`} title={`Remove category and keep its ${noun.many}`} onClick={() => onRemoveCategory(group.category)}>
                               <X size={13} aria-hidden="true" />
                             </button>
                           </span>
@@ -344,7 +351,7 @@ export function SharedMacroLibraryPane({
                   onDragOver={(event) => onDragOverTarget(event, key)}
                   onDrop={(event) => onDropOnTarget(event, { category: group.category })}
                 >
-                  Empty. Drag a macro here.
+                  Empty. Drag a {noun.one} here.
                 </div>
               ) : (
                 <ul className="settings-reorder-group">
@@ -368,7 +375,7 @@ export function SharedMacroLibraryPane({
         })}
         {!isLoading && macros.length === 0 ? <p className="settings-empty-state">No macros yet.</p> : null}
         {!isLoading && macros.length > 0 && groups.every((group) => group.macros.length === 0) && filter.trim().length > 0 ? (
-          <p className="settings-empty-state">No macro matches “{filter.trim()}”.</p>
+          <p className="settings-empty-state">No {noun.one} matches “{filter.trim()}”.</p>
         ) : null}
       </div>
       <div className="settings-sidebar-footer macro-library-footer">
@@ -380,7 +387,7 @@ export function SharedMacroLibraryPane({
             // A new macro starts beside the one being edited.
             onClick={() => onCreate(macros.find((macro) => macro.id === activeMacroId)?.category ?? '')}
           >
-            New macro
+            New {noun.one}
           </button>
         )}
         {canManageCategories ? (

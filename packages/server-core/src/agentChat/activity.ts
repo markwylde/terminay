@@ -177,6 +177,12 @@ export function describeChatMcpCall(
 			return `Running a macro in ${terminal()}`;
 		case 'cancel_macro':
 			return 'Cancelling a macro';
+		case 'get_workflow':
+			return `Reading the workflow of ${terminal()}`;
+		case 'create_workflow':
+			return `Attaching a workflow to ${terminal()}`;
+		case 'update_workflow_step':
+			return `Updating a workflow step in ${terminal()}`;
 		case 'list_notifications':
 			return 'Looking at notifications';
 		case 'dismiss_notification':

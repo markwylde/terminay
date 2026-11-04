@@ -51,6 +51,7 @@ const SPEC_GROUPS = {
 		'wait_for_idle',
 		'wait_for_command',
 		'wait_for_attention',
+		'get_workflow',
 	],
 	terminalsManage: [
 		'open_terminal',
@@ -79,6 +80,8 @@ const SPEC_GROUPS = {
 		'list_macros',
 		'run_macro',
 		'cancel_macro',
+		'create_workflow',
+		'update_workflow_step',
 	],
 	automationsRead: [
 		'list_automations',

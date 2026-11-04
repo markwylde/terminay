@@ -60,6 +60,9 @@ import {
 	fileWorktreePromptPreferences,
 	GitService,
 	MacroRepository,
+	createWorkflowTemplateFileBackend,
+	WORKFLOW_RECORDS_DIRECTORY,
+	WorkflowTemplateRepository,
 	MdxRuntime,
 	type NodePtyModuleLike,
 	type SessionHolderObservationReport,
@@ -1202,6 +1205,13 @@ async function createServerComposition(
 			},
 		},
 		automations: { repository: automations, runLog: automationRuns },
+		// Workflow templates, and one file per terminal session (ADR-0097).
+		workflows: {
+			templates: new WorkflowTemplateRepository(
+				createWorkflowTemplateFileBackend(options.dataRoot),
+			),
+			directory: join(options.dataRoot, WORKFLOW_RECORDS_DIRECTORY),
+		},
 		macros: {
 			repository: macros,
 			environmentFor: (request, target) => {

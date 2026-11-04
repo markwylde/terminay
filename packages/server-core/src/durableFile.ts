@@ -354,6 +354,7 @@ export type StateStoreName =
 	| 'device-settings'
 	| 'remote-access-settings'
 	| 'macros'
+	| 'workflow-templates'
 	| 'automations'
 	| 'bots'
 	| 'bot-sessions'

@@ -12,6 +12,8 @@ export type TerminalInputSource =
 	| 'remote'
 	| 'automation'
 	| 'window_message'
+	/** The one launch or resume text a workflow types (ADR-0097). */
+	| 'workflow'
 	/** The start command a terminal launcher types into a new shell (ADR-0073). */
 	| 'launcher';
 export type TerminalResizeMode = 'claim' | 'update' | 'release';
@@ -125,6 +127,7 @@ const SOURCES: readonly TerminalInputSource[] = [
 	'remote',
 	'automation',
 	'window_message',
+	'workflow',
 	'launcher',
 ];
 const VIEWPORTS: readonly TerminalViewport[] = ['wide', 'narrow', 'mobile'];

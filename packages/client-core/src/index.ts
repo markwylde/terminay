@@ -33,6 +33,7 @@ export * from './macros.js';
 export * from './automations.js';
 export * from './mcpApprovals.js';
 export * from './appWindows.js';
+export * from './workflows.js';
 export * from './connectedServers.js';
 export * from './health.js';
 export * from './shellProfiles.js';

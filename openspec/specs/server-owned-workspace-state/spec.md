@@ -82,9 +82,9 @@ terminal identity, lifecycle, metadata, bounded output position, activity, and
 recording state; file and folder navigation and modes where they are part of the
 shared workspace; settings affecting shells, project services, terminal
 behaviour, recording, remote exposure, agents, AI providers, macros, and server
-automation; macros and server-held secrets; authoritative agent and activity
-state and acknowledgement; the app window records of terminal sessions that
-are running; paired devices, public device keys, exposure state,
+automation; macros, workflow templates, and server-held secrets; authoritative agent and activity
+state and acknowledgement; the app window records and workflows of terminal
+sessions that are running; paired devices, public device keys, exposure state,
 and audit records; and schema and revision metadata needed for safe migration
 and resync.
 
@@ -110,6 +110,11 @@ and resync.
 
 - **WHEN** a project awaits a start choice and a fresh client connects
 - **THEN** that client shows the project's start chooser and the server's recent project folders
+
+#### Scenario: A running terminal's workflow is kept
+
+- **WHEN** the server restarts while a terminal session that has a workflow keeps running
+- **THEN** the server publishes that session's workflow again from what it persisted
 
 ### Requirement: Excluded from the persistence contract
 

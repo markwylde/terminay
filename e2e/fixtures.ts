@@ -469,6 +469,7 @@ export async function launchDesktopApp(options: {
 					'terminals-survive-restart.spec.ts',
 					'app-windows-survive-restart.spec.ts',
 					'holder-relaunch.spec.ts',
+					'workflows.spec.ts',
 				].includes(path.basename(testInfo.file))
 					? { TERMINAY_SESSION_HOLDER: '1' }
 					: {}),
