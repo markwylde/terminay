@@ -52,7 +52,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   // everywhere but this job; it must keep staging it and running them.
   assert.match(job(giteaCi, "real-webrtc"), /npm run test:real-webrtc/u);
   assert.match(JSON.parse(packageJson).scripts["test:real-webrtc"], /^node scripts\/stage-selected-secure-werift-runtime\.mjs /u);
-  assert.match(job(giteaCi, "packaged-macos-smoke"), /^ {4}runs-on: xcode-16$/mu);
+  assert.match(job(giteaCi, "packaged-macos-smoke"), /^ {4}runs-on: macos$/mu);
   assert.match(job(giteaCi, "packaged-macos-smoke"), /packaged-macos-pr-smoke\.sh/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /codesign --verify/u);
   assert.doesNotMatch(job(giteaCi, "packaged-macos-smoke"), /setup-node/u);

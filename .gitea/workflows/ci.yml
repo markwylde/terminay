@@ -28,7 +28,7 @@ concurrency:
 jobs:
   packaged-macos-smoke:
     name: Packaged macOS startup smoke
-    runs-on: xcode-16
+    runs-on: macos
     timeout-minutes: 25
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 25
