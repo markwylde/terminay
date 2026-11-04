@@ -154,6 +154,7 @@ async function setup(t, options = {}) {
 	const driver = relayDriver();
 	const service = new BotService(bots, sessions, memories, {
 		now: () => time.now,
+		sources: options.sources,
 		agents: {
 			botAgentContributions: () => [
 				{ extensionId: 'fake', contribution: agent },
@@ -466,9 +467,9 @@ test('runtime trigger preview, Run now and scheduled firing use the shared sched
 	);
 	await assert.rejects(
 		call('triggers_preview', {
-			condition: { kind: 'every', intervalMs: 120000 },
+			condition: { kind: 'every', intervalMs: 30000 },
 		}),
-		/5 minutes/,
+		/1 minutes/,
 	);
 	const created = await call('triggers_create', {
 		revision: r.bots.revision,
@@ -517,7 +518,7 @@ test('runtime trigger mutation guards reject invalid drafts, forged scope, limit
 	for (const bad of [
 		draft(undefined, { prompt: '' }),
 		draft(undefined, { prompt: 'x'.repeat(32769) }),
-		draft({ kind: 'every', intervalMs: 120000 }),
+		draft({ kind: 'every', intervalMs: 30000 }),
 		draft({ kind: 'event', event: 'invented' }),
 		draft(undefined, { botId: 'forged' }),
 		draft({ kind: 'every', intervalMs: 300000, anchor: 0 }),
@@ -574,7 +575,7 @@ test('6.1 idle trigger starts a new session through send; disabled trigger never
 	const session = r.sessions.list(r.bot.id)[0];
 	assert.equal(session.origin.kind, 'trigger');
 	assert.equal(session.origin.triggerId, trigger.id);
-	assert.ok(r.turns[0].text.endsWith(trigger.prompt));
+	assert.ok(r.turns[0].text.includes(trigger.prompt));
 	assert.equal(
 		r.triggers.list(r.bot.id).triggers.find((t) => t.id === trigger.id).enabled,
 		false,
@@ -589,7 +590,7 @@ test('6.1 validation rejects empty/oversize prompts, short intervals, malformed/
 	for (const [d, reason] of [
 		[draft(undefined, { prompt: '' }), /prompt/],
 		[draft(undefined, { prompt: '🦜'.repeat(8193) }), /prompt/],
-		[draft({ kind: 'every', intervalMs: 2 * MINUTE }), /5 minutes/],
+		[draft({ kind: 'every', intervalMs: MINUTE / 2 }), /1 minutes/],
 		[draft({ kind: 'cron', cron: '61 * * * *' }), /minute/i],
 		[draft({ kind: 'cron', cron: '0 0 30 2 *' }), /never/],
 	])
@@ -614,42 +615,42 @@ test('6.1 validation rejects empty/oversize prompts, short intervals, malformed/
 	);
 });
 
-test('6.1 busy bot queues; repeated pending firings and a full queue skip as bot busy; queued input snapshots survive edits', async (t) => {
+test('distinct firings from one busy trigger wait instead of being skipped and retain prompt snapshots', async (t) => {
 	const r = await setup(t);
-	const chat = await r.service.send(r.bot.id, 'chat');
-	for (let n = 0; n < 3; n++) await r.service.send(r.bot.id, 'hold');
-	await flush();
+	const active = [];
+	for (let n = 0; n < 4; n++)
+		active.push(await r.service.send(r.bot.id, 'hold'));
 	const trigger = r.triggers.create(r.bot.id, draft());
 	await r.time.advance(start + 5 * MINUTE, r.engine);
-	assert.equal(r.turns.length, 4);
-	assert.equal(r.service.queue.list(r.bot.id).length, 1);
 	r.triggers.update(
 		r.bot.id,
 		trigger.id,
 		draft(undefined, { prompt: 'new prompt' }),
 	);
 	await r.time.advance(start + 10 * MINUTE, r.engine);
-	assert.equal(r.triggers.firings(r.bot.id)[0].reason, 'bot busy');
-	assert.equal(r.triggers.firings(r.bot.id)[0].outcome, 'skipped');
-	for (let n = 0; n < 19; n++) {
-		const other = r.triggers.create(
-			r.bot.id,
-			draft({ kind: 'event', event: 'project.opened' }, { name: `q${n}` }),
-		);
-		await r.triggers.runNow(r.bot.id, other.id);
-	}
+	assert.equal(r.service.queue.list(r.bot.id).length, 2);
+	assert.ok(r.triggers.firings(r.bot.id).every((f) => f.outcome === 'pending'));
+	for (let n = 0; n < 19; n++) await r.triggers.runNow(r.bot.id, trigger.id);
 	assert.equal(r.service.queue.list(r.bot.id).length, 20);
-	const overflow = r.triggers.create(
-		r.bot.id,
-		draft({ kind: 'event', event: 'project.closed' }),
+	assert.equal(
+		r.triggers.observations
+			.pending(r.bot.id)
+			.filter(
+				(e) => !r.sessions.list(r.bot.id).some((s) => s.id === e.sessionId),
+			).length,
+		1,
 	);
-	const skipped = await r.triggers.runNow(r.bot.id, overflow.id);
-	assert.equal(skipped.reason, 'bot busy');
-	assert.equal(skipped.outcome, 'skipped');
-	await finish(r, chat.sessionId);
-	assert.equal(r.closed[0].reason, 'end');
-	assert.ok(r.turns[4].text.endsWith(trigger.prompt));
-	assert.equal(r.sessions.get(chat.sessionId).state, 'completed');
+	await finish(r, active[0].sessionId);
+	await flush();
+	assert.ok(r.turns[4].text.includes(trigger.prompt));
+	assert.equal(
+		r.triggers.observations
+			.pending(r.bot.id)
+			.filter(
+				(e) => !r.sessions.list(r.bot.id).some((s) => s.id === e.sessionId),
+			).length,
+		0,
+	);
 });
 
 test('6.1 trigger and subsequent user messages use fresh executions', async (t) => {
@@ -659,7 +660,7 @@ test('6.1 trigger and subsequent user messages use fresh executions', async (t) 
 	await finish(r, chat.sessionId);
 	const trigger = r.triggers.create(
 		r.bot.id,
-		draft({ kind: 'event', event: 'project.opened' }),
+		draft({ kind: 'every', intervalMs: 60000 }),
 	);
 	const firing = await r.triggers.runNow(r.bot.id, trigger.id);
 	await flush();
@@ -705,7 +706,7 @@ test('6.1 Run now starts disabled triggers with run-now origin and leaves them d
 	const firing = await r.triggers.runNow(r.bot.id, trigger.id);
 	await flush();
 	assert.equal(r.sessions.get(firing.sessionId).origin.kind, 'run-now');
-	assert.ok(r.turns[0].text.endsWith(trigger.prompt));
+	assert.ok(r.turns[0].text.includes(trigger.prompt));
 	assert.equal(r.triggers.list(r.bot.id).triggers[0].enabled, false);
 });
 
@@ -816,7 +817,7 @@ for (const [label, at] of [
 			trigger.id,
 			draft({ kind: 'every', intervalMs: HOUR }),
 		);
-		assert.equal(r.engine.armedFor, r.time.now + HOUR);
+		assert.equal(r.engine.armedFor, anchor + 3 * HOUR);
 		r.triggers.enable(r.bot.id, trigger.id, false);
 		assert.equal(r.time.timers.size, 0);
 		await r.time.advance(anchor + 3 * HOUR, r.engine);
@@ -862,13 +863,13 @@ test('6.1 restart keeps interval anchor, records missed firings until dismissed,
 	);
 });
 
-test('6.1 sleep follows shared missed-run tolerance with no polling or catch-up', async (t) => {
+test('6.1 sleep skips late bot ticks without changing the next deadline', async (t) => {
 	const r = await setup(t, { autoComplete: true });
 	const trigger = r.triggers.create(r.bot.id, draft());
 	await r.time.wake(start + 16 * MINUTE + 1, r.engine);
 	assert.equal(r.turns.length, 0);
 	assert.equal(r.bots.trigger(r.bot.id, trigger.id).missedCount, 3);
-	await r.time.wake(start + 30 * MINUTE + 30_000, r.engine);
+	await r.time.wake(start + 30 * MINUTE + 500, r.engine);
 	assert.equal(r.turns.length, 1);
 	assert.equal(r.bots.trigger(r.bot.id, trigger.id).missedCount, 5);
 	assert.equal(r.time.timers.size, 1);
@@ -886,106 +887,23 @@ const agentEntry = (id, state) => ({
 const snapshot = (entries) => ({
 	entries: Object.fromEntries(entries.map((e) => [e.entryId, e])),
 });
-test('6.1 event needs-input fires across projects only on transitions; bounded context excludes private payloads', async (t) => {
-	const r = await setup(t, { autoComplete: true });
-	r.triggers.create(
-		r.bot.id,
-		draft({ kind: 'event', event: 'agent.needsInput' }),
+test('project events are refused for new triggers and do not subscribe bots to workspace events', async (t) => {
+	const r = await setup(t);
+	assert.throws(
+		() =>
+			r.triggers.create(
+				r.bot.id,
+				draft({ kind: 'event', event: 'agent.needsInput' }),
+			),
+		/unsupported/,
 	);
-	r.agents.emit(
-		snapshot([
-			agentEntry('project-one', 'working'),
-			agentEntry('project-two', 'working'),
-		]),
-	);
-	r.agents.emit(
-		snapshot([
-			agentEntry('project-one', 'waiting'),
-			agentEntry('project-two', 'working'),
-		]),
-	);
-	await flush();
-	r.agents.emit(
-		snapshot([
-			agentEntry('project-one', 'waiting'),
-			agentEntry('project-two', 'working'),
-		]),
-	);
-	await flush();
-	r.agents.emit(
-		snapshot([
-			agentEntry('project-one', 'waiting'),
-			agentEntry('project-two', 'waiting'),
-		]),
-	);
-	await flush();
-	assert.equal(r.turns.length, 2);
-	assert.match(r.turns[0].text, /Build terminal/);
-	assert.match(r.turns[0].text, /Project A/);
-	assert.match(r.turns[0].text, /Fake ACP/);
-	const context = eventBlock({
-		event: 'agent.needsInput',
-		subject: {
-			kind: 'terminal',
-			serverId: 'server',
-			projectId: 'p',
-			sessionId: 's',
-			title: '🦜'.repeat(100_000),
-			projectTitle: 'Project',
-			capabilityToken: 'private-token',
-		},
-		context: {
-			agentProvider: 'Fake',
-			secret: 'private-secret',
-			terminalOutput: 'private-output',
-			providerJournal: 'private-journal',
-		},
-	});
-	assert.ok(Buffer.byteLength(context) < 4096);
-	assert.doesNotMatch(context, /private-/);
-});
-
-test('6.1 bot process, file and shell activity has no workspace terminal and raises no event for any consumer', async (t) => {
-	const r = await setup(t, { autoComplete: true });
-	for (const event of [
-		'agent.finished',
-		'agent.needsInput',
-		'terminal.commandFinished',
-		'terminal.idle',
-		'project.opened',
-	])
-		r.triggers.create(r.bot.id, draft({ kind: 'event', event }));
-	const received = [];
-	r.fanout.registerSource('observer', {
-		accepts: () => true,
-		onEvent: (e) => received.push(e),
-	});
-	for (const id of ['bot-agent', 'bot-file-helper', 'shell-bot']) {
-		r.agents.emit(snapshot([agentEntry(id, 'working')]));
-		r.agents.emit(snapshot([agentEntry(id, 'waiting')]));
-		r.agents.emit(snapshot([agentEntry(id, 'done')]));
-		r.activity.emit({
-			type: 'activity.changed',
-			snapshot: { sessionId: id, status: 'working', attention: false },
-		});
-		r.activity.emit({
-			type: 'activity.changed',
-			snapshot: {
-				sessionId: id,
-				status: 'idle',
-				attention: false,
-				source: 'structured:command',
-				exitCode: 0,
-			},
-		});
-	}
-	r.journal.emit({
-		event: 'bots.changed',
-		payload: { botId: r.bot.id, revision: 1 },
-	});
-	await flush();
-	assert.equal(received.length, 0);
-	assert.equal(r.turns.length, 0);
+	assert.equal(r.sessions.list(r.bot.id).length, 0);
+	const condition = {
+		kind: 'files',
+		path: '/home/bot/watch',
+		debounceMs: 5000,
+	};
+	assert.deepEqual(r.triggers.preview(condition), []);
 });
 
 function backend() {
@@ -1126,7 +1044,7 @@ for (const action of ['disable', 'delete'])
 		assert.equal(r.service.queue.list(r.bot.id).length, 0);
 	});
 
-test('6.1 restart records previously queued and unassociated pending firings as skipped', async (t) => {
+test('restart restores queued accepted events with the same session and skips only orphan legacy firings', async (t) => {
 	const root = mkdtempSync(join(tmpdir(), 'bot-trigger-pending-'));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const first = await setup(t, { root, keepRoot: true });
@@ -1139,19 +1057,24 @@ test('6.1 restart records previously queued and unassociated pending firings as 
 	first.triggers.stop();
 	first.engine.stop();
 	const second = await setup(t, { root, keepRoot: true, at: start + MINUTE });
+	await flush();
 	const firings = second.triggers.firings(second.bot.id);
 	assert.equal(firings.length, 2);
-	assert.ok(
-		firings.every(
-			(f) => f.outcome === 'skipped' && f.reason === 'server restarted',
-		),
+	assert.equal(firings.find((f) => f.id === 'a'.repeat(24)).outcome, 'skipped');
+	const restored = firings.find((f) => f.id === pending.id);
+	assert.equal(restored.sessionId, pending.sessionId);
+	assert.equal(
+		second.sessions
+			.list(second.bot.id)
+			.filter((s) => s.id === pending.sessionId).length,
+		1,
 	);
-	assert.equal(second.turns.length, 0);
+	assert.equal(second.turns.length, 1);
 });
 
-test('6.1 all offered event kinds reach the same send path and repeated reports stay quiet', async (t) => {
-	const r = await setup(t, { autoComplete: true });
-	const events = [
+test('all legacy project event kinds are rejected and stored definitions are retained disabled', async (t) => {
+	const r = await setup(t);
+	for (const event of [
 		'agent.finished',
 		'agent.needsInput',
 		'agent.blocked',
@@ -1161,65 +1084,224 @@ test('6.1 all offered event kinds reach the same send path and repeated reports 
 		'project.opened',
 		'project.closed',
 		'device.connected',
-	];
-	for (const event of events)
+	])
+		assert.throws(
+			() => r.triggers.create(r.bot.id, draft({ kind: 'event', event })),
+			/unsupported/,
+		);
+	const trigger = r.triggers.create(r.bot.id, draft());
+	r.bots.putTrigger({
+		...trigger,
+		condition: { kind: 'event', event: 'project.opened' },
+	});
+	const stored = new BotStore(join(r.root, 'bots.json')).triggers(r.bot.id)[0];
+	assert.equal(stored.enabled, false);
+	assert.match(stored.unsupported, /unsupported/);
+});
+
+test('generic command checks do not wake AI on nonmatches; tests leave memory unchanged and new items start independent sessions', async (t) => {
+	let items = [{ id: 1 }, { id: 2 }];
+	const calls = [];
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		async run(botId, source, options, observe) {
+			calls.push({ botId, source, options });
+			await observe({ stdout: JSON.stringify(items), stderr: '', exitCode: 0 });
+		},
+	};
+	const r = await setup(t, { sources });
+	const trigger = r.triggers.create(
+		r.bot.id,
+		draft({
+			kind: 'command',
+			command: 'list --json',
+			intervalMs: 60000,
+			match: { kind: 'items', items: '', identity: '/id' },
+		}),
+	);
+	const test = await r.triggers.test(r.bot.id, trigger.condition, trigger.id);
+	assert.equal(test.wouldFire, 2);
+	assert.equal(r.triggers.memory(r.bot.id, trigger.id).total, 0);
+	assert.equal(r.turns.length, 0);
+	await r.triggers.runNow(r.bot.id, trigger.id);
+	await flush();
+	assert.equal(r.sessions.list(r.bot.id).length, 2);
+	assert.equal(r.triggers.memory(r.bot.id, trigger.id).total, 2);
+	await r.time.advance(start + MINUTE, r.engine);
+	await flush();
+	assert.equal(r.sessions.list(r.bot.id).length, 2);
+	items = [{ id: 1 }, { id: 3 }];
+	await r.time.advance(start + 2 * MINUTE, r.engine);
+	await flush();
+	assert.equal(r.sessions.list(r.bot.id).length, 3);
+	assert.ok(calls.every((c) => c.botId === r.bot.id));
+	assert.equal(
+		r.triggers.list(r.bot.id).triggers[0].health.lastSuccess,
+		start + 2 * MINUTE,
+	);
+});
+
+for (const [policy, checks] of [
+	['skip', 0],
+	['once', 1],
+	['replay', 3],
+])
+	test(`source recovery ${policy} after server downtime`, async (t) => {
+		let count = 0;
+		const sources = {
+			protect: async (_b, _t, s) => s,
+			async run(_bot, _source, _options, observe) {
+				count++;
+				await observe({ stdout: 'unchanged', stderr: '', exitCode: 0 });
+			},
+		};
+		const r = await setup(t, { sources });
 		r.triggers.create(
 			r.bot.id,
-			draft({ kind: 'event', event }, { name: event }),
+			draft(
+				{
+					kind: 'command',
+					command: 'status',
+					intervalMs: 60000,
+					match: { kind: 'changed' },
+				},
+				{ recovery: policy },
+			),
 		);
-	const emitAgent = (state) =>
-		r.agents.emit(snapshot([agentEntry('project-one', state)]));
-	emitAgent('working');
-	for (const state of ['done', 'waiting', 'blocked']) {
-		emitAgent(state);
+		await r.time.wake(start + 3 * MINUTE + 10000, r.engine);
 		await flush();
-	}
-	const emitActivity = (snapshot) =>
-		r.activity.emit({
-			type: 'activity.changed',
-			snapshot: { sessionId: 'project-one', attention: false, ...snapshot },
-		});
-	emitActivity({ status: 'working' });
-	emitActivity({
-		status: 'idle',
-		source: 'structured:command',
-		exitCode: 7,
-		attention: true,
+		await flush();
+		await r.triggers.idle();
+		assert.equal(count, checks);
+		assert.equal(r.turns.length, 0);
+	});
+
+test('bot Disable persists, pauses checks and manual operations; Enable skips disabled-period work', async (t) => {
+	let count = 0;
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		async run(_bot, _source, _options, observe) {
+			count++;
+			await observe({ stdout: 'ready', stderr: '', exitCode: 0 });
+		},
+	};
+	const r = await setup(t, { sources });
+	const trigger = r.triggers.create(
+		r.bot.id,
+		draft(
+			{
+				kind: 'command',
+				command: 'check',
+				intervalMs: 60000,
+				match: { kind: 'contains', text: 'ready' },
+			},
+			{ recovery: 'replay' },
+		),
+	);
+	r.service.enableBot(r.bot.id, false);
+	assert.equal(
+		new BotStore(join(r.root, 'bots.json')).get(r.bot.id).enabled,
+		false,
+	);
+	await r.time.wake(start + 10 * MINUTE, r.engine);
+	assert.equal(count, 0);
+	await assert.rejects(r.triggers.runNow(r.bot.id, trigger.id), /disabled/);
+	await assert.rejects(
+		r.triggers.test(r.bot.id, trigger.condition),
+		/disabled/,
+	);
+	await assert.rejects(r.service.send(r.bot.id, 'hello'), /disabled/);
+	r.service.enableBot(r.bot.id, true);
+	await r.time.advance(start + 11 * MINUTE, r.engine);
+	await r.triggers.idle();
+	assert.equal(count, 1);
+	assert.equal(r.turns.length, 0);
+});
+
+test('a source disabled during asynchronous redaction cannot accept a late result; disabled-trigger Run now remains explicit', async (t) => {
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		run: async (_b, _s, _o, observe) =>
+			observe({ stdout: 'ready', exitCode: 0 }),
+	};
+	const r = await setup(t, { sources });
+	const trigger = r.triggers.create(
+		r.bot.id,
+		draft({
+			kind: 'command',
+			command: 'check',
+			intervalMs: 60000,
+			match: { kind: 'contains', text: 'ready' },
+		}),
+	);
+	const original = r.service.redactMessage.bind(r.service);
+	let release, entered;
+	const arrived = new Promise((resolve) => (entered = resolve));
+	const paused = new Promise((resolve) => (release = resolve));
+	r.service.redactMessage = async (...args) => {
+		entered();
+		await paused;
+		return original(...args);
+	};
+	const work = r.time.advance(start + MINUTE, r.engine);
+	await arrived;
+	r.triggers.enable(r.bot.id, trigger.id, false);
+	release();
+	await work;
+	await r.triggers.idle();
+	assert.equal(r.triggers.memory(r.bot.id, trigger.id).total, 0);
+	assert.equal(r.sessions.list(r.bot.id).length, 0);
+	r.service.redactMessage = original;
+	await r.triggers.runNow(r.bot.id, trigger.id);
+	await flush();
+	assert.equal(r.sessions.list(r.bot.id).length, 1);
+	assert.equal(r.bots.trigger(r.bot.id, trigger.id).enabled, false);
+});
+
+test('continuous restart exposes its gap and resumes an SSE cursor without duplicate sessions', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bot-source-resume-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const cursors = [];
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		async run(_b, _s, options, observe) {
+			cursors.push(options.cursor);
+			await observe({ status: 'connected' });
+			await observe({ eventId: 'stable-1', data: { id: 1 } });
+			await new Promise((resolve) => {
+				if (options.signal.aborted) resolve();
+				else options.signal.addEventListener('abort', resolve, { once: true });
+			});
+		},
+	};
+	const first = await setup(t, { root, keepRoot: true, sources });
+	first.triggers.create(
+		first.bot.id,
+		draft(
+			{ kind: 'sse', url: 'https://fixture.invalid/events' },
+			{ recovery: 'recover-available' },
+		),
+	);
+	await flush();
+	await flush();
+	const trigger = first.bots.triggers(first.bot.id)[0];
+	assert.equal(first.triggers.memory(first.bot.id, trigger.id).total, 1);
+	first.triggers.stop();
+	first.engine.stop();
+	await first.triggers.idle();
+	const second = await setup(t, {
+		root,
+		keepRoot: true,
+		sources,
+		at: start + MINUTE,
 	});
 	await flush();
-	r.journal.emit({
-		event: 'project.opened',
-		payload: { serverId: 'server', projectId: 'p', name: 'P' },
-	});
-	r.journal.emit({
-		event: 'project.closed',
-		payload: { serverId: 'server', projectId: 'p', name: 'P' },
-	});
-	r.fanout.deviceConnected({ deviceId: 'device', deviceName: 'Phone' });
-	// Wait for the per-bot send serialization and turns, using service events.
-	await new Promise((resolve, reject) => {
-		const timer = setTimeout(() => {
-			r.service.off('changed', check);
-			reject(new Error('event firing deadline'));
-		}, 5000);
-		const check = () => {
-			if (
-				r.triggers.firings(r.bot.id).filter((f) => f.outcome === 'completed')
-					.length === events.length
-			) {
-				clearTimeout(timer);
-				r.service.off('changed', check);
-				resolve();
-			}
-		};
-		r.service.on('changed', check);
-		check();
-	});
-	assert.deepEqual(
-		r.triggers
-			.firings(r.bot.id)
-			.map((f) => f.triggerName)
-			.sort(),
-		events.sort(),
+	await flush();
+	assert.equal(cursors.at(-1), 'stable-1');
+	assert.match(
+		second.triggers.list(second.bot.id).triggers[0].health.gap,
+		/Server restarted/,
 	);
+	assert.equal(second.triggers.memory(second.bot.id, trigger.id).total, 1);
+	assert.equal(second.triggers.firings(second.bot.id).length, 1);
 });

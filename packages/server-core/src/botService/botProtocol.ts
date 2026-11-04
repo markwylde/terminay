@@ -51,6 +51,16 @@ export function createBotOperations(service: BotService): OperationRegistries {
 		),
 		queries: Object.fromEntries(
 			Object.entries({
+				[op.sourceMemory]: (r) => {
+					const d = payload(r);
+					return json(
+						service.triggers.memory(
+							bot(d),
+							text(d.triggerId, 24, 'trigger id'),
+							d.memoryOffset as number | undefined,
+						),
+					);
+				},
 				[op.triggers]: (r) => json(service.triggers.list(bot(payload(r)))),
 				[op.previewTrigger]: (r) => {
 					const d = payload(r);
@@ -176,9 +186,35 @@ export function createBotOperations(service: BotService): OperationRegistries {
 			),
 		),
 		commands: {
-			[op.createTrigger]: command((d, r) => {
-				const trigger = service.triggers.create(
+			[op.enableBot]: command((d, r) =>
+				service.enableBot(
 					bot(d),
+					d.enabled as boolean,
+					r.context.expectedRevision,
+				),
+			),
+			[op.testSource]: command((d, r) =>
+				service.triggers.test(
+					bot(d),
+					d.condition,
+					d.triggerId as string | undefined,
+					r.context.signal,
+				),
+			),
+			[op.resetSource]: command((d) =>
+				service.triggers.reset(
+					bot(d),
+					text(d.triggerId, 24, 'trigger id'),
+					d.confirmed === true,
+				),
+			),
+			[op.retrySource]: command((d) =>
+				service.triggers.retry(bot(d), text(d.triggerId, 24, 'trigger id')),
+			),
+			[op.createTrigger]: command(async (d, r) => {
+				const trigger = await service.triggers.prepare(
+					bot(d),
+					undefined,
 					object(
 						r.body.byteLength
 							? JSON.parse(
@@ -190,8 +226,8 @@ export function createBotOperations(service: BotService): OperationRegistries {
 				);
 				return { triggerId: trigger.id, revision: service.bots.revision };
 			}),
-			[op.updateTrigger]: command((d, r) => {
-				const trigger = service.triggers.update(
+			[op.updateTrigger]: command(async (d, r) => {
+				const trigger = await service.triggers.prepare(
 					bot(d),
 					text(d.triggerId, 24, 'trigger id'),
 					object(

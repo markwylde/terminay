@@ -21,12 +21,20 @@ export interface ScheduleDefinition {
 	readonly schedule: Schedule;
 	/** Durable progress, independent of the definition's edit revision. */
 	readonly evaluatedThrough: number;
+	readonly minimumIntervalMs?: number;
+	readonly lateToleranceMs?: number;
 }
 
 /** The caller loads its store before registering. A save/enable persists a new
  * interval anchor; the engine never derives it from startup or fire time. */
 export interface ScheduleSource {
+	readonly resume?:()=>void;
 	readonly schedules: () => readonly ScheduleDefinition[];
+	readonly recoverMissed?: (
+		id: string,
+		after: number,
+		through: number,
+	) => Promise<void>;
 	readonly subscribe: (listener: () => void) => () => void;
 	readonly markEvaluated: (id: string, through: number) => Promise<void>;
 	readonly recordMissed: (
@@ -56,6 +64,7 @@ type ParsedSchedule =
 	| Exclude<Schedule, { kind: 'cron' }>
 	| { readonly kind: 'cron'; readonly value: CronSchedule };
 interface ScheduleEntry {
+	readonly lateToleranceMs?: number;
 	readonly key: string;
 	readonly schedule: ParsedSchedule;
 	nextDueAt: number | undefined;
@@ -119,7 +128,13 @@ export class ScheduleEngine {
 					now,
 				);
 				await this.guard(async () => {
-					if (missed.count > 0)
+					if (missed.count > 0 && source.recoverMissed)
+						await source.recoverMissed(
+							definition.id,
+							definition.evaluatedThrough,
+							now,
+						);
+					else if (missed.count > 0)
 						await source.recordMissed(
 							definition.id,
 							missed.count,
@@ -165,6 +180,7 @@ export class ScheduleEngine {
 	/** Host resume/clock-change hook; never invoked by a polling timer. */
 	wake(): Promise<void> {
 		if (this.stopped) return Promise.resolve();
+		for(const {source} of this.sources.values())source.resume?.();
 		this.disarm();
 		return this.fire();
 	}
@@ -182,9 +198,13 @@ export class ScheduleEngine {
 		now: number,
 	): ScheduleEntry | undefined {
 		try {
-			const schedule = parseSchedule(definition.schedule);
+			const schedule = parseSchedule(
+				definition.schedule,
+				definition.minimumIntervalMs,
+			);
 			return {
 				key: scheduleKey(definition.schedule),
+				lateToleranceMs: definition.lateToleranceMs,
 				schedule,
 				nextDueAt: this.next(
 					schedule,
@@ -270,7 +290,9 @@ export class ScheduleEngine {
 					const count = 1 + rest.count;
 					const onTime =
 						now - latest <=
-						(this.options.lateToleranceMs ?? SCHEDULE_LATE_TOLERANCE_MS);
+						(entry.lateToleranceMs ??
+							this.options.lateToleranceMs ??
+							SCHEDULE_LATE_TOLERANCE_MS);
 					const missedCount = onTime ? count - 1 : count;
 					const missedLatest = onTime
 						? count > 1
@@ -279,7 +301,13 @@ export class ScheduleEngine {
 						: latest;
 					entry.nextDueAt = this.next(entry.schedule, now);
 					await this.guard(async () => {
-						if (missedCount > 0 && missedLatest !== undefined)
+						if (
+							missedCount > 0 &&
+							missedLatest !== undefined &&
+							source.recoverMissed
+						)
+							await source.recoverMissed(id, armedFor - 1, missedLatest);
+						else if (missedCount > 0 && missedLatest !== undefined)
 							await source.recordMissed(id, missedCount, missedLatest);
 						if (active(id, entry)) await source.markEvaluated(id, now);
 						if (active(id, entry) && onTime) await source.onDue(id, latest);
@@ -366,15 +394,20 @@ function scheduleKey(schedule: Schedule): string {
 	}
 }
 
-function parseSchedule(schedule: Schedule): ParsedSchedule {
+function parseSchedule(
+	schedule: Schedule,
+	minimum = MIN_SCHEDULE_INTERVAL_MS,
+): ParsedSchedule {
 	if (schedule.kind === 'cron')
 		return { kind: 'cron', value: parseCron(schedule.cron) };
 	if (schedule.kind === 'every') {
 		if (
 			!Number.isSafeInteger(schedule.intervalMs) ||
-			schedule.intervalMs < MIN_SCHEDULE_INTERVAL_MS
+			schedule.intervalMs < minimum
 		)
-			throw new Error('Schedule interval must be at least 5 minutes');
+			throw new Error(
+				`Schedule interval must be at least ${minimum / 60000} minutes`,
+			);
 		if (
 			!Number.isSafeInteger(schedule.anchor) ||
 			!Number.isFinite(new Date(schedule.anchor).getTime())
@@ -412,10 +445,11 @@ export function previewSchedule(
 	after: number,
 	count = 5,
 	timeZone?: string,
+	minimum = MIN_SCHEDULE_INTERVAL_MS,
 ): number[] {
 	if (!Number.isSafeInteger(count) || count < 1 || count > 1001)
 		throw new Error('invalid preview count');
-	const parsed = parseSchedule(schedule);
+	const parsed = parseSchedule(schedule, minimum);
 	const times: number[] = [];
 	for (let n = 0; n < count; n++) {
 		const next = nextParsedOccurrence(parsed, times.at(-1) ?? after, timeZone);

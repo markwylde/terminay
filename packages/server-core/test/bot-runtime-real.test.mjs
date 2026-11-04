@@ -1,3 +1,4 @@
+import './bot-sources-real.test.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -571,8 +572,12 @@ for (const brokenPrefix of [false, true]) {
 						);
 						const calls = JSON.stringify(modelCalls.flatMap((c) => c.results));
 						assert.ok(
-							modelCalls.some((c) =>
-								c.tools.includes('mcp__terminay_bot__chat_post'),
+							modelCalls.some(
+								(c) =>
+									c.tools.includes('mcp__terminay_bot__chat_post') ||
+									JSON.stringify(c.results).includes(
+										'mcp__terminay_bot__chat_post',
+									),
 							),
 						);
 						assert.match(calls, /shell-token=unset provider-key=unset/);

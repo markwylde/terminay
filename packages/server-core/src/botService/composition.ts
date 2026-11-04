@@ -31,6 +31,7 @@ import { BotDesktopService } from './rfb.js';
 import { type BotAgents, BotService, botAgentConfigFiles } from './service.js';
 import { BotSessionStore } from './sessions.js';
 import { BotShellService } from './shell.js';
+import { containerSourceRunner } from './sourceRunner.js';
 import { BotError, BotStore } from './store.js';
 import {
 	type BotTokenLease,
@@ -261,6 +262,12 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	const detachEnvironment = environment.follow(engine);
 	service = new BotService(bots, sessions, memories, {
 		serverId: options.serverId,
+		sources: containerSourceRunner({
+			driver: () => images.driver(),
+			start: (id) => environment.start(id),
+			activity: (id, delta) => streamActivity(id, 'shells', delta),
+			vault: options.vault,
+		}),
 		closeConnection: (id) => {
 			void io
 				.closeConnection(id)
@@ -426,6 +433,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			),
 		dispose: async () => {
 			engine.off('availability', cleanup);
+			engine.off('availability', resumeSources);
 			images.off('changed', cleanup);
 			await cleaning;
 			detachEnvironment();
@@ -479,6 +487,14 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			cleaning = undefined;
 		});
 	};
+	let sourcesEngineAvailable = engine.availability.available;
+	const resumeSources = () => {
+		const available = engine.availability.available;
+		const restored = available && !sourcesEngineAvailable;
+		sourcesEngineAvailable = available;
+		if (restored) service.triggers.resumeSources();
+	};
+	engine.on('availability', resumeSources);
 	engine.on('availability', cleanup);
 	images.on('changed', cleanup);
 	environment.on('changed', ({ botId }) => service.invalidate(botId));

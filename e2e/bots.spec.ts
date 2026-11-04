@@ -115,7 +115,9 @@ async function newTrigger(
 	const page = tab.page();
 	const editor = page.locator('[data-terminay-bot-trigger-editor]');
 	await editor.locator('[data-terminay-bot-trigger-field="name"]').fill(name);
-	await editor.locator('[data-terminay-bot-trigger-kind="every"]').click();
+	await editor
+		.locator('[data-terminay-bot-trigger-type]')
+		.selectOption('every');
 	await editor
 		.locator('[data-terminay-bot-trigger-field="prompt"]')
 		.fill(prompt);
@@ -845,4 +847,94 @@ test.describe('Home › Bots', () => {
 			'none',
 		);
 	});
+});
+
+test('generic command source editor tests without sessions and Disable blocks manual wakes', async ({
+	mainWindow,
+}) => {
+	await engineReady(mainWindow);
+	const tab = await createBot(mainWindow, 'Source watcher');
+	await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+	await tab.locator('[data-terminay-bot-trigger-new]').click();
+	const editor = tab.locator('[data-terminay-bot-trigger-editor]');
+	await editor
+		.getByLabel('Source group', { exact: true })
+		.selectOption('Commands');
+	await editor.getByLabel('Name', { exact: true }).fill('Watch incoming items');
+	await editor.getByLabel('Command / shell script').fill('fixture-items');
+	await editor.getByLabel('Check every', { exact: true }).fill('1');
+	await editor.getByLabel('Unit', { exact: true }).selectOption('minutes');
+	await editor.getByLabel('Fire when', { exact: true }).selectOption('items');
+	await editor
+		.getByLabel('Prompt', { exact: true })
+		.fill('Inspect each item for risks.');
+	await editor
+		.getByRole('button', { name: 'Test source', exact: true })
+		.click();
+	await expect(editor).toContainText('2 events would fire');
+	await editor.locator('[data-terminay-bot-trigger-save]').click();
+	const row = tab
+		.locator('[data-terminay-bot-trigger]')
+		.filter({ hasText: 'Watch incoming items' });
+	await expect(row).toBeVisible();
+	await row.getByRole('button', { name: 'Run now', exact: true }).click();
+	await expect(row).toContainText('Completed', { timeout: 30000 });
+	await tab.getByRole('button', { name: 'Disable bot', exact: true }).click();
+	await expect(tab).toContainText('Sources and automatic wake-ups are paused');
+	await expect(
+		row.getByRole('button', { name: 'Run now', exact: true }),
+	).toBeDisabled();
+	await tab
+		.locator('.bots-ahead')
+		.getByRole('button', { name: 'Enable bot', exact: true })
+		.click();
+	await expect(
+		row.getByRole('button', { name: 'Run now', exact: true }),
+	).toBeEnabled();
+});
+
+test('generic network and file sources preview real checks without starting sessions', async ({
+	mainWindow,
+}) => {
+	test.setTimeout(90000);
+	await engineReady(mainWindow);
+	const tab = await createBot(mainWindow, 'Network watcher');
+	await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+	await tab.locator('[data-terminay-bot-trigger-new]').click();
+	const editor = tab.locator('[data-terminay-bot-trigger-editor]');
+	await editor.getByLabel('Name', { exact: true }).fill('Observe status');
+	await editor.getByLabel('Prompt', { exact: true }).fill('Inspect the event.');
+	await editor
+		.getByLabel('Source group', { exact: true })
+		.selectOption('Network');
+	await editor.getByLabel('Source type', { exact: true }).selectOption('http');
+	await editor
+		.getByLabel('URL', { exact: true })
+		.fill('https://fixture.invalid/status');
+	await editor
+		.getByLabel('If Terminay Server was offline', { exact: true })
+		.selectOption('once');
+	await editor
+		.getByRole('button', { name: 'Test source', exact: true })
+		.click();
+	await expect(editor).toContainText('0 events would fire');
+	await editor.getByLabel('Source type', { exact: true }).selectOption('sse');
+	await editor
+		.getByLabel('URL', { exact: true })
+		.fill('https://fixture.invalid/events');
+	await editor
+		.getByRole('button', { name: 'Test source', exact: true })
+		.click();
+	await expect(editor).toContainText('1 event would fire', { timeout: 20000 });
+	await editor
+		.getByLabel('Source group', { exact: true })
+		.selectOption('Files');
+	await editor
+		.getByLabel('File or folder path', { exact: true })
+		.fill('/home/bot/incoming');
+	await editor
+		.getByRole('button', { name: 'Test source', exact: true })
+		.click();
+	await expect(editor).toContainText('0 events would fire', { timeout: 20000 });
+	await expect(editor).toContainText('Continuous watching keeps it running.');
 });

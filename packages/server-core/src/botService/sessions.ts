@@ -91,7 +91,7 @@ function parseRecord(value: unknown): BotSessionRecord {
 		const queued = object(d.queuedMessage);
 		if (typeof queued.id !== 'string' || !/^[a-z0-9]{24}$/.test(queued.id))
 			throw new Error('invalid queued message id');
-		text(queued.text, 64 * 1024, 'queued message');
+		text(queued.text, 80 * 1024, 'queued message');
 		if (!['queued', 'not-sent'].includes(String(queued.status)))
 			throw new Error('invalid queued message');
 	}
@@ -252,10 +252,16 @@ export class BotSessionStore extends EventEmitter {
 		botId: string,
 		origin: BotSessionOrigin,
 		snapshot: BotSessionSnapshot,
+		reservedId?: string,
 	): BotSessionRecord {
 		botEnvironmentId(botId);
+		if (
+			reservedId &&
+			(!/^[a-z0-9]{24}$/.test(reservedId) || this.entries.has(reservedId))
+		)
+			throw new Error('Invalid or duplicate session reservation');
 		const record: BotSessionRecord = {
-			id: randomBytes(12).toString('hex'),
+			id: reservedId ?? randomBytes(12).toString('hex'),
 			botId,
 			origin: structuredClone(origin),
 			snapshot: structuredClone(snapshot),
