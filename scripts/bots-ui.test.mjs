@@ -39,6 +39,22 @@ test.after(async () => {
 	await rm(directory, { recursive: true, force: true });
 });
 
+/** Chooses an option in one of the Bots grouped dropdowns. */
+async function pick(scope, label, value) {
+	await scope.getByRole('combobox', { name: label, exact: true }).click();
+	await scope
+		.getByRole('listbox', { name: label, exact: true })
+		.locator(`[data-grouped-select-value="${value}"]`)
+		.click();
+}
+
+/** The value a grouped dropdown currently holds. */
+function picked(scope, label) {
+	return scope
+		.getByRole('combobox', { name: label, exact: true })
+		.getAttribute('data-grouped-select-value');
+}
+
 const NOW = Date.now();
 const BIRD = 'birdbot00001';
 const OWL = 'owlbot000002';
@@ -485,7 +501,9 @@ test('the agent picker groups agents by extension with their status and action',
 		);
 		await page.locator('[data-terminay-bot-agent-option="codex"]').click();
 		assert.equal(
-			await page.locator('[data-terminay-bot-profile="model"]').inputValue(),
+			await page
+				.locator('[data-terminay-bot-profile="model"]')
+				.getAttribute('data-grouped-select-value'),
 			'',
 		);
 	} finally {
@@ -1118,14 +1136,10 @@ test('Triggers shows plain words, missed firings, upcoming, and Run now on a dis
 			/Nightly build/,
 		);
 		await page.locator('[data-terminay-bot-trigger-new]').click();
-		await page
-			.locator('[data-terminay-bot-trigger-type]')
-			.selectOption('every');
+		const editor = page.locator('[data-terminay-bot-trigger-editor]');
+		await pick(editor, 'Source', 'every');
 		await page.locator('[data-terminay-bot-trigger-field="every"]').fill('0.5');
-		await page
-			.locator('select')
-			.filter({ hasText: 'Minutes' })
-			.selectOption('minutes');
+		await pick(editor, 'Unit', 'minutes');
 		assert.match(
 			await page.locator('[data-terminay-bot-trigger-preview]').innerText(),
 			/at least 1 minute/,
@@ -1697,14 +1711,14 @@ test('generic source editor groups fields, preserves a narrow draft, and tests w
   await page.locator('[data-terminay-bot-trigger-new]').click();
   const editor=page.locator('[data-terminay-bot-trigger-editor]');
   await editor.getByLabel('Name',{exact:true}).fill('Incoming items');
-  await editor.getByLabel('Source group',{exact:true}).selectOption('Commands');
+  await pick(editor,'Source','command');
   await editor.getByLabel('Command / shell script').fill('list --json');
-  await editor.getByLabel('Check every',{exact:true}).fill('1');await editor.getByLabel('Unit',{exact:true}).selectOption('minutes');
-  await editor.getByLabel('Fire when',{exact:true}).selectOption('items');
+  await editor.getByLabel('Check every',{exact:true}).fill('1');await pick(editor,'Unit','minutes');
+  await pick(editor,'Fire when','items');
   await editor.getByLabel('Prompt',{exact:true}).fill('Inspect risks in this item.');
-  assert.equal(await editor.getByLabel('If Terminay Server was offline').inputValue(),'once');
-  assert.equal(await editor.getByLabel('First successful check').inputValue(),'process');
-  await editor.getByRole('button',{name:'Back to list'}).click();
+  assert.equal(await picked(editor,'If Terminay Server was offline'),'once');
+  assert.equal(await picked(editor,'First successful check'),'process');
+  await editor.getByRole('button',{name:'Close editor'}).click();
   await page.locator('[data-terminay-bot-trigger-new]').click();
   assert.equal(await editor.getByLabel('Command / shell script').inputValue(),'list --json');
   await editor.getByRole('button',{name:'Test source',exact:true}).click();

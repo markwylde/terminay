@@ -4,7 +4,22 @@ import type {
 	BotSourceTest,
 	BotTrigger,
 } from '@terminay/protocol';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+	CalendarClock,
+	Clock,
+	FolderOpen,
+	Globe,
+	Radio,
+	Repeat,
+	SquareTerminal,
+	X,
+} from 'lucide-react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import {
+	GroupedSelect,
+	type GroupedSelectGroup,
+	plainOptions,
+} from './GroupedSelect';
 import {
 	describeCondition,
 	emptyTriggerForm,
@@ -13,30 +28,116 @@ import {
 	formToDraft,
 	SOURCE_GROUPS,
 	type SourceGroup,
-	sourceGroup,
 	TRIGGER_KIND_LABELS,
 	type TriggerForm,
 	type TriggerKind,
 } from './triggersModel';
 import { refusalText, type ServerBots } from './useServerBots';
 
+export const SOURCE_DESCRIPTIONS: Readonly<Record<TriggerKind, string>> = {
+	files: 'When files are created, changed or deleted',
+	sse: 'When a server-sent event stream emits',
+	http: 'Poll a URL and compare its responses',
+	command: 'Run a command and watch its output',
+	cron: 'On a cron schedule',
+	every: 'Every few minutes or hours',
+	once: 'Once, at a date and time',
+	event: 'This project event is no longer supported',
+};
+
+const SOURCE_ICONS: Readonly<Record<TriggerKind, ReactNode>> = {
+	files: <FolderOpen size={14} />,
+	sse: <Radio size={14} />,
+	http: <Globe size={14} />,
+	command: <SquareTerminal size={14} />,
+	cron: <CalendarClock size={14} />,
+	every: <Repeat size={14} />,
+	once: <Clock size={14} />,
+	event: <Clock size={14} />,
+};
+
+export function sourceIcon(kind: TriggerKind): ReactNode {
+	return SOURCE_ICONS[kind];
+}
+
+function sourceGroups(
+	includeEvent: boolean,
+): readonly GroupedSelectGroup<TriggerKind>[] {
+	const groups = (Object.keys(SOURCE_GROUPS) as SourceGroup[]).map((g) => ({
+		label: g,
+		options: SOURCE_GROUPS[g].map((k) => ({
+			value: k,
+			label: TRIGGER_KIND_LABELS[k],
+			description: SOURCE_DESCRIPTIONS[k],
+			icon: SOURCE_ICONS[k],
+		})),
+	}));
+	return includeEvent
+		? [
+				...groups,
+				{
+					label: 'Unsupported',
+					options: [
+						{
+							value: 'event' as const,
+							label: TRIGGER_KIND_LABELS.event,
+							description: SOURCE_DESCRIPTIONS.event,
+							disabled: true,
+						},
+					],
+				},
+			]
+		: groups;
+}
+
+function SelectField<V extends string>({
+	label,
+	hint,
+	...props
+}: Readonly<
+	{ label: string; hint?: ReactNode } & Parameters<typeof GroupedSelect<V>>[0]
+>) {
+	return (
+		<div className="bots-field">
+			<span>{label}</span>
+			<GroupedSelect<V> label={label} {...props} />
+			{hint ? <small className="bots-faint">{hint}</small> : null}
+		</div>
+	);
+}
+
+function formatRun(at: number): string {
+	return new Date(at).toLocaleString(undefined, {
+		weekday: 'short',
+		day: 'numeric',
+		month: 'short',
+		hour: '2-digit',
+		minute: '2-digit',
+	});
+}
+
 export function BotTriggerEditor({
 	server,
 	bot,
 	trigger,
+	initialKind,
 	onClose,
 	onSaved,
 }: Readonly<{
 	server: ServerBots;
 	bot: BotProfile;
 	trigger: BotTrigger | undefined;
+	/** Source a new trigger starts on, when chosen from a quick start. */
+	initialKind?: TriggerKind;
 	onClose: () => void;
 	onSaved: () => void;
 }>) {
 	const [form, setForm] = useState<TriggerForm>(() =>
 		trigger
 			? formFromTrigger(trigger, Date.now())
-			: emptyTriggerForm(Date.now()),
+			: initialKind
+				? withKind(emptyTriggerForm(Date.now()), initialKind)
+				: emptyTriggerForm(Date.now()),
 	);
 	const [error, setError] = useState<string>();
 	const [busy, setBusy] = useState(false);
@@ -59,7 +160,6 @@ export function BotTriggerEditor({
 	const key = condition.ok ? JSON.stringify(condition.condition) : '';
 	const periodic = ['command', 'http', 'every'].includes(form.kind);
 	const continuous = form.kind === 'files' || form.kind === 'sse';
-	const group = sourceGroup(form.kind);
 	useEffect(() => {
 		setPreview([]);
 		if (
@@ -85,19 +185,7 @@ export function BotTriggerEditor({
 		};
 	}, [key, server.client, bot.id]);
 	useEffect(() => () => testingAbort.current?.abort(), []);
-	const switchKind = (kind: TriggerKind) =>
-		update({
-			kind,
-			recovery:
-				kind === 'files' || kind === 'sse'
-					? 'recover-available'
-					: kind === 'command' || kind === 'http'
-						? 'once'
-						: 'skip',
-			...(kind === 'http' && form.match === 'exit'
-				? { match: 'changed' as const }
-				: {}),
-		});
+	const switchKind = (kind: TriggerKind) => update(withKind(form, kind));
 	const field = (
 		label: string,
 		name: keyof TriggerForm,
@@ -170,18 +258,25 @@ export function BotTriggerEditor({
 			}}
 		>
 			<header className="bots-source-editor__head">
-				<div>
+				<span className="bots-source-editor__icon" aria-hidden="true">
+					{SOURCE_ICONS[form.kind]}
+				</span>
+				<div className="bots-grow">
 					<span className="bots-lab">
 						{trigger ? 'Edit trigger' : 'New trigger'}
 					</span>
-					<h3 className="bots-h3">{form.name || 'Watch something'}</h3>
+					<h3 className="bots-h3">
+						{form.name || TRIGGER_KIND_LABELS[form.kind]}
+					</h3>
 				</div>
 				<button
 					type="button"
-					className="bots-btn bots-btn--sm"
+					className="bots-iconbtn"
+					aria-label="Close editor"
+					title="Close"
 					onClick={onClose}
 				>
-					Back to list
+					<X size={16} aria-hidden="true" />
 				</button>
 			</header>
 			{!condition.ok ? (
@@ -200,42 +295,13 @@ export function BotTriggerEditor({
 			{field('Name', 'name', 'text', { maxLength: 80 })}
 			<section className="bots-source-section" aria-label="When">
 				<h4 className="bots-lab">When</h4>
-				<div className="bots-two">
-					<label className="bots-field">
-						<span>Source group</span>
-						<select
-							aria-label="Source group"
-							value={group}
-							onChange={(e) =>
-								switchKind(SOURCE_GROUPS[e.target.value as SourceGroup][0]!)
-							}
-						>
-							{Object.keys(SOURCE_GROUPS).map((g) => (
-								<option key={g}>{g}</option>
-							))}
-						</select>
-					</label>
-					<label className="bots-field">
-						<span>Source type</span>
-						<select
-							aria-label="Source type"
-							value={form.kind}
-							onChange={(e) => switchKind(e.target.value as TriggerKind)}
-							data-terminay-bot-trigger-type="true"
-						>
-							{form.kind === 'event' ? (
-								<option value="event" disabled>
-									Unsupported project event
-								</option>
-							) : null}
-							{SOURCE_GROUPS[group].map((k) => (
-								<option key={k} value={k}>
-									{TRIGGER_KIND_LABELS[k]}
-								</option>
-							))}
-						</select>
-					</label>
-				</div>
+				<SelectField<TriggerKind>
+					label="Source"
+					value={form.kind}
+					groups={sourceGroups(form.kind === 'event')}
+					onChange={switchKind}
+					data={{ 'data-terminay-bot-trigger-type': 'true' }}
+				/>
 				{form.kind === 'command' ? (
 					<>
 						{field('Command / shell script', 'command')}
@@ -304,45 +370,46 @@ export function BotTriggerEditor({
 				{periodic ? (
 					<div className="bots-two">
 						{field('Check every', 'every', 'number', { min: 1 })}
-						<label className="bots-field">
-							<span>Unit</span>
-							<select
-								aria-label="Unit"
-								value={form.everyUnit}
-								onChange={(e) =>
-									update({ everyUnit: e.target.value as 'minutes' | 'hours' })
-								}
-							>
-								<option value="minutes">Minutes</option>
-								<option value="hours">Hours</option>
-							</select>
-						</label>
+						<SelectField<'minutes' | 'hours'>
+							label="Unit"
+							value={form.everyUnit}
+							onChange={(everyUnit) => update({ everyUnit })}
+							groups={plainOptions([
+								{ value: 'minutes', label: 'Minutes' },
+								{ value: 'hours', label: 'Hours' },
+							])}
+						/>
 					</div>
 				) : null}
 				{form.kind === 'command' || form.kind === 'http' ? (
 					<>
-						<label className="bots-field">
-							<span>Fire when</span>
-							<select
-								aria-label="Fire when"
-								value={form.match}
-								onChange={(e) =>
-									update({ match: e.target.value as TriggerForm['match'] })
-								}
-							>
-								<option value="changed">Output changes</option>
-								<option value="items">New JSON items appear</option>
-								<option value="contains">Text contains</option>
-								{form.kind === 'command' ? (
-									<>
-										<option value="regex">
-											Text matches a regular expression
-										</option>
-										<option value="exit">Exit code equals</option>
-									</>
-								) : null}
-							</select>
-						</label>
+						<SelectField<TriggerForm['match']>
+							label="Fire when"
+							value={form.match}
+							onChange={(match) => update({ match })}
+							groups={plainOptions([
+								{
+									value: 'changed',
+									label: 'Output changes',
+									description: 'Any difference from the previous check',
+								},
+								{
+									value: 'items',
+									label: 'New JSON items appear',
+									description: 'Each new item starts its own session',
+								},
+								{ value: 'contains', label: 'Text contains' },
+								...(form.kind === 'command'
+									? [
+											{
+												value: 'regex' as const,
+												label: 'Text matches a regular expression',
+											},
+											{ value: 'exit' as const, label: 'Exit code equals' },
+										]
+									: []),
+							])}
+						/>
 						{form.match === 'contains' || form.match === 'regex'
 							? field('Text to match', 'matchText')
 							: null}
@@ -366,23 +433,18 @@ export function BotTriggerEditor({
 									{field('Items JSON Pointer (blank = root array)', 'items')}
 									{field('Item identity JSON Pointer', 'identity')}
 								</div>
-								<label className="bots-field">
-									<span>First successful check</span>
-									<select
-										aria-label="First successful check"
-										value={form.initial}
-										onChange={(e) =>
-											update({
-												initial: e.target.value as 'process' | 'baseline',
-											})
-										}
-									>
-										<option value="process">Process existing items</option>
-										<option value="baseline">
-											Remember existing items without running
-										</option>
-									</select>
-								</label>
+								<SelectField<'process' | 'baseline'>
+									label="First successful check"
+									value={form.initial}
+									onChange={(initial) => update({ initial })}
+									groups={plainOptions([
+										{ value: 'process', label: 'Process existing items' },
+										{
+											value: 'baseline',
+											label: 'Remember existing items without running',
+										},
+									])}
+								/>
 								<p className="bots-faint">
 									Each new identity starts a separate session. Your script
 									handles pagination.
@@ -398,53 +460,75 @@ export function BotTriggerEditor({
 						</details>
 					</>
 				) : null}
-				<label className="bots-field">
-					<span>If Terminay Server was offline</span>
-					<select
-						aria-label="If Terminay Server was offline"
-						value={form.recovery}
-						onChange={(e) =>
-							update({ recovery: e.target.value as BotRecoveryPolicy })
-						}
+				<SelectField<BotRecoveryPolicy>
+					label="If Terminay Server was offline"
+					value={form.recovery}
+					onChange={(recovery) => update({ recovery })}
+					groups={plainOptions(
+						continuous
+							? [
+									{
+										value: 'recover-available',
+										label: 'Recover available changes / events',
+										description: 'Catch up on what the source still has',
+									},
+									{
+										value: 'ignore-gap',
+										label: 'Ignore the gap and resume watching',
+									},
+								]
+							: [
+									{
+										value: 'skip',
+										label: 'Skip missed runs',
+										description: 'Carry on from the next occurrence',
+									},
+									{
+										value: 'once',
+										label: 'Run once on return',
+										description: 'One catch-up run for everything missed',
+									},
+									{
+										value: 'replay',
+										label: 'Run each missed occurrence',
+									},
+								],
+					)}
+					hint={
+						continuous
+							? 'Recovery depends on the source: file rescans find net changes; SSE replay needs event IDs and server support.'
+							: form.recovery === 'replay' &&
+									form.kind !== 'cron' &&
+									form.kind !== 'every' &&
+									form.kind !== 'once'
+								? 'Replayed checks read current state; they cannot reconstruct historical responses.'
+								: 'Missed work is measured on the server, independently of connected clients.'
+					}
+				/>
+				{condition.ok && preview.length ? (
+					<div
+						className="bots-runpreview"
+						data-terminay-bot-trigger-preview="true"
 					>
-						{continuous ? (
-							<>
-								<option value="recover-available">
-									Recover available changes / events
-								</option>
-								<option value="ignore-gap">
-									Ignore the gap and resume watching
-								</option>
-							</>
-						) : (
-							<>
-								<option value="skip">Skip missed runs</option>
-								<option value="once">Run once on return</option>
-								<option value="replay">Run each missed occurrence</option>
-							</>
-						)}
-					</select>
-				</label>
-				<p className="bots-faint">
-					{continuous
-						? 'Recovery depends on the source: file rescans find net changes; SSE replay needs event IDs and server support.'
-						: form.recovery === 'replay' &&
-								form.kind !== 'cron' &&
-								form.kind !== 'every' &&
-								form.kind !== 'once'
-							? 'Replayed checks read current state; they cannot reconstruct historical responses.'
-							: 'Missed work is measured on the server, independently of connected clients.'}
-				</p>
-				{preview.length ? (
-					<div className="bots-note" data-terminay-bot-trigger-preview="true">
-						<b>{condition.ok ? describeCondition(condition.condition) : ''}</b>
-						<div className="bots-faint">
+						<div className="bots-runpreview__head">
+							<CalendarClock size={14} aria-hidden="true" />
+							<b>
+								{condition.ok ? describeCondition(condition.condition) : ''}
+							</b>
+						</div>
+						<span className="bots-lab">
 							Next{' '}
 							{form.kind === 'command' || form.kind === 'http'
 								? 'checks'
 								: 'runs'}
-							: {preview.map((at) => new Date(at).toLocaleString()).join(' · ')}
-						</div>
+						</span>
+						<ul className="bots-runpreview__list">
+							{preview.map((at) => (
+								<li key={at} className="bots-mono">
+									{formatRun(at)}
+								</li>
+							))}
+						</ul>
 					</div>
 				) : null}
 			</section>
@@ -622,4 +706,21 @@ export function BotTriggerEditor({
 			</footer>
 		</form>
 	);
+}
+
+/** Switches source, resetting the settings that do not carry across kinds. */
+function withKind(form: TriggerForm, kind: TriggerKind): TriggerForm {
+	return {
+		...form,
+		kind,
+		recovery:
+			kind === 'files' || kind === 'sse'
+				? 'recover-available'
+				: kind === 'command' || kind === 'http'
+					? 'once'
+					: 'skip',
+		...(kind === 'http' && form.match === 'exit'
+			? { match: 'changed' as const }
+			: {}),
+	};
 }

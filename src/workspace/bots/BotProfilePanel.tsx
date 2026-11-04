@@ -9,10 +9,10 @@ import type {
 	BotProfile,
 	BotSignIn,
 } from '@terminay/protocol';
-import { Check, ChevronDown } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BotSignInSection } from './BotSignInSection';
 import { botActivity, ENVIRONMENT_LABELS } from './botsModel';
+import { GroupedSelect } from './GroupedSelect';
 import {
 	type BotAgentOption,
 	type BotAgentState,
@@ -286,33 +286,40 @@ export function BotProfilePanel({
 								}
 							/>
 						</div>
-						<label className="bots-field">
+						<div className="bots-field">
 							<span>Model</span>
-							<select
+							<GroupedSelect
+								label="Model"
 								value={form.modelId ?? ''}
 								disabled={agent === undefined}
-								onChange={(event) =>
-									update({ modelId: event.target.value || null })
-								}
-								data-terminay-bot-profile="model"
-							>
-								<option value="">Default</option>
-								{form.modelId !== null &&
-								!agent?.models.some((m) => m.id === form.modelId) ? (
-									<option value={form.modelId}>{form.modelId}</option>
-								) : null}
-								{agent?.models.map((model) => (
-									<option key={model.id} value={model.id}>
-										{model.displayName}
-									</option>
-								))}
-							</select>
+								onChange={(modelId) => update({ modelId: modelId || null })}
+								data={{ 'data-terminay-bot-profile': 'model' }}
+								groups={[
+									{
+										options: [
+											{
+												value: '',
+												label: 'Default',
+												description: 'Let the agent choose',
+											},
+											...(form.modelId !== null &&
+											!agent?.models.some((m) => m.id === form.modelId)
+												? [{ value: form.modelId, label: form.modelId }]
+												: []),
+											...(agent?.models.map((model) => ({
+												value: model.id,
+												label: model.displayName,
+											})) ?? []),
+										],
+									},
+								]}
+							/>
 							<small className="bots-faint">
 								{agent !== undefined && !agent.modelsAvailable
 									? 'This agent did not list its models. Default lets it choose.'
 									: 'Default lets the agent choose.'}
 							</small>
-						</label>
+						</div>
 					</div>
 					<div className="bots-form__row">
 						<div className="bots-field">
@@ -456,47 +463,52 @@ function AgentPicker({
 	onChange: (agentId: string) => void;
 	onBuildImage: () => void;
 }>) {
-	const [open, setOpen] = useState(false);
-	const root = useRef<HTMLDivElement>(null);
 	const current = agents.find((a) => a.id === value);
-	useEffect(() => {
-		if (!open) return;
-		const onDown = (event: MouseEvent) => {
-			if (!root.current?.contains(event.target as Node)) setOpen(false);
-		};
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') setOpen(false);
-		};
-		window.addEventListener('mousedown', onDown);
-		window.addEventListener('keydown', onKey);
-		return () => {
-			window.removeEventListener('mousedown', onDown);
-			window.removeEventListener('keydown', onKey);
-		};
-	}, [open]);
+	const groups = useMemo(
+		() =>
+			groupAgents(agents).map((group) => ({
+				label: group.extension,
+				options: group.agents.map((agent) => ({
+					value: agent.id,
+					label: agent.displayName,
+					description: `${agentStateLabel(agent.status)}${
+						agent.status.action
+							? ` · ${agent.status.action.label}`
+							: agent.status.detail
+								? ` · ${agent.status.detail}`
+								: ''
+					}${agent.autonomousOnly ? ' · Autonomous only' : ''}`,
+					data: {
+						'data-terminay-bot-agent-option': agent.id,
+						'data-terminay-bot-agent-state': agent.status.state,
+					},
+				})),
+			})),
+		[agents],
+	);
 	return (
-		<div className="bots-dd" ref={root}>
-			<button
-				type="button"
-				className="bots-in bots-dd__btn"
-				aria-haspopup="listbox"
-				aria-expanded={open}
-				onClick={() => setOpen((v) => !v)}
-				data-terminay-bot-profile="agent"
-			>
-				<span className="bots-grow">
-					{current?.displayName ?? value}
-					{current === undefined ? (
-						<span className="bots-need"> · Unavailable</span>
-					) : current.status.state === 'ready' ? null : (
-						<span className="bots-need">
-							{' '}
-							· {agentStateLabel(current.status)}
-						</span>
-					)}
-				</span>
-				<ChevronDown size={14} aria-hidden="true" />
-			</button>
+		<div className="bots-dd-wrap">
+			<GroupedSelect
+				label="Agent"
+				value={value}
+				groups={groups}
+				onChange={onChange}
+				empty="No installed extension offers bot agents."
+				data={{ 'data-terminay-bot-profile': 'agent' }}
+				display={
+					<>
+						{current?.displayName ?? value}
+						{current === undefined ? (
+							<span className="bots-need"> · Unavailable</span>
+						) : current.status.state === 'ready' ? null : (
+							<span className="bots-need">
+								{' '}
+								· {agentStateLabel(current.status)}
+							</span>
+						)}
+					</>
+				}
+			/>
 			{current === undefined && value === savedAgentId ? (
 				<small className="bots-need">
 					The extension that provided this agent is disabled or removed. The bot
@@ -505,54 +517,6 @@ function AgentPicker({
 			) : null}
 			{current?.status.state !== 'ready' && current?.status.action ? (
 				<AgentAction agent={current} onBuildImage={onBuildImage} />
-			) : null}
-			{open ? (
-				<div className="bots-card bots-dd__panel" role="listbox">
-					{agents.length === 0 ? (
-						<p className="bots-faint bots-pad">
-							No installed extension offers bot agents.
-						</p>
-					) : (
-						groupAgents(agents).map((group) => (
-							<fieldset key={group.extension} aria-label={group.extension}>
-								<div className="bots-dd__grp">{group.extension}</div>
-								{group.agents.map((agent) => (
-									<button
-										key={agent.id}
-										type="button"
-										role="option"
-										aria-selected={agent.id === value}
-										className={`bots-dd__opt${agent.id === value ? ' bots-dd__opt--on' : ''}`}
-										onClick={() => {
-											if (agent.id !== value) onChange(agent.id);
-											setOpen(false);
-										}}
-										data-terminay-bot-agent-option={agent.id}
-										data-terminay-bot-agent-state={agent.status.state}
-									>
-										<span className="bots-dd__check">
-											{agent.id === value ? (
-												<Check size={13} aria-hidden="true" />
-											) : null}
-										</span>
-										<span className="bots-grow">
-											<b>{agent.displayName}</b>
-											<span className="bots-dd__sub">
-												{agentStateLabel(agent.status)}
-												{agent.status.action
-													? ` · ${agent.status.action.label}`
-													: agent.status.detail
-														? ` · ${agent.status.detail}`
-														: ''}
-												{agent.autonomousOnly ? ' · Autonomous only' : ''}
-											</span>
-										</span>
-									</button>
-								))}
-							</fieldset>
-						))
-					)}
-				</div>
 			) : null}
 		</div>
 	);

@@ -4,8 +4,13 @@ import type {
 	BotTriggerFiring,
 	BotUpcomingFiring,
 } from '@terminay/protocol';
+import { Plus, Zap } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BotTriggerEditor } from './BotTriggerEditor';
+import {
+	BotTriggerEditor,
+	SOURCE_DESCRIPTIONS,
+	sourceIcon,
+} from './BotTriggerEditor';
 import { shortAge } from './botsModel';
 import {
 	describeCondition,
@@ -15,6 +20,7 @@ import {
 	SOURCE_GROUPS,
 	sourceGroup,
 	TRIGGER_KIND_LABELS,
+	type TriggerKind,
 	UPCOMING_DAYS,
 } from './triggersModel';
 import { useNow } from './useNow';
@@ -36,6 +42,9 @@ export function BotTriggersPanel({
 	const [upcoming, setUpcoming] = useState<readonly BotUpcomingFiring[]>([]);
 	const [error, setError] = useState<string>();
 	const [editing, setEditing] = useState<BotTrigger | 'new'>();
+	const [newKind, setNewKind] = useState<TriggerKind>();
+	// Closing keeps the editor mounted, so reopening the same trigger, or New
+	// trigger again, returns to the unsaved draft.
 	const [editorHidden, setEditorHidden] = useState(false);
 	const [confirmDelete, setConfirmDelete] = useState<string>();
 	const load = useCallback(async () => {
@@ -67,10 +76,34 @@ export function BotTriggersPanel({
 		void work.then(load).catch((e) => setError(refusalText(e)));
 	};
 	const last = useMemo(() => lastFirings(firings), [firings]);
-	const edit = (trigger: BotTrigger | 'new') => {
+	const edit = (trigger: BotTrigger | 'new', kind?: TriggerKind) => {
 		setEditing(trigger);
+		setNewKind(kind);
 		setEditorHidden(false);
 	};
+	const full = (triggers?.length ?? 0) >= MAX_TRIGGERS;
+	const hasList = (triggers?.length ?? 0) > 0;
+	const showEditor = editing !== undefined && !editorHidden;
+	const editor = editing ? (
+		<div className="bots-source-editor-wrap" hidden={editorHidden}>
+			<BotTriggerEditor
+				key={editing === 'new' ? `new:${newKind ?? ''}` : editing.id}
+				server={server}
+				bot={bot}
+				initialKind={editing === 'new' ? newKind : undefined}
+				trigger={
+					editing === 'new'
+						? undefined
+						: (triggers?.find((t) => t.id === editing.id) ?? editing)
+				}
+				onClose={() => setEditorHidden(true)}
+				onSaved={() => {
+					setEditing(undefined);
+					void load();
+				}}
+			/>
+		</div>
+	) : null;
 	if (server.sourcesSupported === false)
 		return (
 			<div className="bots-cpad bots-note">
@@ -90,12 +123,12 @@ export function BotTriggersPanel({
 					</div>
 					<button
 						type="button"
-						className="bots-btn bots-btn--primary"
-						disabled={(triggers?.length ?? 0) >= MAX_TRIGGERS}
+						className="bots-btn bots-btn--primary bots-btn--icon"
+						disabled={full}
 						onClick={() => edit('new')}
 						data-terminay-bot-trigger-new="true"
 					>
-						+ New trigger
+						<Plus size={14} aria-hidden="true" /> New trigger
 					</button>
 				</div>
 				{bot.enabled === false ? (
@@ -141,19 +174,63 @@ export function BotTriggersPanel({
 						</div>
 					</section>
 				) : null}
-				<div
-					className={`bots-source-layout${editing && !editorHidden ? ' bots-source-layout--editing' : ''}`}
-				>
-					<aside className="bots-source-list" aria-label="Trigger list">
-						{triggers === undefined ? (
-							<p className="bots-faint">Loading triggers…</p>
-						) : triggers.length === 0 ? (
-							<div className="bots-emptyc">
-								<b>No triggers yet</b>
-								<span>Choose an outbound source or a time schedule.</span>
-							</div>
-						) : (
-							Object.keys(SOURCE_GROUPS).map((group) => {
+				{triggers === undefined ? (
+					<p className="bots-faint">Loading triggers…</p>
+				) : !hasList ? (
+					<>
+						{showEditor ? null : (
+							<section
+								className="bots-trigempty"
+								aria-label="No triggers yet"
+								data-terminay-bot-trigger-empty="true"
+							>
+								<div className="bots-trigempty__intro">
+									<span className="bots-trigempty__badge" aria-hidden="true">
+										<Zap size={18} />
+									</span>
+									<div>
+										<h3 className="bots-h3">
+											When something changes, ask your bot
+										</h3>
+										<p className="bots-faint">
+											No triggers yet. Pick what to watch and {bot.name} gets a
+											prompt, with the event attached, each time it fires.
+										</p>
+									</div>
+								</div>
+								<div className="bots-trigempty__grid">
+									{Object.values(SOURCE_GROUPS)
+										.flat()
+										.map((kind) => (
+											<button
+												key={kind}
+												type="button"
+												className="bots-trigstart"
+												disabled={full}
+												onClick={() => edit('new', kind)}
+												data-terminay-bot-trigger-start={kind}
+											>
+												<span
+													className="bots-trigstart__icon"
+													aria-hidden="true"
+												>
+													{sourceIcon(kind)}
+												</span>
+												<span className="bots-grow">
+													<b>{TRIGGER_KIND_LABELS[kind]}</b>
+													<span>{SOURCE_DESCRIPTIONS[kind]}</span>
+												</span>
+											</button>
+										))}
+								</div>
+							</section>
+						)}
+						{editor ? <div className="bots-source-solo">{editor}</div> : null}
+					</>
+				) : (
+					<div className="bots-source-layout">
+						<aside className="bots-source-list" aria-label="Trigger list">
+							{Object.keys(SOURCE_GROUPS).map((group) => {
 								const rows = triggers.filter(
 									(t) => sourceGroup(t.condition.kind) === group,
 								);
@@ -318,37 +395,22 @@ export function BotTriggersPanel({
 										</ul>
 									</section>
 								);
-							})
+							})}
+						</aside>
+						{editor}
+						{showEditor ? null : (
+							<div className="bots-source-placeholder">
+								<span className="bots-trigempty__badge" aria-hidden="true">
+									<Zap size={18} />
+								</span>
+								<b>Select a trigger to edit it</b>
+								<span className="bots-faint">
+									Its source, recovery policy and prompt open here.
+								</span>
+							</div>
 						)}
-					</aside>
-					{editing ? (
-						<div className="bots-source-editor-wrap" hidden={editorHidden}>
-							<BotTriggerEditor
-								key={editing === 'new' ? 'new' : editing.id}
-								server={server}
-								bot={bot}
-								trigger={
-									editing === 'new'
-										? undefined
-										: (triggers?.find((t) => t.id === editing.id) ?? editing)
-								}
-								onClose={() => setEditorHidden(true)}
-								onSaved={() => {
-									setEditing(undefined);
-									void load();
-								}}
-							/>
-						</div>
-					) : (
-						<div className="bots-source-placeholder">
-							<h3 className="bots-h3">When something changes, ask your bot.</h3>
-							<p className="bots-faint">
-								Select a trigger to inspect its source, recovery policy and
-								prompt.
-							</p>
-						</div>
-					)}
-				</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);
