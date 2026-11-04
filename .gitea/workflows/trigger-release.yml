@@ -98,10 +98,14 @@ jobs:
         fetch-depth: 0
         fetch-tags: true
     - name: Set up Node.js
+      if: matrix.os != 'macos'
       uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
       with:
         cache: npm
         node-version: 24.15.0
+    - name: Install pinned Node.js in the macOS VM
+      if: matrix.os == 'macos'
+      run: bash scripts/install-macos-node.sh
     - env:
         EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
         TAG: ${{ needs.release.outputs.tag }}

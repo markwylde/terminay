@@ -8,12 +8,16 @@ Applications from both forges continue to use the GitHub update feed.
 ## Runners and credentials
 
 - `macos`: native Apple Silicon macOS runner with Xcode command-line tools,
-  writable Node tool cache for `actions/setup-node`, and a usable signing keychain.
+  `curl`, `shasum`, `tar`, and a usable signing keychain.
   The workflow imports the Developer ID certificate and requires notarization.
 - `ubuntu-latest`: native Linux x64 runner with Docker access for the project's
   glibc-floor image and terminal probes. Container paths and permissions must
   support `scripts/run-in-linux-floor.sh`.
-- Node 24.15.0 is installed by setup-node; npm 12.2.1 is installed under
+- Node 24.15.0 is installed by setup-node on Linux. The macOS VM uses a shell
+  step (`scripts/install-macos-node.sh`) shared with packaged macOS CI to install
+  the checksum-pinned official arm64 archive into `RUNNER_TEMP`,
+  avoiding setup-node, which failed its runner transport in run 23419.
+  npm 12.2.1 is installed under
   `$HOME/.local` so the runner does not require a globally writable npm prefix.
 - Repository secrets: `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD`,
   `APPLE_APP_SPECIFIC_PASSWORD`.
