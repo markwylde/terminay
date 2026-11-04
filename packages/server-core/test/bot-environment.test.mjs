@@ -74,6 +74,14 @@ test('4.3 lazy creation, defaults, bootstrap stdin and config restoration before
 	assert.ok(profile);
 	const policy = JSON.parse(profile.slice('seccomp='.length));
 	assert.equal(policy.defaultAction, 'SCMP_ACT_ERRNO');
+	assert.ok(
+		policy.syscalls.some(
+			(s) =>
+				s.names.includes('pidfd_open') &&
+				s.names.includes('pidfd_send_signal') &&
+				s.action === 'SCMP_ACT_ALLOW',
+		),
+	);
 	assert.deepEqual(policy.syscalls[0].names, ['clone', 'setns', 'unshare']);
 	assert.equal(create.includes('--privileged'), false);
 	assert.equal(create.includes('--cap-add'), false);
