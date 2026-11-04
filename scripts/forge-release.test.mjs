@@ -1,0 +1,235 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { assetNames, ForgeRelease } from './forge-release.mjs';
+
+const commit = 'a'.repeat(40);
+const tag = 'v1.2.3';
+
+function harness() {
+	const state = {
+		tag: null,
+		release: null,
+		assets: [],
+		bytes: new Map(),
+		writes: 0,
+	};
+	const json = (value, status = 200) =>
+		new Response(JSON.stringify(value), { status });
+	const request = async (url, options) => {
+		assert.equal(options.headers.Authorization, 'token secret');
+		const parsed = new URL(url);
+		assert.equal(
+			options.redirect,
+			parsed.pathname.startsWith('/download/') ? 'manual' : 'error',
+		);
+		const path = parsed.pathname.replace('/api/v1/repos/owner/repo', '');
+		const method = options.method ?? 'GET';
+		if (method !== 'GET') state.writes++;
+		if (path === `/tags/${tag}`)
+			return state.tag ? json({ commit: { sha: state.tag } }) : json({}, 404);
+		if (path === '/tags') {
+			state.tag = JSON.parse(options.body).target;
+			return json({});
+		}
+		if (path === `/releases/tags/${tag}`)
+			return state.release ? json(state.release) : json({}, 404);
+		if (path === '/releases') {
+			state.release = { id: 1, ...JSON.parse(options.body) };
+			return json(state.release);
+		}
+		if (path === '/releases/1' && method === 'PATCH') {
+			Object.assign(state.release, JSON.parse(options.body));
+			return json(state.release);
+		}
+		if (path === '/releases/1/assets' && method === 'GET')
+			return json(state.assets);
+		if (path === '/releases/1/assets' && method === 'POST') {
+			const name = parsed.searchParams.get('name');
+			state.bytes.set(
+				name,
+				Buffer.from(await options.body.get('attachment').arrayBuffer()),
+			);
+			state.assets.push({
+				name,
+				browser_download_url: `https://forge.test/download/${name}`,
+			});
+			return json({});
+		}
+		if (path.startsWith('/download/'))
+			return new Response(state.bytes.get(path.slice('/download/'.length)));
+		throw new Error(`Unexpected request: ${method} ${path}`);
+	};
+	const client = new ForgeRelease({
+		server: 'https://forge.test',
+		repository: 'owner/repo',
+		token: 'secret',
+		tag,
+		commit,
+		request,
+	});
+	return { client, state };
+}
+
+async function fixtures(t) {
+	const directory = await mkdtemp(join(tmpdir(), 'forge-release-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	for (const name of assetNames(tag).filter(
+		(name) => !name.endsWith('.sha256'),
+	)) {
+		const bytes = Buffer.from(`payload ${name}`);
+		await writeFile(join(directory, name), bytes);
+		await writeFile(
+			join(directory, `${name}.sha256`),
+			`${createHash('sha256').update(bytes).digest('hex')}  ${name}\n`,
+		);
+	}
+	return directory;
+}
+
+test('independent two-platform release verifies remote bytes and publishes; identical retries do not upload again', async (t) => {
+	const { client, state } = harness();
+	const directory = await fixtures(t);
+	await client.prepare();
+	assert.equal(state.release.draft, true);
+	await client.upload('mac', directory);
+	await assert.rejects(client.publish(), /inventory/);
+	assert.equal(state.release.draft, true);
+	await client.upload('linux', directory);
+	const writes = state.writes;
+	await client.prepare();
+	await client.upload('mac', directory);
+	assert.equal(state.writes, writes);
+	await client.publish();
+	assert.equal(state.release.draft, false);
+	assert.match(state.release.body, /GitHub release feed/);
+	await assert.rejects(client.prepare(), /immutable/);
+	await assert.rejects(client.upload('linux', directory), /immutable/);
+});
+
+test('conflicting source tags and foreign drafts are rejected without writes', async () => {
+	const { client, state } = harness();
+	state.tag = 'b'.repeat(40);
+	await assert.rejects(client.prepare(), /source commit/);
+	assert.equal(state.writes, 0);
+	state.tag = commit;
+	state.release = { id: 1, draft: true, body: 'A different release' };
+	await assert.rejects(client.prepare(), /workflow-owned/);
+	assert.equal(state.writes, 0);
+});
+
+test('corrupted remote bytes and unexpected assets keep release draft', async (t) => {
+	const { client, state } = harness();
+	const directory = await fixtures(t);
+	await client.prepare();
+	await client.upload('mac', directory);
+	await client.upload('linux', directory);
+	const name = assetNames(tag)[0];
+	state.bytes.set(name, Buffer.from('corrupted'));
+	await assert.rejects(client.publish(), /checksum mismatch/);
+	await assert.rejects(client.upload('mac', directory), /different bytes/);
+	assert.equal(state.release.draft, true);
+	state.assets.push({ name: 'unexpected.exe' });
+	await assert.rejects(client.publish(), /inventory/);
+});
+
+test('invalid local checksums and symlinks never upload', async (t) => {
+	const { client, state } = harness();
+	const directory = await fixtures(t);
+	await client.prepare();
+	await writeFile(join(directory, assetNames(tag, 'linux')[1]), 'bad checksum');
+	await assert.rejects(client.upload('linux', directory), /Local checksum/);
+	assert.equal(state.assets.length, 0);
+	const name = assetNames(tag, 'mac')[0];
+	await rm(join(directory, name));
+	await symlink(
+		join(directory, assetNames(tag, 'mac')[2]),
+		join(directory, name),
+	);
+	await assert.rejects(client.upload('mac', directory), /regular file/);
+	assert.equal(state.assets.length, 0);
+});
+
+test('invalid versions, revisions, repositories, platforms and external download origins fail closed', async () => {
+	assert.throws(() => assetNames('main'), /stable/);
+	assert.throws(() => assetNames(tag, 'win'), /platform/);
+	assert.throws(() => new ForgeRelease({ tag, commit: 'main' }), /full source/);
+	const { client } = harness();
+	await assert.rejects(
+		client.download({ browser_download_url: 'https://other.test/file' }),
+		/outside/,
+	);
+});
+
+test('asset redirects stay on the authenticated forge and API errors fail closed', async () => {
+	const { client } = harness();
+	const visited = [];
+	client.request = async (url, options) => {
+		visited.push(String(url));
+		assert.equal(options.headers.Authorization, 'token secret');
+		return visited.length === 1
+			? new Response(null, {
+					status: 302,
+					headers: { location: '/attachment/file' },
+				})
+			: new Response('payload');
+	};
+	assert.equal(
+		await (
+			await client.download({
+				browser_download_url: 'https://forge.test/download/file',
+			})
+		).text(),
+		'payload',
+	);
+	assert.deepEqual(visited, [
+		'https://forge.test/download/file',
+		'https://forge.test/attachment/file',
+	]);
+	client.request = async () =>
+		new Response(null, {
+			status: 302,
+			headers: { location: 'https://other.test/file' },
+		});
+	await assert.rejects(
+		client.download({ browser_download_url: 'https://forge.test/file' }),
+		/outside/,
+	);
+	client.request = async () => new Response('failure', { status: 403 });
+	await assert.rejects(client.prepare(), /403/);
+});
+
+test('forge workflow retains platform verification and no Windows build or GitHub release transport', async () => {
+	const forge = await readFile(
+		new URL('../.gitea/workflows/trigger-release.yml', import.meta.url),
+		'utf8',
+	);
+	const github = await readFile(
+		new URL('../.github/workflows/trigger-release.yml', import.meta.url),
+		'utf8',
+	);
+	for (const name of [
+		'Verify immutable release tag source',
+		'Check macOS signing secrets',
+		'Verify macOS microphone entitlement',
+		'Verify macOS signed and notarized release DMG',
+		'Verify macOS signed and notarized update zip',
+		'Check the Linux AppImage against the glibc floor and run terminals from it there',
+		'Verify release asset checksums before upload',
+	]) {
+		assert.ok(forge.includes(name), name);
+		assert.ok(github.includes(name), name);
+	}
+	assert.match(forge, /darwin:arm64/);
+	assert.match(forge, /linux:x64/);
+	assert.match(forge, /needs:\n\s+- release\n\s+- build-binaries/);
+	assert.doesNotMatch(
+		forge,
+		/windows-latest|npm run build:win|gh release|actions\/(?:upload|download)-artifact/,
+	);
+	assert.match(github, /windows-latest/);
+	assert.match(github, /npm run build:win/);
+});
