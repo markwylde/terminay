@@ -40,8 +40,15 @@ export async function fakeModel({ listen = true } = {}) {
 		}
 		// Side requests (titles, prompt suggestions) must not use up the one tool
 		// turn: only answer the conformance prompt itself with a tool call.
-		const offersShell = (data.tools ?? []).some((t) =>
-			['Bash', 'exec_command', 'shell', 'shell_command'].includes(t.name),
+		const availableTools = (data.tools ?? []).flatMap((t) =>
+			t.type === 'namespace'
+				? (t.tools ?? []).map((tool) => ({ ...tool, namespace: t.name }))
+				: [t],
+		);
+		const offersShell = availableTools.some((t) =>
+			state.action === 'mcp'
+				? t.name?.includes('chat_post')
+				: ['Bash', 'exec_command', 'shell', 'shell_command'].includes(t.name),
 		);
 		const lastUser = [...(data.messages ?? data.input ?? [])]
 			.reverse()
@@ -85,7 +92,11 @@ export async function fakeModel({ listen = true } = {}) {
 					usage: { input_tokens: 1, output_tokens: 0 },
 				},
 			});
-			const selected = (data.tools ?? []).find((t) => t.name === 'Bash');
+			const selected = availableTools.find((t) =>
+				state.action === 'mcp'
+					? t.name?.includes('chat_post')
+					: t.name === 'Bash',
+			);
 			if (tool && !selected) {
 				response.destroy(new Error('missing Bash tool'));
 				return;
@@ -104,10 +115,14 @@ export async function fakeModel({ listen = true } = {}) {
 				delta: tool
 					? {
 							type: 'input_json_delta',
-							partial_json: JSON.stringify({
-								command,
-								description: 'Conformance shell check',
-							}),
+							partial_json: JSON.stringify(
+								state.action === 'mcp'
+									? { text: 'native-mcp-proof', key: 'gate' }
+									: {
+											command,
+											description: 'Conformance shell check',
+										},
+							),
 						}
 					: { type: 'text_delta', text: 'offline-pong' },
 			});
@@ -135,25 +150,30 @@ export async function fakeModel({ listen = true } = {}) {
 				output: [],
 			};
 			emit('response.created', { response: base });
-			const selected = (data.tools ?? []).find((t) =>
-				['exec_command', 'shell', 'shell_command'].includes(t.name),
+			const selected = availableTools.find((t) =>
+				state.action === 'mcp'
+					? t.name?.includes('chat_post')
+					: ['exec_command', 'shell', 'shell_command'].includes(t.name),
 			);
 			if (tool && !selected) {
 				response.destroy(new Error('missing shell tool'));
 				return;
 			}
 			const args =
-				selected?.name === 'shell'
-					? { command: ['bash', '-lc', command] }
-					: selected?.name === 'shell_command'
-						? { command }
-						: { cmd: command, yield_time_ms: 1000 };
+				state.action === 'mcp'
+					? { text: 'native-mcp-proof', key: 'gate' }
+					: selected?.name === 'shell'
+						? { command: ['bash', '-lc', command] }
+						: selected?.name === 'shell_command'
+							? { command }
+							: { cmd: command, yield_time_ms: 1000 };
 			const item = tool
 				? {
 						type: 'function_call',
 						id: `fc_${id}`,
 						call_id: `call_${id}`,
 						name: selected.name,
+						...(selected.namespace ? { namespace: selected.namespace } : {}),
 						arguments: '',
 						status: 'in_progress',
 					}

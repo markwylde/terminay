@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory() as d:
     class Proxy:
         pid=777
         def poll(self): return None
-    m.spawn=lambda args: (order.append('proxy') or Proxy())
+    m.spawn=lambda args: (order.append('proxy') or m.children.append(Proxy()) or m.children[-1])
     m.wait_path=lambda *args: order.append('proxy-ready')
     m.start_desktop=lambda *args: order.append('desktop')
     m.os.waitpid=lambda *args: (777,0)
@@ -271,7 +271,7 @@ test('4.4 shipped init has no polling sleeps or published desktop port', async (
 });
 
 test('browser opens once, remains closed, and launches only on validated URL requests', () => {
- python(`
+	python(`
 import pathlib, subprocess, select, signal, socket
 with tempfile.TemporaryDirectory() as d:
     control=socket.socket(socket.AF_UNIX)

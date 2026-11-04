@@ -1,29 +1,31 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import test from 'node:test';
+import agentsPackage from '../../../extensions/builtin-agents/package.json' with {
+	type: 'json',
+};
+import { BotAgentProcess } from '../dist/botService/agentProcess.js';
+import { BotEngine } from '../dist/botService/engine.js';
 import {
-	BotService,
-	BotStore,
-	BotSessionStore,
 	BotMemories,
+	BotService,
+	BotSessionStore,
+	BotStore,
 } from '../dist/botService/index.js';
 import {
 	modelServer,
 	preFixToolShell,
 } from './fixtures/bot-anthropic-model.mjs';
-import { randomBytes } from 'node:crypto';
-import test from 'node:test';
-import { BotEngine } from '../dist/botService/engine.js';
-import { BotAgentProcess } from '../dist/botService/agentProcess.js';
-import agentsPackage from '../../../extensions/builtin-agents/package.json' with {
-	type: 'json',
-};
+
 const claude = agentsPackage.terminay.contributes.botAgents.find(
-	(agent) => agent.acpCommand.executable === 'claude-agent-acp',
+	(agent) => agent.nativeDriver === 'claude-code-cli',
 );
+
 import { openBotRuntimeBridge } from '../dist/botService/runtimeBridge.js';
 
 const image = process.env.TERMINAY_BOT_MCP_SMOKE_IMAGE;

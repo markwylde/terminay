@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BotEngineClient, BotsClient } from '../dist/index.js';
+
 const status = {
 	engine: null,
 	available: false,
@@ -134,4 +135,18 @@ test('agent and queue facades reject invalid server responses before exposing th
 		).queue(queue.botId),
 		/invalid bot queue/,
 	);
+});
+
+test('build detail query is validated and independent of the compact status projection', async () => {
+	const wire = transport(null);
+	let operation;
+	wire.query = async (op) => {
+		operation = op;
+		return null;
+	};
+	const client = new BotEngineClient(wire);
+	assert.equal(await client.progress(), null);
+	assert.equal(operation, 'bots.image.progress');
+	wire.query = async () => ({ id: 'invalid' });
+	await assert.rejects(client.progress(), /build progress/);
 });

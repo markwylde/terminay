@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# XFCE configuration adapted from the source recorded in PORTING.md.
+# VNC/bootstrap/browser ownership stays with terminay-init.
+set -euo pipefail
+TERMINAY_DESKTOP_SCRIPT=/usr/local/bin/terminay-desktop-session
+TERMINAY_DESKTOP_STATE_DIR=/tmp/terminay-desktop
+export DISPLAY=:1 XDG_CURRENT_DESKTOP=XFCE
+case "${1:-run}" in
+ browser) exec terminay-browser open "${2:-about:blank}" ;;
+ terminal) cd /home/bot; exec xfce4-terminal --disable-server --working-directory /home/bot -x bash -l ;;
+ run) ;;
+ *) exit 2 ;;
+esac
+write_xfce_config() {
+  local config_dir="$1" data_dir="$2"
+  local xfconf="$config_dir/xfce4/xfconf/xfce-perchannel-xml"
+  mkdir -p "$xfconf" "$data_dir/applications"
+  cat > "$xfconf/xfce4-panel.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="configver" type="int" value="2"/>
+  <property name="panels" type="array">
+    <value type="int" value="1"/>
+    <property name="dark-mode" type="bool" value="true"/>
+    <property name="panel-1" type="empty">
+      <property name="position" type="string" value="p=10;x=0;y=0"/>
+      <property name="length" type="uint" value="100"/>
+      <property name="position-locked" type="bool" value="true"/>
+      <property name="size" type="uint" value="32"/>
+      <property name="icon-size" type="uint" value="20"/>
+      <property name="plugin-ids" type="array">
+        <value type="int" value="1"/>
+        <value type="int" value="2"/>
+        <value type="int" value="3"/>
+        <value type="int" value="4"/>
+      </property>
+    </property>
+  </property>
+  <property name="plugins" type="empty">
+    <property name="plugin-1" type="string" value="applicationsmenu">
+      <property name="button-title" type="string" value="Applications"/>
+    </property>
+    <property name="plugin-2" type="string" value="tasklist">
+      <property name="grouping" type="uint" value="0"/>
+    </property>
+    <property name="plugin-3" type="string" value="separator">
+      <property name="expand" type="bool" value="true"/>
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-4" type="string" value="clock">
+      <property name="digital-format" type="string" value="%H:%M"/>
+    </property>
+  </property>
+</channel>
+EOF
+  # Compositing is pure overhead over VNC.
+  cat > "$xfconf/xfwm4.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+    <property name="workspace_count" type="int" value="1"/>
+    <property name="click_to_focus" type="bool" value="true"/>
+  </property>
+</channel>
+EOF
+  cat > "$xfconf/xfce4-desktop.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="desktop-icons" type="empty">
+    <property name="style" type="int" value="0"/>
+  </property>
+</channel>
+EOF
+  cat > "$xfconf/xsettings.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="IconThemeName" type="string" value="Adwaita"/>
+  </property>
+</channel>
+EOF
+
+  # Menu entries for the Terminay browser (persistent profile + CDP) and terminal. They
+  # take the file names of the menu's top-level preferred-application entries, and
+  # the stock Chromium and terminal entries are hidden, so the menu never opens a
+  # second browser profile the agent cannot see.
+  cat > "$data_dir/applications/xfce4-web-browser.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Web Browser
+Exec=$TERMINAY_DESKTOP_SCRIPT browser %U
+Icon=chromium
+Categories=Network;WebBrowser;X-XFCE;X-Xfce-Toplevel;
+EOF
+  cat > "$data_dir/applications/xfce4-terminal-emulator.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Exec=$TERMINAY_DESKTOP_SCRIPT terminal
+Icon=utilities-terminal
+Categories=System;TerminalEmulator;X-XFCE;X-Xfce-Toplevel;
+EOF
+  local hidden
+  for hidden in chromium.desktop xfce4-terminal.desktop xfce4-terminal-settings.desktop xfce4-file-manager.desktop \
+    xfce4-mail-reader.desktop debian-xterm.desktop debian-uxterm.desktop; do
+    printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n' "$hidden" > "$data_dir/applications/$hidden"
+  done
+}
+
+mkdir -p "$TERMINAY_DESKTOP_STATE_DIR"
+write_xfce_config "$TERMINAY_DESKTOP_STATE_DIR/config" "$TERMINAY_DESKTOP_STATE_DIR/data"
+export XDG_CONFIG_DIRS="$TERMINAY_DESKTOP_STATE_DIR/config:/etc/xdg"
+export XDG_DATA_DIRS="$TERMINAY_DESKTOP_STATE_DIR/data:/usr/local/share:/usr/share"
+xset s off -dpms || true
+# Re-exec under a private D-Bus session, preserving the generated defaults.
+if [ "${TERMINAY_DESKTOP_BUS:-}" != 1 ]; then
+ export TERMINAY_DESKTOP_BUS=1
+ exec dbus-run-session -- "$0" run
+fi
+pids=()
+cleanup() { for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; }
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+for component in xfsettingsd xfwm4 xfce4-panel xfdesktop; do
+ if [ "$component" = xfsettingsd ]; then "$component" --no-daemon & else "$component" & fi
+ pids+=("$!")
+done
+python3 /usr/local/bin/terminay-desktop-control.py --listen-port 9223 --host 127.0.0.1 --cdp-port 9222 --display :1 --launcher "$0" &
+pids+=("$!")
+# Event-driven lifecycle: loss of a required component fails the environment.
+wait -n
+exit 78

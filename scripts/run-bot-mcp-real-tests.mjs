@@ -24,9 +24,8 @@ try {
 			'utf8',
 		),
 	);
-	const agent = pkg.terminay.contributes.botAgents.find(
-		(agent) => agent.acpCommand.executable === 'claude-agent-acp',
-	);
+	const agents = pkg.terminay.contributes.botAgents;
+	const agent = agents.find((a) => a.nativeDriver === 'claude-code-cli');
 	if (!agent) throw new Error('pinned Claude bot contribution is required');
 	const source = path.join(
 		root,
@@ -34,29 +33,19 @@ try {
 	);
 	const plan = await planBotImage(
 		source,
-		[
-			{
-				id: agent.id,
-				install: {
-					npm: agent.imageInstall.npm,
-					apt: agent.imageInstall.debian ?? [],
-				},
-			},
-		],
+		agents.map((a) => ({
+			id: a.id,
+			install: { npm: a.imageInstall.npm, apt: a.imageInstall.debian ?? [] },
+		})),
 		1000,
 		1000,
 	);
 	const sourcePlan = await planBotImage(
 		path.join(root, 'docker/terminay-bot'),
-		[
-			{
-				id: agent.id,
-				install: {
-					npm: agent.imageInstall.npm,
-					apt: agent.imageInstall.debian ?? [],
-				},
-			},
-		],
+		agents.map((a) => ({
+			id: a.id,
+			install: { npm: a.imageInstall.npm, apt: a.imageInstall.debian ?? [] },
+		})),
 		1000,
 		1000,
 	);
@@ -85,11 +74,50 @@ try {
 		format: 'esm',
 		outfile: path.join(runnerContext, 'test.mjs'),
 	});
+	await cp(
+		path.join(root, 'extensions/builtin-agents/test/bots'),
+		path.join(runnerContext, 'bots'),
+		{ recursive: true },
+	);
+	await cp(
+		path.join(root, 'extensions/builtin-agents/package.json'),
+		path.join(runnerContext, 'bots/package.json'),
+	);
 	await writeFile(
 		path.join(runnerContext, 'Dockerfile'),
-		`FROM ${image}\nCOPY test.mjs /test.mjs\nENTRYPOINT ["node", "--test", "/test.mjs"]\n`,
+		`FROM ${image}\nCOPY test.mjs /test.mjs\nCOPY bots /tmp/bots\nENTRYPOINT ["node", "--test", "/test.mjs"]\n`,
 	);
 	docker('build', '-t', harness, runnerContext);
+	for (const agent of ['codex', 'claude-code'])
+		docker(
+			'run',
+			'--rm',
+			'--network',
+			'none',
+			'--user',
+			'bot',
+			'--env',
+			'HOME=/home/bot',
+			'--entrypoint',
+			'node',
+			harness,
+			'/tmp/bots/run.mjs',
+			agent,
+		);
+	docker(
+		'run',
+		'--rm',
+		'--network',
+		'none',
+		'--user',
+		'bot',
+		'--env',
+		'HOME=/home/bot',
+		'--entrypoint',
+		'bash',
+		harness,
+		'/tmp/bots/desktop-gate.sh',
+	);
 	// The source is daemon-side, which also works when the CI job reaches its
 	// Docker daemon over TCP. The code under test only receives a local socket.
 	const socket =

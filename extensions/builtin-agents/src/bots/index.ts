@@ -5,8 +5,8 @@ export const BOT_AGENT_IDS = {
 	codex: 'com.terminay.builtin-agents/codex',
 } as const;
 
-// Model ids observed in the pinned adapters at gate 0.6. The host adds Default
-// and selects through the ACP model config option, never through CLI flags.
+// Models exposed by the native bot runtimes. The host adds Default and assembles
+// model flags; extensions never control the native execution protocol.
 const models = {
 	claude: ['default', 'opus', 'fable', 'sonnet', 'haiku'],
 	codex: [
@@ -22,7 +22,7 @@ const models = {
 	],
 } as const;
 
-/** Describes an adapter only. Credentials injected into a bot belong to the
+/** Describes a native runtime only. Credentials injected into a bot belong to the
  * server; availability here never inspects the server account’s credentials. */
 export function createBotAgent(
 	agent: keyof typeof BOT_AGENT_IDS,

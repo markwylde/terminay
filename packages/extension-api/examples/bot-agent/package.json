@@ -13,7 +13,7 @@
 		"manifestVersion": 1,
 		"id": "com.example.bot",
 		"displayName": "Example bot agent",
-		"api": "^3.5.0",
+		"api": "^3.6.0",
 		"engines": {
 			"terminay": ">=1.0.0",
 			"node": ">=24"
@@ -29,55 +29,53 @@
 					"displayName": "Example ACP agent",
 					"imageInstall": {
 						"npm": [
-							"@example/agent-acp@1.2.3"
+							"@openai/codex@0.165.0"
 						]
-					},
-					"acpCommand": {
-						"executable": "example-agent-acp",
-						"args": []
 					},
 					"deviceSignIn": {
 						"command": {
-							"executable": "example-agent",
+							"executable": "codex",
 							"args": [
 								"login",
-								"--device"
+								"--device-auth"
 							]
 						},
-						"label": "Sign in with Example",
-						"help": "Example shows a link and a code to approve in your browser.",
 						"signOutCommand": {
-							"executable": "example-agent",
+							"executable": "codex",
 							"args": [
 								"logout"
 							]
 						},
+						"label": "Sign in with ChatGPT",
+						"help": "Approve the code in your browser.",
 						"configFiles": [
 							{
-								"path": ".example/config.json",
-								"contents": "{\"credentialStore\":\"file\"}\n"
+								"path": ".codex/config.toml",
+								"contents": "cli_auth_credentials_store = \"file\"\n"
 							}
 						]
 					},
 					"credentialSecrets": [
 						{
-							"environmentVariable": "EXAMPLE_API_KEY",
+							"environmentVariable": "CODEX_API_KEY",
 							"kind": "api-key",
-							"authenticateMethodId": "api-key",
 							"label": "Example API key",
 							"help": "Create an API key in your Example account."
 						}
 					],
-					"autonomousOnly": false,
+					"autonomousOnly": true,
 					"botConfigFiles": [
 						{
-							"path": ".example/config.json",
-							"contents": "{\"credentialStore\":\"ephemeral\"}\n"
+							"path": ".codex/config.toml",
+							"contents": "cli_auth_credentials_store = \"ephemeral\"\n[shell_environment_policy]\nexclude = [\"CODEX_API_KEY\", \"OPENAI_API_KEY\"]\n"
 						}
 					],
 					"launchEnvironment": {
 						"EXAMPLE_MAX_RETRIES": "0"
-					}
+					},
+					"runtimeProtocol": "native-cli-v1",
+					"nativeDriver": "codex-cli",
+					"runtimeVersion": "0.165.0"
 				}
 			]
 		}
