@@ -41,7 +41,7 @@ def prepare_dirs():
     for d in (VNC_DIR, SESSIONS):
         os.makedirs(d, mode=0o700, exist_ok=True)
         os.chmod(d, 0o700)
-    for stale in (FIFO, READY):
+    for stale in (FIFO, READY, "/tmp/terminay-app.sock"):
         try:
             os.unlink(stale)
         except FileNotFoundError:
@@ -135,6 +135,8 @@ def start_desktop(passwd_path, uid, gid, bot_id):
     # Keep Chromium's sandbox enabled; it runs as the unprivileged bot user.
     spawn(["terminay-browser"], uid=uid, gid=gid, env=env)
     wait_path("/tmp/terminay-browser.sock", time.monotonic() + 10)
+    spawn(["terminay-app"], uid=uid, gid=gid, env=env)
+    wait_path("/tmp/terminay-app.sock", time.monotonic() + 10)
 
 
 def main_tunnel(port):
