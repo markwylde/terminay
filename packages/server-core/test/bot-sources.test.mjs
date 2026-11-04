@@ -1,22 +1,29 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import {
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
+import { containerSourceRunner } from '../dist/botService/sourceRunner.js';
 import {
 	BotSourceStore,
 	evaluateObservation,
 	initialCheckpoint,
-	selectPointer,
 	parseObservation,
+	selectPointer,
 } from '../dist/botService/sourceState.js';
 import {
-	triggerCondition,
 	storedTrigger,
+	triggerCondition,
 } from '../dist/botService/triggerState.js';
-import { containerSourceRunner } from '../dist/botService/sourceRunner.js';
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
+
 const id = 'a'.repeat(24),
 	botId = 'b'.repeat(12);
 const trigger = {
@@ -363,4 +370,32 @@ test('worker frames reject malformed fields before observation progress', () => 
 		stdout: 'ok',
 		exitCode: 0,
 	});
+});
+
+test('source canonical corruption restores the last complete batch and preserves bad files; future versions never roll back', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bot-source-corrupt-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const store = new BotSourceStore(root);
+	const first = evaluateObservation(
+		trigger.condition,
+		store.checkpoint(trigger),
+		observation([{ id: 1 }]),
+	);
+	store.commit(trigger, first.checkpoint, first.events, 100, 100);
+	const second = evaluateObservation(
+		trigger.condition,
+		store.checkpoint(trigger),
+		observation([{ id: 1 }, { id: 2 }]),
+	);
+	store.commit(trigger, second.checkpoint, second.events, 200, 200);
+	const path = join(root, `${botId}.json`);
+	writeFileSync(path, 'broken');
+	const recovered = new BotSourceStore(root);
+	assert.equal(recovered.pending(botId).length, 1);
+	assert.equal(recovered.checkpoint(trigger).ids.length, 1);
+	assert.ok(readdirSync(root).some((name) => name.includes('.corrupt-')));
+	const future = JSON.stringify({ version: 999 });
+	writeFileSync(path, future);
+	assert.throws(() => new BotSourceStore(root).pending(botId), /version/);
+	assert.equal(readFileSync(path, 'utf8'), future);
 });

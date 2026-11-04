@@ -42,7 +42,12 @@ export class BotTriggers {
 	private detach: (() => void)[] = [];
 	private workers = new Map<
 		string,
-		{ controller: AbortController; generation: string; task: Promise<void> }
+		{
+			controller: AbortController;
+			generation: string;
+			task: Promise<void>;
+			manual: boolean;
+		}
 	>();
 	private tests = new Map<string, AbortController>();
 	private retries = new Map<string, ReturnType<typeof setTimeout>>();
@@ -241,7 +246,12 @@ export class BotTriggers {
 		if (!this.started || this.stopped) return;
 		for (const [id, w] of this.workers) {
 			const t = this.find(id);
-			if (!t || !this.active(t) || t.generation !== w.generation)
+			if (
+				!t ||
+				this.store.get(t.botId).enabled === false ||
+				(!w.manual && !t.enabled) ||
+				t.generation !== w.generation
+			)
 				w.controller.abort();
 		}
 		for (const t of this.store.triggers())
@@ -363,6 +373,7 @@ export class BotTriggers {
 		this.workers.set(t.id, {
 			controller,
 			generation: t.generation ?? t.id,
+			manual: test,
 			task,
 		});
 		return task;
@@ -375,11 +386,14 @@ export class BotTriggers {
 		recovery?: { after: number; through: number },
 	): Promise<PendingSourceEvent[]> {
 		if (!isObservation(t.condition)) return [];
+		const worker = this.workers.get(t.id);
 		// Redact bot credentials before durable diagnostics or selected payloads.
 		const safe = JSON.parse(
 			await this.service.redactMessage(t.botId, JSON.stringify(value)),
 		) as Observation;
 		if (
+			worker?.controller.signal.aborted ||
+			(origin === 'trigger' && !this.current(t)) ||
 			this.find(t.id)?.generation !== t.generation ||
 			this.store.get(t.botId).enabled === false
 		)
