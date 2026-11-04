@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -10,6 +10,7 @@ import agentsPackage from '../../../extensions/builtin-agents/package.json' with
 	type: 'json',
 };
 import { BotAgentProcess } from '../dist/botService/agentProcess.js';
+import { BOT_BROWSER_SECCOMP } from '../dist/botService/browserSandbox.js';
 import { BotEngine } from '../dist/botService/engine.js';
 import {
 	BotMemories,
@@ -56,6 +57,9 @@ async function container(work) {
 	const botId = randomBytes(6).toString('hex'),
 		sessionId = randomBytes(12).toString('hex');
 	const name = `terminay-bot-${botId}`;
+	const profileRoot = await mkdtemp(join(tmpdir(), 'bot-sandbox-'));
+	const profilePath = join(profileRoot, 'seccomp.json');
+	await writeFile(profilePath, JSON.stringify(BOT_BROWSER_SECCOMP));
 	let pin;
 	const engine = new BotEngine({
 		load: async () => pin,
@@ -79,6 +83,9 @@ async function container(work) {
 				'-d',
 				'--network',
 				'none',
+				...(selected.details.pin.kind === 'docker'
+					? ['--security-opt', `seccomp=${profilePath}`]
+					: []),
 				'--cpus',
 				'2',
 				'--memory',
@@ -111,6 +118,7 @@ async function container(work) {
 		await work({ driver, botId, sessionId, name, botUid });
 	} finally {
 		engine.close();
+		await rm(profileRoot, { recursive: true, force: true });
 		try {
 			execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' });
 		} catch {
