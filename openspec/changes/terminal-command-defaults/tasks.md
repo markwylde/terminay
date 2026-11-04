@@ -43,4 +43,8 @@
 - [x] 8.2 Extend `e2e/agent-status-sidebar.spec.ts` with a detached fake server spawned from a terminal: its session shows as external and the terminal tab shows no dot. Verified by `npm run test:e2e -- e2e/agent-status-sidebar.spec.ts`.
 - [ ] 8.3 Manually verify with a real Codex (`-m gpt-6-luna`) in two Terminay terminals that each tab shows its own dot. Verified by observation recorded in the PR.
 - [x] 8.4 Run `npm run lint`, `npm run test:built-in-extensions`, and `npm run typecheck` and `npm test` in `packages/server-core` and `packages/extension-api`. Verified by clean output.
-- [ ] 8.5 Run `openspec validate --all` and, at archive time, check the `extension-platform` `Contribution arrays` and `Bounded API scope` text against the unarchived `folders-pane-strip-and-agent-launchers` and `add-agent-chat-and-pixel` changes so the full list survives. Verified by validate passing and a diff review.
+- [x] 8.5 Run `openspec validate --all` and, at archive time, check the `extension-platform` `Contribution arrays` and `Bounded API scope` text against the unarchived `folders-pane-strip-and-agent-launchers` and `add-agent-chat-and-pixel` changes so the full list survives. Verified by validate passing and a diff review.
+
+### Reconciled verification — 2026-11-04
+
+Canonical extension-platform includes all eight contribution arrays and preserves chat, launchers and bot agents alongside terminalCommandDefaults. Active spec validation passes after the audit. The separate real-Codex two-terminal observation remains unchecked.

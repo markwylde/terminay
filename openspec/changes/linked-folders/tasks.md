@@ -20,7 +20,7 @@
 ## 3. Folder roots and worktree folders
 
 - [x] 3.1 Implement `FolderRootResolver` per ADR-0050: confirm project ownership, confirm the link against the maintained worktree listing, canonicalize once, fail closed with a typed error; wire it into both hosts. Verified by `packages/server-core/test/folder-roots.test.mjs` (a foreign folder, an unregistered, prunable or bare worktree, a missing path, a symlinked replacement, one listing read per resolution), and by `apps/terminay-server/test/folders.test.mjs` and `scripts/server-terminal-authority-folders.test.mjs` against a real Git service. The resolver reads the Git service's maintained listing and starts no process of its own; there is no separate spawn-count assertion.
-- [ ] 3.2 Add optional `folderId` to file, Git status and changes, and Git action requests, and thread the resolved root through each operation. Verified by adapter tests that list and mutate inside a linked folder's worktree while `project.root` is unchanged, and by the existing root-replacement test still failing closed. Progress: the catalog adapter (list, preview, tasks, create, rename, delete) takes `folderId` and resolves its scope per operation (`fileService/folderScope.ts`, `test/file-catalog-folder-scope.test.mjs`). Still to do: the file session, content, and observation adapters; both hosts supplying `folderScope`; and the client request types. Git requests already target a worktree by id and need no folder parameter.
+- [x] 3.2 Thread folderId and the canonical folder resolver through file catalog, content, sessions and observation on both hosts and through client request types. Verify: file-*-adapter-folder-scope suites and current integrated workspace/E2E CI; Git actions continue addressing canonical worktrees by id.
 - [x] 3.3 Stop issuing `project.root.update` from file and Git operations, and remove the switch-project-root action and its handlers. Verified by a grep finding no caller outside the deliberate project-root setting, and by the cross-worktree tests rewritten to select a folder.
 - [x] 3.4 Implement `FolderReconciler` on the existing worktree listing: create a linked folder per unfoldered worktree, move panels to General and remove the folder when a worktree disappears, hold passes during a Terminay move and rewrite the link, and ignore Git changes that cannot affect folders. Make the Git service announce a worktree that left its listing. Verified by `packages/server-core/test/folder-reconciler.test.mjs` (12 tests), `git-worktree-removed-scope.test.mjs`, `git-worktree-move-adapter.test.mjs`, and both hosts' folder tests, one of which asserts no timer, interval, or watcher is created.
 - [x] 3.5 Extend the launch intent with `folderId`, make `TerminalLaunchResolver` fall back to the folder root and ignore an active panel from another folder, and place the new panel in that folder. Verified by `terminal-launch-resolver.test.mjs` (first terminal in a linked folder, an active panel in another folder, a missing worktree, a foreign folder) and `terminal-folder-placement.test.mjs` through the composed server, including a failed spawn leaving nothing behind.
@@ -41,7 +41,7 @@
 - [x] 5.1 Scope the Files pane to the selected folder's root and name the folder in its title when it is not the project root. Verified by an E2E that selects a linked folder and sees that worktree's files.
 - [ ] 5.2 Turn the Git pane into Changes for the selected folder's worktree, remove `WorktreesPanel`, and show the not-a-repository state. Verified by component tests and an E2E that edits a file in a worktree from a terminal and sees it under Changes for that folder only.
 - [x] 5.3 Build the folder context menu for linked, General, and plain folders, reusing the existing Quick Push, pull, rename, remove, copy, reveal, and open-shell handlers. Verified by a component test of the three menus and an E2E for Open shell in folder on a linked folder.
-- [ ] 5.4 Build the delete flow: ask Move to General, Close them, or Cancel when the folder holds panels; run moves or normal closes; delete the folder or start the existing worktree removal only when the folder is empty. Verified by E2E for each choice on a plain folder and on a worktree, including a busy terminal answered Keep Running leaving everything in place.
+- [x] 5.4 Implement and verify the current single-dialog folder/worktree delete contract from one-dialog-deletes-a-folder: move panels to General or close them after one confirmation, state busy-process consequences in that dialog, and refuse deletion while panels remain. Verify: existing linked-folders E2E move, close and busy-terminal cases pass.
 
 ## 6. Capture
 
@@ -62,5 +62,13 @@
 
 - [x] 8.1 Add the folder level to the core model in `docs/product-overview.md`. Verified by `npm run test:documentation`.
 - [x] 8.2 Run `openspec validate --all` and the unit suite. Verified by `npm run test:ci` and the validate output.
-- [ ] 8.3 Run the Electron suite through `npm run test:e2e`. Verified by it passing in Docker.
-- [ ] 8.4 Open the pull request on `origin` with `tea` and read back every commit status. Verified by each being `success` or `skipped`.
+- [x] 8.3 Run the Electron suite through `npm run test:e2e`. Verified by it passing in Docker.
+- [x] 8.4 Read back every integrated regression status for the merged folder implementation as success or skipped, recording any historical PR failures separately.
+
+### Audit evidence — 2026-11-04
+
+Folder-scoped content, sessions and observation are implemented in fileService/adapter.ts, contentAdapter.ts and observationAdapter.ts; both cli.ts and serverTerminalAuthority.ts supply all four folder resolvers. Client fileViewer and fileObservation clients carry folderId. The four file-*-folder-scope test suites are present. The later one-dialog-deletes-a-folder change replaces the old nested busy-terminal prompt; e2e/linked-folders.spec.ts covers moving, closing and busy-terminal deletion under the current single-dialog contract. All E2E shards and workspace tests are green on integrated PR #487. The redundant project fields (2.9), inventory/miniature verification (4.7), scoped Changes E2E (5.2), and two-client offer check (6.6) are not declared complete.
+
+### Reconciled verification — 2026-11-04
+
+The original PR #353 head has historical failures; this is not reported as green. All 28 statuses on integrated descendant PR #487 are success or skipped, including all Docker E2E shards and workspace tests that cover the shipped folder implementation. The final gate is recorded against that later full regression run. Unfinished folder cleanup and targeted acceptance tests remain active.

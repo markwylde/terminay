@@ -223,6 +223,8 @@ The recorded diagnostic history SHALL distinguish agent observation outcomes for
 
 The normal diagnostic level SHALL record the embedded Local server's session-holder lifecycle so that terminals ending without the user asking can be traced to the holder event that ended them. The history SHALL distinguish: a holder found at server start-up and attached, with whether it was started by the same build, whether it is drain-only, and how many live and ended sessions it holds; a holder record removed because its process was gone; a holder that could not be spoken to and was signalled to end; a live holder that would not accept this server and was left running, with the reason it gave; a holder launched, with how long the launch took; a holder launch that failed, with the reported error; a holder marked drain-only, with the cause; the unattached limit sent to holders; the server's connection to a holder closing, with whether this server closed it, whether the holder announced it was closing, and how many live sessions that holder held; and a holder closing.
 
+A holder that exits before it is ready SHALL report the reason it could not start to the server that launched it, and the launch-failed record SHALL carry that reason together with the holder's exit status. When the reason is that the terminal native module could not be loaded, it SHALL be the operating system's loader error for the module file that is present, not only the name of the last location searched.
+
 A holder-closing record SHALL carry the reason the holder gave — that it held no live session, that its unattached limit expired, that the server ended every session, that it received a termination signal (with the signal's name), that no server attached after it started, or that it failed with an uncaught error (with the reported error) — together with the number of sessions live when it closed, whether a server was attached, the unattached limit in force, and the time since a server last attached and last detached. A holder that closes while holding live sessions for any reason other than the server ending every session SHALL be recorded at warning severity, as SHALL a connection to a holder that closes without this server closing it.
 
 #### Scenario: A server starts with a holder from an earlier launch
@@ -257,6 +259,11 @@ A holder-closing record SHALL carry the reason the holder gave — that it held 
 
 - **WHEN** the history is read after terminals ended without the user closing them
 - **THEN** it distinguishes a holder whose limit expired, a holder that was signalled, a holder that failed, a holder the server ended deliberately, and sessions that ended on their own while their holder kept running
+
+#### Scenario: The terminal native module cannot be loaded
+
+- **WHEN** a launched holder exits before it is ready because its `pty.node` requires a glibc version the host does not have
+- **THEN** a warning launch-failed record carries the holder's exit status and the loader's error naming the missing version
 
 ### Requirement: A holder close with no server attached is recorded by the next server
 

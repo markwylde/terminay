@@ -2,13 +2,14 @@
 
 ## Purpose
 
-Terminay provides a local Model Context Protocol server that lets agent processes launched inside a Terminay terminal inspect and control terminal tabs in their own project and manage the server's automations, within the user's MCP permission policy, without learning about or controlling other projects, servers, workspace views, or clients.
+
+Terminay provides a local Model Context Protocol server for terminal agents and server-owned agent chats. Project callers act only within their project; workspace callers can inspect and manage the owning server’s projects, workspace windows and permitted app settings. Every operation is constrained by the caller’s canonical capability and the user’s MCP permission policy, and grants no authority on another server.
 
 ## Requirements
 
 ### Requirement: Project-scoped MCP terminal control
 
-Terminay SHALL provide a local Model Context Protocol server for Claude Code, Codex, Cursor CLI, Gemini CLI, Grok, and OpenCode processes running inside Terminay terminals. An installed agent in a project terminal SHALL be able to inspect and control terminal tabs in its own project and SHALL NOT be able to learn about or control other projects, servers, workspace views, or clients. A process in a terminal of the automation terminal space SHALL instead hold the workspace scope defined for automation terminals, and SHALL NOT be able to learn about or control other servers, workspace views, or clients.
+Terminay SHALL provide a local Model Context Protocol server for Claude Code, Codex, Cursor CLI, Gemini CLI, Grok, and OpenCode processes running inside Terminay terminals. An installed agent in a project terminal SHALL be able to inspect and control terminal tabs in its own project, and to rename, re-icon and recolour that project. It SHALL NOT be able to learn about or control other projects, workspace windows, servers or clients, or the server's settings. A process in a terminal of the automation terminal space SHALL instead hold the workspace scope defined for automation terminals. It SHALL NOT be able to learn about or control other servers, or any client except as the agent's client.
 
 #### Scenario: Agent lists terminals
 
@@ -249,17 +250,37 @@ Each eligible terminal SHALL receive protected launch-environment values identif
 
 ### Requirement: Capability token scope and lifecycle
 
-Presenting a token SHALL resolve to the immutable calling terminal and its canonical scope: its project for a project terminal, or the workspace scope for a terminal in the automation terminal space. A project-scope token SHALL grant access only to terminal panels in that project and SHALL never enumerate project identity as an MCP tool concept. No token SHALL address another server. A token SHALL be replaced or revoked atomically when its terminal changes project or leaves or enters the automation terminal space, SHALL be revoked on terminal exit, explicit revocation, server shutdown, or MCP disablement, and SHALL NOT be widened using a title, panel id, cwd, active tab, renderer state, process name, environment variable, or copied metadata.
+Presenting a token SHALL resolve to the immutable calling principal and its current canonical scope. The principal SHALL be either a terminal or an agent chat. A terminal’s scope SHALL be its project for a project terminal, or the workspace scope for a terminal in the automation terminal space. A chat’s scope SHALL be its reach, one project or the workspace; its token SHALL be revoked as the Chat capability requirement states. A project-scope token SHALL grant access only to terminal panels in that project and SHALL never enumerate project identity as an MCP tool concept. No token SHALL address another server. When its terminal moves to another project, or from the automation terminal space into a project, a token SHALL follow the terminal: from the moment of the move it SHALL resolve to the new project and not to the old one, with no instant in which it reaches both, and approvals, session grants, and in-flight requests made under the old scope SHALL end. A token SHALL be revoked when its terminal enters the automation terminal space, and SHALL be revoked on terminal exit, explicit revocation, server shutdown, or MCP disablement. A token SHALL NOT expire with time while its terminal runs. The server SHALL prune the capability of any terminal that is no longer running, when it starts and at least once a day. A token SHALL NOT be widened using a title, panel id, cwd, active tab, renderer state, process name, environment variable, or copied metadata.
 
 #### Scenario: Terminal changes project
 
-- **WHEN** a terminal holding a capability changes project
-- **THEN** its token is replaced or revoked atomically
+- **WHEN** a terminal holding a capability is moved to another project
+- **THEN** a call presenting its token reaches the terminals of the new project and none of the old project
+
+#### Scenario: Agent started after the move
+
+- **WHEN** an agent is started in a terminal that was moved to another project
+- **THEN** its inherited token resolves to the terminal's new project
+
+#### Scenario: Per-scope state ends at a move
+
+- **WHEN** a terminal is moved to another project while it holds approvals, session grants, or in-flight requests
+- **THEN** those approvals and session grants end and those requests are cancelled
 
 #### Scenario: Terminal exits
 
 - **WHEN** a terminal exits, its capability is explicitly revoked, the server shuts down, or MCP is disabled
 - **THEN** the token is revoked
+
+#### Scenario: Long-running terminal
+
+- **WHEN** a terminal has been running for several days
+- **THEN** its token still resolves to that terminal and its scope
+
+#### Scenario: Terminal ended without an exit event
+
+- **WHEN** a capability's terminal is no longer running but its exit was never observed
+- **THEN** the next prune revokes that capability
 
 #### Scenario: Widening attempt
 
@@ -269,7 +290,17 @@ Presenting a token SHALL resolve to the immutable calling terminal and its canon
 #### Scenario: Automation terminal moved into a project
 
 - **WHEN** a terminal is moved from the automation terminal space into a project
-- **THEN** its workspace-scope token is replaced with a project-scope token or revoked atomically
+- **THEN** its token resolves to that project with project scope and no longer has workspace reach
+
+#### Scenario: Terminal moved into the automation space
+
+- **WHEN** a project terminal is moved into the automation terminal space
+- **THEN** its token is revoked
+
+#### Scenario: Chat token resolves to its reach
+
+- **WHEN** the agent of a chat with workspace reach presents its token
+- **THEN** it resolves to that chat with workspace scope and no calling terminal
 
 ### Requirement: Token secrecy
 
@@ -282,17 +313,22 @@ Raw tokens SHALL be protected at rest and excluded from logs, snapshots, setting
 
 ### Requirement: Stdio adapter lifecycle
 
-The stdio adapter SHALL start with the agent client and read its connection details from the inherited terminal environment. It SHALL validate the endpoint and token before advertising tools and SHALL exit cleanly when stdin closes or authority is revoked.
+The stdio adapter SHALL start with the agent client and SHALL read its connection details from its launch environment. That environment is inherited from the terminal for a terminal agent, and supplied by the host in the MCP server entry for a chat's agent. It SHALL validate the endpoint and token before advertising tools and SHALL exit cleanly when stdin closes or authority is revoked.
 
 #### Scenario: Adapter start
 
 - **WHEN** the stdio adapter starts
-- **THEN** it reads connection details from the inherited terminal environment and validates the endpoint and token before advertising tools
+- **THEN** it reads connection details from its launch environment and validates the endpoint and token before advertising tools
 
 #### Scenario: Authority revoked
 
 - **WHEN** stdin closes or the adapter's authority is revoked
 - **THEN** the adapter exits cleanly
+
+#### Scenario: Adapter started for a chat
+
+- **WHEN** a chat's agent starts the Terminay MCP adapter from the host-supplied MCP server entry
+- **THEN** the adapter validates the chat's token and advertises the Terminay tools
 
 ### Requirement: Bounded local control protocol
 
@@ -334,7 +370,27 @@ The server SHALL dispatch validated operations through an explicit operation-to-
 
 ### Requirement: Project-implicit tool surface
 
-Terminay SHALL expose the following project-implicit tools: `get_mcp_capabilities` reporting the globally available MCP operations for the bound host; `list_terminals` listing terminal panels in scope with opaque handles, display names, state, and active status; `read_terminal` reading either a bounded lossless raw-output range or a bounded current terminal-presentation snapshot; `search_terminal` searching a bounded current text presentation snapshot and returning bounded matching visual-row context; `get_terminal_status` returning canonical activity, attention, cwd, and last-exit information; `write_terminal` writing exact validated text to one live terminal; `run_command` writing one command and submitting it once as a paste followed by Enter, framed with bracketed paste only when the foreground program has enabled it; `open_terminal` creating a terminal in the same project with an optional display name and policy-valid cwd; `close_terminal` closing one terminal through normal terminal lifecycle rules; `focus_terminal` making one terminal active in the logical workspace view without stealing focus in an unrelated client; `rename_terminal` changing one terminal's display title; `split_terminal` creating a split relative to one terminal; `wait_for_idle` waiting for bounded canonical terminal inactivity; `wait_for_command` waiting for the next structured command completion and returning bounded exit information; and `wait_for_attention` waiting for the next canonical needs-attention signal.
+Terminay SHALL expose the following project-implicit tools:
+
+- `get_mcp_capabilities` reports the MCP operations available to the caller.
+- `list_terminals` lists terminal panels in scope with opaque handles, display names, state, and active status.
+- `read_terminal` reads either a bounded lossless raw-output range or a bounded current terminal-presentation snapshot.
+- `search_terminal` searches a bounded current text presentation snapshot and returns bounded matching visual-row context.
+- `get_terminal_status` returns canonical activity, attention, cwd, and last-exit information.
+- `write_terminal` writes exact validated text to one live terminal.
+- `run_command` writes one command and submits it once as a paste followed by Enter, framed with bracketed paste only when the foreground program has enabled it.
+- `open_terminal` creates one terminal in the same project. It takes an optional display name, an optional policy-valid cwd, and an optional shell profile id from `list_shell_profiles`. The terminal can optionally be placed beside a tab and optionally brought to the front on the agent's client.
+- `close_terminal` closes one terminal through normal terminal lifecycle rules.
+- `focus_terminal` shows one terminal's project, folder, and tab on the agent's client.
+- `rename_terminal` changes one terminal's display title.
+- `update_terminal` changes one terminal tab's icon, colour, note, and activity tracking.
+- `split_terminal` creates exactly one new terminal beside a target terminal on the agent's client.
+- `wait_for_idle` waits for bounded canonical terminal inactivity.
+- `wait_for_command` waits for the next structured command completion and returns bounded exit information.
+- `wait_for_attention` waits for the next canonical needs-attention signal.
+- The view and folder tools of the MCP workspace view.
+
+A shell profile given to `open_terminal` SHALL be resolved as the New Terminal action resolves a chosen profile, and an unknown or unavailable profile SHALL fail without creating a terminal. A tool SHALL report a view change only when the agent's client has applied it, and its result SHALL carry that client's layout afterwards.
 
 #### Scenario: Listing terminals
 
@@ -344,7 +400,37 @@ Terminay SHALL expose the following project-implicit tools: `get_mcp_capabilitie
 #### Scenario: Focusing a terminal
 
 - **WHEN** an agent calls `focus_terminal`
-- **THEN** the terminal becomes active in the logical workspace view without stealing focus in an unrelated client
+- **THEN** the agent's client shows that terminal's project, folder, and tab in front, and no other client's view changes
+
+#### Scenario: Splitting a terminal
+
+- **WHEN** an agent calls `split_terminal` with `direction: "right"`
+- **THEN** exactly one new terminal is created, the agent's client shows it in a new pane to the right of the target, and the result carries the new terminal's handle and the resulting layout
+
+#### Scenario: Opening without taking focus
+
+- **WHEN** an agent calls `open_terminal` without `focus`
+- **THEN** the terminal is created and the tab in front on the agent's client is unchanged
+
+#### Scenario: Opening and focusing
+
+- **WHEN** an agent calls `open_terminal` with `focus: true`
+- **THEN** the agent's client shows the new terminal in front, including when it is in another project or the automation space
+
+#### Scenario: Opening with a shell profile
+
+- **WHEN** an agent calls `open_terminal` with the id of a durable bash profile
+- **THEN** the terminal launches with that profile
+
+#### Scenario: Unknown shell profile
+
+- **WHEN** an agent calls `open_terminal` with a profile id that does not exist
+- **THEN** the call fails and no terminal is created
+
+#### Scenario: Placement without a client
+
+- **WHEN** an agent calls `split_terminal` and no agent's client is reachable
+- **THEN** the terminal is still created, and the result reports `placed: false` with the reason instead of a layout
 
 #### Scenario: Running a multiline command
 
@@ -578,7 +664,9 @@ Wait tools SHALL observe canonical server-owned terminal activity and SHALL retu
 
 ### Requirement: Capability reporting
 
-`get_mcp_capabilities` SHALL always be available after capability validation. It SHALL return an adapter-global list of tool names, each with an `available` boolean for the bound host and its effective permission as `allow`, `ask`, or `deny`. The effective permission SHALL reflect the tool's group policy and any session grant the calling terminal holds. Availability SHALL NOT be a property of an individual terminal row. An unavailable optional tool MAY remain in the MCP registration for a stable client surface, but a caller SHALL be able to discover it through this result, and calls to it SHALL return `unsupported_op` without side effects. A tool whose permission is `deny` SHALL remain in the registration and SHALL return `permission_denied` without side effects.
+`get_mcp_capabilities` SHALL always be available after capability validation. It SHALL return an adapter-global list of tool names. Each tool SHALL carry an `available` boolean and its effective permission as `allow`, `ask`, or `deny`. `available` SHALL account for the bound host, the calling principal, and the caller's reach. A tool that needs workspace reach SHALL be reported unavailable to a project-reach caller. The effective permission SHALL reflect the tool's group policy and any session grant the calling capability holds. Availability SHALL NOT be a property of an individual terminal row.
+
+A tool unavailable for the bound host or the calling principal MAY remain in the MCP registration for a stable client surface. A caller SHALL be able to discover it through this result, and calls to it SHALL return `unsupported_op` without side effects. A call to a tool unavailable for the caller's reach SHALL return `out_of_scope` without side effects. A tool whose permission is `deny` SHALL remain in the registration and SHALL return `permission_denied` without side effects.
 
 #### Scenario: Optional tool unavailable
 
@@ -594,6 +682,16 @@ Wait tools SHALL observe canonical server-owned terminal activity and SHALL retu
 
 - **WHEN** the calling terminal holds a session grant for Full Automation Management
 - **THEN** `get_mcp_capabilities` reports `create_automation` with permission `allow`
+
+#### Scenario: Window tools reported to a chat
+
+- **WHEN** a chat's agent calls `get_mcp_capabilities`
+- **THEN** `show_window`, `close_window` and `list_windows` are reported unavailable
+
+#### Scenario: Reach-filtered report
+
+- **WHEN** an agent in a project terminal calls `get_mcp_capabilities`
+- **THEN** `create_project`, `update_settings` and `open_workspace_window` are reported unavailable, and `update_project` and `list_projects` are reported available
 
 ### Requirement: Cross-host response conformance
 
@@ -611,17 +709,44 @@ Desktop and standalone-server adapters SHALL share required response fields and 
 
 ### Requirement: MCP security and privacy boundaries
 
-Terminay's own MCP tools SHALL expose terminal control, automation management, and the calling terminal's app windows only; filesystem, Git, settings, secrets, recordings, extension administration, remote administration, and arbitrary native-window management SHALL remain outside Terminay's own tool surface. The single file read in that surface is the stdio adapter reading the document an agent names for `show_window`: it is performed by the adapter and never by the Terminay Server, its contents are shown to the user in a window, and they SHALL NEVER be returned to the agent. The surface MAY additionally carry the tools of MCP servers the user has connected in Settings; such a tool SHALL be named with its entry's prefix, SHALL be run by that server and never by Terminay, and SHALL NOT gain any Terminay authority. Every request SHALL revalidate its capability against canonical terminal and project state and SHALL be evaluated against the MCP permission policy before it is dispatched. Output, parameters, errors, candidate lists, and waits SHALL be bounded to resist memory and context exhaustion. The server SHALL NOT infer authority from current UI focus or renderer ownership. Installing the MCP entry SHALL NOT enable provider hooks or disclose provider journals. Journal records used for agent status SHALL never be routed through MCP and MCP calls SHALL never synthesize agent-status lifecycle events.
+Terminay's own MCP tools SHALL expose only the following:
+
+- terminal control;
+- the agent's own client's view of projects in scope;
+- automation management, macros and notifications;
+- the calling terminal's app windows;
+- for a workspace-reach caller, the app-level control the MCP app control capability defines.
+
+The following SHALL remain outside Terminay's own tool surface, for every caller:
+
+- filesystem create, rename, delete and edit, and root-folder browsing;
+- Git and worktree actions;
+- the MCP permission policies and the Enable Terminay MCP switch;
+- stored credentials;
+- recordings and recording settings;
+- extension administration, device pairing, server upgrade and Remote Access;
+- arbitrary native-window management.
+
+No tool SHALL let a caller change what it, or any other caller, is permitted to do.
+
+`open_file` SHALL only open a viewer tab for a path inside the project root and SHALL NEVER return file content to the agent. The single file read in that surface is the stdio adapter reading the document an agent names for `show_window`. That read is performed by the adapter and never by the Terminay Server. Its contents are shown to the user in a window, and SHALL NEVER be returned to the agent. The surface MAY additionally carry the tools of MCP servers the user has connected in Settings. Such a tool SHALL be named with its entry's prefix, SHALL be run by that server and never by Terminay, and SHALL NOT gain any Terminay authority.
+
+Every request SHALL revalidate its capability against canonical terminal, project and window state, and SHALL be evaluated against the MCP permission policy before it is dispatched. Output, parameters, errors, candidate lists, and waits SHALL be bounded to resist memory and context exhaustion. The server SHALL NOT infer authority from current UI focus or renderer ownership. The agent's client only decides where a permitted view change is applied. Installing the MCP entry SHALL NOT enable provider hooks or disclose provider journals. Journal records used for agent status SHALL never be routed through MCP, and MCP calls SHALL never synthesize agent-status lifecycle events.
 
 #### Scenario: Filesystem tool requested
 
-- **WHEN** an agent seeks filesystem, Git, settings, secret, recording, extension-management, or remote-administration access through Terminay's own tools
-- **THEN** no such Terminay tool exists in the surface
+- **WHEN** any agent, including a workspace-reach one, seeks file editing, Git, MCP permission, stored credential, recording, extension, pairing, upgrade, or Remote Access control through Terminay's own tools
+- **THEN** no such Terminay tool exists in the surface, and no settings tool reaches it
 
 #### Scenario: Agent names a file it wants to read
 
 - **WHEN** an agent calls `show_window` with `html_file` naming a file that is not an HTML document, such as a private key
 - **THEN** the file's text is shown to the user in a window, and neither the tool result nor any later tool result carries it to the agent
+
+#### Scenario: Agent opens a file tab
+
+- **WHEN** an agent calls `open_file` for a file in the project
+- **THEN** the user sees the file in a viewer tab and the agent receives only the tab id and layout
 
 #### Scenario: Connected server offers a file tool
 
@@ -693,7 +818,14 @@ Registrations SHALL install and uninstall independently while preserving unrelat
 
 ### Requirement: MCP non-goals
 
-MCP SHALL NOT provide provider hooks of any kind, agent lifecycle detection, Agents sidebar population, or terminal agent-status inference. It SHALL NOT provide cross-project or cross-server terminal control, a public or remotely discoverable network MCP endpoint, or Terminay-implemented filesystem, Git, settings, recording, secret, extension-management, or remote-access tools. It SHALL NOT read or modify an agent CLI's own MCP server configuration beyond Terminay's own registration entry. It SHALL NOT establish trust based on terminal title, process name, cwd, active UI focus, or renderer state.
+MCP SHALL NOT provide:
+
+- provider hooks of any kind, agent lifecycle detection, Agents sidebar population, or terminal agent-status inference;
+- cross-project control for a project-reach caller, or cross-server control for any caller;
+- a public or remotely discoverable network MCP endpoint;
+- any tool in the excluded set the MCP security boundaries name.
+
+It SHALL NOT read or modify an agent CLI's own MCP server configuration beyond Terminay's own registration entry. It SHALL NOT establish trust based on terminal title, process name, cwd, active UI focus, or renderer state.
 
 #### Scenario: Remote discovery attempted
 
@@ -751,7 +883,13 @@ token, or tool listing SHALL span attached servers.
 
 ### Requirement: Workspace scope for automation terminals
 
-Only a terminal in the automation terminal space SHALL receive a workspace-scope capability, and the server SHALL decide that from the terminal's canonical placement alone. A workspace-scope capability SHALL grant the same tools as a project scope, over the terminal panels of every project and of the automation terminal space on the owning server. With that scope, `list_terminals` SHALL identify each terminal's project by an opaque project handle and its display title, `open_terminal` SHALL create the terminal in the automation terminal space unless the caller names a project handle from a listing, and every other tool SHALL address terminals only by the opaque handles those listings return. A workspace scope SHALL NEVER grant anything the MCP security boundaries exclude, and its automation tools SHALL be governed by the MCP permission policy exactly as a project scope's are.
+Only a terminal in the automation terminal space, which Home shows, SHALL receive a workspace-scope capability. The server SHALL decide that from the terminal's canonical placement alone. A workspace-scope capability SHALL grant every project-scope tool, over the terminal panels of every project and of the automation terminal space on the owning server. It SHALL also grant the app-level tools that need workspace reach: projects, workspace windows, settings, shell profiles, cross-project terminal moves, and Home. With that scope:
+
+- `list_terminals` and `list_projects` SHALL identify each project by an opaque project handle and its display title;
+- `open_terminal` SHALL create the terminal in the automation terminal space, unless the caller names a project handle from a listing;
+- every other tool SHALL address terminals, projects and windows only by the opaque handles those listings return.
+
+A workspace scope SHALL NEVER grant anything the MCP security boundaries exclude. Every tool it grants SHALL be governed by the MCP permission policy exactly as a project scope's tools are.
 
 #### Scenario: Script opens an agent terminal
 
@@ -762,6 +900,11 @@ Only a terminal in the automation terminal space SHALL receive a workspace-scope
 
 - **WHEN** a workspace-scope caller calls `open_terminal` with a project handle it obtained from `list_terminals`
 - **THEN** the terminal is created in that project and receives a project-scope capability
+
+#### Scenario: Home terminal creates a project
+
+- **WHEN** an agent in a terminal the user opened under Home calls `create_project`, and the request is permitted
+- **THEN** the project is created, and the agent can open terminals in it by its handle
 
 #### Scenario: Project terminal cannot obtain workspace scope
 
@@ -786,8 +929,11 @@ Terminay SHALL expose these automation tools:
 - `set_automation_enabled` enables or disables one automation.
 - `run_automation` starts one run now.
 - `stop_automation_run` stops one run in progress.
+- `remove_automation_run` deletes one finished run from an automation's run log.
+- `prune_automation_runs` removes an automation's finished runs that started more than a given number of whole days ago.
+- `dismiss_missed_runs` clears the missed-schedule notice for one automation, or for all automations.
 
-Automations are server-wide, so these tools SHALL address every automation on the owning server from both project-scope and workspace-scope capabilities. They SHALL NEVER address another server's automations. Definitions SHALL be validated exactly as automations saved from the Automations section are. `run_automation` for a subject-terminal action SHALL require a subject terminal handle that the caller could address with its own scope. A project-scope caller SHALL NEVER see the subject terminal, subject project, or output tail of a run whose subject lies outside its project; those fields SHALL be withheld from its results. Every automation tool SHALL be governed by the MCP permission policy.
+Automations are server-wide, so these tools SHALL address every automation on the owning server from both project-scope and workspace-scope capabilities. They SHALL NEVER address another server's automations. Definitions SHALL be validated exactly as automations saved from the Automations section are. Removing, pruning and dismissing SHALL follow the same rules as the Automations section: a run in progress is never removed, and dismissing runs nothing. They SHALL be audited with the MCP principal as the actor. `run_automation` for a subject-terminal action SHALL require a subject terminal handle that the caller could address with its own scope. A project-scope caller SHALL NEVER see the subject terminal, subject project, or output tail of a run whose subject lies outside its project; those fields SHALL be withheld from its results. Every automation tool SHALL be governed by the MCP permission policy.
 
 #### Scenario: Agent schedules a script
 
@@ -808,6 +954,11 @@ Automations are server-wide, so these tools SHALL address every automation on th
 
 - **WHEN** a project-scope caller calls `run_automation` for a write-text automation naming a terminal handle outside its project
 - **THEN** the request is refused and nothing runs
+
+#### Scenario: Pruning keeps a run in progress
+
+- **WHEN** an agent calls `prune_automation_runs` with zero days while one run is in progress
+- **THEN** every finished run is removed and the run in progress remains
 
 ### Requirement: App window tools
 
@@ -954,3 +1105,106 @@ When the control endpoint's socket cannot be placed, because the data directory'
 
 - **WHEN** a program sets its title to another terminal's display name and an agent addresses a terminal by handle
 - **THEN** the tool acts on the terminal the handle names
+
+### Requirement: Chat capability
+
+The server SHALL mint exactly one capability for each provider session of an agent chat whose reach is a project or the workspace. It SHALL mint none for a chat with reach `none`. Only the server's agent chat service SHALL be able to obtain a chat capability. A chat capability SHALL have no calling terminal, and its scope SHALL be the chat's reach: one project's scope, or the workspace scope of the owning server. With workspace scope it SHALL grant the same tools as a workspace-scope terminal capability, under the same addressing rules, and `open_terminal` without a project handle SHALL create the terminal in the automation terminal space. With project scope it SHALL grant what a project-scope terminal capability grants in that project, and `open_terminal` SHALL create the terminal in that project. Tools that need a calling terminal, namely the app window tools, SHALL be reported unavailable to a chat capability and SHALL return `unsupported_op` without side effects. A chat capability SHALL be revoked when its provider session ends for any reason, when the chat is cleared or closed, on MCP disablement, and on server shutdown. No client message, terminal, extension or MCP caller SHALL be able to request, copy into effect or widen a chat capability.
+
+#### Scenario: Workspace chat lists terminals across projects
+
+- **WHEN** a chat with workspace reach calls `list_terminals` on a server with two projects and an automation run
+- **THEN** it receives the terminals of both projects and of the automation terminal space, each with an opaque project handle and display title
+
+#### Scenario: Chat calls show_window
+
+- **WHEN** a chat's agent calls `show_window`
+- **THEN** it receives `unsupported_op` and no window opens
+
+#### Scenario: Session ends
+
+- **WHEN** a chat's provider session ends
+- **THEN** its capability is revoked, and a later request presenting it fails without revealing any scope
+
+#### Scenario: Terminal cannot obtain chat reach
+
+- **WHEN** a process in a project terminal presents its own token or tries to obtain a chat capability
+- **THEN** its token resolves only to its project and no chat capability is issued
+
+### Requirement: Notification tools
+
+Terminay SHALL expose three notification tools:
+
+- `send_notification` SHALL take a body of at most 280 characters and an optional title of at most 80 characters, add a notification to the calling terminal, and return its opaque handle. Given the handle of a notification the calling terminal sent, it SHALL replace that notification's title and body in place and add no second notification.
+- `list_notifications` SHALL return the published notifications of terminals the caller can address, each with an opaque handle, its kind, its title and body, and its terminal's handle. The result SHALL be bounded.
+- `dismiss_notification` SHALL remove one notification by handle. The handle is one the calling terminal received from `send_notification`, or one `list_notifications` returned to the caller.
+
+Dismissing a notification that came from terminal activity SHALL acknowledge its terminal exactly as a user's dismissal from the Notifications list does. Dismissing a sent notification SHALL remove it for every client. A handle SHALL resolve only for a notification of a terminal the caller can address. A workspace-reach caller can therefore dismiss any notification on its server, and a project-reach caller only those of its own project.
+
+`send_notification` SHALL need a calling terminal. `list_notifications` and `dismiss_notification` SHALL NOT need one. All three SHALL be operations of the local control endpoint, dispatched with the resolved scope of the capability that called, so that any process holding that capability can call them and the stdio adapter only presents them as tools. The owning terminal of a sent notification SHALL be resolved from the capability and SHALL NOT be a parameter. The tools' descriptions SHALL tell the agent the following:
+
+- a sent notification is shown to the user only if it is still present after a short settle period;
+- a sent notification is removed when the user interacts with the terminal, including within that period.
+
+#### Scenario: Sending a notification
+
+- **WHEN** an agent calls `send_notification` with the title `Review ready` and the body `Three files changed`
+- **THEN** a notification with that text is added to the calling terminal and the call returns its handle
+
+#### Scenario: Updating a notification
+
+- **WHEN** an agent calls `send_notification` with the handle of a notification it sent and a new body
+- **THEN** the same notification carries the new body and no second notification is added
+
+#### Scenario: Dismissing a notification
+
+- **WHEN** an agent calls `dismiss_notification` with the handle of a notification it sent
+- **THEN** that notification is removed for every client
+
+#### Scenario: Sent and dismissed quickly
+
+- **WHEN** an agent calls `send_notification` and then `dismiss_notification` with its handle two seconds later
+- **THEN** no client is ever shown that notification
+
+#### Scenario: Pixel clears an agent-finished notification
+
+- **WHEN** Pixel lists notifications and dismisses an agent-finished notification of a terminal in project "web"
+- **THEN** that terminal is acknowledged on every client and its tab dot clears
+
+#### Scenario: Handle from another terminal
+
+- **WHEN** an agent in project "api" calls `dismiss_notification` with a handle of a notification belonging to a terminal in project "web"
+- **THEN** the call fails as not found and no notification is removed
+
+#### Scenario: A terminal's activity notification
+
+- **WHEN** an agent calls `dismiss_notification` with the handle `list_notifications` gave it for its own terminal's agent-finished notification
+- **THEN** that terminal is acknowledged and the notification is removed for every client
+
+#### Scenario: Called over the socket without an MCP client
+
+- **WHEN** a process in a terminal sends the send-notification operation to the control endpoint with that terminal's capability
+- **THEN** a notification is added to that terminal exactly as the tool adds one
+
+#### Scenario: Body too long
+
+- **WHEN** an agent calls `send_notification` with a body over 280 characters
+- **THEN** the call fails with a bounded error and no notification is added
+
+### Requirement: Terminal metadata and project moves
+
+`update_terminal` SHALL change one terminal tab's icon, colour, note, and whether its activity is tracked. It SHALL apply them as the tab editor does, and every client SHALL observe the change. Both reaches SHALL be able to use it for any terminal they can address. `move_terminal_to_project` SHALL move one terminal to another project, through the same server-committed move a user's drag uses. The terminal SHALL keep its PTY and scrollback. It SHALL leave its old project's identity behind and take one in the target project, while its MCP handle stays the same. The result SHALL carry that handle. After the move, the terminal SHALL NOT be addressable by any caller whose reach covers the old project but not the target project. It SHALL require workspace reach and SHALL fail with `out_of_scope` for project reach. Neither tool SHALL move a terminal into or out of the automation terminal space.
+
+#### Scenario: Agent notes what a tab is for
+
+- **WHEN** an agent calls `update_terminal` with a note and an icon for a terminal in its project
+- **THEN** every client shows that tab with the new icon and note
+
+#### Scenario: Moving a terminal between projects
+
+- **WHEN** a workspace-reach caller calls `move_terminal_to_project` for a running terminal
+- **THEN** the terminal appears in the target project with its output intact, the result carries the same handle it had before the move, and a caller in the old project gets `terminal_not_found` for that handle
+
+#### Scenario: Project terminal moves a terminal out
+
+- **WHEN** an agent in a project terminal calls `move_terminal_to_project`
+- **THEN** the call fails with `out_of_scope` and nothing moves

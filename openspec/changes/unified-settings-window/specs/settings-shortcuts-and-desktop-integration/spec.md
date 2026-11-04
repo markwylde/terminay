@@ -159,6 +159,7 @@ Settings SHALL lay out every column on one spacing scale. The sidebar, the list 
 
 ## MODIFIED Requirements
 
+
 ### Requirement: Application menu presentation
 
 Native menus, macOS and Linux integration, external links, reveal actions, and application lifecycle SHALL be coordinated by Electron. Browser hosts SHALL provide a visible in-page menu bar for Terminay, Edit, View, and Help so shared commands remain discoverable without native application menus. Host capability negotiation SHALL select exactly one application-menu presentation: Desktop SHALL use its native menu and the shared renderer SHALL NOT render the browser menu bar, while browser hosts SHALL render the in-page menu. On macOS, project controls SHALL respect the native title-bar and traffic-light inset and SHALL NOT overlap either native chrome or an in-page menu.
@@ -225,6 +226,11 @@ On Windows and Linux, Terminay Desktop SHALL attach the native application menu 
 
 - **WHEN** any Terminay window is focused on macOS
 - **THEN** the single global application menu is shown
+
+#### Scenario: Project window on Windows reaches the menu
+
+- **WHEN** a project-host workspace window opens on Windows
+- **THEN** its title bar has a menu button that opens the native application menu, with the same menus Linux shows in its menu bar
 
 ### Requirement: Server-authoritative file and macro definitions
 

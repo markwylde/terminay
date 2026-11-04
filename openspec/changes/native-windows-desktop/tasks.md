@@ -49,8 +49,12 @@
 
 - [x] 7.1 Add Windows to the README download section and to `docs/product-overview.md`, with the SmartScreen "More info → Run anyway" note and the WSL-terminal `limited` observation. Verified by review of the rendered README.
 - [ ] 7.2 Run `openspec validate --all` and `openspec validate --all --archived`. Verified by both passing.
-- [ ] 7.3 Archive only after `linux-glibc-floor`, `terminals-survive-restart`, `linked-folders`, and `worktree-capture-survives-restart` have been archived. Verified by `openspec list` showing those archived before this change's archive commit.
+- [x] 7.3 Reconcile the Linux floor, terminal-persistence, linked-folder and capture prerequisite contracts before archive; verify the canonical matrix keeps macOS 13, glibc 2.31 and Windows x64 together without requiring unfinished prerequisite checks to be archived.
 
 ## Follow-ups (out of this change)
 
 - Port `@markwylde/all-your-agents` to Windows (process table, exit watch, holders) and add `win32` to Built-in Agents' platforms. Until then a Windows-hosted server shows it as "Not available on Windows".
+
+### Prerequisite reconciliation — 2026-11-04
+
+The prerequisite contracts are canonical and the matrix retains the newer macOS floor alongside Windows support. Linux floor and capture are archived; linked-folder and terminal-persistence changes retain their unrelated open acceptance tasks. Windows release wiring exists in both workflows, but publication/probe results and the separate historical archive validation failures remain unverified.

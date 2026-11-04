@@ -1,5 +1,7 @@
 ## MODIFIED Requirements
 
+
+
 ### Requirement: Home sidebar sections
 
 While Home is selected the workspace SHALL offer a Home sidebar that lists exactly four sections, in this order: **Home**, **Tabs**, **Automations**, and **Recordings**. Activating a section SHALL open it as a Home tab, or bring its tab to the front where one is already open, so that no section is ever open twice. The sidebar SHALL show as current the section that the Home tab in front belongs to, and SHALL show none as current when no Home tab is open. A tab opened from within a section, such as an automation or a recording's replay, SHALL count as belonging to that section. The Home sidebar SHALL NOT show any project's Explorer, Documentation, Agents, or Git panes, and a project's sidebar SHALL NOT show the Home sections. The sidebar items SHALL be reachable by keyboard and SHALL expose the current section to assistive technology.
@@ -39,6 +41,11 @@ While Home is selected the workspace SHALL offer a Home sidebar that lists exact
 - **WHEN** a user brings a recording's replay tab to the front
 - **THEN** the sidebar shows Recordings as current
 
+#### Scenario: Bot tab belongs to Bots
+
+- **WHEN** a user brings a bot's tab to the front
+- **THEN** the sidebar shows Bots as current
+
 ### Requirement: Home with no tabs open
 
 When every Home tab is closed, Home SHALL show an empty state that names the four sections and opens the one a user activates. Home SHALL remain the selected view, and the Home sidebar SHALL remain available.
@@ -76,4 +83,3 @@ Home SHALL present its content as tabs in a tab strip of its own, drawn where a 
 
 - **WHEN** a user drags a Home tab over a project tab on the project bar
 - **THEN** the tab stays in Home and the project is unchanged
-

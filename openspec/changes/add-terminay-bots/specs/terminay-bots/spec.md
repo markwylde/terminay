@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Bots are server-owned and workspace-wide
 
@@ -354,7 +354,7 @@ Further rules:
 - **Capability-bound callers refused.** A caller bound by capability, such as an MCP token or a caller bound to a project or a session, SHALL be refused for every bot operation.
 - **Revocation is immediate.** When a client loses authority, the server SHALL immediately close every bot subscription, shell, and desktop stream that client holds.
 - **No inference.** The server SHALL revalidate authority on every request, and SHALL NEVER infer it from UI focus or renderer state.
-- **No MCP route.** No MCP tool SHALL create, read, change, or prompt a bot.
+- **Workspace MCP callers.** No terminal or agent-chat MCP capability SHALL create, read, change, or prompt a bot. A bot execution’s own authenticated runtime tools SHALL be restricted to that bot under the bot-message-log contract.
 
 #### Scenario: Client without terminal authority
 

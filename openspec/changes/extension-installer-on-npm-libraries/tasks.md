@@ -29,4 +29,10 @@
 ## 6. Records
 
 - [x] 6.1 Add ADR-0080 to `openspec/adr/README.md` and mark ADR-0078 superseded in the index; verify with `openspec validate --all`.
-- [ ] 6.2 Open the pull request on origin and read back every commit status as `success` or `skipped`; then confirm the `undici` and `ip-address` Dependabot alerts close after the mirror syncs `main`.
+- [x] 6.2 Open the pull request on origin and read back every head commit status as success or skipped.
+
+### Audit evidence — 2026-11-04
+
+[PR #458](https://git.i.wylde.net/markwylde/terminay/pulls/458), head `3c9245e36e62a1a796465adb7e73128a329aa625`, is merged and every one of its 27 statuses is success or skipped. The PR reports npm audit with zero vulnerabilities. Closure of the named external Dependabot alerts has not been independently checked; that part is now a separate unchecked follow-up.
+
+- [ ] 6.2a Confirm the mirror’s `undici` and `ip-address` Dependabot alerts are closed after main synchronizes. Verify: inspect the named alert states; npm audit alone does not prove closure.

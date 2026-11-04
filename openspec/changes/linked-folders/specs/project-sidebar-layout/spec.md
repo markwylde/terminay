@@ -2,20 +2,23 @@
 
 ### Requirement: Sidebar group tab bar
 
-The sidebar tab bar SHALL sit above the pane stack and SHALL use the same project chrome as the active project tab and panel tab strip so the colour continues across that band. It SHALL have three tabs, in order: Explorer with a file/folder icon, Documentation, and Agents. The Explorer group SHALL contain Files and Changes; Documentation SHALL contain Documentation; Agents SHALL contain Agents. Additional panes SHALL join one of these groups rather than becoming a fourth top-level tab.
+The sidebar tab bar SHALL sit above the pane stack and SHALL use the same project chrome as the active project tab and panel tab strip so the colour continues across that band. It SHALL have two tabs, in order: Explorer with a file/folder icon, and Documentation. The Explorer group SHALL contain Files and Changes; Documentation SHALL contain Documentation. Every pane of the sidebar SHALL be scoped to the folder in front; a list that belongs to the whole project SHALL be a tab of the left column rather than a sidebar group. Additional panes SHALL join one of these groups rather than becoming a further top-level tab.
 
 #### Scenario: Switching groups
 
-- **WHEN** a user selects Explorer, Documentation, or Agents in the tab bar
-- **THEN** Explorer shows Files and Changes, Documentation shows Documentation, and Agents shows Agents
+- **WHEN** a user selects Explorer or Documentation in the tab bar
+- **THEN** Explorer shows Files and Changes, and Documentation shows Documentation
 - **AND** panes from another group are not visible
+
+#### Scenario: Two groups at every width
+
+- **WHEN** the sidebar renders side by side with the content or as a narrow-layout drawer
+- **THEN** the tab bar offers Explorer and Documentation and no other tab
 
 #### Scenario: Tab bar chrome
 
 - **WHEN** the sidebar renders
 - **THEN** the tab bar sits above the pane stack and uses the same project chrome colour as the active project tab and panel tab strip
-
-## ADDED Requirements
 
 ### Requirement: Sidebar placement
 
@@ -36,20 +39,6 @@ At or above the narrow layout breakpoint, the project sidebar SHALL sit to the r
 - **WHEN** a user drags the sidebar's separator
 - **THEN** the sidebar and the panel area resize and the Folders tree keeps its width
 
-### Requirement: Sidebar follows the selected folder
-
-The Files and Changes panes SHALL present the root of the project's selected folder. Selecting another folder SHALL immediately present that folder's root in both panes. The Files pane title SHALL name the folder when its root is not the project root. Pane dimensions, order, and collapse state SHALL stay per project and SHALL NOT change when the selected folder changes. Documentation and Agents SHALL stay scoped to the project.
-
-#### Scenario: Selecting a linked folder
-
-- **WHEN** a user selects a linked folder
-- **THEN** Files lists that folder's worktree, Changes lists that worktree's working-tree changes, and the pane heights are unchanged
-
-#### Scenario: Selecting General or a plain folder
-
-- **WHEN** a user selects General or a plain folder
-- **THEN** Files and Changes present the project root
-
 ### Requirement: Folders tree visibility
 
 Folders tree open/closed visibility SHALL belong to the current device and project, stored with device preferences under the selected server and opaque project id, independently of the sidebar's visibility. A device that has no preference for a project SHALL present the Folders tree open.
@@ -63,3 +52,19 @@ Folders tree open/closed visibility SHALL belong to the current device and proje
 
 - **WHEN** a user hides the Folders tree on one device
 - **THEN** no other device and no other project is affected, and the sidebar's visibility is unchanged
+
+## ADDED Requirements
+
+### Requirement: Sidebar follows the selected folder
+
+The Files and Changes panes SHALL present the root of the project's selected folder. Selecting another folder SHALL immediately present that folder's root in both panes. The Files pane title SHALL name the folder when its root is not the project root. Pane dimensions, order, and collapse state SHALL stay per project and SHALL NOT change when the selected folder changes. Documentation and Agents SHALL stay scoped to the project.
+
+#### Scenario: Selecting a linked folder
+
+- **WHEN** a user selects a linked folder
+- **THEN** Files lists that folder's worktree, Changes lists that worktree's working-tree changes, and the pane heights are unchanged
+
+#### Scenario: Selecting General or a plain folder
+
+- **WHEN** a user selects General or a plain folder
+- **THEN** Files and Changes present the project root

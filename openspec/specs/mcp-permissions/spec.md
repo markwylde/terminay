@@ -9,14 +9,18 @@ Terminay lets the user decide, per kind of operation, what agents may do through
 
 Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly one permission group, fixed in the server's operation table:
 
-- **Read Terminals**: `list_terminals`, `read_terminal`, `search_terminal`, `get_terminal_status`, `wait_for_idle`, `wait_for_command`, and `wait_for_attention`.
-- **Full Terminal Management**: `open_terminal`, `close_terminal`, `write_terminal`, `run_command`, `focus_terminal`, `rename_terminal`, and `split_terminal`.
+- **Read Terminals**: `list_terminals`, `read_terminal`, `search_terminal`, `get_terminal_status`, `get_layout`, `wait_for_idle`, `wait_for_command`, and `wait_for_attention`.
+- **Full Terminal Management**: `open_terminal`, `close_terminal`, `write_terminal`, `run_command`, `focus_terminal`, `rename_terminal`, `update_terminal`, `move_terminal_to_project`, `split_terminal`, `focus_tab`, `move_tab`, `resize_pane`, `arrange_tabs`, `focus_project`, `focus_home`, `select_folder`, `create_folder`, `rename_folder`, `delete_folder`, `reorder_folders`, `move_tab_to_folder`, `open_file`, `close_tab`, `list_macros`, `run_macro`, and `cancel_macro`.
 - **Read Automations**: `list_automations`, `get_automation`, and `list_automation_runs`.
-- **Full Automation Management**: `create_automation`, `update_automation`, `delete_automation`, `set_automation_enabled`, `run_automation`, and `stop_automation_run`.
+- **Full Automation Management**: `create_automation`, `update_automation`, `delete_automation`, `set_automation_enabled`, `run_automation`, `stop_automation_run`, `remove_automation_run`, `prune_automation_runs`, and `dismiss_missed_runs`.
+- **Projects & Windows**: `list_projects`, `create_project`, `update_project`, `move_project`, `close_project`, `list_workspace_windows`, `open_workspace_window`, `rename_workspace_window`, and `close_workspace_window`.
+- **Read Settings**: `get_settings` and `list_shell_profiles`.
+- **Change Settings**: `update_settings`, `save_shell_profile`, `delete_shell_profile`, `reorder_shell_profiles`, and `set_default_shell_profile`.
 - **App Windows**: `show_window`, `close_window`, and `list_windows`, and the opening of a window for a connected server's tool that declares a UI.
+- **Notifications**: `send_notification`, `list_notifications`, and `dismiss_notification`.
 - **Connected Server Tools**: every tool offered by a connected MCP server, whether called by the agent or by that server's own view.
 
-`get_mcp_capabilities` SHALL belong to no group and SHALL always be permitted after capability validation. An operation's group SHALL NEVER depend on its parameters, the caller, or its scope. A call to a connected server's tool that declares a UI SHALL be evaluated under Connected Server Tools to run and, separately, under App Windows to show its view; where App Windows does not permit it, the tool SHALL still run and no window SHALL open.
+`get_mcp_capabilities` SHALL belong to no group and SHALL always be permitted after capability validation. An operation's group SHALL NEVER depend on its parameters, the caller, or its scope. Whether the caller's reach may use an operation SHALL be decided separately from its group, and before the policy is evaluated, so that a call outside the caller's reach never asks. A call to a connected server's tool that declares a UI SHALL be evaluated under Connected Server Tools to run and, separately, under App Windows to show its view. Where App Windows does not permit it, the tool SHALL still run and no window SHALL open.
 
 #### Scenario: Running a command
 
@@ -48,14 +52,39 @@ Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly on
 - **WHEN** App Windows is Never Allow, Connected Server Tools is Always Allow, and an agent calls a connected tool that declares a UI
 - **THEN** the tool runs and returns its result, and no window opens
 
+#### Scenario: Reading the layout
+
+- **WHEN** an agent calls `get_layout`
+- **THEN** the server evaluates it under Read Terminals
+
+#### Scenario: Arranging tabs
+
+- **WHEN** an agent calls `arrange_tabs`
+- **THEN** the server evaluates it under Full Terminal Management
+
+#### Scenario: Sending a notification
+
+- **WHEN** an agent calls `send_notification`
+- **THEN** the server evaluates it under Notifications
+
+#### Scenario: Renaming a project from either reach
+
+- **WHEN** a project-reach agent and a workspace-reach agent each call `update_project`
+- **THEN** the server evaluates both under Projects & Windows
+
+#### Scenario: Out-of-reach call never asks
+
+- **WHEN** Change Settings is Ask Permission and an agent in a project terminal calls `update_settings`
+- **THEN** the call fails with `out_of_scope` and no approval prompt appears
+
 ### Requirement: MCP permission policy settings
 
-Settings > AI > Terminay MCP SHALL list the six permission groups and the Window Messages policy under the **Enable Terminay MCP server** switch, each with a choice of **Ask Permission**, **Always Allow**, or **Never Allow**. The defaults SHALL be Always Allow for Read Terminals, Full Terminal Management, Read Automations, App Windows, Connected Server Tools, and Window Messages, and Ask Permission for Full Automation Management. The policies SHALL be server-owned settings of the server that owns the MCP endpoint, SHALL be the same for every project and terminal on that server, and SHALL be shown and changed identically from desktop, web, and mobile clients.
+Settings > AI > Terminay MCP SHALL list the ten permission groups and the Window Messages policy under the **Enable Terminay MCP server** switch, each with a choice of **Ask Permission**, **Always Allow**, or **Never Allow**. The defaults SHALL be Ask Permission for Full Automation Management and Change Settings, and Always Allow for every other group and for Window Messages. The policies SHALL be server-owned settings of the server that owns the MCP endpoint. They SHALL be the same for every project, terminal and chat on that server, and SHALL be shown and changed identically from desktop, web, and mobile clients. They SHALL be changeable only from Settings, never through MCP.
 
 #### Scenario: Fresh settings
 
 - **WHEN** a server starts with no stored MCP permission settings
-- **THEN** both terminal groups, Read Automations, App Windows, Connected Server Tools, and Window Messages are Always Allow, and Full Automation Management is Ask Permission
+- **THEN** both terminal groups, Read Automations, Projects & Windows, Read Settings, App Windows, Notifications, Connected Server Tools, and Window Messages are Always Allow, and Full Automation Management and Change Settings are Ask Permission
 
 #### Scenario: Changed from a browser client
 
@@ -66,6 +95,26 @@ Settings > AI > Terminay MCP SHALL list the six permission groups and the Window
 
 - **WHEN** a user sets App Windows to Ask Permission and an agent calls `show_window`
 - **THEN** the calling terminal's pane shows an approval prompt stating the window's title, and no window opens until the user allows it
+
+#### Scenario: Notifications set to Ask Permission
+
+- **WHEN** a user sets Notifications to Ask Permission and an agent calls `send_notification`
+- **THEN** the calling terminal's pane shows an approval prompt stating the notification's title and body, and no notification is added until the user allows it
+
+#### Scenario: Notifications set to Never Allow
+
+- **WHEN** a user sets Notifications to Never Allow and an agent calls `send_notification`
+- **THEN** the call is refused and no notification is added
+
+#### Scenario: Changing a setting asks by default
+
+- **WHEN** Pixel calls `update_settings` on a fresh server to set scrollback to 10000
+- **THEN** the Pixel chat shows an approval naming the scrollback setting with its current and requested values, and nothing changes until a user allows it
+
+#### Scenario: Creating a project does not ask by default
+
+- **WHEN** a Home terminal's agent calls `create_project` on a fresh server
+- **THEN** the project is created without an approval prompt
 
 ### Requirement: Server-side permission enforcement
 
@@ -92,14 +141,14 @@ An operation whose group is Never Allow SHALL be refused immediately with a stab
 
 ### Requirement: Inline approval prompt
 
-An operation whose group is Ask Permission, with no session grant covering it, SHALL create a pending approval on the server and wait for a decision. Each client that shows the calling terminal SHALL present the pending approval inline with that terminal's pane, above the terminal output, never as a modal, dialog, or separate window. This applies in the desktop, web, and mobile layouts. The prompt SHALL state:
+An operation whose group is Ask Permission, with no session grant covering it, SHALL create a pending approval on the server and wait for a decision. When the calling capability is a terminal's, each client that shows the calling terminal SHALL present the pending approval inline with that terminal's pane, above the terminal output, never as a modal, dialog, or separate window. When the calling capability is a chat's, each client that shows that chat SHALL present it as an approval entry in the chat. This applies in the desktop, web, and mobile layouts. The prompt SHALL state:
 
-- the agent, using the agent detected in the calling terminal where known and "An agent" otherwise;
-- the calling terminal's display title;
+- the agent: for a terminal caller, the agent detected in the calling terminal where known and "An agent" otherwise; for a chat, the chat's title with its provider;
+- for a terminal caller, the calling terminal's display title;
 - a plain-words summary of the requested action;
-- the full details the operation would apply: for an automation, its name, trigger, action including the complete command or text, and settings; for an edit, which fields change.
+- the full details the operation would apply: for an automation, its name, trigger, action including the complete command or text, and settings; for an edit, which fields change; for a terminal write or command, the target terminal's display title and the complete text.
 
-The prompt SHALL offer **Allow One Time**, **Allow This Session**, and **Decline**. While the calling terminal is not visible, its tab SHALL show that it needs attention.
+The prompt SHALL offer **Allow One Time**, **Allow This Session**, and **Decline**. While a calling terminal is not visible, its tab SHALL show that it needs attention. A chat SHALL show that it needs attention wherever a client lists it.
 
 #### Scenario: Agent adds an automation
 
@@ -115,6 +164,11 @@ The prompt SHALL offer **Allow One Time**, **Allow This Session**, and **Decline
 
 - **WHEN** a pending approval exists for a terminal whose tab is not selected
 - **THEN** that tab shows that it needs attention, and selecting it shows the prompt
+
+#### Scenario: A chat runs a command
+
+- **WHEN** Full Terminal Management is Ask Permission and the chat "Pixel" on Claude Code calls `run_command` with `npm test` in the terminal titled "api"
+- **THEN** the chat shows a prompt such as "Pixel (Claude Code) wants to run `npm test` in api" with the buttons Allow One Time, Allow This Session, and Decline, and no terminal pane shows a prompt
 
 ### Requirement: Approval decisions
 
@@ -152,7 +206,7 @@ An approval SHALL authorize only the exact operation and parameters that were sh
 
 ### Requirement: Session grants
 
-A session grant SHALL allow one permission group for one calling terminal's capability without further prompts. It SHALL end when that capability is revoked or replaced, which happens on terminal exit, a move to another project, leaving or entering the automation terminal space, MCP disablement, or server restart. A session grant SHALL NEVER be persisted, SHALL NEVER apply to another terminal, including a split or a terminal the caller opened, and SHALL NEVER override a Never Allow policy.
+A session grant SHALL allow one permission group for one calling capability without further prompts. For a terminal, it SHALL end when that terminal's capability is revoked or replaced, which happens on terminal exit, a move to another project, leaving or entering the automation terminal space, MCP disablement, or server restart. For a chat, it SHALL end when the chat's capability is revoked, which happens when its provider session ends, the chat is cleared or closed, MCP is disabled, or the server restarts. A session grant SHALL NEVER be persisted. It SHALL NEVER apply to another capability: a terminal's grant does not apply to a split, to a terminal the caller opened, or to a chat, and a chat's grant does not apply to any terminal or other chat. A session grant SHALL NEVER override a Never Allow policy.
 
 #### Scenario: Second call after Allow This Session
 
@@ -169,18 +223,23 @@ A session grant SHALL allow one permission group for one calling terminal's capa
 - **WHEN** Terminal 1 exits and a new terminal is opened in its place
 - **THEN** the new terminal holds no session grant
 
+#### Scenario: Chat cleared
+
+- **WHEN** the user chose Allow This Session for Full Terminal Management in a chat and then clears that chat
+- **THEN** the chat's next `run_command` shows a prompt again
+
 ### Requirement: Pending approval lifecycle
 
 A pending approval SHALL have no time limit. It SHALL end only when:
 
 - a user decides it;
 - the MCP caller cancels the request or disconnects;
-- the calling terminal's capability is revoked or replaced;
+- the calling capability is revoked or replaced;
 - MCP is disabled;
 - the server restarts;
 - the group's policy changes.
 
-Every ending other than a decision SHALL refuse the operation without side effects and remove the prompt from every client. A policy change to Always Allow SHALL run the pending operation, and a change to Never Allow SHALL refuse it with `permission_denied`. Any change to a group's policy SHALL end all session grants for that group. Each calling terminal SHALL hold a bounded number of pending approvals, shown one at a time in request order. A request beyond the bound SHALL fail with a stable `approval_queue_full` error.
+Every ending other than a decision SHALL refuse the operation without side effects and remove the prompt from every client. A policy change to Always Allow SHALL run the pending operation, and a change to Never Allow SHALL refuse it with `permission_denied`. Any change to a group's policy SHALL end all session grants for that group. Each calling capability SHALL hold a bounded number of pending approvals, shown one at a time in request order. A request beyond the bound SHALL fail with a stable `approval_queue_full` error.
 
 #### Scenario: Agent process killed
 
@@ -201,6 +260,11 @@ Every ending other than a decision SHALL refuse the operation without side effec
 
 - **WHEN** an agent issues three automation-management calls concurrently from one terminal
 - **THEN** the pane shows one prompt at a time, in request order
+
+#### Scenario: User stops a chat while an approval is pending
+
+- **WHEN** a chat's approval is pending and the user presses Stop in that chat
+- **THEN** the turn is cancelled, the MCP request is cancelled, the approval actions disappear from every client, and nothing runs
 
 ### Requirement: Window Messages policy
 
