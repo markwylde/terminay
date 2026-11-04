@@ -50,6 +50,14 @@
 - [x] 7.1 Run lint, typecheck, and the unit suites. Verified by each command exiting zero.
 - [x] 7.2 Run `npm run test:e2e` for the affected suites. Verified by them passing.
 - [ ] 7.3 Check by hand in a development run: an agent finishing in a background terminal turns its tab green at once and reaches the bell and Dock badge five seconds later; clicking the tab within five seconds leaves the bell untouched; an agent's `send_notification` appears with its text and clears when the terminal is typed in. Verified by a screen recording of the three cases.
-- [ ] 7.4 Rebase this change's `agent-status-and-sidebar` delta if `one-window-one-server` has been archived first. Verified by `openspec validate --all` reporting no archive refusal for this change.
+- [x] 7.4 Rebase this change's `agent-status-and-sidebar` delta if `one-window-one-server` has been archived first. Verified by `openspec validate --all` reporting no archive refusal for this change.
 - [x] 7.5 Run `openspec validate --all`. Verified by it reporting no errors.
-- [ ] 7.6 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.
+- [x] 7.6 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.
+
+### Audit evidence — 2026-11-04
+
+Read back every head status on [PR #384](https://git.i.wylde.net/markwylde/terminay/pulls/384), `6c71c18c004df1ead893a2fa273df8a03cf75b52`: all 26 are success or skipped. Separate unchecked manual or external-repository checks remain open.
+
+### Audit evidence — 2026-11-04
+
+one-window-one-server remains active. Its conditional rename has not occurred. The implemented Notification tools prerequisite is canonical and `openspec validate --all` has no archive-refusal notice. The provider-CLI test and manual settle/interaction recording remain unverified.

@@ -14,5 +14,9 @@
 
 - [x] 3.1 Archive `gitea-shows-merged-pull-request` and `github-worktree-status` first, so the requirements this change modifies exist in `openspec/specs/built-in-extensions/spec.md`. Verified by `openspec validate --all --strict` exiting zero.
 - [x] 3.2 Run `npm run lint`, `npx tsc --noEmit -p .`, and both extensions' tests. Verified by all exiting zero.
-- [ ] 3.3 Open the pull request on `origin` with `tea`, and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 3.3 Open the pull request on `origin` with `tea`, and read back the commit statuses on the head SHA. Verified by every status being `success` or `skipped`.
 - [ ] 3.4 After the merge, confirm the `fix/mention-menu-arrow-keys` worktree in atlas shows #311 as `merged`. Verified by a screenshot of the folder card.
+
+### Reconciled verification — 2026-11-04
+
+[PR #450](https://git.i.wylde.net/markwylde/terminay/pulls/450), head `a1f422d72e7f58445222f38160a22279feab42c1`, includes the merged GitHub/Gitea status correction and all 26 head statuses are success or skipped; statuses were read back through tea/API in this audit. The atlas folder-card screenshot remains unverified.

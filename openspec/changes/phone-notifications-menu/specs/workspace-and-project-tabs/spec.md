@@ -1,5 +1,6 @@
 ## MODIFIED Requirements
 
+
 ### Requirement: Compact bar presentation
 
 On a compact bar at phone width or 640px and below, the workspace chrome SHALL be a single row holding, in order: the application menu control where the host renders one, the file-explorer toggle, the dashboard control, the Command Bar control, a project-and-terminal breadcrumb that grows to fill the remaining width, the Notifications control, and the connection control on the trailing edge. The Command Bar control SHALL open the Command Bar whichever view is selected, including Home and a window that holds no project. The breadcrumb SHALL name the active project and the active terminal, SHALL truncate the project name before the terminal title when space runs out, and SHALL open the unified switcher wherever it is pressed. The panel tab strip SHALL be absent on a compact workspace, for a project and for Home alike, and New project SHALL live in the switcher instead of as header `+` chrome. A pending application update SHALL stay visible on the row rather than being folded away. Above 640px the bar SHALL present the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip.
@@ -39,3 +40,15 @@ On a compact bar at phone width or 640px and below, the workspace chrome SHALL b
 #### Scenario: Wide bar is unchanged
 - **WHEN** the project bar is wider than 640px
 - **THEN** the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip are present
+
+#### Scenario: Pixel takes the trailing place
+- **WHEN** the project bar is at 640px or narrower and the active server has Pixel on
+- **THEN** Pixel's dock is the trailing control of the row and the connection control is absent
+
+#### Scenario: Server trouble without the connection control
+- **WHEN** Pixel's dock takes the trailing place and the active server is unreachable
+- **THEN** the breadcrumb shows that the server is unreachable
+
+#### Scenario: Going Home from the switcher
+- **WHEN** a user opens the unified switcher on a compact workspace and presses its Home control
+- **THEN** Home is selected and the switcher closes

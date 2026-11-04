@@ -32,4 +32,8 @@
 - [x] 6.2 `npm run lint`, `npm run typecheck --workspace terminay-github`, and `npm test --workspace terminay-github` pass (the root has no `typecheck` script). Verify with the command output.
 - [x] 6.3 `openspec validate --all` passes. Verify with the command output.
 - [x] 6.4 Run the real server stack with the built extension against a github.com repository with an open pull request and Actions checks, using the local `gh` login. Verify that the worktree lists its pull request and linked checks, and that the process table shows no `gh` spawn after the first refresh. Verified by driving the built runtime with real `fetch`, the real keychain-backed `gh` login, and the host `validateWorktreeProperties` against `markwylde/datasharp-company-linkage-test`: PR #6 with 6/6 linked checks, `main` with 3 passed and 2 skipped, a missing branch publishing nothing, 3 GraphQL requests over 3 refreshes, and 1 `gh` spawn. Activation inside the packaged desktop is covered by the packaged startup smoke, which now expects a healthy `terminay-github` card.
-- [ ] 6.5 Open a pull request on `origin` (Gitea) and read back every commit status as `success` or `skipped`. Verify with `tea`/API output.
+- [x] 6.5 Open a pull request on `origin` (Gitea) and read back every commit status as `success` or `skipped`. Verify with `tea`/API output.
+
+### Reconciled verification — 2026-11-04
+
+[PR #450](https://git.i.wylde.net/markwylde/terminay/pulls/450), head `a1f422d72e7f58445222f38160a22279feab42c1`, includes the merged GitHub/Gitea status correction and all 26 head statuses are success or skipped; statuses were read back through tea/API in this audit. This fixes stale verification bookkeeping in the existing archive, without rewriting its implementation history.

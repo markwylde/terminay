@@ -2,7 +2,7 @@
 
 ### Requirement: Exit and interruption metadata
 
-Exit metadata — code, signal, reason, and timestamp — SHALL be committed and published once, and the canonical workspace session record SHALL be marked exited so a later attach or renderer reload cannot treat that panel as a live PTY. A server shutdown or restart SHALL NOT alter the lifetime of a session that keeps running. A session that is found no longer running when the server starts SHALL be marked ended once, with its exit code when known, while client disconnect, reload, and native-window close SHALL NOT alter session lifetime.
+Exit metadata — code, signal, reason, and timestamp — SHALL be committed and published once, and the canonical workspace session record SHALL be marked exited so a later attach or renderer reload cannot treat that panel as a live PTY. After server shutdown or restart, a session retained by its holder SHALL be adopted with its process and recoverable presentation. Sessions that were not retained SHALL be marked interrupted once. Client disconnect, reload, and native-window close SHALL NOT alter session lifetime.
 
 #### Scenario: Terminal exits
 
@@ -18,10 +18,5 @@ Exit metadata — code, signal, reason, and timestamp — SHALL be committed and
 
 #### Scenario: Server restart
 
-- **WHEN** the server shuts down or restarts while a session keeps running
-- **THEN** the session stays running and is not marked interrupted
-
-#### Scenario: Session gone at server start
-
-- **WHEN** the server starts and a formerly live session is no longer running
-- **THEN** it is marked ended once, with its exit code when one is known
+- **WHEN** the server shuts down or restarts
+- **THEN** sessions retained by their holders are adopted and sessions that were not retained are marked interrupted once

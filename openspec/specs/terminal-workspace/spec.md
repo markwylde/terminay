@@ -177,13 +177,13 @@ Live xterm surfaces SHALL use the WebGL renderer when the host provides WebGL2 s
 
 ### Requirement: Touch input and software keyboard accessory
 
-On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface, except for the remainder of a gesture that has entered text selection. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible and the keyboard focus is inside the terminal's panel, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. Each modifier SHALL behave like Shift on the iOS keyboard: one tap applies it to the next input only, a second tap locks it on for every input until a third tap releases it, and each state SHALL be visibly distinct on the key. Dismissing the keyboard from the accessory SHALL release every modifier, locked or not. While the keyboard is visible for anything outside the panel, such as a text field in an app window, the accessory row SHALL NOT be shown. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
+On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequences required by interactive TUIs; Terminay SHALL NOT translate or suppress touch input over the xterm surface, except for stationary TUI taps and the remainder of a gesture that has entered text selection. A stationary non-link tap that has not entered selection SHALL produce exactly one primary mouse press and release at the tapped cell when the foreground program enables mouse reporting. xterm SHALL encode those events according to the active mouse protocol; a plain terminal SHALL receive no button report. A synchronous, non-cancelling touch focus bridge SHALL focus xterm's helper textarea so iOS can present its software keyboard, and that bridge SHALL claim focus only for a tap — a touch that is released without travelling beyond a small movement threshold. A touch that scrolls, drags, or is cancelled SHALL NOT focus the terminal and SHALL NOT cause a software keyboard to be presented. While that keyboard is visible and the keyboard focus is inside the terminal's panel, Terminay SHALL present a compact accessory row immediately above it for Escape, Tab, Control, Shift, and Alt modifiers, arrow keys, Enter, Paste, and keyboard dismissal. Each modifier SHALL behave like Shift on the iOS keyboard: one tap applies it to the next input only, a second tap locks it on for every input until a third tap releases it, and each state SHALL be visibly distinct on the key. Dismissing the keyboard from the accessory SHALL release every modifier, locked or not. While the keyboard is visible for anything outside the panel, such as a text field in an app window, the accessory row SHALL NOT be shown. The accessory SHALL send its bytes through the terminal panel's normal input boundary and SHALL NOT implement scrolling or gesture translation.
 
 #### Scenario: Touching the terminal on iOS
 
 - **WHEN** a user touches the xterm surface on a touch device and releases without moving beyond the movement threshold
 - **THEN** a synchronous, non-cancelling focus bridge focuses xterm's helper textarea so the software keyboard appears
-- **AND** touch input over the surface is neither translated nor suppressed
+- **AND** only a non-link tap in mouse reporting mode is translated into a primary mouse press and release
 
 #### Scenario: Scrolling the terminal does not raise the keyboard
 
@@ -235,6 +235,22 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 - **WHEN** the user taps a text field inside an app window and the software keyboard appears
 - **THEN** the terminal's accessory row is not shown
 - **AND** it is shown again when the user taps the terminal
+
+#### Scenario: Tapping a TUI control
+
+- **WHEN** a user taps a non-link TUI control while mouse reporting is enabled
+- **THEN** the program receives one primary press and release at that cell using its active mouse protocol
+
+#### Scenario: Pan and selection never activate TUI controls
+
+- **WHEN** a touch pans, is cancelled, or enters hold selection
+- **THEN** the gesture produces no tap button report
+- **AND** existing scrolling and selection behavior is preserved
+
+#### Scenario: Links retain priority over TUI buttons
+
+- **WHEN** a user taps a link inside a mouse-reporting TUI
+- **THEN** the link menu appears without any tap button report reaching the program
 
 ### Requirement: File drop behaviour
 
@@ -358,7 +374,7 @@ Terminal output SHALL be counted in raw bytes, split into bounded frames, and re
 
 ### Requirement: Exit and interruption metadata
 
-Exit metadata — code, signal, reason, and timestamp — SHALL be committed and published once, and the canonical workspace session record SHALL be marked exited so a later attach or renderer reload cannot treat that panel as a live PTY. Server shutdown or restart SHALL mark live sessions interrupted once, while client disconnect, reload, and native-window close SHALL NOT alter session lifetime.
+Exit metadata — code, signal, reason, and timestamp — SHALL be committed and published once, and the canonical workspace session record SHALL be marked exited so a later attach or renderer reload cannot treat that panel as a live PTY. After server shutdown or restart, a session retained by its holder SHALL be adopted with its process and recoverable presentation. Sessions that were not retained SHALL be marked interrupted once. Client disconnect, reload, and native-window close SHALL NOT alter session lifetime.
 
 #### Scenario: Terminal exits
 
@@ -375,7 +391,7 @@ Exit metadata — code, signal, reason, and timestamp — SHALL be committed and
 #### Scenario: Server restart
 
 - **WHEN** the server shuts down or restarts
-- **THEN** live sessions are marked interrupted once
+- **THEN** sessions retained by their holders are adopted and sessions that were not retained are marked interrupted once
 
 ### Requirement: Binary live output framing
 
@@ -399,13 +415,12 @@ Live terminal output SHALL use the protocol frame's binary body. Its event envel
 
 ### Requirement: Transport-neutral attach and detach boundary
 
-The transport-neutral `TerminalServiceAdapter` SHALL supply the attach, detach, and resume boundary used by local and remote protocol adapters. It SHALL keep a bounded per-client and per-session high-water mark, advance a stale reconnect cursor before asking the server for replay, and suppress output at or below the last delivered position. Detaching SHALL close only that client subscription while the PTY and its replay window remain owned by the server.
+The transport-neutral `TerminalServiceAdapter` SHALL supply the attach, detach, and resume boundary used by local and remote protocol adapters. It SHALL use the position the display actually rendered or request a fresh presentation. It SHALL NOT substitute a remembered cursor or advance a reconnect cursor on the display's behalf. Detaching SHALL close only that client subscription while the PTY and its replay window remain owned by the server.
 
 #### Scenario: Stale reconnect cursor
 
-- **WHEN** a client reconnects with a cursor behind its last delivered position
-- **THEN** the cursor is advanced before replay is requested
-- **AND** output at or below the last delivered position is suppressed
+- **WHEN** a client reconnects
+- **THEN** replay starts from its confirmed rendered position or a fresh checkpoint, without an adapter-owned remembered cursor
 
 #### Scenario: Detach
 
@@ -415,7 +430,7 @@ The transport-neutral `TerminalServiceAdapter` SHALL supply the attach, detach, 
 
 ### Requirement: Client terminal command surface
 
-`TerminayTerminalClient` SHALL expose the same boundary over a canonical client command and subscription transport. A write-authorized client SHALL create a new server-owned session through `terminal.create`, and the server SHALL assign its session identity and return its canonical cwd and dimensions. The client SHALL then use `terminal.attach`, `terminal.resume`, `terminal.detach`, and `terminal.ack`, subscribe to the bounded `terminal` stream, decode raw output bytes, and reject events whose immutable identity does not match the requested session. Client and session high-water marks SHALL survive a detach, and stale resume cursors SHALL NOT deliver duplicate output. Local sockets, browser transports, and WebRTC SHALL only provide the underlying command and event transport and SHALL NOT own the PTY.
+`TerminayTerminalClient` SHALL expose the same boundary over a canonical client command and subscription transport. A write-authorized client SHALL create a new server-owned session through `terminal.create`, and the server SHALL assign its session identity and return its canonical cwd and dimensions. The client SHALL then use `terminal.attach`, `terminal.resume`, `terminal.detach`, and `terminal.ack`, subscribe to the bounded `terminal` stream, decode raw output bytes, and reject events whose immutable identity does not match the requested session. A resume SHALL name the display's confirmed rendered position or request a fresh checkpoint. Duplicate suppression SHALL belong to the attachment delivery lane, and a detached client SHALL NOT substitute a remembered delivered position for what the display rendered. Local sockets, browser transports, and WebRTC SHALL only provide the underlying command and event transport and SHALL NOT own the PTY.
 
 #### Scenario: Creating a session
 
@@ -551,12 +566,12 @@ A newly mounted terminal SHALL restore its checkpoint at the checkpoint's origin
 
 ### Requirement: Server-side input write boundary
 
-`TerminalInputSourceAdapter` SHALL be the server-side write boundary for keyboard, paste, macro, dictation, MCP, and remote sources. It SHALL validate the exact server, project, and session authorization, preserve per-session write ordering, track optional per-source sequence numbers, and apply bounded input backpressure before forwarding bytes to the PTY.
+`TerminalInputSourceAdapter` SHALL be the server-side write boundary for keyboard, paste, macro, dictation, MCP, and remote sources. It SHALL validate the exact server, project, and session authorization, preserve per-session write ordering, track optional per-source sequence numbers, and bound bytes pending at that admission boundary before forwarding them to the PTY. Acceptance SHALL NOT mean that the shell has consumed or echoed the bytes.
 
 #### Scenario: Concurrent input sources
 
 - **WHEN** keyboard, macro, dictation, MCP, and remote input arrive for one session
-- **THEN** per-session write ordering is preserved and bounded input backpressure is applied before bytes reach the PTY
+- **THEN** per-session write ordering is preserved and bounded pending-byte admission is applied before bytes reach the PTY adapter
 
 #### Scenario: Input reaching only its own PTY
 
@@ -775,12 +790,17 @@ A workspace's contents SHALL be shared across devices. Workspace facts SHALL syn
 
 ### Requirement: View state stays local to each device
 
-View state SHALL NOT sync: which terminal tab is selected, which project tab is selected, split layout and pane sizes, scroll position, and focus. A terminal created on one device SHALL be selected only on the device that created it. A device reading one terminal SHALL NOT be moved to another because a second device made or selected something.
+View state SHALL NOT sync: which terminal tab is selected, which project tab is selected, split layout and pane sizes, scroll position, and focus. A terminal created on one device SHALL be selected only on the device that created it. A device reading one terminal SHALL NOT be moved to another because a second device made or selected something. An MCP agent acting for a device SHALL change only that device's view, through the MCP workspace view, and SHALL NOT change any other device's view.
 
 #### Scenario: Second device creates a terminal
 
 - **WHEN** a second device creates or selects a terminal
 - **THEN** the first device's selection, layout, pane sizes, scroll position, and focus are unchanged
+
+#### Scenario: Agent arranges one device's tabs
+
+- **WHEN** an agent the first device is talking to arranges tabs into a grid
+- **THEN** the first device shows the grid and a second device showing the same folder keeps its own layout
 
 ### Requirement: Per-device selection memory
 
@@ -917,3 +937,169 @@ Hold-to-select SHALL be governed by an **Edit > Enable Text Selection** toggle t
 
 - **WHEN** a device changes Enable Text Selection
 - **THEN** the choice is remembered for that device only and no other device attached to the workspace is affected
+
+### Requirement: A terminal's tab shows the live title fact
+
+A terminal's tab, its sidebar row, and every list that names the terminal SHALL show the displayed title the server publishes for it as a live terminal title fact. When that title changes, only the elements that show that terminal's title SHALL be rendered again. Until a title fact has arrived for a terminal, its tab SHALL show the title held in workspace state.
+
+#### Scenario: Title changes on one of several terminals
+
+- **WHEN** one terminal's displayed title changes while several terminals are open
+- **THEN** that terminal's tab and the rows that name it show the new title, and no other terminal's tab or panel is rendered again
+
+#### Scenario: Typing while another terminal's title animates
+
+- **WHEN** a person types in one terminal while a program in another rewrites its title once a second
+- **THEN** the terminal being typed in is not rendered again by the title changes
+
+#### Scenario: Server that publishes no title facts
+
+- **WHEN** a client is connected to a server that publishes no live title facts
+- **THEN** each terminal's tab shows the title held in workspace state
+
+### Requirement: Terminal panel parameters change only when their values do
+
+A client SHALL hand a terminal panel a new presentation parameter only when its value differs from the one the panel holds. Reconciling panels against a workspace projection in which a terminal is unchanged SHALL leave that terminal's panel and tab unrendered.
+
+#### Scenario: Reconciliation with nothing changed for a terminal
+
+- **WHEN** panels are reconciled against a projection in which a terminal's title, note, emoji, colour, and activity setting are unchanged
+- **THEN** that terminal's panel and tab are not rendered again
+
+### Requirement: Input survives an attachment handoff
+
+A mounted terminal panel SHALL hold ordered input through its own attachment replacement until a hydrated replacement controls presentation. A definitively refused write SHALL be sent once; confirmed writes SHALL NOT be repeated. An uncertain write and its queued successors SHALL NOT be sent again, and the interruption SHALL be visible. Read-only replacements SHALL discard held input and refuse further input.
+
+#### Scenario: Typing through congestion recovery
+
+- **WHEN** a terminal's stream is ended as congested while keys are queued behind a write in flight and the user keeps typing during recovery and the in-flight write confirms delivery
+- **THEN** after the replacement attachment hydrates, the PTY receives every key once, in the order typed
+
+#### Scenario: Typing before the first presentation is known
+
+- **WHEN** a user types into a terminal whose first attach has not yet reported its presentation
+- **THEN** the keys are held and delivered once the attachment holds the presentation lease
+
+#### Scenario: A write refused on the replaced attachment
+
+- **WHEN** a write sent on an attachment that has since been replaced is refused before it reached the PTY
+- **THEN** the replacement attachment sends it once, ahead of any later input
+
+#### Scenario: A write whose outcome is unknown
+
+- **WHEN** a write sent on an attachment that has since been replaced fails with an unknown outcome
+- **THEN** it is not sent again, queued successors are discarded, an input interruption notice is shown, and new input is accepted only after the replacement hydrates and controls presentation
+
+#### Scenario: The replacement is a read-only observer
+
+- **WHEN** the replacement attachment reports a read-only presentation
+- **THEN** the held input is discarded, further input is refused, and the terminal shows its read-only presentation
+
+### Requirement: Bounded and visible pending input
+
+Pending keyboard and clipboard input SHALL have aggregate bounds. Overflow SHALL be visible and SHALL pause input until acknowledged with control available. Unsent successors SHALL be discarded rather than silently truncating a command. Large pastes SHALL deliver Unicode-safe ordered chunks and release retained capacity on completion, cancellation, or discard.
+
+#### Scenario: Keyboard queue fills
+
+- **WHEN** delayed delivery exhausts the terminal's pending keyboard-input bound
+- **THEN** the terminal reports the refusal visibly, discards pending unsent input, and requires acknowledgement of the interruption before more input
+
+#### Scenario: Paste capacity fills
+
+- **WHEN** a paste exceeds the aggregate retained clipboard capacity
+- **THEN** it is refused visibly rather than retained without a bound or silently truncated
+
+#### Scenario: Competing production sources
+
+- **WHEN** interactive input, a macro, dictation, an automation, or an app-window message is admitted for one terminal
+- **THEN** all sources use the same bounded per-session queue with their existing authorization
+
+### Requirement: Input interruption notices reflect readiness
+
+An input interruption notice SHALL remain visible while a replacement attachment is pending, with continuation disabled until hydration and control permit it. A read-only observer SHALL hide the notice without clearing the interruption state or enabling input; regaining control SHALL restore the notice. Closing the queue SHALL clear its displayed notice.
+
+#### Scenario: Notice during replacement
+
+- **WHEN** an uncertain-outcome or overflow notice is visible before the replacement holds control
+- **THEN** a pending replacement keeps the notice visible with continuation disabled, a read-only replacement hides it, and regaining control restores it before explicit continuation
+
+#### Scenario: Queue closes with an interruption notice
+
+- **WHEN** a terminal input queue closes while an interruption notice is displayed
+- **THEN** its notice clears rather than retaining an enabled action against a closed queue
+
+### Requirement: Held terminal presentation survives recovery
+
+A running terminal retained by a presentation-capable holder SHALL recover its screen, active buffer, cursor, mouse tracking and encoding, bracketed paste, and focus reporting before a fresh client becomes interactive. Recovery SHALL preserve terminal identity, the running process, canonical geometry, and real PTY byte positions independently of the bounded raw-output window.
+
+#### Scenario: Startup setup is older than retained history
+
+- **WHEN** an interactive terminal's setup bytes have left the holder's raw replay window and its server restarts
+- **THEN** the same running process receives clicks, wheel events, and keyboard input through its recovered presentation
+- **AND** wheel gestures do not scroll terminal history while the program has mouse tracking enabled
+
+#### Scenario: Modes change while no server is attached
+
+- **WHEN** a held program changes input modes or switches screen buffers while its server is disconnected
+- **THEN** recovery restores its latest parser-safe state and ordered output tail
+- **AND** the state reflects changes made while disconnected rather than the last state observed by the server
+
+#### Scenario: Fragmented control sequence crosses recovery
+
+- **WHEN** the holder's latest output ends inside a control sequence or UTF-8 character
+- **THEN** recovery restores a preceding parser-safe checkpoint and the exact ordered tail before subsequent live bytes
+- **AND** no partial sequence is interpreted as ordinary screen text or lost
+
+#### Scenario: Mouse capture is disabled before recovery
+
+- **WHEN** a program has disabled mouse capture before its held terminal is recovered
+- **THEN** selection and ordinary terminal scrolling remain available
+- **AND** recovery does not force mouse capture or infer modes from the program's name
+
+#### Scenario: Presentation limits are exceeded
+
+- **WHEN** bounded presentation recovery is unavailable or invalid
+- **THEN** recovery reports a presentation failure without ending or replacing the running process
+- **AND** it does not silently substitute default terminal modes for unavailable state
+
+#### Scenario: Restoration stays outside PTY output
+
+- **WHEN** the server installs recovered presentation before admitting subsequent live output
+- **THEN** restoration bytes do not become PTY output, input, recordings, or activity
+- **AND** later raw output and resize transitions take effect once in their original order
+
+### Requirement: A running terminal always has a panel
+
+Terminay Server SHALL keep every running terminal shown by a terminal panel in its project. A running terminal that has had no panel for 5 seconds SHALL be given a new terminal panel in its project's General folder, wherever General sits in the folder order, titled with that project's next default terminal title. A terminal that gets a panel, exits, or is ended within those 5 seconds SHALL NOT be given another. A running terminal whose project no longer exists SHALL be ended. The server SHALL check after every committed workspace change and once when it starts, and SHALL NOT poll to do so.
+
+#### Scenario: A closed tab whose shell keeps running
+
+- **WHEN** a user closes a terminal tab and its shell is still running 5 seconds later
+- **THEN** the terminal appears again as a tab in its project's General folder
+- **AND** closing the project warns only about terminals that are shown
+
+#### Scenario: A closed tab whose shell is ended
+
+- **WHEN** a user closes a terminal tab and the server ends its shell
+- **THEN** the terminal is no longer running
+- **AND** it does not appear again as a tab
+
+#### Scenario: A terminal started without a panel
+
+- **WHEN** a terminal is running in a project and no panel shows it for 5 seconds
+- **THEN** it is given a panel in that project's General folder, titled with the project's next default terminal title, even when General is not the first folder
+
+#### Scenario: A terminal whose creator places it
+
+- **WHEN** a terminal's creator commits its panel within 5 seconds of starting it
+- **THEN** the terminal has exactly that one panel
+
+#### Scenario: A terminal that ends while panel-less
+
+- **WHEN** a terminal without a panel exits within 5 seconds
+- **THEN** no panel is created for it
+
+#### Scenario: A terminal whose project is gone
+
+- **WHEN** a terminal is still running after its project was closed
+- **THEN** the server ends it and creates no panel for it

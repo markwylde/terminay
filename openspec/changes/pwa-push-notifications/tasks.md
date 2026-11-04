@@ -69,14 +69,18 @@ Tasks marked **(terminay.com)** are done in the sibling `terminay.com` repositor
 
 ## 8. Operations and documentation
 
-- [ ] 8.1 Document push in `docs/operations/`: the hosted push origin a server must reach, what it sends, and that a server without that route sends nothing. Verified by the runbook naming the origin and the failure mode.
-- [ ] 8.2 Add push to the remote-access section of `docs/product-overview.md`. Verified by the overview describing banners, the icon badge, and the content-blind hosted service.
+- [x] 8.1 Document push in `docs/operations/`: the hosted push origin a server must reach, what it sends, and that a server without that route sends nothing. Verified by the runbook naming the origin and the failure mode.
+- [x] 8.2 Add push to the remote-access section of `docs/product-overview.md`. Verified by the overview describing banners, the icon badge, and the content-blind hosted service.
 
 ## 9. Validation
 
 - [ ] 9.1 Run lint, typecheck, and the unit suites in both repositories. Verified by each command exiting zero.
-- [ ] 9.2 Run `npm run test:e2e` for the affected suites. Verified by them passing.
+- [x] 9.2 Run `npm run test:e2e` for the affected suites. Verified by them passing.
 - [ ] 9.3 End-to-end on real phones with two paired servers: a banner from each under its own label, the icon showing the sum, a clear made on Desktop reaching the phone, and opening a banner landing on its terminal. Verified by screenshots of each step on an iPhone and an Android phone.
 - [ ] 9.4 Attempt the forgery: from one paired server, send a push naming the other's routing id. Verified by no banner naming the other server and its count unchanged.
-- [ ] 9.5 Run `openspec validate --all`. Verified by it reporting no errors.
-- [ ] 9.6 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.
+- [x] 9.5 Run `openspec validate --all`. Verified by it reporting no errors.
+- [x] 9.6 Open the pull request on `origin` with `tea` and read back every commit status. Verified by every status being `success` or `skipped`.
+
+### Audit evidence — 2026-11-04
+
+Push is documented in docs/operations/standalone-server.md under Push notifications (default https://app.terminay.com/v1/push, payload and blocked-route behavior) and docs/product-overview.md (sealed payload, banners, aggregate badge and data-blind hosting). PR #384 is merged with all 26 head statuses success or skipped. All current Docker E2E shards pass on PR #487; this does not prove framed-manager or real-phone integration, which remains unchecked. Active spec validation passes in this worktree.
