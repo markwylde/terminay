@@ -301,10 +301,16 @@ function SessionDetail({
 				</div>
 			</div>
 
+			<p className="bots-note" data-terminay-bot-session-lifetime="true">
+				Stop ends this execution and its commands. Desktop apps stay open,
+				including unsaved workbooks. Stopping the bot container ends desktop
+				apps.
+			</p>
+
 			{record.state === 'interrupted' ? (
 				<div className="bots-note bots-note--warn">
-					The server restarted during this session. Its processes were ended and
-					its transcript is kept up to the last saved update.
+					The server restarted during this session. Its execution commands were
+					ended and its transcript is kept up to the last saved update.
 					{record.recoveryMayHaveLostUpdates
 						? ' Some of the latest updates may be missing.'
 						: ''}

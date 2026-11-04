@@ -22,6 +22,11 @@ test('5.7 helper CRUD/watch/pins work while stopped; pinned context is newest fi
 	memories.pin(bot.id, 'old.md', true);
 	memories.pin(bot.id, 'new.md', true);
 	const context = await memories.context(store.get(bot.id));
+	assert.match(context, /terminay-app launch gridcraft/);
+	assert.match(context, /terminay-browser open/);
+	assert.match(context, /Launch acceptance does not prove a window appeared/);
+	assert.match(context, /survive execution completion and Stop/);
+	assert.match(context, /terminay-app\/<executable>\.log/);
 	const block = context.split(
 		'Memories are Markdown notes in /home/bot/memories.\n',
 	)[1];
