@@ -430,6 +430,6 @@ test("launch and resume text is /goal, the opening prompt, and the fixed instruc
   assert.equal(workflowLaunchText("Ship it."), `/goal Ship it.\n\n${WORKFLOW_LAUNCH_INSTRUCTION}`);
   assert.equal(workflowLaunchText("  "), `/goal ${WORKFLOW_LAUNCH_INSTRUCTION}`);
   assert.equal(workflowResumeText(""), `/goal ${WORKFLOW_RESUME_INSTRUCTION}`);
-  assert.match(WORKFLOW_RESUME_INSTRUCTION, /resumeStepId/u);
+  assert.match(WORKFLOW_RESUME_INSTRUCTION, /resume_step_id/u);
   assert.throws(() => workflowLaunchText("x".repeat(16 * 1024)), code("invalid_workflow"));
 });
