@@ -44,11 +44,15 @@ Users SHALL be able to create, rename, reorder, close, and colour or icon projec
 
 ### Requirement: Joined chrome band
 
-The active project tab's colour SHALL continue into the panel tab strip and the sidebar group tab bar so that chrome reads as one band. Sidebar pane titles SHALL use the dark project-bar surface with white labels, and pane bodies SHALL share the terminal background. Sidebar pane titles SHALL stay quiet on hover; only title actions such as refresh, explorer file rows, and the 4px resize rail SHALL highlight. The sidebar toggle SHALL be an icon on the dark project bar that highlights slightly on hover. The new-project `+` SHALL be an icon button with the same even pacing as the panel-strip add controls rather than a joined chip. Panel tabs on that strip SHALL use a 4px corner, the active panel tab SHALL be the solid chip, and inactive tabs SHALL stay quiet until hover.
+The active project tab's colour SHALL continue into the panel tab strip and the sidebar group tab bar so that chrome reads as one band. When the active project shows no panel tab strip, such as while it awaits its start choice, the active project tab SHALL be a closed rounded shape within the project bar rather than running down into the workspace. Sidebar pane titles SHALL use the dark project-bar surface with white labels, and pane bodies SHALL share the terminal background. Sidebar pane titles SHALL stay quiet on hover; only title actions such as refresh, explorer file rows, and the 4px resize rail SHALL highlight. The sidebar toggle SHALL be an icon on the dark project bar that highlights slightly on hover. The new-project `+` SHALL be an icon button with the same even pacing as the panel-strip add controls rather than a joined chip. Panel tabs on that strip SHALL use a 4px corner, the active panel tab SHALL be the solid chip, and inactive tabs SHALL stay quiet until hover.
 
 #### Scenario: Active project colour
 - **WHEN** a project tab is active
 - **THEN** its colour continues into the panel tab strip and the sidebar group tab bar as one band
+
+#### Scenario: Active project awaiting its start
+- **WHEN** the active project shows its start chooser and no panel tab strip
+- **THEN** its project tab is a closed rounded shape within the project bar and does not run into the chooser
 
 #### Scenario: Hovering sidebar chrome
 - **WHEN** a user hovers a sidebar pane title
@@ -86,11 +90,23 @@ When project tabs no longer fit, overflowed tabs SHALL leave the strip and remai
 
 ### Requirement: Compact bar presentation
 
-On a compact bar at phone width or 640px and below, the workspace chrome SHALL be a single row holding, in order: the application menu control where the host renders one, the file-explorer toggle, the dashboard control, the Command Bar control, a project-and-terminal breadcrumb that grows to fill the remaining width, and the connection control on the trailing edge. The Command Bar control SHALL open the Command Bar whichever view is selected, including Home and a window that holds no project. The breadcrumb SHALL name the active project and the active terminal, SHALL truncate the project name before the terminal title when space runs out, and SHALL open the unified switcher wherever it is pressed. The panel tab strip SHALL be absent on a compact workspace, for a project and for Home alike, and New project SHALL live in the switcher instead of as header `+` chrome. A pending application update SHALL stay visible on the row rather than being folded away. Above 640px the bar SHALL present the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip.
+On a compact bar at phone width or 640px and below, the workspace chrome SHALL be a single row holding, in order: the application menu control where the host renders one, the file-explorer toggle, the Command Bar control, a project-and-terminal breadcrumb that grows to fill the remaining width, the Notifications control, and a trailing control. The trailing control SHALL be Pixel's dock while the active server has Pixel on, and the connection control otherwise. While Pixel's dock takes the trailing place, the breadcrumb SHALL show when the active server is unreachable or has a server upgrade available, and SHALL say so in its accessible name. The row SHALL NOT carry a dashboard control; the unified switcher SHALL instead offer a Home control as the first control of its toolbar, shown whatever the switcher's filter, marked as current while Home is selected, which selects Home and closes the switcher. The Command Bar control SHALL open the Command Bar whichever view is selected, including Home and a window that holds no project. The breadcrumb SHALL name the active project and the active terminal, SHALL truncate the project name before the terminal title when space runs out, and SHALL open the unified switcher wherever it is pressed. The panel tab strip SHALL be absent on a compact workspace, for a project and for Home alike, and New project SHALL live in the switcher instead of as header `+` chrome. A pending application update SHALL stay visible on the row rather than being folded away. Above 640px the bar SHALL present the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip.
 
 #### Scenario: Phone-width chrome
-- **WHEN** the project bar is at 640px or narrower
-- **THEN** the chrome is one row of application menu, file-explorer toggle, dashboard, Command Bar control, breadcrumb, and connection control, and the panel tab strip is absent
+- **WHEN** the project bar is at 640px or narrower and Pixel is off
+- **THEN** the chrome is one row of application menu, file-explorer toggle, Command Bar control, breadcrumb, Notifications control, and connection control, and the panel tab strip is absent
+
+#### Scenario: Pixel takes the trailing place
+- **WHEN** the project bar is at 640px or narrower and the active server has Pixel on
+- **THEN** Pixel's dock is the trailing control of the row and the connection control is absent
+
+#### Scenario: Server trouble without the connection control
+- **WHEN** Pixel's dock takes the trailing place and the active server is unreachable
+- **THEN** the breadcrumb shows that the server is unreachable
+
+#### Scenario: Going Home from the switcher
+- **WHEN** a user opens the unified switcher on a compact workspace and presses its Home control
+- **THEN** Home is selected and the switcher closes
 
 #### Scenario: Opening the Command Bar by touch
 - **WHEN** a user presses the Command Bar control on a compact workspace with a project in front
@@ -118,7 +134,7 @@ On a compact bar at phone width or 640px and below, the workspace chrome SHALL b
 
 #### Scenario: A pending update stays visible
 - **WHEN** an application update is pending on a compact bar
-- **THEN** its control stays on the row, between the breadcrumb and the connection control
+- **THEN** its control stays on the row, between the breadcrumb and the Notifications control
 
 #### Scenario: Wide bar is unchanged
 - **WHEN** the project bar is wider than 640px
@@ -158,15 +174,23 @@ The strip SHALL be click-and-drag to reorder for visible tabs only. The shared m
 
 ### Requirement: Focus after creation
 
-A user-created project or terminal SHALL receive keyboard focus in that xterm so typing starts immediately. Creation chrome such as the project and terminal `+` controls SHALL NOT keep focus after the new session is ready.
+A user-created terminal, or a project's first terminal launched from its start choice, SHALL receive keyboard focus in that xterm so typing starts immediately. A user-created project awaiting a start choice SHALL focus the chooser's first start action. Creation chrome such as the project and terminal `+` controls SHALL NOT keep focus after the new project or session is ready.
 
 #### Scenario: Creating a terminal
-- **WHEN** a user creates a project or terminal and its session becomes ready
+- **WHEN** a user creates a terminal and its session becomes ready
 - **THEN** keyboard focus moves into that xterm and does not remain on the `+` control
+
+#### Scenario: Creating a project
+- **WHEN** a user creates a project and it becomes ready awaiting a start choice
+- **THEN** keyboard focus moves to the chooser's first start action and does not remain on the `+` control
+
+#### Scenario: Choosing a start
+- **WHEN** a user makes a start choice and the project's first terminal becomes ready
+- **THEN** keyboard focus moves into that xterm
 
 ### Requirement: Pending project tab during creation
 
-Creating a project SHALL immediately add a non-active pending tab with the future project label and a spinning project icon, bound to the server chosen to own it and showing that server when more than one connection is attached. Validation, canonical project creation, terminal launch, and terminal hydration SHALL happen behind that tab without covering or replacing the active project, which SHALL remain usable. When the terminal is ready, Terminay SHALL activate and focus the new project only if the user has not selected another project since creation began; if the user has moved elsewhere, the ready project SHALL remain in the background. A creation failure SHALL activate the pending tab and present its error there.
+Creating a project SHALL immediately add a non-active pending tab with the future project label and a spinning project icon, bound to the server chosen to own it and showing that server when more than one connection is attached. Validation, canonical project creation, terminal launch, and terminal hydration SHALL happen behind that tab without covering or replacing the active project, which SHALL remain usable. The project is ready when its terminal is ready or, for a project awaiting a start choice, when the server has committed it. When the project is ready, Terminay SHALL activate and focus the new project only if the user has not selected another project since creation began; if the user has moved elsewhere, the ready project SHALL remain in the background. A creation failure SHALL activate the pending tab and present its error there.
 
 A creation interrupted by loss of the connection SHALL NOT fail. The pending tab SHALL keep its spinning icon while the connection recovers; once the workspace has resynchronised, Terminay SHALL continue with the project if the server has it and SHALL send the creation again if it does not. Creation SHALL fail only when the server refuses it or when recovery itself gives up, and SHALL never yield two projects for one request.
 
@@ -177,11 +201,11 @@ A failed pending tab SHALL NOT hold the rest of the window. Every other project 
 - **THEN** a non-active pending tab with the future label and a spinning icon appears while the active project stays usable
 
 #### Scenario: Creation completes with no user navigation
-- **WHEN** the new terminal becomes ready and the user has not selected another project
+- **WHEN** the new project becomes ready and the user has not selected another project
 - **THEN** the new project is activated and focused
 
 #### Scenario: User moved elsewhere
-- **WHEN** the new terminal becomes ready but the user has since selected another project
+- **WHEN** the new project becomes ready but the user has since selected another project
 - **THEN** the ready project stays in the background
 
 #### Scenario: Creation fails
@@ -198,7 +222,7 @@ A failed pending tab SHALL NOT hold the rest of the window. Every other project 
 
 #### Scenario: Connection lost after the server created the project
 - **WHEN** the connection is lost while a project is being created, the workspace reconnects, and the server already has the project
-- **THEN** the pending tab keeps spinning, the creation is not sent again, and the project's terminal is launched
+- **THEN** the pending tab keeps spinning, the creation is not sent again, and the project continues from the state the server holds
 
 #### Scenario: Selecting another project while a creation has failed
 - **WHEN** a pending tab shows a failed creation and the user selects another project tab
@@ -212,13 +236,21 @@ A failed pending tab SHALL NOT hold the rest of the window. Every other project 
 - **WHEN** the user chooses retry on a failed pending tab
 - **THEN** the tab returns to its spinning state and the same creation runs again
 
+#### Scenario: A project awaiting a start choice becomes ready
+- **WHEN** a project created with no root is committed by the server and the user has not selected another project
+- **THEN** the pending tab becomes a normal tab, is activated, and shows the start chooser without waiting for any terminal
+
 ### Requirement: New project roots
 
-New projects SHALL use the owning server's default root or verified account home and SHALL NEVER copy an active project's root. A root chosen for a new project SHALL be browsed and validated on the server that will own it. Target and root validation SHALL complete before the pending tab becomes a normal project tab.
+New projects SHALL NEVER copy another project's root, whether from the active project, the first project in the view, or any other project. A project created from the UI without a root SHALL be created awaiting a start choice and SHALL receive its root, or no root, only from that choice. A project created with an explicit root SHALL use that root once the owning server has validated it. A root chosen for a new project SHALL be browsed and validated on the server that will own it. Target and root validation SHALL complete before the pending tab becomes a normal project tab.
 
 #### Scenario: Root selection for a new project
-- **WHEN** a project is created
-- **THEN** it uses the server's default root or verified account home and does not inherit another project's root
+- **WHEN** a user creates a project from the UI while other projects with roots are open
+- **THEN** the creation sends no root, and the project awaits a start choice instead of inheriting another project's root
+
+#### Scenario: Explicit root at creation
+- **WHEN** a project is created with an explicit root, for example through MCP or by creating a terminal in an unknown project
+- **THEN** the server validates that root, the project uses it, and no start chooser is shown
 
 #### Scenario: Validation ordering
 - **WHEN** target and root validation is still running
@@ -238,11 +270,15 @@ Project creation SHALL commit its initial colour and icon atomically with the se
 
 ### Requirement: Project root selection sources
 
-A project root SHALL be selectable directly or derivable from the active terminal's working directory.
+A project root SHALL be selectable from the server-side folder browser, from the owning server's recent project folders, or by deriving it from the active terminal's working directory. Selecting a root for a project with no root folder SHALL give it that root, and the project SHALL leave no-root mode.
 
 #### Scenario: Deriving from terminal cwd
 - **WHEN** a user sets the project root from the active terminal's working directory
 - **THEN** that working directory becomes the project root
+
+#### Scenario: A no-root project gains a root
+- **WHEN** a user sets a root for a project that has no root folder
+- **THEN** the project takes that root, and its Explorer, Git, and Documentation panes present it
 
 ### Requirement: Closing the final panel
 
@@ -700,11 +736,15 @@ The project tab bar SHALL NEVER steal leading or trailing chrome. The sidebar to
 
 ### Requirement: Initial terminal in every project
 
-A successful user-created project SHALL receive one terminal through the server's normal terminal-launch resolver as an explicit creation flow, never a renderer repair for an empty workspace. After a Local Desktop restart, each restored project SHALL likewise receive one fresh terminal so a project is never shown empty. The project tab SHALL show a spinner while a user-created project is still loading.
+A started user-created project SHALL receive one terminal through the server's normal terminal-launch resolver as an explicit creation flow, never a renderer repair for an empty workspace. A project awaiting a start choice SHALL have no terminal, and its first terminal SHALL be launched by its start choice. After a Local Desktop restart, each restored started project SHALL keep its terminal panels and SHALL receive no additional terminal when it already has one. A restored started project without a terminal panel SHALL receive one fresh terminal. Each restored project awaiting a start choice SHALL show its chooser and receive no terminal. The project tab SHALL show a spinner while a user-created project is still loading.
 
 #### Scenario: Restart restores projects
-- **WHEN** Local Desktop restarts with saved projects
-- **THEN** each restored project receives one fresh terminal
+- **WHEN** Local Desktop restarts with saved started projects
+- **THEN** each restored started project keeps its terminal panels and receives no additional terminal when it already has one
+
+#### Scenario: Restart restores a project awaiting a choice
+- **WHEN** Local Desktop restarts with a saved project that awaits a start choice
+- **THEN** the project shows its start chooser and no terminal is launched for it
 
 #### Scenario: Loading indication
 - **WHEN** a project's creation is still loading
@@ -810,14 +850,22 @@ SHALL keep its own hit target rather than shrinking to the glyph.
 
 ### Requirement: Compact switcher terminal creation shows the created terminal
 
-A terminal created from the compact switcher SHALL become the active terminal of its project: it SHALL be the terminal shown on screen, it SHALL receive terminal focus, and the switcher SHALL mark it as current the next time it opens. This SHALL hold for **New terminal**, which creates in the project in front, and for a project group's new-terminal control, which SHALL select that group's project on its own server first when it is not the project in front. The switcher SHALL dismiss when either create action is pressed. The terminal on screen and the switcher's current row SHALL never name different terminals after a create.
+A terminal created from the compact switcher SHALL become the active terminal of its project: it SHALL be the terminal shown on screen, it SHALL receive terminal focus, and the switcher SHALL mark it as current the next time it opens. This SHALL hold for the create bar's new-terminal control, which creates in the project in front and its selected folder; for a folder label's new-terminal control, which SHALL select that folder and its project first when they are not in front and SHALL create the terminal in that folder; and for a project header's new-terminal control, which SHALL select that project on its own server first when it is not the project in front. The switcher SHALL dismiss when any create action is pressed. The terminal on screen and the switcher's current row SHALL never name different terminals after a create.
 
 #### Scenario: New terminal in the project in front
-- **WHEN** a user opens the compact switcher and presses New terminal
-- **THEN** the switcher dismisses, a terminal is created in the project in front, and that terminal replaces the previous one on screen and takes terminal focus
+- **WHEN** a user opens the compact switcher and presses the create bar's new-terminal control
+- **THEN** the switcher dismisses, a terminal is created in the selected folder of the project in front, and that terminal replaces the previous one on screen and takes terminal focus
+
+#### Scenario: New terminal in another folder of the project in front
+- **WHEN** a user presses the new-terminal control on a folder label that is not the selected folder of the project in front
+- **THEN** that folder becomes selected, the created terminal belongs to it, and it is the terminal shown on screen
+
+#### Scenario: New terminal in a folder of a background project
+- **WHEN** a user presses the new-terminal control on a folder label of a project that is not the project in front
+- **THEN** that project becomes active with that folder selected, and the created terminal belongs to that folder and is the terminal shown on screen
 
 #### Scenario: New terminal in a background project
-- **WHEN** a user presses the new-terminal control of a project group that is not the project in front
+- **WHEN** a user presses the new-terminal control on the header of a project that is not the project in front
 - **THEN** that project becomes active on its own server and the created terminal is the terminal shown on screen
 
 #### Scenario: Switcher agrees with the screen
@@ -826,7 +874,7 @@ A terminal created from the compact switcher SHALL become the active terminal of
 
 ### Requirement: Unified compact switcher
 
-A compact workspace SHALL provide one switcher that presents every terminal of every project of every attached connection, grouped by connection and then by project. Each project group SHALL name its project with that project's colour and SHALL offer a new terminal for that project. Each terminal row SHALL name its terminal and SHALL activate that terminal on its own server when pressed, selecting that terminal's project first when it is not the active one. A connection heading SHALL appear for every attached connection, including when only one is attached, so a row's owning server is never ambiguous. The switcher SHALL offer New terminal for the project in front, New project, and Add connection alongside the per-group new terminal, so every create action absorbed from the collapsed chrome remains reachable. New terminal SHALL be absent when no project is in front rather than acting on an arbitrary one. The switcher SHALL open from the breadcrumb and from the connection control, presenting the same content from both.
+A compact workspace SHALL provide one switcher that presents every terminal of every project of every attached connection, grouped by connection and then by project. Each project group SHALL name its project with that project's colour. Each terminal row SHALL name its terminal and SHALL activate that terminal on its own server when pressed, selecting that terminal's project first when it is not the active one. A connection heading SHALL appear for every attached connection, including when only one is attached, so a row's owning server is never ambiguous. The switcher SHALL offer a new terminal for each folder it lists, a new terminal for each project group whose folders it does not list, a new terminal where the user already is, New project, and Add connection, so every create action absorbed from the collapsed chrome remains reachable. The new terminal for where the user already is SHALL be absent when no project is in front rather than acting on an arbitrary one. The switcher SHALL open from the breadcrumb and from the connection control, presenting the same content from both.
 
 #### Scenario: Grouped by connection and project
 - **WHEN** the switcher opens with two attached connections holding projects with terminals
@@ -842,11 +890,15 @@ A compact workspace SHALL provide one switcher that presents every terminal of e
 
 #### Scenario: Create actions survive the collapse
 - **WHEN** the switcher is open with a project in front
-- **THEN** it offers a new terminal for each project group, New terminal, New project, and Add connection
+- **THEN** it offers a new terminal on each listed folder, a new terminal where the user already is, New project, and Add connection
+
+#### Scenario: A project whose folders are not listed
+- **WHEN** the switcher lists a project without listing its folders
+- **THEN** that project's header offers a new terminal for the project
 
 #### Scenario: No project in front
 - **WHEN** the switcher is open while the dashboard is selected
-- **THEN** New terminal is absent and the other create actions remain
+- **THEN** the new terminal for where the user already is is absent, and the other create actions remain
 
 #### Scenario: Single connection still names its server
 - **WHEN** exactly one connection is attached
@@ -1015,7 +1067,7 @@ The project-tab activity dot SHALL reflect the same terminals that currently sho
 
 ### Requirement: Project switcher rows show the activity dot
 
-Each project row in the project switcher menu and in the compact switcher SHALL show the same activity dot as that project's tab, before the project name, with the same state, colour, breathing effect, and hiding behaviour, so projects that have overflowed out of the strip or are hidden behind the compact switcher remain covered. A row's dot SHALL reflect only terminals of that row's own project on its own server.
+Each project row in the project switcher menu SHALL show the same activity dot as that project's tab, before the project name, with the same state, colour, breathing effect, and hiding behaviour, so projects that have overflowed out of the strip remain covered. A row's dot SHALL reflect only terminals of that row's own project on its own server. A project header in the compact switcher SHALL NOT show the activity dot; it presents the project's status summary.
 
 #### Scenario: Overflowed project with activity
 
@@ -1026,6 +1078,11 @@ Each project row in the project switcher menu and in the compact switcher SHALL 
 
 - **WHEN** two attached servers each hold a project with the same id and one of them has a working terminal
 - **THEN** only that project's row shows the dot
+
+#### Scenario: Compact switcher header carries no dot
+
+- **WHEN** the compact switcher lists a project that has a working terminal
+- **THEN** that project's header shows its colour swatch and its status summary, and no activity dot
 
 ### Requirement: Overflow layout accounts for the activity dot
 
@@ -1125,3 +1182,153 @@ Tearing a project tab off SHALL leave every window involved able to tear off aga
 #### Scenario: Narrow tab
 - **WHEN** a user drags a project tab narrower than the smallest drag preview out of the bar
 - **THEN** native tear-off begins with a drag preview of the smallest size
+
+### Requirement: Compact switcher Tabs and Agents tabs
+
+The compact switcher SHALL offer the same two tabs as a project's left column, in the same order: **Tabs** and **Agents**. Tabs SHALL present the switcher's grouped connections, projects, folders, and panels together with its filter and its create actions. Agents SHALL present the Agents pane of the project in front, and SHALL NOT present the filter or the create actions. The switcher SHALL open on Tabs every time it opens, from the breadcrumb and from the connection control alike. The tab bar SHALL be a tab list whose tabs are named Tabs and Agents, with Arrow Left and Arrow Right moving between them and the shown content exposed as the tab panel; selecting a tab SHALL NOT move focus into a text field.
+
+Pressing an agent row SHALL act as it does in the left column's Agents tab and SHALL dismiss the switcher, so the terminal it leads to is on screen.
+
+The Agents tab SHALL be omitted when agent integration is disabled or no project is in front. The switcher SHALL then show the Tabs content with no tab bar.
+
+#### Scenario: Switcher opens on Tabs
+
+- **WHEN** a user opens the compact switcher with a project in front and agent integration enabled
+- **THEN** it shows a Tabs tab and an Agents tab with Tabs selected, and the grouped projects and panels beneath
+
+#### Scenario: Selecting Agents
+
+- **WHEN** a user selects the Agents tab
+- **THEN** the switcher shows the agents of the project in front in place of the grouped list, the filter, and the create actions
+- **AND** no software keyboard is raised
+
+#### Scenario: Reopening the switcher
+
+- **WHEN** a user selects Agents, dismisses the switcher, and opens it again
+- **THEN** Tabs is selected
+
+#### Scenario: Pressing an agent
+
+- **WHEN** a user presses a bound agent's row in the switcher's Agents tab
+- **THEN** that agent's terminal becomes the terminal on screen and the switcher is dismissed
+
+#### Scenario: No project in front
+
+- **WHEN** the switcher is open while the dashboard is selected
+- **THEN** it shows the Tabs content with no tab bar
+
+#### Scenario: Agent integration disabled
+
+- **WHEN** agent integration is disabled
+- **THEN** the switcher shows the Tabs content with no tab bar
+
+### Requirement: Compact switcher project cards
+
+Each project group in the compact switcher SHALL be presented as a card: a bordered container that encloses the project's header and every folder label and panel row belonging to that project, so that what belongs to a project is shown by containment rather than by indentation. The card's border and its header's background SHALL be tinted with that project's colour. The header SHALL carry, in order, the project's colour swatch, the project's name, the project's status summary, and the project's close control. The project name SHALL truncate before the status summary does. A project with no terminal SHALL show no status summary. Nothing belonging to one project SHALL be drawn inside another project's card.
+
+#### Scenario: A project is one card
+
+- **WHEN** the switcher lists a project with two folders and three terminals
+- **THEN** one bordered card encloses that project's header, both folder labels, and all three terminal rows
+
+#### Scenario: Card takes the project's colour
+
+- **WHEN** the switcher lists two projects with different colours
+- **THEN** each card's border and header are tinted with its own project's colour
+
+#### Scenario: Long project name
+
+- **WHEN** a project's name is too long for its header
+- **THEN** the name is truncated and the status summary and close control remain fully visible
+
+#### Scenario: Project with no terminals
+
+- **WHEN** a project holds no terminal
+- **THEN** its header shows no status summary
+
+### Requirement: Compact switcher folder labels
+
+Inside a project's card the switcher SHALL list every folder this window knows that project to have, in the project's folder order, each as a single label line naming the folder, with that folder's panel rows beneath it. A project whose only folder is General SHALL still show that folder's label. A folder that holds no panel SHALL be presented as its label line alone, with no placeholder row. Pressing a folder label SHALL show that folder, selecting its project first when it is not the project in front. Each folder label SHALL carry a new-terminal control whose accessible name states the folder and the project it creates in. A project whose folders this window does not know SHALL list its panel rows directly beneath its header with no folder label.
+
+#### Scenario: Folder with terminals
+
+- **WHEN** a project has a folder holding two terminals
+- **THEN** the card shows that folder's label line followed by its two terminal rows
+
+#### Scenario: Empty folder
+
+- **WHEN** a project has a folder holding no panel
+- **THEN** the card shows that folder's label line and nothing beneath it before the next folder
+
+#### Scenario: Single General folder
+
+- **WHEN** a project's only folder is General
+- **THEN** the card shows a General label line above that project's panel rows
+
+#### Scenario: Pressing a folder label
+
+- **WHEN** a user presses the label of an empty folder
+- **THEN** the switcher dismisses and that folder is shown
+
+#### Scenario: Folders not known
+
+- **WHEN** the switcher lists a project whose folders this window does not know
+- **THEN** that project's panel rows appear directly beneath its header and no folder label is shown
+
+### Requirement: Compact switcher create bar
+
+The compact switcher SHALL end in a create bar that stays in place while the list above it scrolls. When a project is in front, the bar SHALL hold one wide control that creates a terminal in that project's selected folder and whose visible label names both, in the form `Terminal in <project> › <folder>`, beside narrower icon controls for New project and Add connection. The label SHALL truncate rather than wrap, and the control's accessible name SHALL state the project and folder in full. When no project is in front, the bar SHALL offer no new-terminal control, and New project SHALL be the wide control with Add connection beside it. The icon controls SHALL each carry an accessible name stating their action. The create bar SHALL remain when a filter matches nothing.
+
+#### Scenario: Label names where the terminal will be created
+
+- **WHEN** the switcher opens with project Infra in front and its General folder selected
+- **THEN** the create bar's wide control reads `Terminal in Infra › General`
+
+#### Scenario: Label follows the selected folder
+
+- **WHEN** the selected folder of the project in front changes and the switcher is opened again
+- **THEN** the wide control names the newly selected folder
+
+#### Scenario: No project in front
+
+- **WHEN** the switcher is open while the dashboard is selected
+- **THEN** the create bar offers no new-terminal control, and New project is the wide control with Add connection beside it
+
+#### Scenario: Icon controls are named
+
+- **WHEN** assistive technology reads the create bar
+- **THEN** it announces a control for New project and a control for Add connection
+
+#### Scenario: Filter matches nothing
+
+- **WHEN** a filter matches no terminal, project, or connection
+- **THEN** the create bar is still present with all of its controls
+
+### Requirement: Keyboard terminal switcher chord
+
+The keyboard terminal switcher SHALL open on a chord that the operating system leaves to the application. On Windows and Linux Desktop the chord SHALL be Ctrl+Tab to open or move forward and Ctrl+Shift+Tab to move back, and releasing Ctrl SHALL switch to the highlighted terminal. On macOS Desktop and in browser hosts the chord SHALL be Option+Tab (Alt+Tab) and Option+Shift+Tab, and releasing Option SHALL switch. The chord SHALL be claimed only with no other modifier, and it SHALL be claimed even while a terminal has focus, so the terminal never receives it. Escape SHALL close the switcher without switching. The switcher's heading SHALL name the chord and the key to release that the platform uses.
+
+#### Scenario: Ctrl+Tab on Windows
+
+- **WHEN** a user presses Ctrl+Tab in a Windows Desktop project window with a terminal focused
+- **THEN** the terminal switcher opens with the next terminal highlighted and its heading reads Ctrl+Tab, release Ctrl to switch
+
+#### Scenario: Release to switch
+
+- **WHEN** the switcher is open on Windows or Linux and the user releases Ctrl
+- **THEN** the highlighted terminal becomes active and the switcher closes
+
+#### Scenario: Back with Shift
+
+- **WHEN** the switcher is open on Windows or Linux and the user presses Ctrl+Shift+Tab
+- **THEN** the highlight moves to the previous terminal
+
+#### Scenario: macOS keeps Option+Tab
+
+- **WHEN** a user presses Option+Tab on macOS
+- **THEN** the switcher opens and its heading reads Alt+Tab, release Alt to switch, and Ctrl+Tab does not open it
+
+#### Scenario: Other modifiers are left alone
+
+- **WHEN** a user presses Ctrl+Alt+Tab on Windows or Linux
+- **THEN** the switcher does not open and the chord is not claimed

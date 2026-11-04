@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Terminal command defaults permission
 
@@ -37,11 +37,9 @@ The host SHALL include a command default in the registry only while its extensio
 - **WHEN** the extension that contributes a command default is disabled
 - **THEN** the command default leaves the registry and new terminals no longer receive it
 
-## MODIFIED Requirements
-
 ### Requirement: Bounded API scope
 
-The public API SHALL support session sources, MCP install targets, language servers, worktree insights, chat providers, terminal launchers, and terminal command defaults. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
+The public API SHALL support session sources, MCP install targets, language servers, worktree insights, terminal launchers, terminal command defaults, chat providers, and bot agents. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
 
 #### Scenario: Unsupported contribution kind
 
@@ -77,6 +75,11 @@ The public API SHALL support session sources, MCP install targets, language serv
 #### Scenario: Terminal command default contribution
 
 - **WHEN** a package declares a terminal command default contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Bot agent contribution
+
+- **WHEN** a package declares a bot agent contribution
 - **THEN** it is a supported contribution kind and validation accepts it
 
 ### Requirement: Contribution arrays
@@ -117,4 +120,9 @@ The public API SHALL support session sources, MCP install targets, language serv
 #### Scenario: Command-default-only package
 
 - **WHEN** a package contributes one or more terminal command defaults that name no harness, and nothing else
+- **THEN** it passes contribution validation
+
+#### Scenario: Bot-agent-only package
+
+- **WHEN** a package contributes one or more bot agents and nothing else
 - **THEN** it passes contribution validation

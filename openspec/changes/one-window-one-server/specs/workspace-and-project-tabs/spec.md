@@ -1,5 +1,6 @@
 ## MODIFIED Requirements
 
+
 ### Requirement: Compact bar presentation
 
 On a compact bar at phone width or 640px and below, the workspace chrome SHALL be a single row holding, in order: the application menu control where the host renders one, the file-explorer toggle, the dashboard control, the Command Bar control, a project-and-terminal breadcrumb that grows to fill the remaining width, and the connection control on the trailing edge. The Command Bar control SHALL open the Command Bar whichever view is selected, including Home and a window that holds no project. The breadcrumb SHALL name the active project and the active terminal, SHALL truncate the project name before the terminal title when space runs out, and SHALL open the unified switcher wherever it is pressed. The panel tab strip SHALL be absent on a compact workspace, for a project and for Home alike, and New project SHALL live in the switcher instead of as header `+` chrome. A pending application update SHALL stay visible on the row rather than being folded away. Above 640px the bar SHALL present the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip.
@@ -40,6 +41,18 @@ On a compact bar at phone width or 640px and below, the workspace chrome SHALL b
 - **WHEN** the project bar is wider than 640px
 - **THEN** the full project tab strip, its overflow switcher, the named connection control, and the panel tab strip are present
 
+#### Scenario: Pixel takes the trailing place
+- **WHEN** the project bar is at 640px or narrower and the active server has Pixel on
+- **THEN** Pixel's dock is the trailing control of the row and the connection control is absent
+
+#### Scenario: Server trouble without the connection control
+- **WHEN** Pixel's dock takes the trailing place and the active server is unreachable
+- **THEN** the breadcrumb shows that the server is unreachable
+
+#### Scenario: Going Home from the switcher
+- **WHEN** a user opens the unified switcher on a compact workspace and presses its Home control
+- **THEN** Home is selected and the switcher closes
+
 ### Requirement: Wide overflowing bar presentation
 
 On a wider bar the overflowing strip SHALL fill the space before `+` and the connection control, the switcher SHALL stay pinned to that right edge, and at least one extra tab SHALL continue behind it with the pill covering about half of that last tab, rather than leaving a hole or looking like a last tab-like button. The wide-bar switcher menu SHALL stay an anchored dropdown, and the active tab SHALL stay among the real tabs. When every tab fits, `+` SHALL still sit immediately after the last tab and the connection control SHALL stay trailing.
@@ -75,6 +88,14 @@ A terminal created from the compact switcher SHALL become the active terminal of
 #### Scenario: Switcher agrees with the screen
 - **WHEN** a user reopens the compact switcher after creating a terminal from it
 - **THEN** the row marked current is the created terminal, which is also the terminal on screen
+
+#### Scenario: New terminal in another folder of the project in front
+- **WHEN** a user presses the new-terminal control on a folder label that is not the selected folder of the project in front
+- **THEN** that folder becomes selected, the created terminal belongs to it, and it is the terminal shown on screen
+
+#### Scenario: New terminal in a folder of a background project
+- **WHEN** a user presses the new-terminal control on a folder label of a project that is not the project in front
+- **THEN** that project becomes active with that folder selected, and the created terminal belongs to that folder and is the terminal shown on screen
 
 ### Requirement: Compact switcher filtering
 

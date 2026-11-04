@@ -73,17 +73,20 @@ actions.
 ### Requirement: Server-persisted state inventory
 
 The server SHALL persist and publish ordered workspace views and their project
-membership; projects, roots, names, colours, icons, default shell-profile
-references, and sidebar layout configuration; logical panel layout, splits,
-order, notes, and appearance; terminal identity, lifecycle, metadata, bounded
-output position, activity, and recording state; file and folder navigation and
-modes where they are part of the shared workspace; settings affecting shells,
-project services, terminal behaviour, recording, remote exposure, agents, AI
-providers, macros, and server automation; macros and server-held secrets;
-authoritative agent and activity state and acknowledgement; the app window
-records of terminal sessions that are running; paired devices,
-public device keys, exposure state, and audit records; and schema and revision
-metadata needed for safe migration and resync.
+membership; projects, roots, start state, names, colours, icons, default
+shell-profile references, and sidebar layout configuration; the server's recent
+project folders; each project’s ordered folders, their names, kinds, worktree links,
+and pending capture offers; logical panel layout, splits, order, notes, and
+appearance for each folder;
+terminal identity, lifecycle, metadata, bounded output position, activity, and
+recording state; file and folder navigation and modes where they are part of the
+shared workspace; settings affecting shells, project services, terminal
+behaviour, recording, remote exposure, agents, AI providers, macros, and server
+automation; macros and server-held secrets; authoritative agent and activity
+state and acknowledgement; the app window records of terminal sessions that
+are running; paired devices, public device keys, exposure state,
+and audit records; and schema and revision metadata needed for safe migration
+and resync.
 
 #### Scenario: Fresh client rebuilds the workspace
 
@@ -103,17 +106,28 @@ metadata needed for safe migration and resync.
 - **WHEN** a client queries agent or activity state
 - **THEN** the server's authoritative state and acknowledgement are returned
 
+#### Scenario: A project awaiting a start choice survives a fresh client
+
+- **WHEN** a project awaits a start choice and a fresh client connects
+- **THEN** that client shows the project's start chooser and the server's recent project folders
+
 ### Requirement: Excluded from the persistence contract
 
 The persistence contract MUST NOT include unbounded terminal scrollback, live
 PTY serialization, transient search text, open modal state, hover state,
-in-progress drag geometry, or which project tab or terminal panel is active in a
-connected presentation.
+in-progress drag geometry, which project tab, folder, or terminal panel is active in a
+connected presentation, or any value taken from terminal output, including a
+title a program sets.
 
 #### Scenario: Active tab is not durable server state
 
 - **WHEN** a client changes its active project tab or active terminal
 - **THEN** no durable workspace state records that choice
+
+#### Scenario: Program-set title is not durable server state
+
+- **WHEN** a program sets its terminal's title
+- **THEN** no durable workspace state records that title
 
 ### Requirement: Client-owned device-local state
 
@@ -122,27 +136,28 @@ remembered server labels and non-secret connection metadata; encrypted device
 keys and reconnect credentials; native window geometry and the mapping from
 local windows to server and view ids; the window's composition, being its primary
 connection, its set of attached connections, the workspace view attached on each
-of them, and the order of the project tabs drawn from them; which project tab and
-which terminal or panel is active in each connected presentation; the Home tabs
-open on the device and their arrangement; sidebar visibility for each server and
-project pair; transient dialogs, menus, selection, drag previews, and optimistic
-UI state; hardware and host capabilities such as microphone permission; and
+of them, and the order of the project tabs drawn from them; which project tab,
+which folder, and which terminal or panel is active in each connected
+presentation; the Home tabs open on the device and their arrangement; sidebar
+visibility and Folders tree visibility for each server and project pair; the
+Folders tree, sidebar, and Home sidebar widths; transient dialogs, menus, selection, drag previews, and optimistic UI
+state; hardware and host capabilities such as microphone permission; and
 explicitly device-specific accessibility or input overrides. The composition and
 the Home tab arrangement MUST NOT be sent to any server. Client-local state
-MUST NOT be required to recover project membership, panel identity, or a live
-terminal after reconnect.
+MUST NOT be required to recover project membership, folder membership, panel
+identity, or a live terminal after reconnect.
 
 #### Scenario: Active selections differ per client
 
-- **WHEN** two clients of the same server show different active projects and
-  terminals
-- **THEN** both still share the same ordered project and panel lists
+- **WHEN** two clients of the same server show different active projects,
+  folders, and terminals
+- **THEN** both still share the same ordered project, folder, and panel lists
 
 #### Scenario: Recovery without client state
 
 - **WHEN** a client reconnects with no local workspace state
-- **THEN** project membership, panel identity, and live terminals are recovered
-  from the server
+- **THEN** project membership, folder membership, panel identity, and live
+  terminals are recovered from the server
 
 #### Scenario: Composition is device-local
 
@@ -214,6 +229,8 @@ create, move, rename, and close rather than replacement uploads of an opaque
 Dockview JSON document. A command SHALL declare the object ids and expected
 revision it depends on. The server SHALL validate authorization and invariants,
 commit once, assign the next revision, and publish one ordered result event.
+That event SHALL carry the commit's change record, so that a client holding the
+preceding revision advances without requesting anything.
 
 #### Scenario: Committed command yields one ordered result
 
@@ -225,6 +242,12 @@ commit once, assign the next revision, and publish one ordered result event.
 
 - **WHEN** a client changes panel layout
 - **THEN** it submits named commands rather than an opaque layout document
+
+#### Scenario: Result event is enough to advance
+
+- **WHEN** a client holding revision N receives the result event of the commit
+  that produced revision N+1
+- **THEN** it presents revision N+1 without sending a workspace query
 
 ### Requirement: Idempotency, rebase, and conflicts
 
@@ -253,21 +276,36 @@ or a fresh snapshot.
 
 ### Requirement: Workspace delta envelope
 
-A workspace delta SHALL have one versioned wire shape containing the resulting
-project-scoped state and the ordered change records since the requested
-revision. Clients SHALL validate that envelope, advance atomically to its
-embedded state, and MUST NOT parse the envelope itself as a complete workspace
-snapshot.
+A workspace delta SHALL have one versioned wire shape containing the ordered
+change records since the requested revision, each scoped to what the requesting
+connection may see, and the revision they lead to. When the server no longer
+holds the records since the requested revision, it SHALL answer with a complete
+project-scoped snapshot instead. Clients SHALL validate the envelope and every
+record in it, advance atomically to the resulting revision, and MUST NOT parse
+the envelope itself as a complete workspace snapshot.
 
 #### Scenario: Delta applied atomically
 
 - **WHEN** a client receives a valid delta
-- **THEN** it advances atomically to the embedded project-scoped state
+- **THEN** it advances atomically to the revision the delta leads to
 
 #### Scenario: Malformed delta
 
 - **WHEN** a malformed, stale, or incompatible delta arrives
 - **THEN** the client projection is not partially mutated
+
+#### Scenario: Delta carries only what changed
+
+- **WHEN** a client requests a delta across a revision in which one panel was
+  renamed
+- **THEN** the delta carries that panel and no other project, folder, panel,
+  view, or session
+
+#### Scenario: History no longer reaches the requested revision
+
+- **WHEN** a client requests a delta from a revision older than the server's
+  retained change records
+- **THEN** it receives a complete project-scoped snapshot
 
 ### Requirement: Validation failure and bounded recovery
 
@@ -860,10 +898,12 @@ A **server** SHALL be one workspace, trust, persistence, and extension authority
 with one data root, and SHALL execute every project it owns on its own machine. A
 **workspace view** SHALL be a server-owned logical grouping of projects
 presentable as an Electron native window or an in-browser view or tab. A
-**project** SHALL have a stable id, a root folder on the server's filesystem,
-name, colour, icon, optional default shell-profile id, sidebar layout, ordered
-panels, and logical layout. A **panel** SHALL have a stable id, type, project
-ownership, presentation metadata, and type-specific state.
+**project** SHALL have a stable id, a server-validated root folder or an explicit no-root state,
+name, colour, icon, optional default shell-profile id, sidebar layout, and an
+ordered list of folders. A **folder** SHALL have a stable id, project ownership,
+a name, a kind, an optional link to one worktree of the project's repository,
+ordered panels, and logical layout. A **panel** SHALL have a stable id, type,
+project and folder ownership, presentation metadata, and type-specific state.
 
 #### Scenario: A project root is a path on the server
 
@@ -875,8 +915,15 @@ ownership, presentation metadata, and type-specific state.
 
 - **WHEN** a fresh client connects
 - **THEN** it receives each project's id, root, name, colour, icon, default
-  shell-profile reference, sidebar layout, ordered panels, and logical layout
+  shell-profile reference, sidebar layout, and ordered folders, and each
+  folder's id, name, kind, worktree link, ordered panels, and logical layout,
   from the server
+
+#### Scenario: A folder link is a server fact
+
+- **WHEN** a linked folder is persisted
+- **THEN** its link identifies a worktree the server itself listed for the
+  project's repository, and no client-supplied path is stored as a folder root
 
 ### Requirement: Terminal session identity is immutable and server-issued
 
@@ -1000,3 +1047,224 @@ MUST NOT write a secret value to a PTY.
 - **WHEN** a macro runs
 - **THEN** no vault entry is resolved for it and no secret value is written to
   the PTY
+
+### Requirement: Folder changes are named workspace commands
+
+Creating, renaming, reordering, and deleting a folder, moving a panel between
+folders, and accepting or declining a capture offer SHALL each be a named
+workspace command validated and committed by the server under the same revision,
+idempotency, and conflict rules as every other workspace command. A command
+SHALL be refused when it names a folder outside its project, would leave a panel
+without a folder, would rename or delete General, or would delete a linked
+folder whose worktree exists. A reorder SHALL be refused unless it names every
+folder of the project exactly once, and SHALL be accepted for any such order,
+whichever folder it places first. Folders the server creates or removes to
+follow the repository's worktrees, and moves it makes to capture a terminal,
+SHALL be committed through the same commands and published as ordinary revisions.
+
+#### Scenario: Deleting General
+
+- **WHEN** a client submits a command that deletes a project's General folder
+- **THEN** the server refuses it and the workspace revision is unchanged
+
+#### Scenario: Reordering General
+
+- **WHEN** a client submits a reorder that names every folder of a project once and places General last
+- **THEN** the server commits it as one revision and every connected client receives that order
+
+#### Scenario: Reorder that is not the project's folders
+
+- **WHEN** a client submits a reorder that omits a folder of the project, repeats one, or names a folder of another project
+- **THEN** the server refuses it and the workspace revision is unchanged
+
+#### Scenario: Server-made folder
+
+- **WHEN** the server creates a linked folder for a newly observed worktree
+- **THEN** every connected client receives it as an ordinary workspace revision
+
+#### Scenario: Two devices move the same panel
+
+- **WHEN** two devices submit conflicting folder moves for one panel
+- **THEN** one commits, the other is resolved by the ordinary conflict rules, and
+  both devices converge on the same folder
+
+### Requirement: Change records
+
+Each committed command SHALL produce one change record: the revision it starts
+from, the revision it produces, the command type, and for each of the views,
+projects, folders, panels, and terminal sessions collections the objects the
+commit created or replaced, by id and in full, and the ids it removed. A record
+SHALL name every object whose content differs between the two revisions and no
+object whose content is the same. A record delivered to a connection SHALL
+contain only objects that connection may read in a snapshot. Where a record
+cannot be scoped exactly for a connection, the server SHALL tell that connection
+to request a delta and SHALL NOT send it a wider record.
+
+#### Scenario: Rename
+
+- **WHEN** a panel is renamed
+- **THEN** the change record carries that panel and nothing else
+
+#### Scenario: Move between projects
+
+- **WHEN** a terminal panel is moved to another project
+- **THEN** the change record carries the panel, the folders and projects whose
+  membership changed, and the session that was re-homed
+
+#### Scenario: Close
+
+- **WHEN** a panel is closed
+- **THEN** the change record names the panel's id as removed
+
+#### Scenario: Project-scoped connection
+
+- **WHEN** a commit changes a panel of a project a project-scoped connection
+  may not see
+- **THEN** that connection's record carries no object of that project
+
+#### Scenario: Object enters a connection's scope
+
+- **WHEN** a commit moves a panel into the project a project-scoped connection
+  may see, from one it may not
+- **THEN** that connection either receives the panel in full or is told to
+  request a delta
+
+### Requirement: A client applies change records in order
+
+A client SHALL apply a change record only when the record starts from the
+revision the client holds. A record that starts from any other revision SHALL
+leave the projection unchanged, and the client SHALL request a delta from the
+revision it holds. A record for a revision the client has already reached SHALL
+be ignored.
+
+#### Scenario: Missed event
+
+- **WHEN** a client holding revision N receives a record that starts from N+1
+- **THEN** its projection stays at N and it requests a delta from N
+
+#### Scenario: Duplicate event
+
+- **WHEN** a client holding revision N+1 receives the record that produced N+1
+  again
+- **THEN** its projection is unchanged and it requests nothing
+
+### Requirement: Unchanged objects keep their identity in a client projection
+
+When a client projection advances, every view, project, folder, panel, and
+terminal session whose content is the same in the new revision SHALL be
+presented to the client's interface as the same object as before. This SHALL
+hold whether the client advanced by a change record, a delta, or a complete
+snapshot.
+
+#### Scenario: One panel renamed
+
+- **WHEN** one panel is renamed in a workspace of several projects
+- **THEN** every other panel, and every project and folder that does not
+  contain it, is the same object in the client projection as before
+
+#### Scenario: Snapshot after reconnect
+
+- **WHEN** a client reconnects and receives a complete snapshot in which one
+  project changed
+- **THEN** every unchanged project, folder, panel, and session is the same
+  object in the client projection as before
+
+### Requirement: Presentation work follows the change
+
+A client SHALL do presentation work for a workspace change only for what the
+change record names. A change to one terminal panel SHALL NOT re-render another
+terminal's panel or tab, and SHALL NOT cause a project the change does not
+concern to re-run its file, Git, documentation, or agent queries or to re-open
+their subscriptions. A client SHALL NOT treat the workspace revision advancing
+as a reason, on its own, to reload anything.
+
+#### Scenario: Rename beside other terminals
+
+- **WHEN** one terminal is renamed while others are open in the same and in
+  other projects
+- **THEN** no other terminal's panel or tab is rendered again, and no project
+  that does not hold the renamed terminal renders its workspace again
+
+#### Scenario: Change in another project
+
+- **WHEN** a panel changes in one project while another project is on screen
+- **THEN** the project on screen sends no file, Git, documentation, or agent
+  query because of it
+
+### Requirement: Terminal output does not commit workspace state
+
+Nothing a program writes to its terminal SHALL commit a workspace command,
+advance the workspace revision, or write the server's persisted workspace state.
+A fact the server takes from terminal output SHALL be published as live state
+for that terminal.
+
+#### Scenario: Program animates its title
+
+- **WHEN** a program rewrites its terminal's title once a second for a minute
+- **THEN** the workspace revision is the same at the end as at the start and
+  the persisted workspace state was not written
+
+### Requirement: A commit copies the state once and is durable before it is published
+
+Committing a workspace command SHALL copy the workspace state at most once.
+Reading the committed state, and observing that a commit happened, SHALL NOT
+copy it. A commit SHALL be durable in the server's persisted state before its
+result event is published. State the server hands to a reader SHALL be
+read-only.
+
+#### Scenario: Commit with observers
+
+- **WHEN** a command commits while the server's own observers of workspace
+  changes are attached
+- **THEN** the workspace state is copied once in total
+
+#### Scenario: Reader cannot change committed state
+
+- **WHEN** code that read the committed state attempts to change it
+- **THEN** the committed state is unchanged
+
+#### Scenario: Write fails
+
+- **WHEN** persisting a commit fails
+- **THEN** no result event is published and the workspace stays at its previous
+  revision
+
+### Requirement: Remembered command outcomes are bounded in size
+
+The outcomes the server remembers in order to answer a duplicated command id
+SHALL be bounded both in number and in total bytes, and SHALL NOT each retain a
+copy of the workspace state. When either bound is reached the oldest outcome
+SHALL be dropped first.
+
+#### Scenario: Many commands on a large workspace
+
+- **WHEN** more commands commit than the byte bound has room for
+- **THEN** the oldest outcomes are dropped and the retained total stays within
+  the bound
+
+#### Scenario: Duplicate within the bound
+
+- **WHEN** a client resends a command id whose outcome is still remembered
+- **THEN** the recorded outcome is returned and the mutation is not applied
+  again
+
+### Requirement: Every running terminal has a place
+
+Every running terminal session SHALL belong to a project and SHALL have a
+panel in it. On restart, a shell the session holder still has that is running
+and that the workspace does not name SHALL be recovered rather than ended: the
+server SHALL give it a panel in a new project named "Recovered terminals" in
+the first workspace view and SHALL adopt it there. A held shell that has
+already ended, or that the workspace names for another server, SHALL be ended.
+On a freshly initialised workspace, the one session about to be created SHALL
+NOT be treated as recovered.
+
+#### Scenario: A running shell the workspace lost
+
+- **WHEN** the server restarts and the holder has a running shell the workspace does not name
+- **THEN** that shell is running in a "Recovered terminals" project with its retained output, and every client shows its tab
+
+#### Scenario: An ended shell the workspace lost
+
+- **WHEN** the server restarts and the holder has an ended shell the workspace does not name
+- **THEN** it is ended and no project is created for it

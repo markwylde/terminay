@@ -1,5 +1,7 @@
 ## MODIFIED Requirements
 
+
+
 ### Requirement: Home overview section
 
 The Home section SHALL present a set of overview widgets derived from the same workspace inventory, agent state, connection state, and automation state that the rest of the workspace uses, so that no count ever reads differently here than elsewhere. It SHALL present: the number of open projects; the number of open tabs, with how many are terminals; agents counted by canonical state group (Needs you, Working, Done, Idle); remote connections and connected devices; active automations with the next scheduled run; and the most recent automation runs with their outcome. Each count SHALL cover the window's server and no other, and no widget SHALL name a server. While the window's server is unavailable, its counts SHALL be shown as unavailable rather than as zero. Widgets SHALL update live while shown.
@@ -59,6 +61,11 @@ The dashboard SHALL present a summary of the whole workspace of the window's ser
 
 - **WHEN** a device with an active filter reopens the dashboard
 - **THEN** no filter is applied
+
+#### Scenario: Untracked terminal in the summary
+
+- **WHEN** an untracked terminal is running a command
+- **THEN** the summary counts it as untracked and not as working
 
 ### Requirement: Board grouping by project
 

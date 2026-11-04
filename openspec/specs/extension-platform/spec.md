@@ -31,7 +31,7 @@ the server's matching UI bundle and MUST NOT load extension code.
 
 ### Requirement: Bounded API scope
 
-The public API SHALL support session sources, MCP install targets, language servers, and worktree insights. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
+The public API SHALL support session sources, MCP install targets, language servers, worktree insights, terminal launchers, terminal command defaults, chat providers, and bot agents. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
 
 #### Scenario: Unsupported contribution kind
 
@@ -52,6 +52,26 @@ The public API SHALL support session sources, MCP install targets, language serv
 #### Scenario: Worktree insight contribution
 
 - **WHEN** a package declares a worktree insight contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Chat provider contribution
+
+- **WHEN** a package declares a chat provider contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Terminal launcher contribution
+
+- **WHEN** a package declares a terminal launcher contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Terminal command default contribution
+
+- **WHEN** a package declares a terminal command default contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Bot agent contribution
+
+- **WHEN** a package declares a bot agent contribution
 - **THEN** it is a supported contribution kind and validation accepts it
 
 ### Requirement: Server-wide installation scope
@@ -212,7 +232,7 @@ One npm package SHALL contribute one immutable extension identity. Its `package.
 
 ### Requirement: Contribution arrays
 
-`contributes.agentSessionSources`, `contributes.mcpInstallTargets`, `contributes.languageServers`, and `contributes.worktreeInsights` SHALL be the supported contribution arrays, and at least one supported contribution SHALL be required.
+`contributes.agentSessionSources`, `contributes.mcpInstallTargets`, `contributes.languageServers`, `contributes.worktreeInsights`, `contributes.agentChatProviders`, `contributes.terminalLaunchers`, and `contributes.terminalCommandDefaults` SHALL be the supported contribution arrays, and at least one supported contribution SHALL be required.
 
 #### Scenario: Agent-only package
 
@@ -233,6 +253,26 @@ One npm package SHALL contribute one immutable extension identity. Its `package.
 
 - **WHEN** a package contributes one or more worktree insight sources and nothing
   else
+- **THEN** it passes contribution validation
+
+#### Scenario: Chat-provider-only package
+
+- **WHEN** a package contributes one or more chat providers and nothing else
+- **THEN** it passes contribution validation
+
+#### Scenario: Launcher-only package
+
+- **WHEN** a package contributes one or more terminal launchers that name no harness, and nothing else
+- **THEN** it passes contribution validation
+
+#### Scenario: Command-default-only package
+
+- **WHEN** a package contributes one or more terminal command defaults that name no harness, and nothing else
+- **THEN** it passes contribution validation
+
+#### Scenario: Bot-agent-only package
+
+- **WHEN** a package contributes one or more bot agents and nothing else
 - **THEN** it passes contribution validation
 
 ### Requirement: Identity separation and namespacing
@@ -863,13 +903,9 @@ external slot but MUST NOT be physically removed from that release.
 
 ### Requirement: Scoped secret brokerage
 
-Secret values SHALL live only in the Terminay Server vault. References SHALL be
-owned by `{extensionId, profileId, fieldId/purpose}`. An extension MUST NOT
-enumerate the vault or resolve another binding. The broker SHALL recheck
-extension and profile ownership and operation permission each time, SHALL send
-only the scoped transient copy over private IPC, and SHALL zeroize its
-server-side copy afterward. UI, snapshots, events, audit, diagnostics, errors,
-manifests, argv, and environment variables SHALL contain metadata only.
+Secret values SHALL live only in the Terminay Server vault. References SHALL be owned by `{extensionId, profileId, fieldId/purpose}`. An extension MUST NOT enumerate the vault or resolve another binding. Each time it resolves a secret, the broker SHALL recheck extension and profile ownership and operation permission. It SHALL send only the scoped transient copy over private IPC, and SHALL zeroize its server-side copy afterward.
+
+UI, snapshots, events, audit, diagnostics, errors, manifests, argv, and environment variables SHALL contain metadata only, with one exception. The host MAY place a bot's credential secret only in its private container-exec request environment over the pinned local socket, so the native agent receives it. The value SHALL NEVER appear in process arguments, image/container configuration, logs or client metadata. No extension SHALL receive a bot's credential secret.
 
 #### Scenario: Cross-extension secret resolution
 
@@ -881,6 +917,11 @@ manifests, argv, and environment variables SHALL contain metadata only.
 - **WHEN** UI, snapshots, events, audit records, diagnostics, errors, manifests,
   argv, or environment variables are produced
 - **THEN** they contain secret metadata only
+
+#### Scenario: Bot credential injection
+
+- **WHEN** the host starts a bot's agent with an API key
+- **THEN** the key is in the `docker` client's environment, is absent from every process's arguments, and is never sent to the extension
 
 ### Requirement: Honest secret-retention warning
 
@@ -1158,10 +1199,12 @@ Terminay SHALL own all of these, and the API SHALL offer an extension no means o
 - canonical ordering
 - extension enable and disable surfaces, and harness switch surfaces
 - the MCP install surface
+- chats, conversations, chat UI, chat MCP capabilities and approvals
+- bots, containers and images, native CLI drivers and event translation, sessions, credential injection, execution tools and bot UI
 - extension process lifetime and crash backoff
 - Electron-versus-standalone packaging
 
-An extension SHALL supply only session facts and MCP registration knowledge.
+An extension SHALL supply session facts, MCP registration knowledge, declared language-server/worktree insight runtimes, chat-provider turns and declarative bot-agent descriptions. Bot descriptions SHALL name a supported host-owned native driver, exact install versions, credentials, models, availability and bounded launch settings. They SHALL NOT implement process ownership, arbitrary wire parsers, credential access or bot UI.
 
 #### Scenario: Extension attempts a host behaviour
 
@@ -1174,6 +1217,21 @@ An extension SHALL supply only session facts and MCP registration knowledge.
 - **WHEN** a session source package is authored
 - **THEN** it implements session detection, harness reporting, bounded snapshots, and privacy exclusions, and nothing else
 
+#### Scenario: Bot agent responsibilities
+
+- **WHEN** a bot extension contributes a supported native CLI agent
+- **THEN** it describes the runtime and answers model/status/launch queries, while the server starts and controls the execution and owns credentials and diagnostic translation
+
+#### Scenario: Unsupported native driver
+
+- **WHEN** a bot extension declares an unknown native driver or an arbitrary protocol implementation
+- **THEN** contribution validation rejects it before a bot execution starts
+
+#### Scenario: Chat provider responsibilities
+
+- **WHEN** a chat provider is authored
+- **THEN** it reports availability and runs sessions and turns, and cannot read or change a chat's conversation, reach or approvals
+
 ### Requirement: Public extension API capabilities for agent extensions
 
 The API SHALL permit an extension to:
@@ -1185,6 +1243,7 @@ The API SHALL permit an extension to:
 - implement runtime callbacks through bounded typed IPC with cancellation, deadlines, and concurrency limits
 - contribute a session source and publish bounded machine-wide session snapshots
 - contribute MCP install targets that receive the host-supplied MCP server command
+- contribute chat providers that run host-opened sessions and stream bounded turn events
 
 #### Scenario: Runtime callback bounds
 
@@ -1195,6 +1254,11 @@ The API SHALL permit an extension to:
 
 - **WHEN** a session source publishes snapshots
 - **THEN** they are validated before they reach the host-owned canonical projection
+
+#### Scenario: Streaming chat events
+
+- **WHEN** a chat provider streams turn events
+- **THEN** they are validated and bounded before they reach the host-owned conversation
 
 ### Requirement: Extension dependencies are declared, not imported
 
@@ -1454,3 +1518,272 @@ it reports.
 - **WHEN** a child cannot deliver a frame to its host
 - **THEN** the reported error names the frame kind and the reason it was
   refused
+
+### Requirement: Agent chat permission
+
+A chat provider SHALL require the `agent-chat` permission. `agent-chat` SHALL authorize registering the declared chat providers and receiving, for each provider session, the host-supplied working directory, instruction and MCP server entry. It SHALL NOT grant client authority, direct canonical-store mutation, access to chats other than the sessions the host opens with that provider, or the ability to mint, widen or read a capability token other than the one inside the supplied MCP server entry.
+
+#### Scenario: Missing permission
+
+- **WHEN** a package declares a chat provider without `agent-chat`
+- **THEN** manifest validation fails
+
+### Requirement: Chat provider contribution and registration
+
+A package SHALL declare each chat provider under `contributes.agentChatProviders`. Each declaration SHALL carry a namespaced provider id, a display name and its supported platforms. At activation, the extension SHALL register each declared provider through `context.agents.registerChatProvider(id, runtime)`, which SHALL return a disposable registration. Registration SHALL be refused for an undeclared id, a duplicate id, or a registration after deactivation. The runtime SHALL implement:
+
+- `availability(signal)`: returns available, or unavailable with one of `not_installed`, `not_signed_in` or `unsupported_platform`, plus a bounded detail;
+- `openSession(request, events, signal)`: starts one provider session from the host's request, which holds an opaque session id, the working directory, a bounded instruction, and an MCP server entry or none;
+- on a session: `prompt(text, signal)` to run one turn, resolving when the turn completes or is cancelled and rejecting when it fails; `cancel()` to stop the running turn; and `close()` to end the session.
+
+Through `events` the provider SHALL report:
+
+- reply text deltas;
+- tool activity, as the MCP server and tool name for an MCP tool or a bounded tool kind for anything else, with an opaque call id and a running, completed or failed state;
+- failures, with a reason of `not_installed`, `not_signed_in`, `crashed` or `failed` and a bounded detail;
+- session exit.
+
+The host SHALL validate and bound every event. It SHALL drop events for sessions it did not open or has closed. A provider's events SHALL NEVER carry tool arguments or results to clients.
+
+#### Scenario: Registering a declared provider
+
+- **WHEN** an extension registers a chat provider id its manifest declared
+- **THEN** the registration is accepted and returns a disposable registration
+
+#### Scenario: Event for a closed session
+
+- **WHEN** a provider reports text for a session the host has already closed
+- **THEN** the host drops it and no chat changes
+
+### Requirement: Chat provider sessions in the extension host
+
+Provider sessions SHALL run inside the extension's child process. The agent processes they start SHALL be children of that process, and SHALL count toward the extension's crash containment. The host SHALL own each session's lifetime: it opens, prompts, cancels and closes sessions, and every call carries a cancellation signal. When the extension child exits, is quarantined, is disabled or is updated, the host SHALL treat each of its open sessions as ended unexpectedly. The extension SHALL kill the agent processes of a session that is closed, and of every session when it is deactivated.
+
+#### Scenario: Extension child crashes mid-turn
+
+- **WHEN** the extension child running a chat's provider session crashes during a turn
+- **THEN** the chat records that its agent stopped, the chat's capability is revoked, and the next message opens a new session once the extension is running again
+
+#### Scenario: Session closed
+
+- **WHEN** the host closes a provider session
+- **THEN** the extension ends that session's agent process
+
+### Requirement: Chat providers confine their agents
+
+A chat provider SHALL start its agent so that it can act only through the MCP server entry the host supplied:
+
+- it disables the agent's built-in tools where the agent offers that;
+- it loads no other MCP server and no user or project MCP configuration;
+- it declines every request to use any other tool;
+- it keeps no session history on disk where the agent offers that;
+- it writes nothing to the agent's configuration, settings, hooks or credential files.
+
+A provider MAY rely on the agent's existing login. A provider SHALL start the agent's executable as installed on the server account, from the server's environment. It SHALL NOT download an agent at run time.
+
+#### Scenario: No MCP entry
+
+- **WHEN** the host opens a session with no MCP server entry
+- **THEN** the provider starts the agent with no MCP servers and no built-in tools, so it can only converse
+
+#### Scenario: Configuration untouched
+
+- **WHEN** a provider session is opened, used and closed
+- **THEN** no file under the agent's configuration directory has been written by the provider
+
+### Requirement: Agent launch permission
+
+A terminal launcher SHALL require the `agent-launch` permission. `agent-launch` SHALL authorize registering the declared launchers and reporting, for each, whether it is available and which executable it starts. It SHALL NOT grant client authority, terminal input or output, the ability to create, read, or write a terminal, direct canonical-store mutation, or the ability to supply arguments, environment, or a working directory for a launch.
+
+#### Scenario: Missing permission
+
+- **WHEN** a package declares a terminal launcher without `agent-launch`
+- **THEN** manifest validation fails
+
+### Requirement: Terminal launcher contribution and registration
+
+A package SHALL declare each terminal launcher under `contributes.terminalLaunchers`. Each declaration SHALL carry:
+
+- a namespaced launcher id
+- a display name
+- an icon id from Terminay's icon allowlist
+- supported platforms
+- optionally, the harness it belongs to, named by the id of a session source the same package declares and a harness id that source declares
+
+At activation the extension SHALL register each declared launcher through `context.terminals.registerLauncher(id, runtime)`, which SHALL return a disposable registration. Registration SHALL be refused for an undeclared id, a duplicate id, or a registration after deactivation. The runtime SHALL implement `resolve(signal)`, which returns either available with the absolute path of the executable to start, or unavailable with one of `not_installed` or `unsupported_platform` and a bounded detail.
+
+The host SHALL list a launcher as available only while its extension is active, the launcher is registered, its platform is supported, its harness, when it names one, is switched on, and its last resolution reported available. The host SHALL NOT call `resolve` for a launcher whose harness is switched off. The host SHALL refuse an executable path that is not absolute, exceeds the path bound, or contains a control character, and SHALL treat that launcher as unavailable. The host SHALL bound how long `resolve` may run and SHALL treat a launcher whose resolution times out or fails as unavailable. A launcher SHALL NOT supply arguments, environment, input, or a working directory: what is started, and where, is decided by the host.
+
+The icon allowlist SHALL include marks for the agents the built-in agents extension supports. An icon id outside the allowlist SHALL fail manifest validation.
+
+#### Scenario: Registering a declared launcher
+
+- **WHEN** an extension registers a terminal launcher id its manifest declared
+- **THEN** the registration is accepted and returns a disposable registration
+
+#### Scenario: Undeclared launcher
+
+- **WHEN** an extension registers a launcher id its manifest did not declare
+- **THEN** the registration is refused
+
+#### Scenario: Harness switched off
+
+- **WHEN** a launcher names a harness and that harness is switched off
+- **THEN** the launcher is not listed as available and its `resolve` is not called
+
+#### Scenario: Relative executable
+
+- **WHEN** a launcher's `resolve` reports the executable `claude` rather than an absolute path
+- **THEN** the host lists the launcher as unavailable
+
+#### Scenario: Unknown icon
+
+- **WHEN** a launcher declaration names an icon id that is not on the allowlist
+- **THEN** manifest validation fails
+
+#### Scenario: Extension disabled
+
+- **WHEN** the extension that contributes a launcher is disabled
+- **THEN** the launcher is no longer listed as available
+
+### Requirement: Agent bots permission
+
+A bot agent SHALL require the `agent-bots` permission.
+
+`agent-bots` SHALL authorize:
+
+- registering the declared bot agents;
+- answering the host's requests for models, status, and launch details;
+- having the host run the declared device sign-in command inside a bot's container, as `bot`, when the user asks to sign that bot in;
+- having the host inject the declared credential secrets into the agent processes of bots that use them.
+
+It SHALL NOT grant:
+
+- client authority;
+- access to bots, sessions, transcripts, memories, or files;
+- running anything in a bot's container;
+- reading a credential secret's value.
+
+#### Scenario: Missing permission
+
+- **WHEN** a package declares a bot agent without `agent-bots`
+- **THEN** manifest validation fails
+
+### Requirement: Bot agent contribution
+
+A package SHALL declare each bot agent under `contributes.botAgents`. Each declaration SHALL carry:
+
+- a namespaced agent id and a display name;
+- an **image install** step: npm package specifiers, each pinned to an exact version, and optionally Debian package names;
+- the versioned `native-cli-v1` runtime protocol, a supported native driver and its exact runtime version;
+- zero or one **device sign-in**, for an agent whose CLI can sign in without a browser on the machine it runs on. It has:
+  - the sign-in command, as an executable and its arguments, which prints a URL and a one-time code and saves the login in the agent's own home;
+  - the sign-out command, as an executable and its arguments, which removes that login;
+  - optionally, its own bot config files, which the host writes in place of the agent's bot config files of the same path while the bot signs in this way, and before it runs the sign-in command;
+  - a label and help text;
+- zero or more **credential secrets**, each with:
+  - an environment variable name;
+  - a kind, which is sign-in token or API key;
+  - a label;
+  - help text that says how to obtain the value;
+- whether the agent can ask permission inside a bot container. An agent that cannot is **Autonomous only**;
+- zero or more **bot config files**: a path relative to `/home/bot` and its fixed contents, which the host writes into each bot's home when the bot is created and restores before each session;
+- a fixed, non-secret **launch environment**.
+
+Manifest validation SHALL reject:
+
+- an install step of any other form;
+- a version that is not exact;
+- a path that is absolute or contains `..`;
+- a bot config file inside `memories/` or a Terminay-reserved directory;
+- a device sign-in without both a sign-in command and a sign-out command;
+- a launch environment that names a declared credential secret;
+- an environment variable name that does not match `[A-Z][A-Z0-9_]*`.
+
+#### Scenario: Pinned packages
+
+- **WHEN** a package declares a bot agent whose install step names `@openai/codex@latest`
+- **THEN** manifest validation fails, naming the unpinned specifier
+
+#### Scenario: Bot config file escapes home
+
+- **WHEN** a package declares a bot config file whose path is `../.ssh/config`
+- **THEN** manifest validation fails
+
+#### Scenario: Device sign-in without a sign-out command
+
+- **WHEN** a package declares a device sign-in that has a sign-in command but no sign-out command
+- **THEN** manifest validation fails
+
+### Requirement: Bot agent registration and runtime
+
+At activation, an extension SHALL register each declared bot agent with `context.agents.registerBotAgent(id, runtime)`, which SHALL return a disposable registration. Registration SHALL be refused for an undeclared id, for a duplicate id, and after deactivation.
+
+The runtime SHALL implement:
+
+- `models(signal)`: returns the agent's selectable models, at most 64, each with an id and a display name;
+- `status(signal)`: returns ready, or not signed in with a bounded detail;
+- `launch(request, signal)`: receives the chosen model id, or Default. It returns a bounded non-secret launch environment. Native command arguments and model selection SHALL be assembled by the host.
+
+The host SHALL validate and bound every result, and SHALL cache `models` per activation. A call that times out or throws SHALL leave the agent shown as unavailable. The extension SHALL NOT start, stop, or speak to the agent process.
+
+#### Scenario: Models listed
+
+- **WHEN** a user opens the model picker for a bot whose agent is Codex
+- **THEN** the host asks the Codex bot agent for its models, and the picker lists Default plus those models
+
+#### Scenario: Extension child crashed
+
+- **WHEN** the extension contributing a bot's agent has crashed and is in backoff
+- **THEN** the agent is shown as unavailable, and its bots start no new session until the extension is running again
+
+### Requirement: Terminal command defaults permission
+
+A terminal command default SHALL require the `terminal-command-defaults` permission. `terminal-command-defaults` SHALL authorize registering the declared command defaults and reporting, for each, whether it applies and which arguments it adds. It SHALL NOT grant client authority, terminal input or output, the ability to create, read, or write a terminal, shell code, environment, or working directory, or direct canonical-store mutation.
+
+#### Scenario: Missing permission
+
+- **WHEN** a package declares a terminal command default without `terminal-command-defaults`
+- **THEN** manifest validation fails
+
+### Requirement: Terminal command default contribution and registration
+
+A package SHALL declare each terminal command default under `contributes.terminalCommandDefaults`. Each declaration SHALL carry a namespaced id, the command name it applies to, and optionally the harness it belongs to, named by the id of a session source the same package declares and a harness id that source declares. The command name SHALL be fixed by the manifest and SHALL meet the command-name rules of the terminal command defaults registry.
+
+At activation the extension SHALL register each declared command default through `context.terminals.registerCommandDefault(id, runtime)`, which SHALL return a disposable registration. Registration SHALL be refused for an undeclared id, a duplicate id, or a registration after deactivation. The runtime SHALL implement `resolve(signal)`, which returns either applies with the arguments to place before the user's arguments, or does not apply with a bounded reason.
+
+The host SHALL include a command default in the registry only while its extension is active, it is registered, its harness, when it names one, is switched on, and its last resolution reported that it applies with arguments that meet the registry's argument rules. The host SHALL NOT call `resolve` for a command default whose harness is switched off. The host SHALL resolve on registration and whenever the harness is switched on, SHALL bound how long `resolve` may run, and SHALL treat a timeout or failure as does not apply. The host SHALL NOT wait for resolution while launching a terminal; a launch uses the registry as it stands.
+
+#### Scenario: Registering a declared command default
+
+- **WHEN** an extension registers a command default id its manifest declared
+- **THEN** the registration is accepted and returns a disposable registration
+
+#### Scenario: Harness switched off
+
+- **WHEN** a command default names a harness and that harness is switched off
+- **THEN** it is not in the registry and its `resolve` is not called
+
+#### Scenario: Resolution reports an argument that is not a flag
+
+- **WHEN** a command default's `resolve` returns the argument `exec`
+- **THEN** the host treats it as does not apply
+
+#### Scenario: Extension disabled
+
+- **WHEN** the extension that contributes a command default is disabled
+- **THEN** the command default leaves the registry and new terminals no longer receive it
+
+### Requirement: The host runs bot agents through native CLI drivers
+
+The host SHALL execute supported native drivers inside the owning bot container as `bot` under its session supervisor, never on the host account or through a shell. It SHALL select the declared model, supply bounded execution input and scoped MCP, normalize diagnostics and approvals, and confirm process cleanup. Each user message SHALL start a fresh execution; historical diagnostics SHALL remain readable without continuation. The extension SHALL have no part in process control. The bot CLI runtime contract defines detailed lifecycle and credential behaviour.
+
+#### Scenario: Agent runs in the container
+
+- **WHEN** a bot whose agent is Claude Code starts a session
+- **THEN** the agent process runs inside that bot's container as `bot`, and no agent process for that session runs on the server account
+
+#### Scenario: Model rejected
+
+- **WHEN** the agent rejects the bot's chosen model
+- **THEN** the session fails, and the reason names the model

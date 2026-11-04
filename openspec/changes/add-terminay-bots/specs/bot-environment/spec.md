@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: A container engine is required and detected
 
@@ -191,7 +191,7 @@ Environment › Overview SHALL show:
 - the image, and whether the container is current;
 - the home volume;
 - the resource limits;
-- whether the engine socket is shared;
+- the shared engine proxy and its attribution rules;
 - the lifecycle actions.
 
 It SHALL show CPU use, memory use, and home size as read when the Overview opened, with a **Refresh** action. It SHALL NOT sample them on a timer. It SHALL show the container's recent log, capped at its last 256 KiB, with injected secrets redacted.
@@ -248,43 +248,6 @@ Environment › Shell SHALL open an interactive terminal in the bot's container,
 
 - **WHEN** a user opens Shell on a running bot and types `whoami`
 - **THEN** the terminal prints `bot`
-
-### Requirement: Desktop
-
-Environment › Desktop SHALL show the bot's desktop live, in either view-only or control mode. It SHALL open in view-only mode. The user SHALL be able to switch modes, open the desktop in its own window, and reconnect.
-
-- **Authentication.** The desktop's VNC service SHALL require a password. The server SHALL hold the password in its vault and SHALL deliver it at start through a root-only bootstrap. The desktop SHALL NOT start until the bootstrap completes, and a container that receives no bootstrap SHALL exit. The `bot` user SHALL NOT be able to read the password.
-- **Transport.** The VNC service SHALL listen only on the container's own loopback. The server SHALL reach it through an engine `exec` stream into the container, and SHALL relay the desktop to the client through the Terminay connection, so no port is published and remote clients need no other port.
-- **Stream binding.** Each desktop stream SHALL be bound to the authorized client connection, the bot, the mode, and a stream generation. Changing the mode SHALL open a new stream.
-- **Allowlist.** The server SHALL forward only a bounded allowlist of client messages, and SHALL close the stream on any unknown or oversized message.
-- **View-only enforcement.** In view-only mode, the server SHALL discard every keyboard, pointer, and clipboard message.
-- **Thumbnail.** The context rail's thumbnail SHALL be a view-only relay of the same desktop, shown only while the container runs. Activating it SHALL open Desktop.
-- **Idle stop.** Viewing the desktop SHALL count as activity for idle stop.
-
-#### Scenario: Remote client
-
-- **WHEN** a paired remote browser client opens a bot's Desktop
-- **THEN** the desktop is shown through the Terminay connection and no container port is reachable from that device
-
-#### Scenario: Forged input in view-only mode
-
-- **WHEN** a client in view-only mode sends a pointer event over the desktop stream
-- **THEN** the server discards it and the bot's desktop receives no input
-
-#### Scenario: Malformed traffic
-
-- **WHEN** a client sends an unknown RFB message type, or a `ClientCutText` longer than 1 MiB
-- **THEN** the server closes that desktop stream and the bot's desktop receives nothing
-
-#### Scenario: No bootstrap
-
-- **WHEN** a bot's container starts but the server never delivers the bootstrap
-- **THEN** the container exits and no desktop service listens
-
-#### Scenario: No direct connection
-
-- **WHEN** a process on the server machine, or in another bot, tries to connect to a bot's desktop
-- **THEN** there is no published port to connect to, and inside the bot's own container the VNC service still requires the password
 
 ### Requirement: Shared engine proxy
 
@@ -352,7 +315,7 @@ When the user chooses an agent's device sign-in, the server SHALL start the bot'
 - **Config.** Before running the command, and before each session while the bot's sign-in is `device`, the host SHALL write the device sign-in's own bot config files in place of the agent's files of the same path.
 - **The login stays in the bot.** The login the command saves SHALL stay in the bot's home volume. Terminay SHALL NEVER read, copy, or display it, and SHALL NOT pass it to any other bot.
 - **Outcome.** When the command exits successfully, the bot's sign-in SHALL become `device`. When it fails, or the user closes the terminal first, the bot's sign-in SHALL be unchanged.
-- **Sign out.** Signing out SHALL run the declared sign-out command in the bot's container as `bot`, and SHALL set the bot to Not signed in.
+- **Sign out.** Signing out SHALL run the declared sign-out command in the bot's container as `bot`, and SHALL set the bot to Not signed in only after successful sign-out.
 - **Deletion.** Deleting a bot with its home SHALL remove its login. Choosing another sign-in SHALL leave the saved login in the home until the user signs out.
 
 #### Scenario: Codex signs in with ChatGPT
@@ -377,7 +340,7 @@ When the user chooses an agent's device sign-in, the server SHALL start the bot'
 
 ### Requirement: Tokens are kept in the vault and injected without arguments
 
-A token SHALL be entered in a bot's Profile, and SHALL be kept in the server vault for that bot. Terminay SHALL pass a token only into the environment of the agent processes it starts for that bot. To do that, it SHALL put the value only in the environment of the local `docker` client process, and SHALL name only the variable in that client's arguments.
+A token SHALL be entered in a bot's Profile, and SHALL be kept in the server vault for that bot. Terminay SHALL pass a token only into the environment of the agent processes it starts for that bot. The server SHALL supply the value in the execution environment through the pinned local engine’s socket API; it SHALL NOT interpolate the value into a command or process argument.
 
 Terminay SHALL NEVER put the value in process arguments, the container's configuration, the image, the volume, logs, diagnostics, or errors. It SHALL launch each agent with the declared bot config files and launch environment that keep the agent itself from writing the token to the bot's home or passing it to tool shells. The image SHALL provide `terminay-tool-shell`, which runs a command without the variables named in `TERMINAY_CREDENTIAL_VARIABLES`, and Terminay SHALL set that variable, for each agent it starts, to the names of the agent's declared credential variables, never their values. Copying a token to another bot SHALL be an explicit user action.
 
@@ -392,3 +355,40 @@ The agent and anything it runs act as the same user, so they can read the token 
 
 - **WHEN** a user sets a Claude Code bot's Sign-in to API key and enters a key
 - **THEN** its sessions use that key, and no other bot can use it
+
+### Requirement: Desktop
+
+Environment › Desktop SHALL show the bot's desktop live, in either view-only or control mode. It SHALL open in view-only mode. The user SHALL be able to switch modes, open the desktop in its own window, and reconnect.
+
+- **Authentication.** The desktop's VNC service SHALL require a password. The server SHALL hold the password in its vault and SHALL deliver it at start through a root-only bootstrap. The desktop SHALL NOT start until the bootstrap completes, and a container that receives no bootstrap SHALL exit. The `bot` user SHALL NOT be able to read the password.
+- **Transport.** The VNC service SHALL listen only on the container's own loopback. The server SHALL reach it through an engine `exec` stream into the container, and SHALL relay the desktop to the client through the Terminay connection, so no port is published and remote clients need no other port.
+- **Stream binding.** Each desktop stream SHALL be bound to the authorized client connection, the bot, the mode, and a stream generation. Changing the mode SHALL open a new stream.
+- **Allowlist.** The server SHALL forward only a bounded allowlist of client messages, and SHALL close the stream on any unknown or oversized message.
+- **View-only enforcement.** In view-only mode, the server SHALL discard every keyboard, pointer, and clipboard message.
+- **Thumbnail.** The context rail's thumbnail SHALL be a view-only relay of the same desktop, shown only while the container runs. Activating it SHALL open Desktop.
+- **Idle stop.** Viewing the desktop SHALL count as activity for idle stop.
+
+#### Scenario: Remote client
+
+- **WHEN** a paired remote browser client opens a bot's Desktop
+- **THEN** the desktop is shown through the Terminay connection and no container port is reachable from that device
+
+#### Scenario: Forged input in view-only mode
+
+- **WHEN** a client in view-only mode sends a pointer event over the desktop stream
+- **THEN** the server discards it and the bot's desktop receives no input
+
+#### Scenario: Malformed traffic
+
+- **WHEN** a client sends an unknown RFB message type, or a `ClientCutText` longer than 1 MiB
+- **THEN** the server closes that desktop stream and the bot's desktop receives nothing
+
+#### Scenario: No bootstrap
+
+- **WHEN** a bot's container starts but the server never delivers the bootstrap
+- **THEN** the container exits and no desktop service listens
+
+#### Scenario: No direct connection
+
+- **WHEN** a process on the server machine, or in another bot, tries to connect to a bot's desktop
+- **THEN** there is no published port to connect to, and inside the bot's own container the VNC service still requires the password

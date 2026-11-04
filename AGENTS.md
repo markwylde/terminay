@@ -9,7 +9,8 @@ read the relevant capability spec before changing code.
 - `openspec/specs/<capability>/spec.md` — the canonical product contract, one
   capability per directory. Present tense, `### Requirement:` with at least one
   `#### Scenario:` each.
-- `openspec/changes/<name>/` — active, unimplemented work. Each holds
+- `openspec/changes/<name>/` — work in progress or awaiting verification and
+  archive. Each holds
   `proposal.md`, `design.md`, `adr.md`, `tasks.md`, and `specs/<capability>/spec.md`
   deltas.
 - `openspec/changes/archive/<date>-<name>/` — completed changes, kept as history.
@@ -28,6 +29,10 @@ whose schema is vendored at `openspec/schemas/spec-driven-with-adr/`.
 - Work capability-first. Propose a change (`/opsx:propose`, or the
   `openspec-propose` skill) before changing product behaviour; implement it with
   the apply workflow; archive it when done so its deltas fold into the main specs.
+- Keep planning artifacts, implementation, verification, and spec sync in the
+  same worktree and pull request. A proposal does not need a separate commit,
+  pull request, or merge to `main` before implementation. Use a separate
+  proposal review only when requested.
 - A main spec states the required contract as though it had always been that way.
   Never write legacy, deprecated, transitional, migration, or cleanup framing into
   `openspec/specs/` — that belongs in a change.

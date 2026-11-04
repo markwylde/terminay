@@ -211,17 +211,37 @@ The foreground entry SHALL accept explicit `--data-root`, `--server-id`, `--endp
 
 ### Requirement: Supported runtime matrix
 
-Terminay Desktop SHALL support macOS 12 Monterey or newer on Apple silicon through an arm64 DMG and 64-bit GNU/Linux on x64 through an AppImage. Terminay Server SHALL support 64-bit GNU/Linux on x64 and arm64 through self-contained archives that contain the pinned Node runtime, server code, matching responsive UI, and target-native dependencies, and SHALL require no system Node, npm, compiler, display server, or browser. Supported GNU/Linux hosts SHALL provide a Debian 12-compatible userspace with glibc 2.36 or newer. macOS x64, Linux arm64 Desktop, Windows Desktop, standalone macOS and Windows Server, and Alpine/musl Linux are outside the supported matrix.
+Terminay Desktop SHALL support macOS 13 Ventura or newer on Apple silicon through an arm64 DMG, 64-bit GNU/Linux on x64 through an AppImage, and Windows 10 22H2 or Windows 11 on x64 through a per-user NSIS installer. Terminay Server SHALL support 64-bit GNU/Linux on x64 and arm64 through self-contained archives that contain the pinned Node runtime, server code, matching responsive UI, and target-native dependencies, and SHALL require no system Node, npm, compiler, display server, or browser. Supported GNU/Linux hosts, for Desktop and Server alike, SHALL provide a glibc userspace of version 2.31 or newer, such as Debian 11, Ubuntu 20.04, or anything newer. Windows Desktop SHALL require no WSL, Node, npm, compiler, or Git to start terminals. macOS x64, Linux arm64 Desktop, Windows on ARM, standalone macOS and Windows Server, and Alpine/musl Linux are outside the supported matrix.
 
 #### Scenario: Installing the standalone archive
 
 - **WHEN** an operator installs a standalone server archive on a supported Linux host
 - **THEN** the server runs without a system Node, npm, compiler, display server, or browser
 
+#### Scenario: Desktop on the oldest supported glibc
+
+- **WHEN** the Desktop AppImage runs on an x64 host whose glibc is 2.31
+- **THEN** it starts terminals
+
+#### Scenario: Desktop on a newer distribution than the build
+
+- **WHEN** the Desktop AppImage runs on a host whose glibc is newer than any runner it could have been built on
+- **THEN** it starts terminals
+
+#### Scenario: Desktop on a clean Windows machine
+
+- **WHEN** a user installs `Terminay-Windows-<version>-Setup.exe` on Windows 10 22H2 or Windows 11 x64 with no WSL, Node, or Git installed
+- **THEN** Terminay starts and opens a terminal in the system default shell
+
 #### Scenario: Unsupported platform
 
 - **WHEN** the runtime is used on a platform outside the supported matrix
 - **THEN** it is not covered by this contract
+
+#### Scenario: Desktop on the oldest supported macOS
+
+- **WHEN** the Desktop DMG is installed on an Apple silicon Mac running macOS 13
+- **THEN** it launches and starts terminals
 
 ### Requirement: Release packaging validation
 
@@ -747,7 +767,7 @@ Full-control pairing SHALL be presented as equivalent to interactive shell acces
 
 ### Requirement: Server-owned session lifetime
 
-PTYs and server-side agents SHALL be owned by the server, not by a renderer, browser tab, Electron window, or individual transport connection, and SHALL continue running through client disconnect, reload, window close, and temporary network loss. A client SHALL be able to resubscribe using session identity and output position without duplicating the PTY or replaying already acknowledged output. An explicit terminal-close command SHALL end the PTY for all clients. PTY survival across an actual server-process restart SHALL NOT be promised; durable workspace state SHALL record the interruption and SHALL NOT present an ended process as live.
+PTYs and server-side agents SHALL be owned by the server, not by a renderer, browser tab, Electron window, or individual transport connection, and SHALL continue running through client disconnect, reload, window close, and temporary network loss. A client SHALL be able to resubscribe using session identity and output position without duplicating the PTY or replaying already acknowledged output. An explicit terminal-close command SHALL end the PTY for all clients. When a session holder retains a running PTY through a server-process restart, the server SHALL adopt that same process and its recoverable presentation. Durable workspace state SHALL record interruption for processes that were not retained and SHALL NOT present an ended process as live.
 
 #### Scenario: All clients disconnect
 
@@ -767,7 +787,8 @@ PTYs and server-side agents SHALL be owned by the server, not by a renderer, bro
 #### Scenario: Server restart
 
 - **WHEN** the server process restarts
-- **THEN** durable workspace state records the interruption and does not present an ended process as live
+- **THEN** sessions retained by a holder are adopted with the same process identity
+- **AND** durable workspace state records interruption for processes that were not retained and does not present an ended process as live
 
 ### Requirement: Window-independent PTY adapter
 
@@ -1008,21 +1029,225 @@ The direct HTTPS listener SHALL serve a small safe HTML page at `/v1/` for brows
 - **WHEN** Desktop parses the same `/v1/` direct pairing URL
 - **THEN** it connects to the listener's `/signal` WebSocket endpoint and the page route does not change the pairing protocol
 
-### Requirement: A locked data root is explained to the operator
+### Requirement: Connection-scoped concurrent command idempotency
 
-A standalone server that cannot take its data root because a lock is present SHALL NOT start, SHALL leave the lock as it found it, and SHALL exit with a non-zero status. It SHALL write to standard error a message that states that the data root is locked, names the data root and the lock file, gives the time the lock records when it records one, explains that a lock remains when a server is killed before it can remove it and that the server never removes one automatically, and gives the commands that check for another server and remove a stale lock. In the official container image those commands SHALL be expressed for containers and volumes and SHALL NOT refer to a process id. The message SHALL NOT include a stack trace.
+Within a live connection's bounded command-retention window, requests naming one command identity SHALL invoke its handler at most once, including concurrent requests. Repeated results SHALL use the requesting correlation identity. Reuse with different operation, payload, expected revision, or body SHALL be rejected. Replayed outcomes SHALL NOT reapply connection delivery side effects. Retention SHALL remain bounded and connection-scoped.
 
-#### Scenario: A container starts on a volume a killed container left locked
+#### Scenario: Concurrent duplicate command
 
-- **WHEN** the official image starts on a data volume that holds a lock from a container that was killed
-- **THEN** the container exits non-zero and its log states that the data root is locked, names the lock file, and gives the commands to check for another container on the volume and to remove the lock
+- **WHEN** requests sharing one command identity arrive before its handler completes
+- **THEN** the handler executes once and each response names its requesting correlation identity
 
-#### Scenario: A host server starts on a locked data root
+#### Scenario: Completed duplicate command
 
-- **WHEN** a standalone server outside a container starts on a data root that holds a lock
-- **THEN** it exits non-zero and names the process id the lock records and the command that removes the lock
+- **WHEN** a retained completed command is requested under another correlation identity
+- **THEN** its retained outcome is returned under that correlation identity without executing the handler again
 
-#### Scenario: The lock is left in place
+### Requirement: Bounded feature admission preserves connection control
 
-- **WHEN** a server refuses a locked data root
-- **THEN** the lock file is unchanged
+A connection SHALL bound admitted feature handlers while continuing to consume heartbeat, cancellation, and transport termination. Excess feature frames SHALL enter a FIFO bounded by bytes and frames with their original deadlines preserved. A FIFO safety-ceiling breach SHALL close the connection explicitly. Queued requests SHALL remain cancellable before execution. Feature saturation SHALL NOT alone make a live connection appear disconnected.
+
+#### Scenario: Heartbeat under saturation
+
+- **WHEN** every feature-handler slot is occupied and a heartbeat arrives
+- **THEN** the connection answers it without waiting for a feature handler to complete
+
+#### Scenario: Cancellation under saturation
+
+- **WHEN** every feature-handler slot is occupied and a cancellation arrives
+- **THEN** its admitted request is cancelled without waiting for another handler to finish
+
+#### Scenario: Excess feature work
+
+- **WHEN** a feature request arrives while handler capacity is exhausted and FIFO capacity remains
+- **THEN** it waits in bounded FIFO order while heartbeat and cancellation remain serviceable
+
+#### Scenario: Pending FIFO safety ceiling
+
+- **WHEN** queued feature frames exhaust the FIFO byte or frame limit
+- **THEN** the connection closes with a resource diagnostic rather than retaining unbounded work
+
+### Requirement: Client feature bursts remain bounded before transmission
+
+A client SHALL bound outstanding feature requests and captured bytes below the connection's safety capacity. Further requests SHALL wait in bounded FIFO order without blocking heartbeat or cancellation. Local queue time SHALL count against request deadlines. Cancelled or disconnected queued commands SHALL be reported as unsent and SHALL NOT cross a replacement transport generation.
+
+#### Scenario: Desktop opens many panels
+
+- **WHEN** a normal client submits more feature requests than the server's pending FIFO holds
+- **THEN** excess work waits within the client's bounded admission queue without disconnecting the live connection
+
+#### Scenario: A locally queued command is cancelled or disconnected
+
+- **WHEN** a command ends before its frame is transmitted
+- **THEN** the frame is discarded and the outcome is a definitive pre-send refusal, not an unknown delivery outcome
+
+#### Scenario: Connection ends before local admission
+
+- **WHEN** a locally queued request loses its connection before transmission
+- **THEN** it reports a distinguishable unsent connection-loss error, project creation can recover, and subscription cleanup treats it as expected teardown without converting it to an unknown command outcome
+
+#### Scenario: Cancellation reason normalization
+
+- **WHEN** a request is aborted with a non-Error reason before transmission or while waiting for local admission
+- **THEN** it rejects with an AbortError consistently and transmits no frame
+
+### Requirement: Holder retention configuration is valid before resource creation
+
+A holder SHALL reject a retention byte bound that is not a positive safe integer before creating resources or spawning a PTY.
+
+#### Scenario: Non-positive retention capacity
+
+- **WHEN** holder startup receives zero or a negative retention byte bound
+- **THEN** startup fails before a PTY or holder resource is created
+
+### Requirement: Bounded authenticated holder presentation transfer
+
+Holder presentation recovery SHALL remain internal to the authenticated holder/server connection. Restoration bytes SHALL travel in bounded binary payloads with validated session identity, geometry, format, lengths, and byte positions. A recovery snapshot SHALL be installed before later output is parsed or clients hydrate.
+
+#### Scenario: Unauthenticated peer requests presentation
+
+- **WHEN** a peer has not completed the holder authentication handshake
+- **THEN** the holder sends it no terminal presentation or output
+
+#### Scenario: Transfer is malformed or crosses sessions
+
+- **WHEN** a presentation transfer exceeds its bounds, has invalid positions, or names another session
+- **THEN** the server refuses that transfer without applying it to any terminal
+
+#### Scenario: Queries appear in held output
+
+- **WHEN** terminal output requests cursor, palette, mouse-mode, or other protocol replies
+- **THEN** the holder observes presentation without forwarding emulator replies to the PTY
+
+### Requirement: Holder presentation is bounded and observational
+
+The holder SHALL bound presentation memory and parsing work, SHALL NOT forward terminal-emulator replies to its PTYs, and SHALL NOT persist running terminal output to disk. Exhausting presentation resources SHALL NOT end the PTY or disrupt its existing live output stream.
+
+#### Scenario: Untrusted output exhausts presentation bounds
+
+- **WHEN** terminal output exceeds the holder presentation limits
+- **THEN** presentation recovery reports a bounded failure while the same process and existing live output continue
+- **AND** the holder creates no running-output disk journal
+
+### Requirement: A data root is held by one running standalone server
+
+A standalone server SHALL hold its data root exclusively from before it reads or writes any durable state in it until its process ends. The hold SHALL belong to the server process and SHALL be enforced by the operating system, so that it ends when the process ends by any means, including a kill, and continues while the process is paused or suspended. A second standalone server started on a held data root SHALL NOT start. Whether a data root is held SHALL NOT be decided from the presence, contents, or age of a file, from a recorded process id, or from a deadline. A server that cannot establish whether the data root is held SHALL NOT start.
+
+#### Scenario: A second server on a held data root
+
+- **WHEN** a standalone server starts on a data root that a running server holds
+- **THEN** it does not start, and the running server is unaffected
+
+#### Scenario: Start after a kill
+
+- **WHEN** a standalone server is killed and another is then started on the same data root
+- **THEN** the second server starts with no operator action
+
+#### Scenario: Start after a graceful stop
+
+- **WHEN** a standalone server is stopped gracefully and another is then started on the same data root
+- **THEN** the second server starts
+
+#### Scenario: A paused server keeps its data root
+
+- **WHEN** a standalone server starts on a data root whose holder is paused
+- **THEN** it does not start, however long the holder has been paused
+
+#### Scenario: Two containers on one volume
+
+- **WHEN** two containers of the official image are started on the same data volume
+- **THEN** exactly one of them runs a server
+
+#### Scenario: A data root that cannot be locked
+
+- **WHEN** a standalone server starts on a data root whose filesystem cannot provide the lock
+- **THEN** it does not start, and reports that the data root could not be locked
+
+### Requirement: A held data root is explained to the operator
+
+A standalone server that cannot take its data root because another server holds it SHALL exit with a non-zero status and SHALL leave the data root as it found it. It SHALL write to standard error a message that states that another server is using the data root, names the data root and the lock file, gives the time the holder recorded when one is recorded, explains that the lock is held by a running server and ends when that server does, and gives the command that finds that server and the instruction to use it or stop it. The message SHALL NOT tell the operator to remove a file. In the official container image the commands SHALL be expressed for containers and volumes, SHALL say that a paused container holds the lock, and SHALL NOT refer to a process id. The message SHALL NOT include a stack trace.
+
+#### Scenario: A container starts on a volume another container holds
+
+- **WHEN** the official image starts on a data volume that a running container holds
+- **THEN** the container exits non-zero and its log states that another server is using the data root, names the lock file, and gives the command that lists the containers using the volume
+
+#### Scenario: A host server starts on a held data root
+
+- **WHEN** a standalone server outside a container starts on a data root that a running server holds
+- **THEN** it exits non-zero and names the process id the holder recorded and the command that checks it
+
+#### Scenario: The data root is left as found
+
+- **WHEN** a server refuses a held data root
+- **THEN** the holder's lock and its record are unchanged
+
+### Requirement: Windows Desktop starts terminals on Windows before publication
+
+The tag release and the `main` prerelease SHALL build the Windows installer on a Windows x64 runner. Before the installer or its update payload is checksummed, attached, or named in update metadata, release packaging SHALL install that exact installer silently for the current user. It SHALL start the installed application with an isolated data directory and wait until the embedded server and its session holder report ready. It SHALL then run Windows PowerShell and Command Prompt in PTYs through the packaged `node-pty`, write input to each, resize each, observe output, and observe a clean exit. It SHALL also restart the server and observe that a held terminal is still running. Publication SHALL fail if any step does not succeed, and the probe SHALL record the installer's SHA-256 with its result.
+
+#### Scenario: Probe passes
+
+- **WHEN** a candidate installer passes every probe step
+- **THEN** it and its update metadata are published, and the probe record names the installer's SHA-256
+
+#### Scenario: Holder never becomes ready
+
+- **WHEN** the installed application's session holder exits before it reports ready
+- **THEN** the probe fails with the holder's reported reason and nothing for Windows is published for that run
+
+#### Scenario: A shell cannot start
+
+- **WHEN** PowerShell or Command Prompt does not start or does not echo input in the packaged PTY
+- **THEN** publication fails and names the shell
+
+### Requirement: Windows native files match the artifact architecture
+
+Before publication, release packaging SHALL read the header of every PE file (`.exe`, `.dll`, and `.node`) in the Windows payload, including those inside `app.asar.unpacked`. It SHALL fail if any file is not a PE32+ image for x64, unless it is on a declared allow-list of files that load only into another process of a matching architecture.
+
+#### Scenario: An arm64 addon in the x64 payload
+
+- **WHEN** the Windows x64 payload contains a `pty.node` built for arm64
+- **THEN** the check fails, naming the file and its machine type, and nothing is published
+
+#### Scenario: Payload of x64 files
+
+- **WHEN** every PE file in the payload is PE32+ x64
+- **THEN** the check passes
+
+### Requirement: Linux artifacts are built at the glibc floor
+
+Every published Linux artifact SHALL be compiled, packaged, and staged inside one floor build image. That covers the Desktop AppImage on the tag and `main` channels and every standalone server archive. The image is pinned by digest, provides glibc 2.31 and the pinned Node runtime, and is declared in one place together with the floor. The runner a job lands on SHALL NOT decide the glibc an artifact needs.
+
+#### Scenario: The runner image moves
+
+- **WHEN** the runner image a Linux lane runs on gains a newer glibc
+- **THEN** the artifact's native code is still compiled against glibc 2.31
+
+### Requirement: Linux artifacts are checked against the glibc floor before publication
+
+Before an artifact is checksummed, signed, or uploaded, release packaging SHALL read the symbol-version requirements of every ELF file in it for the artifact's architecture. It SHALL fail if any file requires a `GLIBC_` version above 2.31, a `GLIBCXX_` version above 3.4.28, or a `CXXABI_` version above 1.3.12. Files for other architectures SHALL NOT fail the check.
+
+#### Scenario: A native addon built against a newer glibc
+
+- **WHEN** a Linux artifact contains an x64 `pty.node` that requires `GLIBC_2.42`
+- **THEN** the floor check fails, naming the file and the version, and the artifact is not published
+
+#### Scenario: A bundled library for another architecture
+
+- **WHEN** an x64 artifact contains an armhf library that requires `GLIBC_2.34`
+- **THEN** the floor check skips it and does not fail
+
+### Requirement: Linux artifacts start terminals on a clean floor host before merge and publication
+
+Release packaging SHALL extract each Linux artifact in a clean glibc 2.31 environment with no compiler, npm, or system Node. Using the artifact's own runtime, it SHALL start the packaged session holder until it reports ready and run a shell in a PTY through the packaged `node-pty`. Publication SHALL fail if either does not succeed. Pull-request CI SHALL build the x64 AppImage and the x64 server archive in the floor build image, and SHALL run the floor check and this probe on both.
+
+#### Scenario: Holder cannot start on the floor host
+
+- **WHEN** the session holder from a candidate AppImage or server archive exits before it is ready in the clean glibc 2.31 environment
+- **THEN** the probe fails with the holder's reported reason and the artifact is not published
+
+#### Scenario: Pull request raises the floor
+
+- **WHEN** a pull request adds a native dependency whose x64 build requires a glibc above 2.31
+- **THEN** pull-request CI fails before the change can merge

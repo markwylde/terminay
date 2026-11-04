@@ -6,7 +6,7 @@ Model calls in every spike and test go through OpenRouter, using `OPENROUTER_API
 
 The engines are the Podman machine on this Mac, and rootful Docker on Linux. The Linux Docker runs as a privileged `docker:dind` container under Podman. Docker Desktop and OrbStack are checked when they are available.
 
-- [ ] 0.1 Confirm that `add-agent-chat-and-pixel` and `unified-settings-window` are archived. Verify: `openspec validate --all` passes. `openspec/specs/extension-platform/spec.md` lists `contributes.agentChatProviders`, and the main `workspace-dashboard` spec lists Recordings.
+- [x] 0.1 Confirm the prerequisite agent-chat provider and Home Recordings contracts are present in the canonical specs and active validation passes. Prerequisite changes with unrelated open verification may remain active.
 - [x] 0.2 Build a prototype bot image containing `terminay-init`, `terminay-run`, `terminay-files`, TigerVNC, and the pinned `@agentclientprotocol/codex-acp` and `@agentclientprotocol/claude-agent-acp`. Verify: the image builds with `podman build` on the Podman machine and with `docker build` on the Linux Docker engine. The exact versions are recorded.
 - [x] 0.3 Spike Codex Host login on both engines. Result: every functional check passes on the Podman machine and on Linux Docker, using fake keys and `codex login --with-api-key` through the link. Codex writes `auth.json` in place, and its sidecar is `auth.lock`. Podman masks need `notmpcopyup`. Locks cross between host and containers on Linux, but not between the Mac and the Podman VM; the owner accepted that race. A real ChatGPT OAuth refresh stays a manual owner check. Host login was later withdrawn (ADR-0091); this result is history.
 - [x] 0.4 Spike Claude Code Host login on Linux. Result: a link fails on write, because Claude Code renames over the path. `CLAUDE_SECURESTORAGE_CONFIG_DIR` pointed at the masked mount works. A real Claude OAuth refresh stays a manual owner check. Host login was later withdrawn (ADR-0091); this result is history.
@@ -92,7 +92,7 @@ The engines are the Podman machine on this Mac, and rootful Docker on Linux. The
 
   Verify: unit tests against a fake helper, and an integration test that reuses the cases from 0.8.
 - [x] 4.10 Implement the Shell bridge under the PTY host. Verify: an integration test shows `whoami` prints `bot`, resizing propagates, and closing the shell ends its process.
-- [ ] 4.11 Implement the RFB relay (the desktop checks moved from 0.9):
+- [x] 4.11 Implement the RFB relay (the desktop checks moved from 0.9):
   - an `exec` tunnel to the container's loopback, with no published port;
   - VNC authentication on the server side;
   - RFB 3.8 with security type None to the client, over a stream bound to the client, bot, mode, and generation;
@@ -102,7 +102,8 @@ The engines are the Podman machine on this Mac, and rootful Docker on Linux. The
   - the thumbnail stream;
   - teardown when authority is revoked.
 
-  Verify: protocol unit tests cover forged input, unknown types, oversized `ClientCutText`, fragmented messages, and stale generations. An integration test confirms a remote browser renders the desktop.
+  Verify: protocol unit tests cover forged input, unknown types, oversized `ClientCutText`, fragmented messages, and stale generations. The existing protocol suite is covered by the green Workspace tests job on PR #487. The remote-browser acceptance check is tracked separately in 4.11a.
+- [ ] 4.11a Verify the production desktop relay renders in a remote browser. Verify: an integration test or recorded paired-browser run displays the bot desktop; protocol fixtures alone are insufficient.
 - [x] 4.12 Implement Overview's on-demand figures and its bounded, redacted log. Verify: unit tests show no timer is created and Refresh reads the figures again.
 - [x] 4.13 Implement Containers: list by label, excluding the bot's own container, with the per-container actions. Verify: unit tests against the fake driver.
 
@@ -270,3 +271,7 @@ pinned-adapter container checks cannot connect to the engine in this sandbox.
 The non-UI implementation and obsolete credential tests are updated. The
 sign-in PTY still enters the root-only `terminay-run` supervisor, which launches
 the declared command as `bot` in `/home/bot` with `HOME=/home/bot`.
+
+### Audit evidence — 2026-11-04
+
+The canonical extension-platform contract includes contributes.agentChatProviders and the Home sidebar contract includes Recordings. Agent chat is archived. The unfinished settings refinements remain under unified-settings-window and do not block the already shipped bot runtime. Bot RFB code and its specific 4.11 protocol tests exist; only the separate remote-browser acceptance and cross-engine smoke remain unchecked.

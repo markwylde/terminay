@@ -1,5 +1,6 @@
 ## MODIFIED Requirements
 
+
 ### Requirement: MCP permission groups
 
 Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly one permission group, fixed in the server's operation table:
@@ -49,6 +50,26 @@ Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly on
 - **WHEN** an agent calls `send_notification`
 - **THEN** the server evaluates it under Notifications
 
+#### Scenario: Reading the layout
+
+- **WHEN** an agent calls `get_layout`
+- **THEN** the server evaluates it under Read Terminals
+
+#### Scenario: Arranging tabs
+
+- **WHEN** an agent calls `arrange_tabs`
+- **THEN** the server evaluates it under Full Terminal Management
+
+#### Scenario: Renaming a project from either reach
+
+- **WHEN** a project-reach agent and a workspace-reach agent each call `update_project`
+- **THEN** the server evaluates both under Projects & Windows
+
+#### Scenario: Out-of-reach call never asks
+
+- **WHEN** Change Settings is Ask Permission and an agent in a project terminal calls `update_settings`
+- **THEN** the call fails with `out_of_scope` and no approval prompt appears
+
 ### Requirement: MCP permission policy settings
 
 Settings > AI > Terminay MCP SHALL list the seven permission groups and the Window Messages policy under the **Enable Terminay MCP server** switch, each with a choice of **Ask Permission**, **Always Allow**, or **Never Allow**. The defaults SHALL be Always Allow for Read Terminals, Full Terminal Management, Read Automations, App Windows, Notifications, Connected Server Tools, and Window Messages, and Ask Permission for Full Automation Management. The policies SHALL be server-owned settings of the server that owns the MCP endpoint, SHALL be the same for every project and terminal on that server, and SHALL be shown and changed identically from desktop, web, and mobile clients.
@@ -77,3 +98,13 @@ Settings > AI > Terminay MCP SHALL list the seven permission groups and the Wind
 
 - **WHEN** a user sets Notifications to Never Allow and an agent calls `send_notification`
 - **THEN** the call is refused and no notification is added
+
+#### Scenario: Changing a setting asks by default
+
+- **WHEN** Pixel calls `update_settings` on a fresh server to set scrollback to 10000
+- **THEN** the Pixel chat shows an approval naming the scrollback setting with its current and requested values, and nothing changes until a user allows it
+
+#### Scenario: Creating a project does not ask by default
+
+- **WHEN** a Home terminal's agent calls `create_project` on a fresh server
+- **THEN** the project is created without an approval prompt

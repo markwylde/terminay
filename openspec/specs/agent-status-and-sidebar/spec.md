@@ -88,7 +88,7 @@ Session source ids SHALL be namespaced extension contributions rather than a clo
 
 ### Requirement: Canonical agent states
 
-An agent entry SHALL carry one of five states. `working` means the agent is processing a turn or performing tool or subagent work and SHALL be indicated in yellow or amber with restrained motion, including on the focused terminal. `waiting` means the provider explicitly requests approval, an answer, or other user input and SHALL be indicated in red while unacknowledged. `blocked` means a supported record explicitly reports a blocking condition and SHALL be indicated in red with an accessible label distinct from waiting while unacknowledged. `done` means the current turn or agent run completed, failed, or was cancelled and SHALL be indicated in green while unacknowledged. `idle` means the live session exists without active work or a pending result and SHALL be neutral or hidden on compact surfaces. Viewing the bound terminal SHALL hide the waiting, blocked, and done tab indicators without rewriting those states. The Agents pane SHALL continue to present operational state independently of acknowledgement.
+An agent entry SHALL carry one of five states. `working` means the agent is processing a turn or performing tool or subagent work and SHALL be indicated in yellow or amber with restrained motion, including on the focused terminal. `waiting` means the provider explicitly requests approval, an answer, or other user input and SHALL be indicated in red while unacknowledged. `blocked` means a supported record explicitly reports a blocking condition and SHALL be indicated in red with an accessible label distinct from waiting while unacknowledged. `done` means the current turn or agent run completed, failed, or was cancelled and the user has not yet acknowledged the result, and SHALL be indicated in green. `idle` means the live session exists without active work or a pending result and SHALL be neutral or hidden on compact surfaces. Viewing the bound terminal SHALL hide the waiting and blocked tab indicators without rewriting those states, and SHALL return a `done` root to `idle`. The Agents pane SHALL present operational state, so an acknowledged root that was `done` SHALL appear there as `idle`.
 
 #### Scenario: Approval requested
 
@@ -103,41 +103,56 @@ An agent entry SHALL carry one of five states. `working` means the agent is proc
 #### Scenario: Turn completes
 
 - **WHEN** a turn completes, fails, or is cancelled
-- **THEN** the entry is `done` and is indicated in green while unacknowledged
+- **THEN** the entry is `done` and is indicated in green
 
 #### Scenario: Viewing a done agent
 
-- **WHEN** the user views a terminal whose bound agent is `done`
-- **THEN** the tab's green indicator is hidden and the entry remains `done`
+- **WHEN** the user views a terminal whose bound root agent is `done`
+- **THEN** the root becomes `idle`, and no surface — tab, project, header, Agents pane, dashboard, or home overview — shows it as done
 
 ### Requirement: Acknowledgement independent of state
 
-Acknowledgement SHALL be independent of operational state. Interacting with a terminal — clicking its tab, clicking into it, or typing — SHALL clear its unread treatment without rewriting its provider-derived state, and a later meaningful transition SHALL be able to make it unread again. Activating the project SHALL NOT clear unread treatment. A terminal the user is already interacting with when a meaningful `done`, `waiting`, or `blocked` transition arrives SHALL be treated as viewed for that transition.
+Acknowledgement SHALL be independent of operational state, with one exception: acknowledging a `done` root SHALL return it to `idle`, because `done` exists only to mark a result the user has not yet seen. Interacting with a terminal — clicking its tab, clicking into it, or typing — SHALL clear its unread treatment, SHALL return each of its bound `done` roots to `idle`, and SHALL leave every other provider-derived state unchanged. A subagent's `done` SHALL NOT change on acknowledgement. A later meaningful transition SHALL be able to make an entry unread again. Activating the project SHALL NOT clear unread treatment. A meaningful `done`, `waiting`, or `blocked` transition SHALL remain unread until the user interacts with that terminal after the transition, even when the terminal already has focus. Passive focus and pointer movement SHALL NOT count as interaction. A terminal navigation command that deliberately focuses the terminal SHALL count as interaction.
 
 #### Scenario: Viewing an entry
 
 - **WHEN** the user clicks the bound terminal tab, clicks into that terminal, or types into it
-- **THEN** its unread treatment clears and its provider-derived state is unchanged
+- **THEN** its unread treatment clears, a `done` root becomes `idle`, and any other provider-derived state is unchanged
 
 #### Scenario: Activating the project does not acknowledge an agent
 
 - **WHEN** a bound agent is `done` or needs attention and the user activates its project without interacting with that terminal
-- **THEN** the entry stays unread and the tab indicator remains
+- **THEN** the entry stays unread, keeps its state, and the tab indicator remains
 
 #### Scenario: New transition after acknowledgement
 
 - **WHEN** a meaningful transition occurs after an entry was acknowledged
 - **THEN** the entry becomes unread again
 
+#### Scenario: Next turn after a done root was viewed
+
+- **WHEN** a root that was returned to `idle` by acknowledgement starts and completes another turn
+- **THEN** it becomes `done` and unread again
+
+#### Scenario: Snapshot after acknowledgement
+
+- **WHEN** a session source reports an `idle` snapshot whose last turn ended before the root was acknowledged
+- **THEN** the root stays `idle`
+
 #### Scenario: Done while already viewing
 
 - **WHEN** a bound agent becomes `done` on the terminal the user is already clicking or typing in
-- **THEN** the entry is acknowledged, remains `done`, and no green tab or project activity indicator is shown for it
+- **THEN** the entry remains unread and `done` until the next interaction, and enabled green tab and project activity indicators are shown for it
 
 #### Scenario: Waiting while already viewing
 
 - **WHEN** a bound agent becomes `waiting` or `blocked` on the terminal the user is already clicking or typing in
-- **THEN** the entry is acknowledged, its operational state is unchanged, and no red tab or project activity indicator is shown for it
+- **THEN** the entry remains unread with its operational state unchanged until the next interaction, and enabled red tab and project activity indicators are shown for it
+
+#### Scenario: Subagent done is kept
+
+- **WHEN** the user acknowledges a terminal whose bound root has a subagent in `done`
+- **THEN** the subagent stays `done`
 
 ### Requirement: Roots and children
 
@@ -183,9 +198,19 @@ Every root SHALL carry a label from the moment it is created. Until the source r
 
 ### Requirement: Agents pane presentation
 
-The **Agents** pane SHALL be the Agents sidebar group's collapsible pane. It SHALL show the roots that belong to the current project on that project's own server, keyed by the pair of server and project, and SHALL nest children beneath them. Bound and external roots SHALL be listed together in one stable ordering, with external rows carrying the **External** marker. Rows SHALL use the existing tree geometry. Missing metadata SHALL be omitted. A generic terminal tab name SHALL NOT be used as the agent title: an untitled root SHALL use the harness label until the source reports a title. The harness label SHALL come from the source's declared harness display names, and the Agents UI SHALL NOT keep a hardcoded map of provider ids.
+The **Agents** pane SHALL be the content of the Agents tab of the project's left column. On a compact workspace, which presents no left column, it SHALL be the content of the compact switcher's Agents tab for the project in front. It SHALL NOT be a group or pane of the sidebar. It SHALL show the roots that belong to the current project on that project's own server, keyed by the pair of server and project, and SHALL nest children beneath them. Bound and external roots SHALL be listed together in one stable ordering, with external rows carrying the **External** marker. Rows SHALL use the existing tree geometry. Missing metadata SHALL be omitted. A generic terminal tab name SHALL NOT be used as the agent title: an untitled root SHALL use the harness label until the source reports a title. The harness label SHALL come from the source's declared harness display names, and the Agents UI SHALL NOT keep a hardcoded map of provider ids.
 
 How an entry's display name, provider and model metadata, and prompt are resolved from a snapshot entry SHALL be one rule shared by every surface that presents an agent, so the same agent SHALL NEVER be named one thing in the Agents pane and another thing on another surface. A surface that presents agents outside one project SHALL apply that same rule rather than its own.
+
+#### Scenario: Agents tab of the left column
+
+- **WHEN** a project renders at or above the narrow layout breakpoint with its left column visible and a user selects the Agents tab
+- **THEN** the Agents pane fills the left column, and the sidebar offers no Agents group
+
+#### Scenario: Agents tab of the compact switcher
+
+- **WHEN** a user opens the compact switcher with a project in front and selects its Agents tab
+- **THEN** the switcher shows that project's Agents pane with the same roots, children, names, and ordering the left column shows for it
 
 #### Scenario: Root in another project
 
@@ -209,12 +234,12 @@ How an entry's display name, provider and model metadata, and prompt are resolve
 
 ### Requirement: Row activation
 
-Activating a bound row SHALL activate its exact project and terminal panel, focus the terminal, and acknowledge that entry without changing operational state. Activating an external row SHALL do nothing. No approximate terminal SHALL be focused when a row has no binding.
+Activating a bound row SHALL activate its exact project and terminal panel, focus the terminal, and acknowledge that entry, which returns a `done` root to `idle` and leaves any other state unchanged. Activating an external row SHALL do nothing. No approximate terminal SHALL be focused when a row has no binding.
 
 #### Scenario: Activating a bound row
 
 - **WHEN** the user activates an agent row bound to a terminal
-- **THEN** its exact project and terminal panel activate, the terminal is focused, and the entry is acknowledged without changing its state
+- **THEN** its exact project and terminal panel activate, the terminal is focused, and the entry is acknowledged, becoming `idle` if it was a `done` root and otherwise keeping its state
 
 #### Scenario: Binding unavailable
 
@@ -256,7 +281,7 @@ Agent status and the Terminay MCP server SHALL be independent even when one exte
 
 ### Requirement: Terminal tab and header status surfaces
 
-Bound roots SHALL render the canonical RAG glyph on terminal tabs for `working` always, and for `waiting`, `blocked`, and `done` only while those entries are unacknowledged. The header SHALL aggregate unacknowledged meaningful entries from every attached connection, giving waiting and blocked priority, keeping done until acknowledged, and optionally showing working for navigation. Every aggregated entry SHALL stay keyed by its server and project, and activating one SHALL act on that entry's own server.
+Bound roots of a tracked terminal SHALL render the canonical RAG glyph on terminal tabs for `working` always, and for `waiting`, `blocked`, and `done` only while those entries are unacknowledged. The header SHALL aggregate unacknowledged meaningful entries from every attached connection, excluding entries bound to an untracked terminal as specified by `terminal-activity-signals`, giving waiting and blocked priority, keeping done until acknowledged, and optionally showing working for navigation. Every aggregated entry SHALL stay keyed by its server and project, and activating one SHALL act on that entry's own server.
 
 #### Scenario: Bound root on a tab
 
@@ -282,6 +307,11 @@ Bound roots SHALL render the canonical RAG glyph on terminal tabs for `working` 
 
 - **WHEN** two attached servers each hold an unacknowledged waiting entry
 - **THEN** the header aggregate includes both, each row keyed by its server and project, and activating one acts only on that server
+
+#### Scenario: Bound root in an untracked terminal
+
+- **WHEN** a terminal whose **Track activity** is off has a bound agent root that is working, waiting, blocked, or unacknowledged done
+- **THEN** its tab renders no RAG glyph and the header aggregate does not include that entry
 
 ### Requirement: Agent authority isolation between server instances
 

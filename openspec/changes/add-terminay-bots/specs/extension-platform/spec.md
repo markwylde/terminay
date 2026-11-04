@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Agent bots permission
 
@@ -105,8 +105,6 @@ The host SHALL execute supported native drivers inside the owning bot container 
 - **WHEN** the agent rejects the bot's chosen model
 - **THEN** the session fails, and the reason names the model
 
-## MODIFIED Requirements
-
 ### Requirement: Scoped secret brokerage
 
 Secret values SHALL live only in the Terminay Server vault. References SHALL be owned by `{extensionId, profileId, fieldId/purpose}`. An extension MUST NOT enumerate the vault or resolve another binding. Each time it resolves a secret, the broker SHALL recheck extension and profile ownership and operation permission. It SHALL send only the scoped transient copy over private IPC, and SHALL zeroize its server-side copy afterward.
@@ -131,7 +129,7 @@ UI, snapshots, events, audit, diagnostics, errors, manifests, argv, and environm
 
 ### Requirement: Bounded API scope
 
-The public API SHALL support session sources, MCP install targets, language servers, worktree insights, chat providers, and bot agents. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
+The public API SHALL support session sources, MCP install targets, language servers, worktree insights, terminal launchers, terminal command defaults, chat providers, and bot agents. Themes, editor plugins, autocomplete sources, arbitrary commands, renderer components, and generic Server Core operation registration SHALL be out of scope.
 
 #### Scenario: Unsupported contribution kind
 
@@ -159,6 +157,16 @@ The public API SHALL support session sources, MCP install targets, language serv
 - **WHEN** a package declares a chat provider contribution
 - **THEN** it is a supported contribution kind and validation accepts it
 
+#### Scenario: Terminal launcher contribution
+
+- **WHEN** a package declares a terminal launcher contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
+#### Scenario: Terminal command default contribution
+
+- **WHEN** a package declares a terminal command default contribution
+- **THEN** it is a supported contribution kind and validation accepts it
+
 #### Scenario: Bot agent contribution
 
 - **WHEN** a package declares a bot agent contribution
@@ -166,7 +174,7 @@ The public API SHALL support session sources, MCP install targets, language serv
 
 ### Requirement: Contribution arrays
 
-The supported contribution arrays SHALL be `contributes.agentSessionSources`, `contributes.mcpInstallTargets`, `contributes.languageServers`, `contributes.worktreeInsights`, `contributes.agentChatProviders`, and `contributes.botAgents`. At least one supported contribution SHALL be required.
+`contributes.agentSessionSources`, `contributes.mcpInstallTargets`, `contributes.languageServers`, `contributes.worktreeInsights`, `contributes.agentChatProviders`, `contributes.terminalLaunchers`, and `contributes.terminalCommandDefaults` SHALL be the supported contribution arrays, and at least one supported contribution SHALL be required.
 
 #### Scenario: Agent-only package
 
@@ -192,6 +200,16 @@ The supported contribution arrays SHALL be `contributes.agentSessionSources`, `c
 #### Scenario: Chat-provider-only package
 
 - **WHEN** a package contributes one or more chat providers and nothing else
+- **THEN** it passes contribution validation
+
+#### Scenario: Launcher-only package
+
+- **WHEN** a package contributes one or more terminal launchers that name no harness, and nothing else
+- **THEN** it passes contribution validation
+
+#### Scenario: Command-default-only package
+
+- **WHEN** a package contributes one or more terminal command defaults that name no harness, and nothing else
 - **THEN** it passes contribution validation
 
 #### Scenario: Bot-agent-only package
