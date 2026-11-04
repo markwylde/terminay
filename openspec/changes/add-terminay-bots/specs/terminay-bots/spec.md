@@ -175,7 +175,7 @@ The server SHALL admit four work executions and one reserved user-message coordi
 
 ### Requirement: Stopping a turn and closing an agent
 
-**Stop** SHALL ask the agent to cancel the running turn. It SHALL then end the session's process group, so that no command the turn started keeps running: once the agent acknowledges the cancel, or after 10 seconds if it does not, first with a termination signal and then, 5 seconds later, with a kill signal. The turn SHALL be marked stopped, and the agent closed.
+**Stop** SHALL ask the agent to cancel the running turn. It SHALL then end the session's process group, so that no session-owned command the turn started keeps running: once the agent acknowledges the cancel, or after 10 seconds if it does not, first with a termination signal and then, 5 seconds later, with a kill signal. The turn SHALL be marked stopped, and the agent closed.
 
 Stop SHALL revoke the execution capability, close the execution and retain its diagnostics. The next user message SHALL start a fresh execution.
 
@@ -199,6 +199,13 @@ Each turn SHALL have a maximum duration, settable per bot and 30 minutes by defa
 
 - **WHEN** the agent process exits during a turn
 - **THEN** the session is marked failed, the reason and runner output are kept, and the bot's card shows the failure
+
+
+Desktop-owned graphical applications SHALL remain outside execution process groups and SHALL survive execution closure and Stop. Stopping the bot container SHALL end them. The session view SHALL explain this lifetime distinction.
+
+#### Scenario: Stop preserves the desktop application
+- **WHEN** a user stops an execution with a desktop-owned Gridcraft workbook and a session-owned `sleep 300` command
+- **THEN** the command ends, Gridcraft stays open with its workbook, and the session view explains that stopping the bot container ends desktop apps
 
 ### Requirement: Sessions survive a server restart as records
 

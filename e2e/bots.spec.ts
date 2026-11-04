@@ -477,6 +477,12 @@ test.describe('Home › Bots', () => {
 		await expect(tab.locator('[data-terminay-bot-session]')).toContainText(
 			'MCP adapter could not connect',
 		);
+		await expect(
+			tab.locator('[data-terminay-bot-session-lifetime]'),
+		).toContainText('Desktop apps stay open');
+		await expect(
+			tab.locator('[data-terminay-bot-session-lifetime]'),
+		).toContainText('Stopping the bot container ends desktop apps');
 		await tab.locator('[data-terminay-bot-runner] summary').click();
 		await expect(tab.locator('[data-terminay-bot-runner]')).toContainText(
 			'runtime socket permission denied',

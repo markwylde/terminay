@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Desktop-owned graphical app launcher. No shell evaluation or automatic restart.
+
+terminay-app launch gridcraft [-- literal arguments...]
+Output: /tmp/terminay-app/<executable>.log (1 MiB plus one rotated file).
+Same-bot processes are cooperative peers, not mutually isolated principals.
+"""
+import json
+import os
+import re
+import selectors
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+
+SOCKET = '/tmp/terminay-app.sock'
+LOG_DIR = '/tmp/terminay-app'
+MAX_REQUEST = 8192
+MAX_LOG = 1024 * 1024
+
+
+def validate(value):
+    if not isinstance(value, dict) or set(value) != {'app', 'args'}:
+        raise ValueError('Expected app and args')
+    app, args = value['app'], value['args']
+    if not isinstance(app, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}', app):
+        raise ValueError('Application must be an executable basename, such as gridcraft')
+    if not isinstance(args, list) or len(args) > 64 or any(
+            not isinstance(arg, str) or any(ord(c) < 32 or ord(c) == 127 for c in arg) for arg in args):
+        raise ValueError('Expected at most 64 literal string arguments without control characters')
+    if len(json.dumps(value).encode()) + 1 > MAX_REQUEST:
+        raise ValueError('Launch request exceeds 8192 bytes')
+    return app, args
+
+
+def request(app, args):
+    value = {'app': app, 'args': args}
+    validate(value)
+    with socket.socket(socket.AF_UNIX) as peer:
+        peer.settimeout(10)
+        peer.connect(SOCKET)
+        peer.sendall((json.dumps(value) + '\n').encode())
+        peer.shutdown(socket.SHUT_WR)
+        response = peer.makefile('rb').readline(2048)
+    result = json.loads(response)
+    if 'error' in result:
+        raise ValueError(result['error'])
+    print(f"Launch requested (PID {result['pid']}). Inspect a fresh screenshot to verify the window. Diagnostics: {result['log']}")
+
+
+def desktop_env():
+    # Allow desktop values only, never arbitrary caller or service credentials.
+    keys = ('HOME', 'USER', 'LOGNAME', 'DISPLAY', 'LANG', 'LC_ALL',
+            'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS')
+    env = {key: os.environ[key] for key in keys if key in os.environ}
+    env['PATH'] = '/usr/local/bin:/usr/bin:/bin'
+    return env
+
+
+def append_log(app, data):
+    path = os.path.join(LOG_DIR, app + '.log')
+    # Rotation follows output events, never a timer. Each file is at most 1 MiB.
+    if os.path.exists(path) and os.path.getsize(path) + len(data) > MAX_LOG:
+        os.replace(path, path + '.1')
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'ab') as stream:
+        stream.write(data[-MAX_LOG:])
+
+
+def serve():
+    os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
+    os.chmod(LOG_DIR, 0o700)
+    env = desktop_env()
+    children = {}
+    with selectors.DefaultSelector() as events, socket.socket(socket.AF_UNIX) as server:
+        # SIGCHLD wakes the selector so exit diagnostics and reaping are event-driven.
+        wake_read, wake_write = socket.socketpair()
+        wake_read.setblocking(False)
+        wake_write.setblocking(False)
+        previous_fd = signal.set_wakeup_fd(wake_write.fileno())
+        previous_child = signal.signal(signal.SIGCHLD, lambda *_: None)
+        def stop(*_):
+            raise SystemExit(0)
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+        events.register(wake_read, selectors.EVENT_READ, 'child')
+        try:
+            server.bind(SOCKET)
+            os.chmod(SOCKET, 0o600)
+            server.listen(4)
+            events.register(server, selectors.EVENT_READ, 'launch')
+            while True:
+                for key, _ in events.select():
+                    if key.data == 'child':
+                        wake_read.recv(65536)
+                        while True:
+                            try:
+                                pid, status = os.waitpid(-1, os.WNOHANG)
+                            except ChildProcessError:
+                                break
+                            if not pid:
+                                break
+                            entry = children.pop(pid, None)
+                            if entry:
+                                proc, app = entry
+                                proc.returncode = os.waitstatus_to_exitcode(status)
+                                append_log(app, f'\n[terminay-app] PID {pid} exited with code {proc.returncode}\n'.encode())
+                    elif key.data == 'launch':
+                        peer, _ = server.accept()
+                        with peer:
+                            peer.settimeout(5)
+                            try:
+                                data = peer.makefile('rb').readline(MAX_REQUEST + 1)
+                                if len(data) > MAX_REQUEST or not data.endswith(b'\n'):
+                                    raise ValueError('Launch request must be a newline-delimited JSON frame of at most 8192 bytes')
+                                app, args = validate(json.loads(data))
+                                executable = shutil.which(app, path=env['PATH'])
+                                if not executable:
+                                    raise ValueError(f'Application is not installed: {app}')
+                                proc = subprocess.Popen([executable, *args], env=env, cwd=env.get('HOME', '/home/bot'),
+                                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                                        stderr=subprocess.STDOUT)
+                                children[proc.pid] = (proc, app)
+                                os.set_blocking(proc.stdout.fileno(), False)
+                                events.register(proc.stdout, selectors.EVENT_READ, ('output', app))
+                                result = {'pid': proc.pid, 'log': os.path.join(LOG_DIR, app + '.log')}
+                            except (ValueError, TypeError, OSError) as error:
+                                result = {'error': str(error)[:512]}
+                            try:
+                                peer.sendall((json.dumps(result) + '\n').encode())
+                            except OSError:
+                                pass
+                    else:
+                        chunk = os.read(key.fd, 65536)
+                        if chunk:
+                            append_log(key.data[1], chunk)
+                        else:
+                            events.unregister(key.fileobj)
+                            key.fileobj.close()
+        finally:
+            signal.set_wakeup_fd(previous_fd)
+            signal.signal(signal.SIGCHLD, previous_child)
+            wake_read.close()
+            wake_write.close()
+            try:
+                os.unlink(SOCKET)
+            except FileNotFoundError:
+                pass
+
+
+if __name__ == '__main__':
+    try:
+        if len(sys.argv) >= 3 and sys.argv[1] == 'launch' and (len(sys.argv) == 3 or sys.argv[3] == '--'):
+            request(sys.argv[2], sys.argv[4:])
+        elif len(sys.argv) == 1:
+            serve()
+        else:
+            raise ValueError('Usage: terminay-app launch <executable> [-- literal arguments...]')
+    except (OSError, ValueError) as error:
+        print(f'terminay-app: {error}', file=sys.stderr)
+        sys.exit(1)
