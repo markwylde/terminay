@@ -905,7 +905,7 @@ external slot but MUST NOT be physically removed from that release.
 
 Secret values SHALL live only in the Terminay Server vault. References SHALL be owned by `{extensionId, profileId, fieldId/purpose}`. An extension MUST NOT enumerate the vault or resolve another binding. Each time it resolves a secret, the broker SHALL recheck extension and profile ownership and operation permission. It SHALL send only the scoped transient copy over private IPC, and SHALL zeroize its server-side copy afterward.
 
-UI, snapshots, events, audit, diagnostics, errors, manifests, argv, and environment variables SHALL contain metadata only, with one exception. The host MAY place a bot's credential secret in the environment of the local `docker` client process that starts that bot's agent, so that the agent receives it. Even then, the value SHALL NEVER appear in that client's arguments. No extension SHALL receive a bot's credential secret.
+UI, snapshots, events, audit, diagnostics, errors, manifests, argv, and environment variables SHALL contain metadata only, with one exception. The host MAY place a bot's credential secret only in its private container-exec request environment over the pinned local socket, so the native agent receives it. The value SHALL NEVER appear in process arguments, image/container configuration, logs or client metadata. No extension SHALL receive a bot's credential secret.
 
 #### Scenario: Cross-extension secret resolution
 
@@ -1188,7 +1188,7 @@ Every long-running API SHALL accept a cancellation signal. A session source runt
 
 ### Requirement: Host-owned behaviours excluded from extension authorship
 
-Terminay SHALL own all of the following, and the API SHALL offer an extension no means of implementing any of them:
+Terminay SHALL own all of these, and the API SHALL offer an extension no means of implementing them:
 
 - sidebar components and styling
 - project scoping and worktree resolution
@@ -1199,17 +1199,12 @@ Terminay SHALL own all of the following, and the API SHALL offer an extension no
 - canonical ordering
 - extension enable and disable surfaces, and harness switch surfaces
 - the MCP install surface
-- chats, conversations, chat UI, MCP capability minting for chats, and approvals
-- bots, bot containers and images, bot sessions and transcripts, the ACP client, credential sharing and injection, and bot UI
+- chats, conversations, chat UI, chat MCP capabilities and approvals
+- bots, containers and images, native CLI drivers and event translation, sessions, credential injection, execution tools and bot UI
 - extension process lifetime and crash backoff
 - Electron-versus-standalone packaging
 
-An extension SHALL supply only:
-
-- session facts;
-- MCP registration knowledge;
-- the running of chat provider turns;
-- the description of bot agents, which is their install step, ACP command, credentials, models, status, and launch details.
+An extension SHALL supply session facts, MCP registration knowledge, declared language-server/worktree insight runtimes, chat-provider turns and declarative bot-agent descriptions. Bot descriptions SHALL name a supported host-owned native driver, exact install versions, credentials, models, availability and bounded launch settings. They SHALL NOT implement process ownership, arbitrary wire parsers, credential access or bot UI.
 
 #### Scenario: Extension attempts a host behaviour
 
@@ -1222,15 +1217,20 @@ An extension SHALL supply only:
 - **WHEN** a session source package is authored
 - **THEN** it implements session detection, harness reporting, bounded snapshots, and privacy exclusions, and nothing else
 
+#### Scenario: Bot agent responsibilities
+
+- **WHEN** a bot extension contributes a supported native CLI agent
+- **THEN** it describes the runtime and answers model/status/launch queries, while the server starts and controls the execution and owns credentials and diagnostic translation
+
+#### Scenario: Unsupported native driver
+
+- **WHEN** a bot extension declares an unknown native driver or an arbitrary protocol implementation
+- **THEN** contribution validation rejects it before a bot execution starts
+
 #### Scenario: Chat provider responsibilities
 
 - **WHEN** a chat provider is authored
-- **THEN** it reports availability and runs sessions and turns, and it cannot read or change a chat's conversation, reach or approvals
-
-#### Scenario: Bot agent responsibilities
-
-- **WHEN** a bot agent is authored
-- **THEN** it describes the agent and answers models, status, and launch, and it cannot start the agent, read a transcript, or reach a bot's container
+- **THEN** it reports availability and runs sessions and turns, and cannot read or change a chat's conversation, reach or approvals
 
 ### Requirement: Public extension API capabilities for agent extensions
 
@@ -1675,7 +1675,7 @@ A package SHALL declare each bot agent under `contributes.botAgents`. Each decla
 
 - a namespaced agent id and a display name;
 - an **image install** step: npm package specifiers, each pinned to an exact version, and optionally Debian package names;
-- the ACP command that runs the agent's Agent Client Protocol server on stdio, as an executable and its arguments;
+- the versioned `native-cli-v1` runtime protocol, a supported native driver and its exact runtime version;
 - zero or one **device sign-in**, for an agent whose CLI can sign in without a browser on the machine it runs on. It has:
   - the sign-in command, as an executable and its arguments, which prints a URL and a one-time code and saves the login in the agent's own home;
   - the sign-out command, as an executable and its arguments, which removes that login;
@@ -1684,7 +1684,6 @@ A package SHALL declare each bot agent under `contributes.botAgents`. Each decla
 - zero or more **credential secrets**, each with:
   - an environment variable name;
   - a kind, which is sign-in token or API key;
-  - whether the agent needs an ACP `authenticate` call, and with which method id, before it uses the secret;
   - a label;
   - help text that says how to obtain the value;
 - whether the agent can ask permission inside a bot container. An agent that cannot is **Autonomous only**;
@@ -1703,7 +1702,7 @@ Manifest validation SHALL reject:
 
 #### Scenario: Pinned packages
 
-- **WHEN** a package declares a bot agent whose install step names `@agentclientprotocol/codex-acp@latest`
+- **WHEN** a package declares a bot agent whose install step names `@openai/codex@latest`
 - **THEN** manifest validation fails, naming the unpinned specifier
 
 #### Scenario: Bot config file escapes home
@@ -1724,7 +1723,7 @@ The runtime SHALL implement:
 
 - `models(signal)`: returns the agent's selectable models, at most 64, each with an id and a display name;
 - `status(signal)`: returns ready, or not signed in with a bounded detail;
-- `launch(request, signal)`: receives the chosen model id, or Default. It returns the extra ACP command arguments and the non-secret environment the adapter needs. The host uses these only for an agent that does not offer model selection through ACP session configuration.
+- `launch(request, signal)`: receives the chosen model id, or Default. It returns a bounded non-secret launch environment. Native command arguments and model selection SHALL be assembled by the host.
 
 The host SHALL validate and bound every result, and SHALL cache `models` per activation. A call that times out or throws SHALL leave the agent shown as unavailable. The extension SHALL NOT start, stop, or speak to the agent process.
 
@@ -1737,31 +1736,6 @@ The host SHALL validate and bound every result, and SHALL cache `models` per act
 
 - **WHEN** the extension contributing a bot's agent has crashed and is in backoff
 - **THEN** the agent is shown as unavailable, and its bots start no new session until the extension is running again
-
-### Requirement: The host runs bot agents over ACP
-
-The host SHALL start each session's agent inside the bot's container, as the `bot` user, under the session launcher. It SHALL use the declared ACP command, and SHALL start it directly, never through a shell. The host SHALL be the ACP client:
-
-- **Session setup.** It SHALL initialize the agent and open or load the session in `/home/bot`.
-- **Model selection.** When the agent offers a model option in its session configuration, the host SHALL set the bot's model through that option. Otherwise it SHALL apply what `launch` returned.
-- **Turns.** It SHALL send prompts and cancel turns.
-- **Transcript.** It SHALL record session updates as the bot's transcript.
-- **Sign-in.** For a credential secret that needs it, it SHALL call ACP `authenticate` with the declared method id before opening the session.
-- **Permissions.** It SHALL answer permission requests as the bot's approval mode decides.
-- **Client capabilities.** It SHALL advertise no file system or terminal capabilities, so the agent acts with its own tools inside the container.
-- **Continue.** It SHALL offer Continue only for an agent that advertises session loading.
-
-The extension SHALL have no part in the session.
-
-#### Scenario: Agent runs in the container
-
-- **WHEN** a bot whose agent is Claude Code starts a session
-- **THEN** the agent process runs inside that bot's container as `bot`, and no agent process for that session runs on the server account
-
-#### Scenario: Model rejected
-
-- **WHEN** the agent rejects the bot's chosen model
-- **THEN** the session fails, and the reason names the model
 
 ### Requirement: Terminal command defaults permission
 
@@ -1799,3 +1773,17 @@ The host SHALL include a command default in the registry only while its extensio
 
 - **WHEN** the extension that contributes a command default is disabled
 - **THEN** the command default leaves the registry and new terminals no longer receive it
+
+### Requirement: The host runs bot agents through native CLI drivers
+
+The host SHALL execute supported native drivers inside the owning bot container as `bot` under its session supervisor, never on the host account or through a shell. It SHALL select the declared model, supply bounded execution input and scoped MCP, normalize diagnostics and approvals, and confirm process cleanup. Each user message SHALL start a fresh execution; historical diagnostics SHALL remain readable without continuation. The extension SHALL have no part in process control. The bot CLI runtime contract defines detailed lifecycle and credential behaviour.
+
+#### Scenario: Agent runs in the container
+
+- **WHEN** a bot whose agent is Claude Code starts a session
+- **THEN** the agent process runs inside that bot's container as `bot`, and no agent process for that session runs on the server account
+
+#### Scenario: Model rejected
+
+- **WHEN** the agent rejects the bot's chosen model
+- **THEN** the session fails, and the reason names the model

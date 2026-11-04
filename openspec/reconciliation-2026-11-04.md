@@ -2,7 +2,7 @@
 
 ## Result
 
-All work is uncommitted on `chore/openspec-refresh` in the existing
+The cleanup is prepared on `chore/openspec-refresh` in the existing
 `terminay-openspec-reconcile` worktree. The main clone is unchanged.
 
 - Archived **46** demonstrably complete changes: the 21 already task-complete
@@ -166,3 +166,17 @@ then reconciled additional completed contracts and archived eligible changes.
 MCP's Purpose was deliberately updated as its full-app change explicitly required;
 other established Purpose sections were preserved. No accepted ADR or application
 code was changed. Original delta wording remains available in Git history.
+
+## Integration before delivery
+
+Main advanced to `e130b271` with merged PR #488 (native bot CLI runtime,
+shared desktop and build timeline) after the audit snapshot. That change and
+ADR-0096 are preserved. Its six unchecked acceptance tasks remain active; it is
+not included among the 46 archives from this audit. The delivery branch therefore
+has 22 active changes, and active spec validation reports 75 passed.
+
+The overlapping bot image, extension/native-driver and Claude login wording is
+reconciled into the canonical contracts without restoring ACP-specific behavior.
+No application implementation or accepted ADR is changed relative to that newer
+main. This delivery integration does not claim the new change’s outstanding
+architecture, creative-app or real-engine acceptance is complete.

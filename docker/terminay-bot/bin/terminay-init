@@ -130,7 +130,7 @@ def start_desktop(passwd_path, uid, gid, bot_id):
     wait_path("/tmp/.X11-unix/X1", time.monotonic() + 10)
     env = {"HOME": HOME, "USER": "bot", "DISPLAY": ":1", "PATH": "/usr/local/bin:/usr/bin:/bin",
            "TERMINAY_BOT_ID": bot_id, "LANG": "C.UTF-8"}
-    spawn(["openbox-session"], uid=uid, gid=gid, env=env)
+    spawn(["terminay-desktop-session"], uid=uid, gid=gid, env=env)
     # The desktop owns the browser, independently of agent/tool process groups.
     # Keep Chromium's sandbox enabled; it runs as the unprivileged bot user.
     spawn(["terminay-browser"], uid=uid, gid=gid, env=env)
@@ -284,8 +284,8 @@ def main_init():
             sys.exit(0 if stopping else 78)
         except InterruptedError:
             continue
-        if pid == proxy.pid and not stopping:
-            log("engine proxy exited; stopping container")
+        if any(pid == p.pid for p in children) and not stopping:
+            log("required environment service exited; stopping container")
             on_term(signal.SIGTERM, None)
             sys.exit(78)
         if stopping and all(p.poll() is not None for p in children):

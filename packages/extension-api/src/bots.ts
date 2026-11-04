@@ -7,12 +7,13 @@ export interface BotAgentContribution {
 	id: string;
 	displayName: string;
 	imageInstall: { npm: string[]; debian?: string[] };
-	acpCommand: { executable: string; args: string[] };
+	runtimeProtocol: 'native-cli-v1';
+	nativeDriver: 'codex-cli' | 'claude-code-cli';
+	runtimeVersion: string;
 	deviceSignIn?: BotAgentDeviceSignIn;
 	credentialSecrets?: {
 		environmentVariable: string;
 		kind: 'sign-in-token' | 'api-key';
-		authenticateMethodId?: string;
 		label: string;
 		help: string;
 	}[];
@@ -52,7 +53,7 @@ export interface BotAgentLaunch {
 export interface BotAgentRuntime {
 	models(signal: AbortSignal): Promise<BotAgentModel[]>;
 	status(signal: AbortSignal): Promise<BotAgentStatus>;
-	/** A model-only fallback for adapters without ACP session model configuration. */
+	/** Bounded non-secret launch environment; the host selects the native model. */
 	launch(
 		request: BotAgentLaunchRequest,
 		signal: AbortSignal,
@@ -181,7 +182,9 @@ export function validateBotAgentContribution(
 			'id',
 			'displayName',
 			'imageInstall',
-			'acpCommand',
+			'runtimeProtocol',
+			'nativeDriver',
+			'runtimeVersion',
 			'deviceSignIn',
 			'credentialSecrets',
 			'autonomousOnly',
@@ -239,14 +242,26 @@ export function validateBotAgentContribution(
 			);
 	}
 	check(
-		command(value.acpCommand),
-		'$.acpCommand',
-		'Expected an executable name and bounded argument array',
+		value.runtimeProtocol === 'native-cli-v1',
+		'$.runtimeProtocol',
+		'Expected native-cli-v1; update ACP bot contributions',
+	);
+	check(
+		value.nativeDriver === 'codex-cli' ||
+			value.nativeDriver === 'claude-code-cli',
+		'$.nativeDriver',
+		'Expected a supported native CLI driver; ACP declarations must be updated',
 	);
 	check(
 		typeof value.autonomousOnly === 'boolean',
 		'$.autonomousOnly',
 		'Expected an Autonomous-only boolean',
+	);
+	check(
+		text(value.runtimeVersion, 128) &&
+			/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(String(value.runtimeVersion)),
+		'$.runtimeVersion',
+		'Expected an exact native CLI version',
 	);
 	const device = value.deviceSignIn;
 	if (device !== undefined) {
@@ -299,13 +314,7 @@ export function validateBotAgentContribution(
 				const path = `$.credentialSecrets[${index}]`;
 				check(
 					record(secret) &&
-						closed(secret, [
-							'environmentVariable',
-							'kind',
-							'authenticateMethodId',
-							'label',
-							'help',
-						]),
+						closed(secret, ['environmentVariable', 'kind', 'label', 'help']),
 					path,
 					'Unknown credential secret field',
 				);
@@ -328,15 +337,6 @@ export function validateBotAgentContribution(
 					`${path}.kind`,
 					'Unknown secret kind; expected sign-in-token or api-key',
 				);
-				if (secret.authenticateMethodId !== undefined)
-					check(
-						text(
-							secret.authenticateMethodId,
-							EXTENSION_LIMITS.agentModelLength,
-						),
-						`${path}.authenticateMethodId`,
-						'Expected a bounded ACP authenticate method id',
-					);
 				check(
 					text(secret.label, EXTENSION_LIMITS.displayNameLength),
 					`${path}.label`,

@@ -1,11 +1,11 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import type { JsonValue } from '@terminay/protocol';
-import type { BotCredentialLease } from './acp.js';
+import type { BotCredentialLease } from './credentials.js';
 import type { EngineDriver } from './engine.js';
 import { BOT_RUNTIME_TOOLS, type BotExecutionRuntime } from './runtime.js';
-import { BotTokenRedactor } from './tokens.js';
 import { BotError, object } from './store.js';
+import { BotTokenRedactor } from './tokens.js';
 
 export interface BotRuntimeBridge {
 	readonly servers: readonly JsonValue[];
@@ -64,7 +64,7 @@ export async function openBotRuntimeBridge(
 			stream.kill();
 			return;
 		}
-		const line = JSON.stringify({ connection, message }) + '\n';
+		const line = `${JSON.stringify({ connection, message })}\n`;
 		if (Buffer.byteLength(line) > 131072)
 			throw new Error('MCP response exceeds relay limit');
 		stream.stdin.write(line);
@@ -333,6 +333,23 @@ export async function openBotRuntimeBridge(
 					name,
 					value,
 				})),
+			},
+			{
+				name: 'terminay_desktop',
+				command: '/usr/local/bin/terminay-desktop-mcp.mjs',
+				args: ['--endpoint=http://127.0.0.1:9223'],
+				env: [],
+			},
+			{
+				name: 'terminay_browser',
+				command: '/usr/local/bin/terminay-desktop-mcp.mjs',
+				args: [
+					'--cap-output',
+					'--',
+					'chrome-devtools-mcp',
+					'--browser-url=http://127.0.0.1:9223',
+				],
+				env: [],
 			},
 		],
 		environment,

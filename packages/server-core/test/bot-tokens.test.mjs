@@ -11,7 +11,6 @@ import {
 const id = 'abc123def456',
 	declaration = {
 		environmentVariable: 'CODEX_API_KEY',
-		authenticateMethodId: 'api-key',
 		kind: 'api-key',
 		label: 'key',
 		help: 'fake',
@@ -49,9 +48,7 @@ test('4.6 bot-owned vault entries, explicit copying, ACP method hook and last-le
 	const a = await service.acquire(id, [declaration]),
 		b = await service.acquire(id, [declaration]);
 	assert.equal(service.retainedCount(id), 1);
-	const calls = [];
-	await a.authenticate(async (params) => calls.push(params));
-	assert.deepEqual(calls, [{ methodId: 'api-key' }]);
+	assert.equal('authenticate' in a, false);
 	let transient;
 	await a.withEnvironment(async (env) => {
 		transient = env;

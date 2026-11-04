@@ -1,4 +1,3 @@
-import {relayDriver} from './fixtures/bot-runtime-relay.mjs';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import {
@@ -25,6 +24,7 @@ import {
 	eventBlock,
 	ScheduleEngine,
 } from '../dist/index.js';
+import { relayDriver } from './fixtures/bot-runtime-relay.mjs';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -95,7 +95,9 @@ const agent = {
 	id: 'fake.agent',
 	displayName: 'Fake',
 	autonomousOnly: false,
-	acpCommand: { executable: 'fake', args: [] },
+	runtimeProtocol: 'native-cli-v1',
+	nativeDriver: 'claude-code-cli',
+	runtimeVersion: '2.1.312',
 };
 async function setup(t, options = {}) {
 	const root = options.root ?? mkdtempSync(join(tmpdir(), 'bot-triggers-'));
@@ -195,7 +197,7 @@ async function setup(t, options = {}) {
 			client.prompt = async (text) => {
 				turns.push({
 					sessionId: o.sessionId,
-                    text,
+					text,
 					snapshot: o.snapshot,
 					loadId: o.loadId,
 				});
@@ -209,14 +211,14 @@ async function setup(t, options = {}) {
 			return {
 				client,
 				async open() {
-					driver.connect(o.sessionId,o.mcpServers);
+					driver.connect(o.sessionId, o.mcpServers);
 					o.onClient(client);
 					return client;
 				},
 				async close(reason) {
 					closed.push({ id: o.sessionId, reason });
 					client.finish();
-                    await o.cleanupRuntime?.();
+					await o.cleanupRuntime?.();
 				},
 			};
 		},
@@ -268,36 +270,87 @@ async function finish(r, id) {
 test('runtime trigger CRUD shares UI persistence, validation and events without a work lease', async (t) => {
 	const r = await setup(t);
 	const { sessionId } = await r.service.send(r.bot.id, 'Manage my triggers');
-	const call = (name, args = {}) => r.service.runtime.call(sessionId, name, args);
+	const call = (name, args = {}) =>
+		r.service.runtime.call(sessionId, name, args);
 	const initial = await call('triggers_list');
 	assert.equal((await call('sessions_get', { sessionId })).ownsWork, false);
-	const created = await call('triggers_create', { revision: initial.revision, draft: draft() });
+	const created = await call('triggers_create', {
+		revision: initial.revision,
+		draft: draft(),
+	});
 	const id = created.trigger.id;
 	assert.equal(created.trigger.prompt, undefined);
-	assert.equal((await call('triggers_get', { triggerId: id })).text, draft().prompt);
-	await assert.rejects(call('triggers_create', { revision: initial.revision, draft: draft() }), /revision changed/);
+	assert.equal(
+		(await call('triggers_get', { triggerId: id })).text,
+		draft().prompt,
+	);
+	await assert.rejects(
+		call('triggers_create', { revision: initial.revision, draft: draft() }),
+		/revision changed/,
+	);
 	assert.equal(r.triggers.list(r.bot.id).triggers.length, 1);
-	const changed = await call('triggers_update', { triggerId: id, revision: created.revision, draft: draft({ kind: 'cron', cron: '0 9 * * 1-5' }, { name: 'Weekday review', prompt: 'Review this morning' }) });
-	const restored = new BotStore(join(r.root, 'bots.json')).trigger(r.bot.id, id);
+	const changed = await call('triggers_update', {
+		triggerId: id,
+		revision: created.revision,
+		draft: draft(
+			{ kind: 'cron', cron: '0 9 * * 1-5' },
+			{ name: 'Weekday review', prompt: 'Review this morning' },
+		),
+	});
+	const restored = new BotStore(join(r.root, 'bots.json')).trigger(
+		r.bot.id,
+		id,
+	);
 	assert.equal(restored.name, 'Weekday review');
 	assert.equal(restored.prompt, 'Review this morning');
-	const disabled = await call('triggers_enable', { triggerId: id, revision: changed.revision, enabled: false });
+	const disabled = await call('triggers_enable', {
+		triggerId: id,
+		revision: changed.revision,
+		enabled: false,
+	});
 	assert.equal(disabled.trigger.enabled, false);
 	assert.equal(r.triggers.list(r.bot.id).triggers[0].prompt, restored.prompt);
-	await assert.rejects(call('triggers_delete', { triggerId: id, revision: changed.revision }), /revision changed/);
-	const deleted = await call('triggers_delete', { triggerId: id, revision: disabled.revision });
+	await assert.rejects(
+		call('triggers_delete', { triggerId: id, revision: changed.revision }),
+		/revision changed/,
+	);
+	const deleted = await call('triggers_delete', {
+		triggerId: id,
+		revision: disabled.revision,
+	});
 	assert.equal(deleted.deleted, id);
-	assert.equal(new BotStore(join(r.root, 'bots.json')).triggers(r.bot.id).length, 0);
+	assert.equal(
+		new BotStore(join(r.root, 'bots.json')).triggers(r.bot.id).length,
+		0,
+	);
 	const events = await call('events_next', { cursor: initial.eventsCursor });
-	assert.deepEqual(events.items.filter((e) => e.type.startsWith('trigger.')).map((e) => e.type), ['trigger.created', 'trigger.updated', 'trigger.updated', 'trigger.deleted']);
+	assert.deepEqual(
+		events.items
+			.filter((e) => e.type.startsWith('trigger.'))
+			.map((e) => e.type),
+		[
+			'trigger.created',
+			'trigger.updated',
+			'trigger.updated',
+			'trigger.deleted',
+		],
+	);
 	assert.ok(!JSON.stringify(events).includes(restored.prompt));
 });
 
 test('runtime trigger reads paginate metadata, slice escaped UTF-8 prompts and reject stale/cross-scope cursors', async (t) => {
 	const r = await setup(t);
-	for (let i = 0; i < 31; i++) r.triggers.create(r.bot.id, draft(undefined, { name: `Task ${i}`, prompt: '😀\n"\\'.repeat(3000) + '\uFFFD' }));
+	for (let i = 0; i < 31; i++)
+		r.triggers.create(
+			r.bot.id,
+			draft(undefined, {
+				name: `Task ${i}`,
+				prompt: `${'😀\n"\\'.repeat(3000)}\uFFFD`,
+			}),
+		);
 	const { sessionId } = await r.service.send(r.bot.id, 'Inspect my triggers');
-	const call = (name, args = {}) => r.service.runtime.call(sessionId, name, args);
+	const call = (name, args = {}) =>
+		r.service.runtime.call(sessionId, name, args);
 	const first = await call('triggers_list');
 	assert.equal(first.items.length, 10);
 	assert.ok(first.items.every((item) => item.prompt === undefined));
@@ -306,30 +359,64 @@ test('runtime trigger reads paginate metadata, slice escaped UTF-8 prompts and r
 	while (cursor) {
 		const page = await call('triggers_list', { cursor, limit: 25 });
 		assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 8192);
-		seen.push(...page.items); cursor = page.nextCursor;
+		seen.push(...page.items);
+		cursor = page.nextCursor;
 	}
 	assert.equal(new Set(seen.map((item) => item.id)).size, 31);
 	await assert.rejects(call('triggers_list', { limit: 26 }), /limit/);
-	await assert.rejects(call('triggers_list', { cursor: first.nextCursor, search: 'different' }), /query/);
+	await assert.rejects(
+		call('triggers_list', { cursor: first.nextCursor, search: 'different' }),
+		/query/,
+	);
 	const id = first.items[0].id;
-	let prompt = '', detailCursor;
+	let prompt = '',
+		detailCursor;
 	do {
-		const detail = await call('triggers_get', { triggerId: id, cursor: detailCursor });
+		const detail = await call('triggers_get', {
+			triggerId: id,
+			cursor: detailCursor,
+		});
 		assert.ok(Buffer.byteLength(JSON.stringify(detail)) <= 8192);
 		assert.ok(!detail.text.slice(0, -1).includes('\uFFFD'));
-		prompt += detail.text; detailCursor = detail.nextCursor;
+		prompt += detail.text;
+		detailCursor = detail.nextCursor;
 	} while (detailCursor);
 	assert.equal(prompt, r.bots.trigger(r.bot.id, id).prompt);
 	const detail = await call('triggers_get', { triggerId: id });
-	const waiting = call('events_next', { cursor: first.eventsCursor, waitMs: 2000 });
-	r.triggers.update(r.bot.id, id, draft(undefined, { name: 'Edited through UI' }));
+	const waiting = call('events_next', {
+		cursor: first.eventsCursor,
+		waitMs: 2000,
+	});
+	r.triggers.update(
+		r.bot.id,
+		id,
+		draft(undefined, { name: 'Edited through UI' }),
+	);
 	assert.equal((await waiting).items[0].type, 'trigger.updated');
-	await assert.rejects(call('triggers_list', { cursor: first.nextCursor }), /query/);
-	await assert.rejects(call('triggers_get', { triggerId: id, cursor: detail.nextCursor }), /query/);
-	const other = r.bots.save({ name: 'Other', agentId: agent.id, signIn: r.bot.signIn });
+	await assert.rejects(
+		call('triggers_list', { cursor: first.nextCursor }),
+		/query/,
+	);
+	await assert.rejects(
+		call('triggers_get', { triggerId: id, cursor: detail.nextCursor }),
+		/query/,
+	);
+	const other = r.bots.save({
+		name: 'Other',
+		agentId: agent.id,
+		signIn: r.bot.signIn,
+	});
 	const outside = r.triggers.create(other.id, draft());
-	const { sessionId: otherSession } = await r.service.send(other.id, 'Inspect own triggers');
-	await assert.rejects(r.service.runtime.call(otherSession, 'triggers_list', { cursor: first.nextCursor }), /cursor/i);
+	const { sessionId: otherSession } = await r.service.send(
+		other.id,
+		'Inspect own triggers',
+	);
+	await assert.rejects(
+		r.service.runtime.call(otherSession, 'triggers_list', {
+			cursor: first.nextCursor,
+		}),
+		/cursor/i,
+	);
 	for (const [name, args] of [
 		['triggers_get', {}],
 		['triggers_update', { revision: r.bots.revision, draft: draft() }],
@@ -337,46 +424,111 @@ test('runtime trigger reads paginate metadata, slice escaped UTF-8 prompts and r
 		['triggers_enable', { revision: r.bots.revision, enabled: false }],
 		['triggers_run', { revision: r.bots.revision }],
 	])
-		await assert.rejects(call(name, { triggerId: outside.id, ...args }), /not found/i);
+		await assert.rejects(
+			call(name, { triggerId: outside.id, ...args }),
+			/not found/i,
+		);
 	assert.equal(r.bots.trigger(other.id, outside.id).enabled, true);
 	r.service.runtime.revoke(sessionId);
-	for (const name of ['triggers_list', 'triggers_create', 'triggers_delete', 'triggers_run'])
-		await assert.rejects(call(name, { triggerId: id, revision: r.bots.revision, draft: draft() }), /active/);
+	for (const name of [
+		'triggers_list',
+		'triggers_create',
+		'triggers_delete',
+		'triggers_run',
+	])
+		await assert.rejects(
+			call(name, { triggerId: id, revision: r.bots.revision, draft: draft() }),
+			/active/,
+		);
 });
 
 test('runtime trigger preview, Run now and scheduled firing use the shared scheduler', async (t) => {
 	const r = await setup(t, { zone: 'Europe/London' });
 	const { sessionId } = await r.service.send(r.bot.id, 'Schedule a check');
-	const call = (name, args = {}) => r.service.runtime.call(sessionId, name, args);
-	const preview = await call('triggers_preview', { condition: { kind: 'cron', cron: '0 9 * * 1-5' } });
+	const call = (name, args = {}) =>
+		r.service.runtime.call(sessionId, name, args);
+	const preview = await call('triggers_preview', {
+		condition: { kind: 'cron', cron: '0 9 * * 1-5' },
+	});
 	assert.equal(preview.timeZone, 'Europe/London');
 	assert.equal(preview.next.length, 5);
-	assert.equal(new Date(preview.next[0]).toISOString(), '2026-01-05T09:00:00.000Z');
-	assert.deepEqual((await call('triggers_preview', { condition: { kind: 'event', event: 'agent.finished' } })).next, []);
-	await assert.rejects(call('triggers_preview', { condition: { kind: 'every', intervalMs: 120000 } }), /5 minutes/);
-	const created = await call('triggers_create', { revision: r.bots.revision, draft: draft({ kind: 'once', at: start + MINUTE }, { enabled: false }) });
-	const run = await call('triggers_run', { triggerId: created.trigger.id, revision: created.revision });
+	assert.equal(
+		new Date(preview.next[0]).toISOString(),
+		'2026-01-05T09:00:00.000Z',
+	);
+	assert.deepEqual(
+		(
+			await call('triggers_preview', {
+				condition: { kind: 'event', event: 'agent.finished' },
+			})
+		).next,
+		[],
+	);
+	await assert.rejects(
+		call('triggers_preview', {
+			condition: { kind: 'every', intervalMs: 120000 },
+		}),
+		/5 minutes/,
+	);
+	const created = await call('triggers_create', {
+		revision: r.bots.revision,
+		draft: draft({ kind: 'once', at: start + MINUTE }, { enabled: false }),
+	});
+	const run = await call('triggers_run', {
+		triggerId: created.trigger.id,
+		revision: created.revision,
+	});
 	assert.notEqual(run.firing.sessionId, sessionId);
 	assert.equal(r.sessions.get(run.firing.sessionId).origin.kind, 'run-now');
 	assert.equal(r.bots.trigger(r.bot.id, created.trigger.id).enabled, false);
-	await assert.rejects(call('triggers_run', { triggerId: created.trigger.id, revision: created.revision }), /revision changed/);
+	await assert.rejects(
+		call('triggers_run', {
+			triggerId: created.trigger.id,
+			revision: created.revision,
+		}),
+		/revision changed/,
+	);
 	assert.equal(r.triggers.firings(r.bot.id).length, 1);
 	await finish(r, run.firing.sessionId);
-	await call('triggers_enable', { triggerId: created.trigger.id, revision: r.bots.revision, enabled: true });
+	await call('triggers_enable', {
+		triggerId: created.trigger.id,
+		revision: r.bots.revision,
+		enabled: true,
+	});
 	const cursor = r.service.messages.eventCursor(r.bot.id);
 	await r.time.advance(start + MINUTE, r.engine);
 	assert.equal(r.bots.trigger(r.bot.id, created.trigger.id).enabled, false);
-	assert.equal(r.sessions.list(r.bot.id).filter((s) => s.origin.kind === 'trigger').length, 1);
-	assert.ok(r.service.messages.events(r.bot.id, cursor).items.some((e) => e.type === 'trigger.updated'));
+	assert.equal(
+		r.sessions.list(r.bot.id).filter((s) => s.origin.kind === 'trigger').length,
+		1,
+	);
+	assert.ok(
+		r.service.messages
+			.events(r.bot.id, cursor)
+			.items.some((e) => e.type === 'trigger.updated'),
+	);
 });
 
 test('runtime trigger mutation guards reject invalid drafts, forged scope, limits and stale writes', async (t) => {
 	const r = await setup(t);
 	const { sessionId } = await r.service.send(r.bot.id, 'Manage schedules');
-	const call = (name, args = {}) => r.service.runtime.call(sessionId, name, args);
-	for (const bad of [draft(undefined, { prompt: '' }), draft(undefined, { prompt: 'x'.repeat(32769) }), draft({ kind: 'every', intervalMs: 120000 }), draft({ kind: 'event', event: 'invented' }), draft(undefined, { botId: 'forged' }), draft({ kind: 'every', intervalMs: 300000, anchor: 0 })])
-		await assert.rejects(call('triggers_create', { revision: r.bots.revision, draft: bad }));
-	await assert.rejects(call('triggers_create', { revision: null, draft: draft() }), /revision/);
+	const call = (name, args = {}) =>
+		r.service.runtime.call(sessionId, name, args);
+	for (const bad of [
+		draft(undefined, { prompt: '' }),
+		draft(undefined, { prompt: 'x'.repeat(32769) }),
+		draft({ kind: 'every', intervalMs: 120000 }),
+		draft({ kind: 'event', event: 'invented' }),
+		draft(undefined, { botId: 'forged' }),
+		draft({ kind: 'every', intervalMs: 300000, anchor: 0 }),
+	])
+		await assert.rejects(
+			call('triggers_create', { revision: r.bots.revision, draft: bad }),
+		);
+	await assert.rejects(
+		call('triggers_create', { revision: null, draft: draft() }),
+		/revision/,
+	);
 	await assert.rejects(call('triggers_list', { botId: 'forged' }), /argument/);
 	assert.equal(r.bots.triggers(r.bot.id).length, 0);
 	const revision = r.bots.revision;
@@ -384,12 +536,21 @@ test('runtime trigger mutation guards reject invalid drafts, forged scope, limit
 		call('triggers_create', { revision, draft: draft() }),
 		call('triggers_create', { revision, draft: draft() }),
 	]);
-	assert.equal(racing.filter((result) => result.status === 'fulfilled').length, 1);
-	assert.equal(racing.filter((result) => result.status === 'rejected').length, 1);
+	assert.equal(
+		racing.filter((result) => result.status === 'fulfilled').length,
+		1,
+	);
+	assert.equal(
+		racing.filter((result) => result.status === 'rejected').length,
+		1,
+	);
 	assert.equal(r.bots.triggers(r.bot.id).length, 1);
 	r.triggers.remove(r.bot.id, r.bots.triggers(r.bot.id)[0].id);
 	for (let i = 0; i < 50; i++) r.triggers.create(r.bot.id, draft());
-	await assert.rejects(call('triggers_create', { revision: r.bots.revision, draft: draft() }), /50 triggers/);
+	await assert.rejects(
+		call('triggers_create', { revision: r.bots.revision, draft: draft() }),
+		/50 triggers/,
+	);
 });
 
 test('6.1 idle trigger starts a new session through send; disabled trigger never fires; once stays queued after automatic disable', async (t) => {
@@ -456,12 +617,12 @@ test('6.1 validation rejects empty/oversize prompts, short intervals, malformed/
 test('6.1 busy bot queues; repeated pending firings and a full queue skip as bot busy; queued input snapshots survive edits', async (t) => {
 	const r = await setup(t);
 	const chat = await r.service.send(r.bot.id, 'chat');
-    for(let n=0;n<3;n++)await r.service.send(r.bot.id,'hold');
+	for (let n = 0; n < 3; n++) await r.service.send(r.bot.id, 'hold');
 	await flush();
 	const trigger = r.triggers.create(r.bot.id, draft());
 	await r.time.advance(start + 5 * MINUTE, r.engine);
-	assert.equal(r.turns.length,4);
-	assert.equal(r.service.queue.list(r.bot.id).length,1);
+	assert.equal(r.turns.length, 4);
+	assert.equal(r.service.queue.list(r.bot.id).length, 1);
 	r.triggers.update(
 		r.bot.id,
 		trigger.id,
@@ -486,9 +647,9 @@ test('6.1 busy bot queues; repeated pending firings and a full queue skip as bot
 	assert.equal(skipped.reason, 'bot busy');
 	assert.equal(skipped.outcome, 'skipped');
 	await finish(r, chat.sessionId);
-	assert.equal(r.closed[0].reason,'end');
+	assert.equal(r.closed[0].reason, 'end');
 	assert.ok(r.turns[4].text.endsWith(trigger.prompt));
-	assert.equal(r.sessions.get(chat.sessionId).state,'completed');
+	assert.equal(r.sessions.get(chat.sessionId).state, 'completed');
 });
 
 test('6.1 trigger and subsequent user messages use fresh executions', async (t) => {
@@ -502,18 +663,18 @@ test('6.1 trigger and subsequent user messages use fresh executions', async (t) 
 	);
 	const firing = await r.triggers.runNow(r.bot.id, trigger.id);
 	await flush();
-	assert.equal(r.sessions.get(chat.sessionId).state,'completed');
+	assert.equal(r.sessions.get(chat.sessionId).state, 'completed');
 	await finish(r, firing.sessionId);
 	const resumed = await r.service.send(r.bot.id, 'continue');
 	await flush();
-	assert.notEqual(resumed.sessionId,chat.sessionId);
-	assert.equal(r.turns.at(-1).loadId,null);
+	assert.notEqual(resumed.sessionId, chat.sessionId);
+	assert.equal(r.turns.at(-1).loadId, null);
 });
 
 test('6.1 disabling/deleting removes pending work; a queued once firing survives its automatic disable', async (t) => {
 	const r = await setup(t);
 	await r.service.send(r.bot.id, 'hold');
-    for(let n=0;n<3;n++)await r.service.send(r.bot.id,'hold');
+	for (let n = 0; n < 3; n++) await r.service.send(r.bot.id, 'hold');
 	await flush();
 	const a = r.triggers.create(r.bot.id, draft()),
 		b = r.triggers.create(r.bot.id, draft());
@@ -550,8 +711,14 @@ test('6.1 Run now starts disabled triggers with run-now origin and leaves them d
 
 for (const [failure, reason] of [
 	['engine', 'container engine unavailable'],
-	['agent', 'The bot agent is not ready. Check its sign-in and rebuild the bot image.'],
-	['image', 'The bot image could not be built. Open Build image to inspect the build log and retry.'],
+	[
+		'agent',
+		'The bot agent is not ready. Check its sign-in and rebuild the bot image.',
+	],
+	[
+		'image',
+		'The bot image could not be built. Open Build image to inspect the build log and retry.',
+	],
 ])
 	test(`6.1 startup failure is recorded: ${failure}`, async (t) => {
 		const r = await setup(t);
@@ -964,7 +1131,7 @@ test('6.1 restart records previously queued and unassociated pending firings as 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const first = await setup(t, { root, keepRoot: true });
 	await first.service.send(first.bot.id, 'hold');
-    for(let n=0;n<3;n++)await first.service.send(first.bot.id,'hold');
+	for (let n = 0; n < 3; n++) await first.service.send(first.bot.id, 'hold');
 	await flush();
 	const trigger = first.triggers.create(first.bot.id, draft());
 	const pending = await first.triggers.runNow(first.bot.id, trigger.id);

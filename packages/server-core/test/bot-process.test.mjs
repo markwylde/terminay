@@ -171,7 +171,7 @@ test('5.3 credential lease is released exactly once and only after supervisor co
 		spawn() {
 			child = spawn(
 				process.execPath,
-				[new URL('./fixtures/bot-acp.mjs', import.meta.url).pathname],
+				[new URL('./fixtures/bot-native.mjs', import.meta.url).pathname],
 				{ stdio: ['pipe', 'pipe', 'pipe'] },
 			);
 			return child;
@@ -188,4 +188,27 @@ test('5.3 credential lease is released exactly once and only after supervisor co
 	assert.equal(released, 1);
 	await owner.close('end');
 	assert.equal(released, 1);
+});
+
+test('native interrupt targets owned children and preserves the supervisor record', () => {
+	python(`
+with tempfile.TemporaryDirectory() as d:
+    m.SESSIONS=d
+    m.write_record('owned',{'pgid':100,'start':10,'nonce':'owned'})
+    m.start_time=lambda pid:10
+    m.pgid_of=lambda pid:100
+    m.running=lambda pid:True
+    m.group_members=lambda pgid,exclude=():[pid for pid in [100,101,102] if pid not in exclude]
+    hits=[]
+    m.signal_pids=lambda fn,sig:hits.extend((pid,sig) for pid in fn())
+    assert m.interrupt_session('owned')==0
+    assert hits==[(101,signal.SIGINT),(102,signal.SIGINT)]
+    assert os.path.exists(d+'/owned')
+    m.start_time=lambda pid:99
+    m.has_nonce=lambda pid,nonce:pid==101
+    hits.clear()
+    assert m.interrupt_session('owned')==0
+    assert hits==[(101,signal.SIGINT)]
+    assert os.path.exists(d+'/owned')
+`);
 });

@@ -269,11 +269,28 @@ def kill_session(sid):
     return 0
 
 
+def interrupt_session(sid):
+    rec = read_record(sid)
+    if rec is None:
+        return 0
+    pgid, st, nonce = rec["pgid"], rec["start"], rec["nonce"]
+    def owned():
+        members = group_members(pgid, exclude=(pgid,))
+        leader = start_time(pgid) == st and pgid_of(pgid) == pgid and running(pgid)
+        return members if leader else [p for p in members if has_nonce(p, nonce)]
+    # Interrupt the CLI/tools, not the root supervisor. It must remain alive to
+    # confirm cleanup, even when the CLI ignores its cooperative cancellation.
+    signal_pids(owned, signal.SIGINT)
+    return 0
+
+
 def main():
     if os.geteuid() != 0:
         log("must run as root")
         sys.exit(1)
     args = sys.argv[1:]
+    if args[:1] == ["--interrupt"] and len(args) == 2:
+        sys.exit(interrupt_session(args[1]))
     if args[:1] == ["--kill"] and len(args) == 2:
         sys.exit(kill_session(args[1]))
     if args == ["--kill-all"]:
