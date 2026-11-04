@@ -1255,3 +1255,51 @@ test('a source disabled during asynchronous redaction cannot accept a late resul
 	assert.equal(r.sessions.list(r.bot.id).length, 1);
 	assert.equal(r.bots.trigger(r.bot.id, trigger.id).enabled, false);
 });
+
+test('continuous restart exposes its gap and resumes an SSE cursor without duplicate sessions', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bot-source-resume-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const cursors = [];
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		async run(_b, _s, options, observe) {
+			cursors.push(options.cursor);
+			await observe({ status: 'connected' });
+			await observe({ eventId: 'stable-1', data: { id: 1 } });
+			await new Promise((resolve) => {
+				if (options.signal.aborted) resolve();
+				else options.signal.addEventListener('abort', resolve, { once: true });
+			});
+		},
+	};
+	const first = await setup(t, { root, keepRoot: true, sources });
+	first.triggers.create(
+		first.bot.id,
+		draft(
+			{ kind: 'sse', url: 'https://fixture.invalid/events' },
+			{ recovery: 'recover-available' },
+		),
+	);
+	await flush();
+	await flush();
+	const trigger = first.bots.triggers(first.bot.id)[0];
+	assert.equal(first.triggers.memory(first.bot.id, trigger.id).total, 1);
+	first.triggers.stop();
+	first.engine.stop();
+	await first.triggers.idle();
+	const second = await setup(t, {
+		root,
+		keepRoot: true,
+		sources,
+		at: start + MINUTE,
+	});
+	await flush();
+	await flush();
+	assert.equal(cursors.at(-1), 'stable-1');
+	assert.match(
+		second.triggers.list(second.bot.id).triggers[0].health.gap,
+		/Server restarted/,
+	);
+	assert.equal(second.triggers.memory(second.bot.id, trigger.id).total, 1);
+	assert.equal(second.triggers.firings(second.bot.id).length, 1);
+});
