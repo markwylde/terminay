@@ -1,5 +1,3 @@
-import { BOT_BROWSER_SECCOMP } from '../packages/server-core/dist/botService/browserSandbox.js';
-
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
@@ -8,6 +6,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { build } from 'esbuild';
+import { BOT_BROWSER_SECCOMP } from '../packages/server-core/dist/botService/browserSandbox.js';
 import { planBotImage } from '../packages/server-core/dist/botService/image.js';
 
 // Exercise the same Dockerfile generator, scripts, IDs and pinned contribution
