@@ -43,14 +43,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Node.js on the macOS image
-        run: |
-          set -euo pipefail
-          if ! command -v node >/dev/null 2>&1; then
-            brew install node@24
-            brew link --overwrite --force node@24
-          fi
-          node --version
-          npm --version
+        run: bash scripts/install-macos-node.sh
 
       - name: Install dependencies
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
