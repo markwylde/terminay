@@ -132,6 +132,32 @@ export class ForgeRelease {
 		return true;
 	}
 
+	async saveNotes(notes) {
+		if (
+			typeof notes !== 'string' ||
+			!notes.trim() ||
+			Buffer.byteLength(notes) > 128 * 1024
+		)
+			throw new Error(
+				'Non-empty release notes of at most 128 KiB are required',
+			);
+		const release = await this.draft();
+		await this.api(`/releases/${release.id}`, {
+			method: 'PATCH',
+			body: {
+				body: `${this.marker()}\n\n<!-- release-notes-ready -->\n\n${notes.trim()}`,
+			},
+		});
+	}
+
+	async publishSavedNotes() {
+		const release = await this.draft();
+		const prefix = `${this.marker()}\n\n<!-- release-notes-ready -->\n\n`;
+		if (!release.body.startsWith(prefix))
+			throw new Error('Draft has no saved release notes');
+		await this.publish(release.body.slice(prefix.length));
+	}
+
 	async download(asset) {
 		let url = new URL(asset.browser_download_url);
 		for (let redirects = 0; redirects < 5; redirects++) {
@@ -265,7 +291,9 @@ if (
 		commit: process.env.RELEASE_COMMIT,
 	});
 	if (command === 'prepare') {
+		const notes = await readFile('RELEASE.md', 'utf8');
 		const needed = await client.prepareAutomatic();
+		if (needed) await client.saveNotes(notes);
 		if (process.env.GITHUB_OUTPUT)
 			await appendFile(
 				process.env.GITHUB_OUTPUT,
@@ -278,8 +306,7 @@ if (
 		);
 	} else if (command === 'upload' && platform && directory)
 		await client.upload(platform, directory);
-	else if (command === 'publish')
-		await client.publish(await readFile('RELEASE.md', 'utf8'));
+	else if (command === 'publish') await client.publishSavedNotes();
 	else
 		throw new Error(
 			'usage: forge-release.mjs prepare | upload <mac|linux> <directory> | publish',

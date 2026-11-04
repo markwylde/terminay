@@ -58,19 +58,19 @@ The workflow SHALL reuse the repository release-version helper to select major, 
 
 ### Requirement: Generated release notes
 
-Canonical-forge releases SHALL use the same AI notes generator and release-range prompt as GitHub, authenticated using the canonical repository OPENROUTER_API_KEY secret. If the credential is absent or AI generation fails, a deterministic commit-based fallback SHALL be generated. Notes SHALL be attached when the verified release is published and SHALL preserve source revision and update-feed information. Blank or missing notes SHALL prevent publication.
+Canonical-forge releases SHALL generate AI notes using the shared GitHub generator and prompt before dependency installation, verification suites or platform builds. The configured OPENROUTER_API_KEY SHALL be exercised in that preflight. Missing credentials or generation failures SHALL stop preparation without starting builds. Successful notes SHALL be saved in the workflow-owned draft and used unchanged at publication, preserving source revision and update-feed information. Blank or missing saved notes SHALL prevent publication.
 
 #### Scenario: AI notes available
 
-- **WHEN** AI generation succeeds for the selected release tag
-- **THEN** the published release contains the generated Markdown notes
+- **WHEN** AI generation succeeds during preparation
+- **THEN** the draft stores the generated Markdown and publication uses that content without requesting AI generation again
 
-#### Scenario: AI generation unavailable
+#### Scenario: Credential rejected
 
-- **WHEN** the API key is absent or the AI generator fails
-- **THEN** the workflow publishes verified binaries with deterministic fallback notes describing desktop distribution
+- **WHEN** OpenRouter rejects the credential or AI generation otherwise fails
+- **THEN** the preparation job fails before dependency installation or platform builds
 
 #### Scenario: Missing notes
 
-- **WHEN** the publisher has no non-empty release notes
+- **WHEN** the publisher has no non-empty saved release notes
 - **THEN** the release remains a draft
