@@ -181,7 +181,7 @@ export function BotTab({
 					</button>
 				</fieldset>
 			</header>
-			<BotRecovery server={server} botId={bot.id} />
+			<BotRecovery server={server} botId={bot.id} visible={host.isVisible} />
 			{availabilityError ? (
 				<div role="alert" className="bots-note bots-note--error">
 					{availabilityError}
