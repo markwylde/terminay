@@ -37,6 +37,8 @@ Run 23419 passed preparation and created draft v6.0.0, then the macOS runner tra
 ## 7. Early live AI preflight
 
 - [x] 7.1 Generate notes before dependencies/tests/builds, fail preparation on AI errors, and persist successful notes in the draft for publication; verify a real preflight process with mocked HTTP 401 and successful provider responses, plus saved-note publication tests.
-- [ ] 7.2 Validate the workflow ordering, release tests and lint, and push directly to origin/main as explicitly requested.
+- [x] 7.2 Validate the workflow ordering, release tests and lint, and push directly to origin/main as explicitly requested.
 
 PR #498 passed all 28 checks, including the workspace retry. Run 23448 exposed HTTP 401 only after its builds; this revision moves the actual credential request before that work.
+
+Verification: all 53 release tests passed, including the actual preflight subprocess with mocked HTTP 401 and 200 responses and publication of saved notes. Biome, workflow ordering/shell syntax, OpenSpec change validation and diff checks passed. Product fix 3daed084 was pushed directly to origin/main and its remote SHA read back, as requested; no PR was created.
