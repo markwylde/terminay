@@ -38,6 +38,19 @@ async function openBots(page: Page): Promise<Locator> {
 	return frontHomeTab(page);
 }
 
+/** Chooses an option in one of the Bots grouped dropdowns. */
+async function pick(
+	scope: Locator,
+	label: string,
+	value: string,
+): Promise<void> {
+	await scope.getByRole('combobox', { name: label, exact: true }).click();
+	await scope
+		.getByRole('listbox', { name: label, exact: true })
+		.locator(`[data-grouped-select-value="${value}"]`)
+		.click();
+}
+
 async function engineReady(page: Page): Promise<void> {
 	const dashboard = await openBots(page);
 	await dashboard.getByRole('button', { name: 'Check again' }).click();
@@ -115,9 +128,7 @@ async function newTrigger(
 	const page = tab.page();
 	const editor = page.locator('[data-terminay-bot-trigger-editor]');
 	await editor.locator('[data-terminay-bot-trigger-field="name"]').fill(name);
-	await editor
-		.locator('[data-terminay-bot-trigger-type]')
-		.selectOption('every');
+	await pick(editor, 'Source', 'every');
 	await editor
 		.locator('[data-terminay-bot-trigger-field="prompt"]')
 		.fill(prompt);
@@ -183,7 +194,7 @@ test.describe('Home › Bots', () => {
 		await expect(
 			progress.getByRole('heading', { name: 'Building your bot environment' }),
 		).toBeVisible();
-		await progress.getByRole('button', { name: 'Back to Bots' }).click();
+		await progress.getByRole('button', { name: 'Close', exact: true }).click();
 		await expect(progress).toHaveCount(0);
 		await dashboard.locator('[data-terminay-build-banner]').click();
 		const buildId = await progress.getAttribute('data-terminay-build-id');
@@ -207,6 +218,32 @@ test.describe('Home › Bots', () => {
 		await mainWindow.screenshot({
 			path: testInfo.outputPath('image-build-mobile.png'),
 		});
+		await mainWindow.setViewportSize({ width: 1280, height: 850 });
+		await progress.getByRole('button', { name: 'Close', exact: true }).click();
+		await expect(progress).toHaveCount(0);
+
+		// The success notice can be dismissed, and stays dismissed.
+		const ready = frontHomeTab(mainWindow).locator(
+			'[data-terminay-build-banner-state="completed"]',
+		);
+		await expect(ready).toContainText('Bot image ready');
+		await ready.locator('[data-terminay-build-banner-dismiss]').click();
+		await expect(ready).toHaveCount(0);
+		await mainWindow.reload();
+		await openBots(mainWindow);
+		await expect(ready).toHaveCount(0);
+
+		// Once seen, leaving and coming back retires it without a click.
+		await mainWindow.evaluate(() =>
+			localStorage.removeItem('terminay.bots.buildBannerDismissed'),
+		);
+		await mainWindow.reload();
+		await openBots(mainWindow);
+		await expect(ready).toBeVisible();
+		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
+		await mainWindow.locator('[data-terminay-home-section-tab="tabs"]').click();
+		await openBots(mainWindow);
+		await expect(ready).toHaveCount(0);
 	});
 
 	test('a bot is created while Docker is down, and chats once Docker is up', async ({
@@ -851,20 +888,32 @@ test.describe('Home › Bots', () => {
 
 test('generic command source editor tests without sessions and Disable blocks manual wakes', async ({
 	mainWindow,
-}) => {
+}, testInfo) => {
 	await engineReady(mainWindow);
 	const tab = await createBot(mainWindow, 'Source watcher');
 	await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
-	await tab.locator('[data-terminay-bot-trigger-new]').click();
+	await expect(tab.locator('[data-terminay-bot-trigger-empty]')).toBeVisible();
+	await mainWindow.screenshot({
+		path: testInfo.outputPath('triggers-empty.png'),
+	});
+	await tab.locator('[data-terminay-bot-trigger-start="command"]').click();
 	const editor = tab.locator('[data-terminay-bot-trigger-editor]');
+	await expect(
+		editor.getByRole('combobox', { name: 'Source', exact: true }),
+	).toContainText('Command result');
+	await editor.getByRole('combobox', { name: 'Source', exact: true }).click();
+	await mainWindow.screenshot({
+		path: testInfo.outputPath('triggers-source-picker.png'),
+		animations: 'disabled',
+	});
 	await editor
-		.getByLabel('Source group', { exact: true })
-		.selectOption('Commands');
+		.getByRole('combobox', { name: 'Source', exact: true })
+		.press('Escape');
 	await editor.getByLabel('Name', { exact: true }).fill('Watch incoming items');
 	await editor.getByLabel('Command / shell script').fill('fixture-items');
 	await editor.getByLabel('Check every', { exact: true }).fill('1');
-	await editor.getByLabel('Unit', { exact: true }).selectOption('minutes');
-	await editor.getByLabel('Fire when', { exact: true }).selectOption('items');
+	await pick(editor, 'Unit', 'minutes');
+	await pick(editor, 'Fire when', 'items');
 	await editor
 		.getByLabel('Prompt', { exact: true })
 		.fill('Inspect each item for risks.');
@@ -904,21 +953,16 @@ test('generic network and file sources preview real checks without starting sess
 	const editor = tab.locator('[data-terminay-bot-trigger-editor]');
 	await editor.getByLabel('Name', { exact: true }).fill('Observe status');
 	await editor.getByLabel('Prompt', { exact: true }).fill('Inspect the event.');
-	await editor
-		.getByLabel('Source group', { exact: true })
-		.selectOption('Network');
-	await editor.getByLabel('Source type', { exact: true }).selectOption('http');
+	await pick(editor, 'Source', 'http');
 	await editor
 		.getByLabel('URL', { exact: true })
 		.fill('https://fixture.invalid/status');
-	await editor
-		.getByLabel('If Terminay Server was offline', { exact: true })
-		.selectOption('once');
+	await pick(editor, 'If Terminay Server was offline', 'once');
 	await editor
 		.getByRole('button', { name: 'Test source', exact: true })
 		.click();
 	await expect(editor).toContainText('0 events would fire');
-	await editor.getByLabel('Source type', { exact: true }).selectOption('sse');
+	await pick(editor, 'Source', 'sse');
 	await editor
 		.getByLabel('URL', { exact: true })
 		.fill('https://fixture.invalid/events');
@@ -926,9 +970,7 @@ test('generic network and file sources preview real checks without starting sess
 		.getByRole('button', { name: 'Test source', exact: true })
 		.click();
 	await expect(editor).toContainText('1 event would fire', { timeout: 20000 });
-	await editor
-		.getByLabel('Source group', { exact: true })
-		.selectOption('Files');
+	await pick(editor, 'Source', 'files');
 	await editor
 		.getByLabel('File or folder path', { exact: true })
 		.fill('/home/bot/incoming');
