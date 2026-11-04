@@ -1,18 +1,10 @@
 /**
- * Touch text selection and touch link activation over the xterm surface.
+ * Touch selection, link menus, and TUI taps over the xterm surface.
  *
- * xterm owns touch on its screen element: its gesture manager calls
- * preventDefault on the touchstart it consumes, so a touch device never
- * receives the compatibility mouse events a browser would otherwise
- * synthesise. That is what makes panning work — a drag reaches xterm as a
- * gesture and becomes wheel mouse reports, a viewport scroll, or cursor keys
- * depending on what the foreground program asked for — and it is also why a
- * tap can neither follow a link nor start a selection.
- *
- * Both gestures here are additive. They are armed only by a touch that today
- * does nothing: a tap that lands on a link, and a stationary hold that passes
- * one second. A touch that travels beyond the movement threshold is a pan and
- * is left entirely alone, so xterm's panning behaviour is untouched.
+ * xterm cancels compatibility mouse events while owning touch panning. The
+ * bridges below supply stationary gestures alongside that pan handling: a
+ * hold selects text; a tap offers a link menu or activates a mouse-reporting
+ * TUI. Movement beyond the gesture threshold stays entirely with xterm.
  */
 
 export const TOUCH_SELECTION_HOLD_MS = 1000;
@@ -221,6 +213,31 @@ export function createTerminalTouchSelectionDriver({
 			restoreSelectionService = null;
 		},
 	};
+}
+
+/**
+ * Forward an already-recognized, non-link tap through xterm's own mouse path.
+ * Waiting until release keeps pans and holds out of the application's buttons;
+ * xterm retains responsibility for cell coordinates and protocol encoding.
+ */
+export function activateTerminalTuiAtTouch({
+	screenElement,
+	terminal,
+	point,
+}: {
+	screenElement: MouseEventTarget;
+	terminal: { modes: { mouseTrackingMode: string } };
+	point: TouchSelectionPoint;
+}): boolean {
+	if (terminal.modes.mouseTrackingMode === 'none') return false;
+	screenElement.dispatchEvent(
+		new MouseEvent('mousedown', mouseEventInit(point, 1)),
+	);
+	// xterm installs its release listener on the owner document after the press.
+	(screenElement.ownerDocument ?? screenElement).dispatchEvent(
+		new MouseEvent('mouseup', { ...mouseEventInit(point, 1), buttons: 0 }),
+	);
+	return true;
 }
 
 /**
