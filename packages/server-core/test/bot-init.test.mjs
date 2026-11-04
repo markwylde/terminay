@@ -113,6 +113,8 @@ m.wait_path=lambda *args: None
 m.start_desktop('/private/password', 1000, 1000, 'abc123def456')
 args, options=calls[2]
 assert args==['terminay-browser']
+assert calls[3][0]==['terminay-app']
+assert calls[3][1]['env']==options['env']
 assert '--no-sandbox' not in args
 assert '--disable-dev-shm-usage' in open(os.path.join(os.path.dirname(m.__file__), 'terminay-browser')).read()
 assert options['uid']==1000 and options['gid']==1000
@@ -319,4 +321,91 @@ with tempfile.TemporaryDirectory() as d:
         p.wait(timeout=5)
         control.close()
 `);
+});
+
+// Runs without server build output, alongside init/browser helper tests.
+test('desktop application launcher validates requests and owns app lifetimes', () => {
+	const result = spawnSync(
+		'python3',
+		[
+			new URL('../../../docker/terminay-bot/test_apps.py', import.meta.url)
+				.pathname,
+		],
+		{ encoding: 'utf8' },
+	);
+	assert.equal(result.status, 0, result.stderr);
+});
+
+test('desktop apps survive supervised session closure and end with their disposable container', {
+	skip: !process.env.TERMINAY_BOT_APP_TEST_IMAGE,
+	timeout: 90000,
+}, (t) => {
+	const name = `terminay-app-lifetime-${process.pid}`;
+	const run = (args, options = {}) => {
+		const result = spawnSync('docker', args, {
+			encoding: 'utf8',
+			timeout: 45000,
+			...options,
+		});
+		assert.equal(result.status, 0, result.stderr);
+		return result.stdout.trim();
+	};
+	t.after(() => spawnSync('docker', ['rm', '-f', name], { timeout: 10000 }));
+	const socket = process.env.TERMINAY_BOT_APP_ENGINE_SOCKET;
+	run([
+		'run',
+		'-d',
+		'--pull',
+		'never',
+		'--name',
+		name,
+		'--network',
+		'none',
+		'--shm-size',
+		'512m',
+		'--security-opt',
+		'label=disable',
+		...(socket ? ['-v', `${socket}:/run/terminay-engine/engine.sock`] : []),
+		process.env.TERMINAY_BOT_APP_TEST_IMAGE,
+	]);
+	run(['exec', '-i', '-u', 'root', name, 'terminay-init', '--bootstrap'], {
+		input: JSON.stringify({
+			botId: 'appverify001',
+			serverId: 'app-lifetime-test',
+			vncPassword: 'test-only-password',
+		}),
+	});
+	assert.equal(
+		run(['exec', name, 'stat', '-c', '%U:%a', '/tmp/terminay-app.sock']),
+		'bot:600',
+	);
+	const inspect = JSON.parse(run(['inspect', name]))[0];
+	assert.deepEqual(inspect.HostConfig.PortBindings ?? {}, {});
+	const result = run(['exec', '-i', '-u', 'root', name, 'python3', '-'], {
+		input: spawnSync(
+			'cat',
+			[
+				new URL(
+					'../../../docker/terminay-bot/test_app_lifetime.py',
+					import.meta.url,
+				).pathname,
+			],
+			{ encoding: 'utf8' },
+		).stdout,
+	});
+	assert.equal(result.split('\n').length, 5);
+	for (const line of result.split('\n')) {
+		const event = JSON.parse(line);
+		assert.equal(event.sessionCommandEnded, true);
+		assert.equal(event.desktopAppSurvived, true);
+	}
+	// Keep an app open at shutdown, rather than merely stopping an idle service.
+	run(['exec', '-u', 'bot', name, 'terminay-app', 'launch', 'xclock']);
+	run(['exec', name, 'pidof', 'xclock']);
+	run(['stop', '--time', '10', name]);
+	assert.equal(JSON.parse(run(['inspect', name]))[0].State.Running, false);
+	assert.notEqual(
+		spawnSync('docker', ['top', name], { encoding: 'utf8' }).status,
+		0,
+	);
 });

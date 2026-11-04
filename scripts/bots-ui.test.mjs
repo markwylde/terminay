@@ -1154,6 +1154,14 @@ test('Sessions filters and reads diagnostics without conversation continuation',
 	});
 	try {
 		await page.locator('[data-terminay-bot-session="s2"]').waitFor();
+		assert.match(
+			await page.locator('[data-terminay-bot-session-lifetime]').innerText(),
+			/Desktop apps stay open/,
+		);
+		assert.match(
+			await page.locator('[data-terminay-bot-session-lifetime]').innerText(),
+			/Stopping the bot container ends desktop apps/,
+		);
 		assert.equal(
 			await page.locator('[data-terminay-bot-session-continue]').count(),
 			0,
