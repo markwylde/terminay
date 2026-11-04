@@ -177,6 +177,16 @@ export class BotTriggers {
 		});
 		if (this.stopped) unregister();
 		else this.detach.push(unregister);
+		for (const t of this.store.triggers()) {
+			if (
+				this.active(t) &&
+				(t.condition.kind === 'files' || t.condition.kind === 'sse') &&
+				this.observations.checkpoint(t).health.lastAttempt !== null
+			)
+				this.health(t, {
+					gap: 'Server restarted; only available source history can be recovered',
+				});
+		}
 		this.reconcileSources();
 		for (const b of this.store.list()) {
 			void this.drain(b.id);
