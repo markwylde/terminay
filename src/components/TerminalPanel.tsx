@@ -118,6 +118,7 @@ import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInterac
 import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction';
 import {
 	activateTerminalLinkAtTouch,
+	activateTerminalTuiAtTouch,
 	createTerminalTouchSelectionDriver,
 	createTerminalTouchSelectionSession,
 	touchSelectionCopyAnchor,
@@ -2377,6 +2378,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				screenElement: touchEventTarget,
 			});
 
+		const activateTouchTap = (point: TouchSelectionPoint) => {
+			// Links keep their menu even inside a mouse-reporting program.
+			if (showTouchLinkMenuAt(point)) return;
+			activateTerminalTuiAtTouch({
+				screenElement: touchEventTarget,
+				terminal,
+				point,
+			});
+			focusTerminalFromTouch();
+		};
+
 		const handleTouchPointerDown = (event: PointerEvent) => {
 			if (!shouldFocusTerminalForTouchPointer(event.pointerType)) return;
 			// xterm cancels the compatibility mousedown a touch would send, so the
@@ -2398,8 +2410,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			const isTap = tapSession.pointerUp(event);
 			if (wasSelecting || !isTap) return;
 			// Keep the keyboard down so it does not cover the link menu.
-			if (showTouchLinkMenuAt(event)) return;
-			focusTerminalFromTouch();
+			activateTouchTap(event);
 		};
 		const handleTouchPointerCancel = (event: PointerEvent) => {
 			tapSession.pointerCancel(event);
@@ -2430,8 +2441,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			touchSelection.pointerUp(point);
 			const isTap = tapSession.pointerUp(point);
 			if (wasSelecting || !isTap) return;
-			if (showTouchLinkMenuAt(point)) return;
-			focusTerminalFromTouch();
+			activateTouchTap(point);
 		};
 		const handleTouchCancel = (event: TouchEvent) => {
 			if (!shouldFocusTerminalForTouchStart('PointerEvent' in window)) return;
