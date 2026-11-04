@@ -46,7 +46,9 @@ const notes = [
 	'## Downloads',
 	'',
 	'### Verified artifacts',
-	'- Published signed/checksummed Desktop and standalone server artifacts with this release.',
+	process.argv.includes('--desktop-only')
+		? '- Published signed and notarized macOS desktop installers and checksummed Linux desktop downloads.'
+		: '- Published signed/checksummed Desktop and standalone server artifacts with this release.',
 	'',
 ].join('\n');
 

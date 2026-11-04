@@ -55,3 +55,22 @@ The workflow SHALL reuse the repository release-version helper to select major, 
 
 - **WHEN** the selected source commit already has its workflow-owned published release
 - **THEN** release preparation succeeds and dependent build and publication jobs are skipped
+
+### Requirement: Generated release notes
+
+Canonical-forge releases SHALL use the same AI notes generator and release-range prompt as GitHub, authenticated using the canonical repository OPENROUTER_API_KEY secret. If the credential is absent or AI generation fails, a deterministic commit-based fallback SHALL be generated. Notes SHALL be attached when the verified release is published and SHALL preserve source revision and update-feed information. Blank or missing notes SHALL prevent publication.
+
+#### Scenario: AI notes available
+
+- **WHEN** AI generation succeeds for the selected release tag
+- **THEN** the published release contains the generated Markdown notes
+
+#### Scenario: AI generation unavailable
+
+- **WHEN** the API key is absent or the AI generator fails
+- **THEN** the workflow publishes verified binaries with deterministic fallback notes describing desktop distribution
+
+#### Scenario: Missing notes
+
+- **WHEN** the publisher has no non-empty release notes
+- **THEN** the release remains a draft

@@ -202,7 +202,15 @@ export class ForgeRelease {
 		}
 	}
 
-	async publish() {
+	async publish(notes) {
+		if (
+			typeof notes !== 'string' ||
+			!notes.trim() ||
+			Buffer.byteLength(notes) > 128 * 1024
+		)
+			throw new Error(
+				'Non-empty release notes of at most 128 KiB are required',
+			);
 		const release = await this.draft();
 		const assets = await this.api(`/releases/${release.id}/assets?limit=100`);
 		const expected = assetNames(this.tag);
@@ -228,7 +236,7 @@ export class ForgeRelease {
 			method: 'PATCH',
 			body: {
 				draft: false,
-				body: `${this.marker()}\n\nIndependently built macOS arm64 and Linux x64 desktop downloads.\n\nmacOS is signed and notarized. Each payload has a SHA-256 checksum sidecar.\n\nApplication updates continue to use the GitHub release feed.`,
+				body: `${this.marker()}\n\n${notes.trim()}\n\nApplication updates continue to use the GitHub release feed.`,
 			},
 		});
 	}
@@ -270,7 +278,8 @@ if (
 		);
 	} else if (command === 'upload' && platform && directory)
 		await client.upload(platform, directory);
-	else if (command === 'publish') await client.publish();
+	else if (command === 'publish')
+		await client.publish(await readFile('RELEASE.md', 'utf8'));
 	else
 		throw new Error(
 			'usage: forge-release.mjs prepare | upload <mac|linux> <directory> | publish',

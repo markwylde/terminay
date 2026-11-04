@@ -430,6 +430,29 @@ jobs:
       with:
         node-version: 24.15.0
         cache: npm
+    - name: Detect AI release-notes credential
+      id: release_notes_credential
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      run: |
+        if [ -n "$OPENROUTER_API_KEY" ]; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Generate AI release notes
+      id: generate_release_notes
+      if: steps.release_notes_credential.outputs.available == 'true'
+      continue-on-error: true
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        TAG: ${{ needs.release.outputs.tag }}
+      run: node scripts/generate-release-notes.mjs "$TAG"
+    - name: Use fallback release notes
+      if: steps.release_notes_credential.outputs.available != 'true' || steps.generate_release_notes.outcome != 'success'
+      env:
+        TAG: ${{ needs.release.outputs.tag }}
+      run: node scripts/generate-fallback-release-notes.mjs "$TAG" --desktop-only
     - name: Verify downloaded assets and publish release
       env:
         FORGE_SERVER_URL: ${{ github.server_url }}
