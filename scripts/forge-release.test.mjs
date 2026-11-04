@@ -11,6 +11,8 @@ import { selectForgeReleaseTag } from './forge-release-version.mjs';
 
 const commit = 'a'.repeat(40);
 const tag = 'v1.2.3';
+const notes =
+	'Terminay has a clearer release workflow.\n\n## Changes\n\n### Releases\n- Generated useful release notes.\n';
 
 function harness() {
 	const state = {
@@ -99,16 +101,18 @@ test('independent two-platform release verifies remote bytes and publishes; iden
 	await client.prepare();
 	assert.equal(state.release.draft, true);
 	await client.upload('mac', directory);
-	await assert.rejects(client.publish(), /inventory/);
+	await assert.rejects(client.publish(notes), /inventory/);
 	assert.equal(state.release.draft, true);
 	await client.upload('linux', directory);
 	const writes = state.writes;
 	await client.prepare();
 	await client.upload('mac', directory);
 	assert.equal(state.writes, writes);
-	await client.publish();
+	await client.publish(notes);
 	assert.equal(state.release.draft, false);
 	assert.match(state.release.body, /GitHub release feed/);
+	assert.ok(state.release.body.includes(notes.trim()));
+	assert.equal(state.release.body.split('\n')[0], `Source commit: ${commit}`);
 	await assert.rejects(client.prepare(), /immutable/);
 	await assert.rejects(client.upload('linux', directory), /immutable/);
 });
@@ -122,6 +126,53 @@ test('conflicting source tags and foreign drafts are rejected without writes', a
 	state.release = { id: 1, draft: true, body: 'A different release' };
 	await assert.rejects(client.prepare(), /workflow-owned/);
 	assert.equal(state.writes, 0);
+});
+
+test('missing, blank or oversized release notes cannot publish or mutate a draft', async () => {
+	const { client, state } = harness();
+	await client.prepare();
+	const writes = state.writes;
+	for (const notes of [undefined, '', ' \n', 'a'.repeat(128 * 1024 + 1)]) {
+		await assert.rejects(client.publish(notes), /release notes/);
+		assert.equal(state.writes, writes);
+		assert.equal(state.release.draft, true);
+	}
+});
+
+test('desktop fallback describes shipped downloads while preserving the GitHub default', async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), 'forge-fallback-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const execute = promisify(execFile);
+	const git = (...args) => execute('git', args, { cwd: directory });
+	await git('init');
+	await git('config', 'user.name', 'Release Test');
+	await git('config', 'user.email', 'release@example.test');
+	await git(
+		'-c',
+		'commit.gpgsign=false',
+		'commit',
+		'--allow-empty',
+		'-m',
+		'fix: clarify releases',
+	);
+	await git('tag', tag);
+	const script = new URL(
+		'./generate-fallback-release-notes.mjs',
+		import.meta.url,
+	).pathname;
+	await execute(process.execPath, [script, tag, '--desktop-only'], {
+		cwd: directory,
+	});
+	const desktop = await readFile(join(directory, 'RELEASE.md'), 'utf8');
+	assert.match(desktop, /### Included work/);
+	assert.match(desktop, /fix: clarify releases/);
+	assert.match(desktop, /notarized macOS.*Linux/);
+	assert.doesNotMatch(desktop, /standalone server/);
+	await execute(process.execPath, [script, tag], { cwd: directory });
+	assert.match(
+		await readFile(join(directory, 'RELEASE.md'), 'utf8'),
+		/Desktop and standalone server/,
+	);
 });
 
 test('automatic preparation resumes drafts and skips only matching published releases', async () => {
@@ -198,11 +249,11 @@ test('corrupted remote bytes and unexpected assets keep release draft', async (t
 	await client.upload('linux', directory);
 	const name = assetNames(tag)[0];
 	state.bytes.set(name, Buffer.from('corrupted'));
-	await assert.rejects(client.publish(), /checksum mismatch/);
+	await assert.rejects(client.publish(notes), /checksum mismatch/);
 	await assert.rejects(client.upload('mac', directory), /different bytes/);
 	assert.equal(state.release.draft, true);
 	state.assets.push({ name: 'unexpected.exe' });
-	await assert.rejects(client.publish(), /inventory/);
+	await assert.rejects(client.publish(notes), /inventory/);
 });
 
 test('invalid local checksums and symlinks never upload', async (t) => {
@@ -306,4 +357,19 @@ test('forge workflow retains platform verification and no Windows build or GitHu
 	);
 	assert.match(github, /windows-latest/);
 	assert.match(github, /npm run build:win/);
+	assert.match(
+		forge,
+		/OPENROUTER_API_KEY: \$\{\{ secrets\.OPENROUTER_API_KEY \}\}/,
+	);
+	assert.match(forge, /continue-on-error: true/);
+	assert.match(forge, /steps\.generate_release_notes\.outcome != 'success'/);
+	assert.match(forge, /generate-release-notes\.mjs "\$TAG"/);
+	assert.match(
+		forge,
+		/generate-fallback-release-notes\.mjs "\$TAG" --desktop-only/,
+	);
+	assert.ok(
+		forge.indexOf('name: Generate AI release notes') <
+			forge.indexOf('name: Verify downloaded assets and publish release'),
+	);
 });
