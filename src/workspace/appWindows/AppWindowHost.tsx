@@ -768,6 +768,7 @@ function AppWindowCard(props: CardProps): ReactElement {
 							mirror={entry.mirror}
 							pane={pane}
 							bodyWidth={placed.bodyWidth}
+							bodyHeight={placed.bodyHeight}
 							autoHeight={
 								placed.bodyHeight === undefined &&
 								(placed.placement === 'window' || placed.placement === 'sheet')
