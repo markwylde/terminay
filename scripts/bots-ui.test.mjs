@@ -1135,6 +1135,7 @@ test('Triggers shows plain words, missed firings, upcoming, and Run now on a dis
 			await page.locator('[data-terminay-bot-upcoming-strip]').innerText(),
 			/Nightly build/,
 		);
+		await shot(page, 'triggers-table');
 		await page.locator('[data-terminay-bot-trigger-new]').click();
 		const editor = page.locator('[data-terminay-bot-trigger-editor]');
 		await pick(editor, 'Source', 'every');
