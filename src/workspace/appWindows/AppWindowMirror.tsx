@@ -30,6 +30,8 @@ type MirrorProps = Readonly<{
 	pane: AppWindowPane;
 	/** The width the window's body has on this client. */
 	bodyWidth: number;
+	/** The height the window's body has on this client, when the layout fixes it. */
+	bodyHeight?: number;
 	/** Whether the window sizes itself to its content here. */
 	autoHeight: boolean;
 	onResized: (key: string, height: number) => void;
@@ -123,7 +125,15 @@ export function AppWindowMirror(props: MirrorProps): ReactElement {
 
 	const scale = viewport === undefined ? 1 : bodyWidth / viewport.width;
 	const scaledHeight = viewport === undefined ? 0 : Math.round(viewport.height * scale);
-	const { windowKey, autoHeight, onResized } = props;
+	const { windowKey, autoHeight, onResized, bodyHeight } = props;
+	// A window with a fixed height, such as a maximised one, is filled to its
+	// bottom: the replica is drawn taller than the view, showing what is below.
+	const stageHeight =
+		autoHeight || bodyHeight === undefined ? 0 : Math.max(0, bodyHeight - MIRROR_BAR_HEIGHT);
+	const frameHeight =
+		viewport === undefined
+			? 0
+			: Math.min(MAX_VIEWPORT, Math.max(viewport.height, Math.ceil(stageHeight / scale)));
 	useEffect(() => {
 		if (!autoHeight) return;
 		// Until there is something to show, leave room for the waiting notice.
@@ -148,7 +158,7 @@ export function AppWindowMirror(props: MirrorProps): ReactElement {
 								? { width: bodyWidth, height: 1 }
 								: {
 										width: viewport.width,
-										height: viewport.height,
+										height: frameHeight,
 										transform: `scale(${scale})`,
 									}
 						}
