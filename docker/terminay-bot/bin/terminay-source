@@ -53,7 +53,7 @@ def emit(value, ack=False):
 def command(c):
     env = dict(os.environ)
     for k in list(env):
-        if k.startswith('TERMINAY_RUNTIME_'):
+        if k.startswith('TERMINAY_RUNTIME_') or k.startswith('TERMINAY_MCP_'):
             del env[k]
     env.pop('BASH_ENV', None)
     child = subprocess.Popen(['/bin/bash', '-c', c['command']], cwd=c.get('cwd', '/home/bot'),
