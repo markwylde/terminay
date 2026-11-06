@@ -126,6 +126,28 @@ test('Investigate failures off is saved explicitly and still reads off after a r
 	await assert.rejects(client.get(profile.id), /invalid bot profile/);
 });
 
+test('Terminay MCP access is optional, saved, and must be a boolean', async () => {
+	let stored = { ...profile };
+	const wire = transport(stored);
+	wire.commandWithBody = async (_operation, _payload, body) => {
+		stored = { ...stored, ...JSON.parse(new TextDecoder().decode(body)) };
+		return { botId: profile.id };
+	};
+	wire.queryWithBody = async () => {
+		const body = new TextEncoder().encode(JSON.stringify(stored));
+		return {
+			result: { encoding: 'json', offset: 0, version: 'stable', totalBytes: body.byteLength },
+			body,
+		};
+	};
+	const client = new BotsClient(wire);
+	assert.equal((await client.get(profile.id)).terminayMcpAccess, undefined);
+	const saved = await client.save({ id: profile.id, name: 'Bird', agentId: 'fake.agent', terminayMcpAccess: true });
+	assert.equal(saved.terminayMcpAccess, true);
+	stored = { ...stored, terminayMcpAccess: 'yes' };
+	await assert.rejects(client.get(profile.id), /invalid bot profile/);
+});
+
 test('message uploads stage images and posts carry their tokens',async()=>{
  const {BotMessagesClient}=await import('../dist/index.js');const calls=[];const token='c'.repeat(24);
  const wire={query:async()=>null,command:async(op,payload)=>{calls.push({op,payload});return {message:{id:'m'}};},commandWithBody:async(op,payload,body)=>{calls.push({op,payload,body});return {token,attachment:{name:'shot.png',mime:'image/png',size:body.length}};},queryWithBody:async()=>null,subscribe:()=>()=>{}};

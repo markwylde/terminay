@@ -28,7 +28,12 @@ import { createBotMessageOperations } from './messageProtocol.js';
 import { EngineProcess } from './process.js';
 import { createBotEnvironmentOperations } from './protocol.js';
 import { BotDesktopService } from './rfb.js';
-import { type BotAgents, BotService, botAgentConfigFiles } from './service.js';
+import {
+	type BotAgents,
+	BotService,
+	type BotTerminayMcpHost,
+	botAgentConfigFiles,
+} from './service.js';
 import { BotSessionStore } from './sessions.js';
 import { BotShellService } from './shell.js';
 import { containerSourceRunner } from './sourceRunner.js';
@@ -67,6 +72,8 @@ export interface BotServerOptions {
 	readonly extensionName?: (extensionId: string) => string;
 	readonly vault: BotTokenVault;
 	readonly tokens?: BotTokenService;
+	/** Where the host serves Terminay MCP, the seam bots reach it through (ADR-0100). */
+	readonly terminayMcp?: BotTerminayMcpHost;
 	readonly pty: PtyFactory;
 	readonly imageContextPath?: string;
 	readonly platform?: NodeJS.Platform;
@@ -262,6 +269,9 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	const detachEnvironment = environment.follow(engine);
 	service = new BotService(bots, sessions, memories, {
 		serverId: options.serverId,
+		...(options.terminayMcp === undefined
+			? {}
+			: { terminayMcp: options.terminayMcp }),
 		sources: containerSourceRunner({
 			driver: () => images.driver(),
 			start: (id) => environment.start(id),

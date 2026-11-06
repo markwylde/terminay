@@ -3,6 +3,7 @@ import { connect, type Socket } from 'node:net';
 import { isAbsolute } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
 	type CallToolResult,
 	CallToolRequestSchema,
@@ -147,6 +148,34 @@ interface ControlReply {
 export async function runServerMcpStdio(
 	options: ServerMcpStdioOptions,
 ): Promise<void> {
+	// The SDK transport does not observe stdin EOF itself. Close the local
+	// capability socket when the MCP host closes stdin so pending waits cannot
+	// keep a headless process alive indefinitely.
+	const transport = new StdioServerTransport();
+	const session = await createTerminayMcpSession({ ...options, transport });
+	process.stdin.once('end', session.close);
+	process.stdin.once('close', session.close);
+}
+
+export interface TerminayMcpSessionOptions extends ServerMcpStdioOptions {
+	/** Carries MCP JSON-RPC messages to and from the agent. */
+	readonly transport: Transport;
+}
+
+export interface TerminayMcpSession {
+	/** Close the session and its control connections, aborting their requests. */
+	readonly close: () => void;
+}
+
+/**
+ * The Terminay MCP tool surface over any MCP transport, presenting one
+ * capability to the local control socket. The stdio adapter serves it over
+ * stdin and stdout; a bot execution's relay serves one per adapter connection
+ * (ADR-0100).
+ */
+export async function createTerminayMcpSession(
+	options: TerminayMcpSessionOptions,
+): Promise<TerminayMcpSession> {
 	assertStdioOptions(options);
 	const client = createLocalControlClient(options.socketPath, options.token);
 	const server = new McpServer({
@@ -185,24 +214,28 @@ export async function runServerMcpStdio(
 	};
 	registerTools(server, call);
 	const stopWatchingConnectedTools = serveConnectedTools(server, client);
-
-	// The SDK transport does not observe stdin EOF itself. Close the local
-	// capability socket when the MCP host closes stdin so pending waits cannot
-	// keep a headless process alive indefinitely.
-	const transport = new StdioServerTransport();
+	let closed = false;
 	const closeClient = (): void => {
+		if (closed) return;
+		closed = true;
 		stopWatchingConnectedTools();
 		client.close();
 	};
-	transport.onclose = closeClient;
-	process.stdin.once('end', closeClient);
-	process.stdin.once('close', closeClient);
+	// The server keeps this handler when it connects, so a transport that
+	// closes ends the control client too.
+	options.transport.onclose = closeClient;
 	try {
-		await server.connect(transport);
+		await server.connect(options.transport);
 	} catch (error) {
-		client.close();
+		closeClient();
 		throw error;
 	}
+	return {
+		close: () => {
+			closeClient();
+			void server.close().catch(() => undefined);
+		},
+	};
 }
 
 function registerTools(

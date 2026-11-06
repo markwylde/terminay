@@ -68,7 +68,40 @@ export interface BotAgents {
 		request: { modelId: string | null },
 	): Promise<BotAgentResult<BotAgentLaunch>>;
 }
+/**
+ * One bot execution's `terminay` relay handler, served by the host that owns
+ * the MCP control socket (ADR-0100). It holds the execution's capability.
+ */
+export interface BotTerminayMcpHandler {
+	handle(
+		connection: number,
+		message: unknown,
+		reply: (message: unknown) => void,
+	): void;
+	closeConnection(connection: number): void;
+	/** End every session and revoke the execution's capability. */
+	close(): void;
+}
+
+/** The host seam through which a bot with Terminay MCP access reaches it. */
+export interface BotTerminayMcpHost {
+	/**
+	 * Mint the execution's capability and serve it, or return undefined when
+	 * Terminay MCP is off. `isAllowed` is checked before and after minting, so
+	 * a start that races a toggle-off never leaves a capability behind.
+	 */
+	open(
+		botId: string,
+		executionId: string,
+		isAllowed: () => boolean,
+	): BotTerminayMcpHandler | undefined;
+	/** Revoke every capability the bot's executions hold, aborting their work. */
+	revokeBot(botId: string): void;
+}
+
 export interface BotServiceHooks {
+	/** Present where the host serves Terminay MCP (ADR-0100). */
+	readonly terminayMcp?: BotTerminayMcpHost;
 	readonly sources?: import('./sourceRunner.js').BotSourceRunner;
 	readonly serverId?: string;
 	readonly closeConnection?: (connectionId: string) => void;
@@ -164,6 +197,11 @@ export class BotService extends EventEmitter {
 	/** Turns this process is starting: running, but with no live runner yet. */
 	private readonly starting = new Set<string>();
 	private readonly stoppingBots = new Set<string>();
+	/**
+	 * Bumped whenever a bot's Terminay MCP access is taken away, so an
+	 * execution that started before then never mints a capability (ADR-0100).
+	 */
+	private readonly mcpAccessGenerations = new Map<string, number>();
 	private readonly detach: (() => void)[] = [];
 	constructor(
 		readonly bots: BotStore,
@@ -494,6 +532,10 @@ export class BotService extends EventEmitter {
 			},
 			expectedRevision,
 		);
+		// Taking Terminay MCP access away applies at once, to running
+		// executions too, before the save is reported (ADR-0100).
+		if (previous?.terminayMcpAccess === true && bot.terminayMcpAccess !== true)
+			this.revokeTerminayMcp(bot.id);
 		this.register(bot);
 		if (bot.investigateFailures === false || bot.enabled === false)
 			this.failureFollowUps.clear(bot.id);
@@ -504,6 +546,40 @@ export class BotService extends EventEmitter {
 		}
 		return bot;
 	}
+	/** End every Terminay MCP capability of the bot's executions, and fence
+	 * off executions that are still starting (ADR-0100). */
+	private revokeTerminayMcp(botId: string): void {
+		this.mcpAccessGenerations.set(
+			botId,
+			(this.mcpAccessGenerations.get(botId) ?? 0) + 1,
+		);
+		this.hooks.terminayMcp?.revokeBot(botId);
+	}
+
+	/**
+	 * How an execution opens Terminay MCP, decided from the bot's current
+	 * record, not its snapshot. Undefined when the bot has no access.
+	 */
+	private terminayMcpOpener(
+		botId: string,
+		executionId: string,
+	): (() => BotTerminayMcpHandler | undefined) | undefined {
+		const host = this.hooks.terminayMcp;
+		if (host === undefined) return undefined;
+		const generation = this.mcpAccessGenerations.get(botId) ?? 0;
+		const isAllowed = () => {
+			if ((this.mcpAccessGenerations.get(botId) ?? 0) !== generation)
+				return false;
+			try {
+				return this.bots.get(botId).terminayMcpAccess === true;
+			} catch {
+				return false;
+			}
+		};
+		if (!isAllowed()) return undefined;
+		return () => host.open(botId, executionId, isAllowed);
+	}
+
 	/** Record (or forget) the device sign-in now held in the bot's own home. */
 	async setDeviceSignIn(botId: string, signedIn: boolean): Promise<void> {
 		const bot = this.bots.get(botId);
@@ -543,6 +619,7 @@ export class BotService extends EventEmitter {
 		this.bots.get(botId);
 		this.hooks.deletion?.begin(botId, deleteHome);
 		// Revocation happens before any engine-dependent process cleanup.
+		this.revokeTerminayMcp(botId);
 		for (const record of this.sessions.list(botId))
 			this.runtime.revoke(record.id);
 		await this.stopBot(botId).catch(() => undefined);
@@ -1123,6 +1200,7 @@ export class BotService extends EventEmitter {
 							record.id,
 							`Bot MCP: ${credential.redact(value)}\n`,
 						),
+					this.terminayMcpOpener(record.botId, record.id),
 				);
 				if (this.cancelledStarts.delete(record.id)) {
 					await bridge.close();

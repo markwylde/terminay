@@ -10,6 +10,7 @@ import { serverControlError } from './appControlAdapter.js';
 import {
 	ControlEndpointError,
 	type ControlRequestContext,
+	hasNoCallingTerminal,
 } from './controlEndpoint.js';
 import type {
 	TemplateStepContent,
@@ -63,15 +64,15 @@ export function createWorkflowControlAdapter(
 			throw serverControlError(error);
 		}
 	};
-	/** The named terminal, or the calling one; a chat has none to default to. */
+	/** The named terminal, or the calling one; a chat or bot has none to default to. */
 	const target = (
 		context: ControlRequestContext,
 		reference: string | undefined,
 	): WorkflowControlTarget => {
-		if (reference === undefined && context.chat !== undefined)
+		if (reference === undefined && hasNoCallingTerminal(context))
 			throw new ControlEndpointError(
 				'bad_request',
-				'A chat has no terminal of its own: name one with terminal, from list_terminals.',
+				`${context.bot === undefined ? 'A chat' : 'A bot'} has no terminal of its own: name one with terminal, from list_terminals.`,
 			);
 		return options.resolveTerminal(
 			context,
