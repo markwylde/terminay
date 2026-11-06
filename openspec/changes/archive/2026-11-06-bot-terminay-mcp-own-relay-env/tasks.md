@@ -33,4 +33,4 @@
 - [x] 4.1 Run `npm run typecheck`, `npm run lint`, and the server-core and terminay-server tests. Verify that all of them pass.
 - [x] 4.2 Run `openspec validate --all` and `/openspec-verify-change`. Verify that both are clean for this change.
 - [x] 4.3 Archive the change and run `openspec validate --all --archived`. Verify that the main spec contains the new delivery scenarios.
-- [ ] 4.4 Open the Gitea PR and read back every commit status on the head SHA. Verify that all of them are `success` or `skipped`.
+- [x] 4.4 Open the Gitea PR and read back every commit status on the head SHA. Verify that all of them are `success` or `skipped`.
