@@ -94,3 +94,22 @@ test('source upgrade preserves profiles and schedules and refuses future canonic
 	assert.throws(() => new BotStore(path), /version/);
 	assert.equal(readFileSync(path, 'utf8'), raw);
 });
+
+test('Investigate failures defaults on, round-trips an explicit value and rejects a non-boolean', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bots-store-investigate-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const path = join(root, 'bots.json');
+	const store = new BotStore(path);
+	const bot = store.save({ name: 'Bird', agentId: 'fake.agent' });
+	assert.equal(bot.investigateFailures, true);
+	store.save({ ...store.get(bot.id), investigateFailures: false });
+	assert.equal(new BotStore(path).get(bot.id).investigateFailures, false);
+	// A profile written before the setting existed reads as on.
+	const raw = JSON.parse(readFileSync(path, 'utf8'));
+	for (const b of raw.bots) delete b.investigateFailures;
+	writeFileSync(path, JSON.stringify(raw));
+	assert.equal(new BotStore(path).get(bot.id).investigateFailures, true);
+	assert.throws(() =>
+		store.save({ ...store.get(bot.id), investigateFailures: 'yes' }),
+	);
+});

@@ -11,7 +11,11 @@ import type {
 } from '@terminay/protocol';
 import { useEffect, useMemo, useState } from 'react';
 import { BotSignInSection } from './BotSignInSection';
-import { botActivity, ENVIRONMENT_LABELS } from './botsModel';
+import {
+	botActivity,
+	ENVIRONMENT_LABELS,
+	investigatesFailures,
+} from './botsModel';
 import { GroupedSelect } from './GroupedSelect';
 import {
 	type BotAgentOption,
@@ -60,6 +64,7 @@ type ProfileForm = Readonly<{
 	modelId: string | null;
 	approvalMode: BotApprovalMode;
 	maxTurnMinutes: string;
+	investigateFailures: boolean;
 }>;
 
 function formFromBot(bot: BotProfile): ProfileForm {
@@ -73,6 +78,7 @@ function formFromBot(bot: BotProfile): ProfileForm {
 		modelId: bot.modelId,
 		approvalMode: bot.approvalMode,
 		maxTurnMinutes: String(Math.round(bot.maxTurnMs / 60_000)),
+		investigateFailures: investigatesFailures(bot),
 	};
 }
 
@@ -179,6 +185,7 @@ export function BotProfilePanel({
 				modelId: form.modelId,
 				approvalMode,
 				maxTurnMs: Number(form.maxTurnMinutes) * 60_000,
+				investigateFailures: form.investigateFailures,
 			})
 			.then((next) => {
 				setBase(next);
@@ -370,6 +377,28 @@ export function BotProfilePanel({
 								}
 							/>
 						</label>
+					</div>
+					<div className="bots-form__row">
+						<div className="bots-field">
+							<span id="bots-investigate-label">Investigate failures</span>
+							<div className="bots-check">
+								<button
+									type="button"
+									role="switch"
+									aria-checked={form.investigateFailures}
+									aria-labelledby="bots-investigate-label"
+									className="bots-toggle"
+									onClick={() =>
+										update({ investigateFailures: !form.investigateFailures })
+									}
+									data-terminay-bot-investigate-failures="true"
+								/>
+							</div>
+							<small className="bots-faint">
+								When a session, trigger run or trigger check fails, the bot
+								starts a session to find out why. At most six an hour.
+							</small>
+						</div>
 					</div>
 					<div className="bots-actionrow">
 						<span className="bots-actionrow__msg">

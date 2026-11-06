@@ -8,7 +8,12 @@ import {
 	chatSendAttempt,
 	filterCounts,
 	initials,
+	investigatesFailures,
 	needsYou,
+	SESSION_ORIGIN_CHIPS,
+	SESSION_ORIGIN_FILTER_LABELS,
+	sessionOriginLabel,
+	sessionTitle,
 	shortAge,
 	visibleBots,
 } from './botsModel.ts';
@@ -150,6 +155,36 @@ test('initials and ages are short enough for a card', () => {
 	assert.equal(shortAge(0, 4 * 60_000), '4m');
 	assert.equal(shortAge(0, 3 * 3_600_000), '3h');
 	assert.equal(shortAge(0, 72 * 3_600_000), '3d');
+});
+
+test('Investigate failures reads as on unless a profile turns it off', () => {
+	assert.equal(investigatesFailures(bot('b', 'Bird')), true);
+	assert.equal(investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: true }), true);
+	assert.equal(investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: false }), false);
+});
+
+test('failure investigations have their own filter, chip, label and title', () => {
+	assert.deepEqual(Object.keys(SESSION_ORIGIN_FILTER_LABELS), ['all', 'chat', 'trigger', 'run-now', 'failure']);
+	assert.equal(SESSION_ORIGIN_FILTER_LABELS.failure, 'Failure');
+	assert.equal(SESSION_ORIGIN_CHIPS.failure, 'Investigate');
+	const ref = {
+		kind: 'execution' as const,
+		sessionId: 's'.repeat(24),
+		firingId: null,
+		triggerId: 't'.repeat(24),
+		triggerName: 'Gitea poll',
+		at: 1,
+		reason: 'spawn EAGAIN',
+	};
+	const one = session('i', 'running', { origin: { kind: 'failure', failures: [ref], overflow: 0 } });
+	const many = session('j', 'running', { origin: { kind: 'failure', failures: [ref, ref], overflow: 3 } });
+	assert.equal(sessionOriginLabel(one.origin), 'Investigate failure');
+	assert.equal(sessionTitle(one), 'Investigate failure');
+	assert.equal(sessionTitle(many), 'Investigate failure (5 failures)');
+	const trigger = { kind: 'trigger' as const, triggerId: 't'.repeat(24), triggerName: 'Nightly', fireTime: 1 };
+	assert.equal(sessionOriginLabel(trigger), 'Trigger · Nightly');
+	assert.equal(sessionOriginLabel({ ...trigger, kind: 'run-now' }), 'Run now · Nightly');
+	assert.equal(sessionOriginLabel({ kind: 'chat' }), 'Chat');
 });
 
 test('composer accepts PNG, JPEG, GIF and WebP up to 2 MiB and four per message', () => {

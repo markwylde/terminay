@@ -4,6 +4,13 @@ import { EventEmitter } from 'node:events';
 export function relayDriver() {
 	const streams = new Map();
 	return {
+		/** Engine stats: tests set `stats` to `{ PIDs, PidsLimit }` or an Error. */
+		stats: undefined,
+		async run(args) {
+			if (args[0] !== 'stats') return '';
+			if (this.stats instanceof Error) throw this.stats;
+			return JSON.stringify(this.stats ?? {});
+		},
 		connect(sessionId, servers) {
 			const server = servers.find((s) => s.name === 'terminay_bot');
 			const token = server.env.find(

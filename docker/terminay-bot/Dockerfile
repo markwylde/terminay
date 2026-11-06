@@ -34,6 +34,8 @@ RUN mkdir -m 0700 /run/terminay-engine
 COPY bin/terminay-source bin/terminay-shell-env bin/terminay-bot-mcp bin/terminay-mcp-relay bin/terminay-browser bin/terminay-app bin/terminay-init bin/terminay-run bin/terminay-files bin/terminay-tool-shell bin/terminay-engine-proxy.mjs /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/terminay-source /usr/local/bin/terminay-shell-env /usr/local/bin/terminay-bot-mcp /usr/local/bin/terminay-mcp-relay /usr/local/bin/terminay-browser /usr/local/bin/terminay-app /usr/local/bin/terminay-init /usr/local/bin/terminay-run /usr/local/bin/terminay-files /usr/local/bin/terminay-tool-shell /usr/local/bin/terminay-engine-proxy.mjs
 
+COPY bin/terminay_bus.py /usr/local/lib/terminay/
+RUN chmod 0755 /usr/local/lib/terminay && chmod 0644 /usr/local/lib/terminay/terminay_bus.py
 COPY bin/terminay-desktop-session bin/terminay-desktop-control.py bin/terminay-desktop-mcp.mjs /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/terminay-desktop*
 RUN mkdir -p /etc/chromium/policies/managed \

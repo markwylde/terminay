@@ -1,6 +1,6 @@
-import type { ProtocolError } from '@terminay/protocol';
+import type { BotFailureCause, ProtocolError } from '@terminay/protocol';
 import { EngineCommandError } from './process.js';
-import { BotError, BotImageBuildError } from './store.js';
+import { BotBlockedError, BotError, BotImageBuildError } from './store.js';
 
 const engineMessages: Readonly<Record<string, string>> = {
 	'not-running':
@@ -19,6 +19,13 @@ const engineMessages: Readonly<Record<string, string>> = {
 	'not-found':
 		'A required container resource is missing. Create or recreate the bot environment.',
 };
+/** The structured cause of a failure that also stops any new execution. */
+export function botFailureCause(error: unknown): BotFailureCause | null {
+	if (error instanceof BotBlockedError) return error.failureCause;
+	if (error instanceof BotImageBuildError) return 'image';
+	if (error instanceof EngineCommandError) return 'engine';
+	return null;
+}
 /** Engine diagnostics can contain secrets or host paths: expose curated causes. */
 export function botFailure(error: unknown): ProtocolError | undefined {
 	if (error instanceof EngineCommandError)

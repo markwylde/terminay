@@ -6,6 +6,9 @@ import signal
 import socket
 import subprocess
 import sys
+sys.path.insert(0, "/usr/local/lib/terminay")
+sys.path.insert(1, os.path.dirname(os.path.realpath(__file__)))
+from terminay_bus import with_session_bus  # noqa: E402
 from urllib.parse import urlsplit
 
 SOCKET = "/tmp/terminay-browser.sock"
@@ -57,7 +60,7 @@ def serve():
                               "--disable-dev-shm-usage", "--hide-crash-restore-bubble", "--start-maximized",
                               "--remote-debugging-port=9222",
                               "--user-data-dir=" + os.path.join(os.environ["HOME"], ".config/chromium"), url], stdin=subprocess.DEVNULL,
-                             stdout=log, stderr=log)
+                             stdout=log, stderr=log, env=with_session_bus(os.environ))
         with socket.socket(socket.AF_UNIX) as server:
             server.bind(SOCKET)
             os.chmod(SOCKET, 0o600)

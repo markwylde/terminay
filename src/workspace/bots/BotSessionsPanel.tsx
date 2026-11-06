@@ -13,23 +13,27 @@ import { Search, Square, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { BotTranscript } from './BotTranscript';
 import { formatWhen } from './BotTriggersPanel';
-import { SESSION_STATE_LABELS, sessionTitle, shortAge } from './botsModel';
+import {
+	FAILURE_KIND_LABELS,
+	SESSION_ORIGIN_CHIPS,
+	SESSION_ORIGIN_FILTER_LABELS,
+	SESSION_STATE_LABELS,
+	type SessionOriginFilter,
+	sessionOriginLabel,
+	sessionTitle,
+	shortAge,
+} from './botsModel';
 import { foldTranscript } from './transcriptModel';
 import { useBotSession } from './useBotSession';
 import { useNow } from './useNow';
 import { refusalText, type ServerBots } from './useServerBots';
 
-type OriginFilter = 'all' | 'chat' | 'trigger' | 'run-now';
+type OriginFilter = SessionOriginFilter;
 /** The trigger a Sessions list is filtered to, named as it was when chosen. */
 export type SessionsTrigger = Readonly<{ id: string; name: string }>;
 type OutcomeFilter = 'all' | BotSessionState;
 
-const ORIGIN_LABELS: Readonly<Record<OriginFilter, string>> = {
-	all: 'Any origin',
-	chat: 'Chat',
-	trigger: 'Trigger',
-	'run-now': 'Run now',
-};
+const ORIGIN_LABELS = SESSION_ORIGIN_FILTER_LABELS;
 const OUTCOMES: readonly OutcomeFilter[] = [
 	'all',
 	'running',
@@ -55,11 +59,13 @@ export function BotSessionsPanel({
 	server,
 	bot,
 	onOpenInChat,
+	onOpenTriggers,
 	selectedId,
 	trigger,
 	onClearTrigger,
 }: Readonly<{
 	selectedId?: string;
+	onOpenTriggers?: () => void;
 	trigger?: SessionsTrigger;
 	onClearTrigger?: () => void;
 	server: ServerBots;
@@ -237,6 +243,14 @@ export function BotSessionsPanel({
 						bot={bot}
 						record={record}
 						onOpenInChat={onOpenInChat}
+						onOpenTriggers={onOpenTriggers}
+						onSelect={(id) => {
+							// The failed session may be outside the current filter.
+							setOrigin('all');
+							setOutcome('all');
+							setSearch('');
+							setSelected(id);
+						}}
 					/>
 				)}
 			</div>
@@ -255,24 +269,22 @@ const STATE_GLYPHS: Readonly<Record<BotSessionRecord['state'], string>> = {
 	suspended: '–',
 	'timed-out': '✕',
 };
-const ORIGIN_CHIPS: Readonly<
-	Record<BotSessionRecord['origin']['kind'], string>
-> = {
-	chat: 'Message',
-	'run-now': 'Manual',
-	trigger: 'Trigger',
-};
+const ORIGIN_CHIPS = SESSION_ORIGIN_CHIPS;
 
 function SessionDetail({
 	server,
 	bot,
 	record,
 	onOpenInChat,
+	onOpenTriggers,
+	onSelect,
 }: Readonly<{
 	server: ServerBots;
 	bot: BotProfile;
 	record: BotSessionRecord;
 	onOpenInChat: (sessionId: string) => void;
+	onOpenTriggers?: () => void;
+	onSelect: (sessionId: string) => void;
 }>) {
 	const { session, error: readError } = useBotSession(server, bot.id, record);
 	const items = useMemo(
@@ -291,10 +303,7 @@ function SessionDetail({
 			})
 			.catch((cause: unknown) => setError(refusalText(cause)));
 	};
-	const origin =
-		record.origin.kind === 'chat'
-			? 'Chat'
-			: `${record.origin.kind === 'run-now' ? 'Run now' : 'Trigger'} · ${record.origin.triggerName}`;
+	const origin = sessionOriginLabel(record.origin);
 	return (
 		<div data-terminay-bot-session={record.id}>
 			<div className="bots-toolbar bots-sdetail__head">
@@ -398,6 +407,51 @@ function SessionDetail({
 			) : null}
 			{record.reason ? (
 				<p className="bots-note bots-note--warn">Reason: {record.reason}</p>
+			) : null}
+			{record.origin.kind === 'failure' ? (
+				<div data-terminay-bot-session-failures="true">
+					<h4 className="bots-lab">Failures</h4>
+					<ul className="bots-failures">
+						{record.origin.failures.map((f) => (
+							<li
+								key={`${f.kind}-${f.sessionId ?? f.firingId ?? f.triggerId}-${f.at}`}
+								className="bots-failure"
+							>
+								<b>{FAILURE_KIND_LABELS[f.kind]}</b>
+								{f.triggerName ? <span> · {f.triggerName}</span> : null}
+								<span className="bots-faint"> · {formatWhen(f.at)}</span>
+								<div className="bots-failure__reason">{f.reason}</div>
+								<div className="bots-row-actions">
+									{f.sessionId ? (
+										<button
+											type="button"
+											className="bots-btn bots-btn--sm"
+											onClick={() => onSelect(f.sessionId!)}
+											data-terminay-bot-failure-session={f.sessionId}
+										>
+											Open session
+										</button>
+									) : null}
+									{f.triggerId && onOpenTriggers ? (
+										<button
+											type="button"
+											className="bots-btn bots-btn--sm"
+											onClick={onOpenTriggers}
+											data-terminay-bot-failure-trigger={f.triggerId}
+										>
+											Open triggers
+										</button>
+									) : null}
+								</div>
+							</li>
+						))}
+					</ul>
+					{record.origin.overflow > 0 ? (
+						<p className="bots-faint">
+							{record.origin.overflow} more failures were counted but not listed.
+						</p>
+					) : null}
+				</div>
 			) : null}
 			<h4 className="bots-lab bots-sdetail__txlab">Transcript</h4>
 			<div className="bots-sdetail__tx">

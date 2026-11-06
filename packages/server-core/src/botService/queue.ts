@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { BotSessionOrigin } from '@terminay/protocol';
+import { type BotSessionOrigin, botTriggerOrigin } from '@terminay/protocol';
 import { BotError } from './store.js';
 export interface BotQueuedTurn {
 	readonly id: string;
@@ -108,7 +108,7 @@ export class BotTurnQueue {
 	}
 	disableTrigger(botId: string, triggerId: string): void {
 		for (const item of this.list(botId))
-			if (item.origin.kind !== 'chat' && item.origin.triggerId === triggerId)
+			if (botTriggerOrigin(item.origin)?.triggerId === triggerId)
 				this.cancel(botId, item.id);
 	}
 	pause(botId: string): void {

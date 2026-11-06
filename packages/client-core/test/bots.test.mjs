@@ -103,6 +103,29 @@ test('message client sends bounded page options without undefined values and fet
  const {BotMessagesClient}=await import('../dist/index.js');const calls=[];const wire={query:async(op,payload)=>{calls.push({op,payload});return {items:[],nextCursor:null,eventsCursor:'events',total:0,truncated:false};},command:async()=>null,queryWithBody:async()=>({result:{mime:'image/png'},body:new Uint8Array([1,2,3])}),subscribe:()=>()=>{}};
  const client=new BotMessagesClient(wire);await client.list(profile.id,{cursor:undefined,limit:10});assert.deepEqual(calls[0].payload,{botId:profile.id,limit:10});const attachment=await client.attachment(profile.id,'a'.repeat(24));assert.equal(attachment.bytes.length,3);assert.equal(attachment.mime,'image/png');
 });
+
+test('Investigate failures off is saved explicitly and still reads off after a reload', async () => {
+	let stored = { ...profile, investigateFailures: true };
+	const wire = transport(stored);
+	wire.commandWithBody = async (_operation, _payload, body) => {
+		stored = { ...stored, ...JSON.parse(new TextDecoder().decode(body)) };
+		return { botId: profile.id };
+	};
+	wire.queryWithBody = async () => {
+		const body = new TextEncoder().encode(JSON.stringify(stored));
+		return {
+			result: { encoding: 'json', offset: 0, version: 'stable', totalBytes: body.byteLength },
+			body,
+		};
+	};
+	const client = new BotsClient(wire);
+	const saved = await client.save({ id: profile.id, name: 'Bird', agentId: 'fake.agent', investigateFailures: false });
+	assert.equal(saved.investigateFailures, false);
+	assert.equal((await new BotsClient(wire).get(profile.id)).investigateFailures, false);
+	stored = { ...stored, investigateFailures: 'no' };
+	await assert.rejects(client.get(profile.id), /invalid bot profile/);
+});
+
 test('message uploads stage images and posts carry their tokens',async()=>{
  const {BotMessagesClient}=await import('../dist/index.js');const calls=[];const token='c'.repeat(24);
  const wire={query:async()=>null,command:async(op,payload)=>{calls.push({op,payload});return {message:{id:'m'}};},commandWithBody:async(op,payload,body)=>{calls.push({op,payload,body});return {token,attachment:{name:'shot.png',mime:'image/png',size:body.length}};},queryWithBody:async()=>null,subscribe:()=>()=>{}};

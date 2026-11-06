@@ -15,6 +15,9 @@ start time. Otherwise it signals only processes in that group whose environment
 carries the nonce, so a reused group number never reaches unrelated work.
 """
 import fcntl, json, os, pwd, re, secrets, selectors, signal, sys, termios, time
+sys.path.insert(0, "/usr/local/lib/terminay")
+sys.path.insert(1, os.path.dirname(os.path.realpath(__file__)))
+from terminay_bus import with_session_bus  # noqa: E402
 
 SESSIONS = "/run/terminay/sessions"
 SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -188,6 +191,9 @@ def supervise(sid, argv):
     env.setdefault("PATH", "/usr/local/bin:/usr/bin:/bin")
     # The bot's own desktop (Xvnc :1, watched live in Terminay).
     env.setdefault("DISPLAY", ":1")
+    # Always replace any inherited or caller address: an unset, empty or
+    # autolaunch: address lets a D-Bus client fork a daemon that escapes the group.
+    env = with_session_bus(env)
 
     child = os.fork()
     if child == 0:
