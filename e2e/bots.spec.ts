@@ -766,6 +766,120 @@ test.describe('Home › Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('a trigger opens its own sessions, and the filter clears from the chip, the tab and a session request', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Wren'));
+		await send(tab, 'hello');
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'secret',
+			{ timeout: 30_000 },
+		);
+		const alpha = await newTrigger(tab, 'Alpha check', 'check alpha');
+		const beta = await newTrigger(tab, 'Beta check', 'check beta');
+		const alphaId = await alpha.getAttribute('data-terminay-bot-trigger');
+		const betaId = await beta.getAttribute('data-terminay-bot-trigger');
+		await alpha.locator('[data-terminay-bot-trigger-run]').click();
+		await beta.locator('[data-terminay-bot-trigger-run]').click();
+
+		const rows = tab.locator('[data-terminay-bot-session-row]');
+		const chip = tab.locator('[data-terminay-bot-sessions-trigger]');
+		const outcome = tab.locator('[data-terminay-bot-sessions-outcome]');
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await expect(
+			rows.and(tab.locator('[data-terminay-bot-session-state="completed"]')),
+		).toHaveCount(3, { timeout: 30_000 });
+
+		// The row action lists only that trigger's sessions, newest selected.
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await alpha
+			.locator(`[data-terminay-bot-trigger-sessions="${alphaId}"]`)
+			.click();
+		await expect(chip).toHaveAttribute(
+			'data-terminay-bot-sessions-trigger',
+			alphaId ?? '',
+		);
+		await expect(chip).toContainText('Alpha check');
+		await expect(rows).toHaveCount(1);
+		await expect(rows).toContainText('Alpha check');
+		await expect(tab.locator('.bots-srow--on')).toContainText('Alpha check');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-sessions-filtered.png'),
+		});
+
+		// Removing the chip keeps the other filters.
+		await outcome.selectOption('completed');
+		await tab.locator('[data-terminay-bot-sessions-trigger-clear]').click();
+		await expect(chip).toHaveCount(0);
+		await expect(outcome).toHaveValue('completed');
+		await expect(rows).toHaveCount(3);
+
+		// Choosing the Sessions tab clears only the trigger filter.
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await alpha
+			.locator(`[data-terminay-bot-trigger-sessions="${alphaId}"]`)
+			.click();
+		await expect(chip).toHaveCount(1);
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await expect(chip).toHaveCount(0);
+		await expect(rows).toHaveCount(3);
+
+		// A saved trigger's sheet offers Sessions; a new trigger's does not.
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await tab.locator('[data-terminay-bot-trigger-new]').click();
+		const editor = mainWindow.locator('[data-terminay-bot-trigger-editor]');
+		await expect(editor).toBeVisible();
+		await expect(
+			editor.locator('[data-terminay-bot-trigger-editor-sessions]'),
+		).toHaveCount(0);
+		await editor.getByRole('button', { name: 'Cancel' }).click();
+		await beta.locator('.bots-trigrow__main').click();
+		await expect(editor).toBeVisible();
+		await editor.evaluate((node) =>
+			Promise.all(
+				(node.closest('.bots-trigsheet') ?? node)
+					.getAnimations({ subtree: true })
+					.map((animation) => animation.finished),
+			),
+		);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-editor-sessions-action.png'),
+		});
+		await editor
+			.locator(`[data-terminay-bot-trigger-editor-sessions="${betaId}"]`)
+			.click();
+		await expect(chip).toHaveAttribute(
+			'data-terminay-bot-sessions-trigger',
+			betaId ?? '',
+		);
+		await expect(rows).toHaveCount(1);
+		await expect(rows).toContainText('Beta check');
+
+		// A trigger that never ran keeps its filter and says nothing matches.
+		const gamma = await newTrigger(tab, 'Gamma check', 'check gamma');
+		await gamma.locator('[data-terminay-bot-trigger-sessions]').click();
+		await expect(chip).toContainText('Gamma check');
+		await expect(rows).toHaveCount(0);
+		await expect(
+			tab.locator('[data-terminay-bot-panel="sessions"]'),
+		).toContainText('No sessions match.');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-sessions-empty.png'),
+		});
+
+		// Opening another trigger's session from the rail clears the filter.
+		await chat(tab);
+		await tab.locator('.bots-sess').filter({ hasText: 'Alpha check' }).click();
+		await expect(
+			tab.locator('[data-terminay-bot-panel="sessions"]'),
+		).toBeVisible();
+		await expect(chip).toHaveCount(0);
+		await expect(tab.locator('.bots-srow--on')).toContainText('Alpha check');
+	});
+
 	test('a new message completes while an older execution is held', async ({
 		mainWindow,
 		tempDir,
@@ -785,6 +899,168 @@ test.describe('Home › Bots', () => {
 		await expect(tab.locator('.bots-sess')).toHaveCount(2);
 		await expect(tab.locator('[data-terminay-bot-stop]')).toHaveCount(1);
 		await tab.locator('[data-terminay-bot-stop]').click();
+	});
+
+	test('images are attached by button, paste and drop, refused when invalid, and sent inline', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Magpie'));
+		const composer = tab.locator('[data-terminay-bot-composer]');
+		const form = tab.locator('[data-terminay-bot-composer-form]');
+		const thumbs = tab.locator(
+			'[data-terminay-bot-pending-images] .bots-composer__image',
+		);
+		const refusal = tab.locator('[data-terminay-bot-attach-error]');
+		const shot = async (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+		// Real PNGs, drawn in the renderer, so thumbnails have something to show.
+		const png = async (color: string): Promise<Buffer> =>
+			Buffer.from(
+				await mainWindow.evaluate((fill) => {
+					const canvas = document.createElement('canvas');
+					canvas.width = 160;
+					canvas.height = 100;
+					const g = canvas.getContext('2d')!;
+					g.fillStyle = fill;
+					g.fillRect(0, 0, 160, 100);
+					g.fillStyle = '#fff';
+					g.font = 'bold 28px sans-serif';
+					g.fillText('IMG', 50, 60);
+					return canvas.toDataURL('image/png').split(',')[1]!;
+				}, color),
+				'base64',
+			);
+		const transfer = (
+			target: Locator,
+			kind: 'paste' | 'drop',
+			file: { name: string; type: string; base64: string },
+		) =>
+			target.evaluate(
+				(el, { kind, file }) => {
+					const bytes = Uint8Array.from(atob(file.base64), (c) =>
+						c.charCodeAt(0),
+					);
+					const data = new DataTransfer();
+					data.items.add(new File([bytes], file.name, { type: file.type }));
+					if (kind === 'paste')
+						el.dispatchEvent(
+							new ClipboardEvent('paste', {
+								clipboardData: data,
+								bubbles: true,
+								cancelable: true,
+							}),
+						);
+					else {
+						for (const type of ['dragenter', 'dragover', 'drop'])
+							el.dispatchEvent(
+								new DragEvent(type, {
+									dataTransfer: data,
+									bubbles: true,
+									cancelable: true,
+								}),
+							);
+					}
+				},
+				{ kind, file },
+			);
+
+		// Attach with the paperclip button, through the file picker.
+		const chooser = mainWindow.waitForEvent('filechooser');
+		await tab.locator('[data-terminay-bot-attach]').click();
+		await (await chooser).setFiles({
+			name: 'blue.png',
+			mimeType: 'image/png',
+			buffer: await png('#3b82f6'),
+		});
+		await expect(thumbs).toHaveCount(1);
+		// Paste a screenshot; plain-text paste still reaches the draft.
+		await transfer(composer, 'paste', {
+			name: 'image.png',
+			type: 'image/png',
+			base64: (await png('#e8b931')).toString('base64'),
+		});
+		await expect(thumbs).toHaveCount(2);
+		await expect(
+			tab.getByRole('button', { name: 'Remove pasted-1.png' }),
+		).toBeVisible();
+		await composer.fill('');
+		await composer.focus();
+		await mainWindow.keyboard.insertText('typed text');
+		await expect(composer).toHaveValue('typed text');
+		// Drop an image onto the composer.
+		await transfer(form, 'drop', {
+			name: 'green.png',
+			type: 'image/png',
+			base64: (await png('#45c874')).toString('base64'),
+		});
+		await expect(thumbs).toHaveCount(3);
+		await shot('composer-pending-images');
+
+		// A non-image and an oversized image are refused; pending stay unchanged.
+		const input = tab.locator('[data-terminay-bot-attach-input]');
+		await input.setInputFiles({
+			name: 'notes.txt',
+			mimeType: 'text/plain',
+			buffer: Buffer.from('not an image'),
+		});
+		await expect(refusal).toContainText('PNG, JPEG, GIF and WebP');
+		await expect(thumbs).toHaveCount(3);
+		await input.setInputFiles({
+			name: 'huge.png',
+			mimeType: 'image/png',
+			buffer: Buffer.alloc(2 * 1024 * 1024 + 1),
+		});
+		await expect(refusal).toContainText('2 MiB');
+		await input.setInputFiles({
+			name: 'red.png',
+			mimeType: 'image/png',
+			buffer: await png('#ee6258'),
+		});
+		await expect(thumbs).toHaveCount(4);
+		await input.setInputFiles({
+			name: 'fifth.png',
+			mimeType: 'image/png',
+			buffer: await png('#a3abb9'),
+		});
+		await expect(refusal).toContainText('at most 4');
+		await expect(thumbs).toHaveCount(4);
+		await shot('composer-refusal');
+
+		// Removing a thumbnail drops that image.
+		for (const name of ['red.png', 'green.png', 'pasted-1.png'])
+			await tab.getByRole('button', { name: `Remove ${name}` }).click();
+		await expect(thumbs).toHaveCount(1);
+
+		// A send the server refuses keeps the draft and the pending images.
+		await input.setInputFiles({
+			name: 'fake.png',
+			mimeType: 'image/png',
+			buffer: Buffer.from('this is not really a png'),
+		});
+		await expect(thumbs).toHaveCount(2);
+		await tab.locator('[data-terminay-bot-send]').click();
+		await expect(tab.locator('[data-terminay-bot-chat-error]')).toContainText(
+			'PNG, JPEG, GIF and WebP',
+		);
+		await expect(composer).toHaveValue('typed text');
+		await expect(thumbs).toHaveCount(2);
+		await tab.getByRole('button', { name: 'Remove fake.png' }).click();
+
+		// An image-only message posts with Enter and shows the image inline.
+		await composer.fill('');
+		await expect(tab.locator('[data-terminay-bot-send]')).toBeEnabled();
+		await composer.press('Enter');
+		await expect(thumbs).toHaveCount(0);
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await expect(transcript.locator('img[alt="blue.png"]')).toBeVisible({
+			timeout: 30_000,
+		});
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		await expect(tab.locator('[data-terminay-bot-send]')).toBeDisabled();
+		await shot('chat-image-sent');
 	});
 
 	test('a turn running when Terminay is killed comes back interrupted', async ({

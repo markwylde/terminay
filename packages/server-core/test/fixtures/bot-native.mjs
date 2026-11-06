@@ -1,6 +1,7 @@
 // Deterministic native Claude control stream for host lifecycle tests.
 
 import { spawn } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { createInterface } from 'node:readline';
 import { MessageChannel } from 'node:worker_threads';
@@ -88,7 +89,14 @@ lines.on('line', async (line) => {
 			result();
 	} else if (e.type === 'control_response') result();
 	else if (e.type === 'user') {
-		let prompt = e.message.content;
+		if (process.env.FAKE_RECORD_INPUT)
+			appendFileSync(process.env.FAKE_RECORD_INPUT, `${line}\n`);
+		let prompt = Array.isArray(e.message.content)
+			? e.message.content
+					.filter((block) => block.type === 'text')
+					.map((block) => block.text)
+					.join('\n')
+			: e.message.content;
 		const briefing = prompt
 			.split('\n')
 			.find((line) => line.startsWith('{"executionId":'));

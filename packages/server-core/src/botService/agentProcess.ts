@@ -28,6 +28,8 @@ export interface BotAgentProcessOptions {
 	readonly onClient: (client: BotNativeClient) => void;
 	readonly released?: () => void;
 	readonly mcpServers?: readonly JsonValue[];
+	/** Container paths of the triggering message's images. */
+	readonly images?: readonly string[];
 	readonly cleanupRuntime?: () => Promise<void>;
 }
 async function deadline<T>(
@@ -87,6 +89,7 @@ export class BotAgentProcess {
 				o.mcpServers ?? [],
 				!!environment.ANTHROPIC_API_KEY ||
 					(o.agent.nativeDriver === 'codex-cli' && !!environment.CODEX_API_KEY),
+				o.agent.nativeDriver === 'codex-cli' ? (o.images ?? []) : [],
 			);
 			const command = [
 				'terminay-run',

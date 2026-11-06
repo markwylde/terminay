@@ -39,6 +39,7 @@ import {
 	terminalRenameTitle,
 } from '../../workspace/folderTreeModel';
 import type { TerminalLauncherView } from '../../types/terminalLaunchers';
+import { TerminalWorkflowBadge } from '../../workspace/workflows/WorkflowTabBadge';
 import { AgentStatusIndicator } from '../AgentStatusIndicator';
 import {
 	FolderDetailsTooltip,
@@ -207,6 +208,9 @@ export type FoldersTreeProps = {
 	onLoadChecks?: (worktreePath: string) => Promise<WorktreeChecks | undefined>;
 	/** A peek lists what is there and nothing else: no grips or actions. */
 	variant?: 'tree' | 'peek';
+	/** The server the project is on, so a terminal's row can show its
+	 * workflow's dial. Without it, rows show none. */
+	serverId?: string;
 };
 
 /**
@@ -238,6 +242,7 @@ export function FoldersTree({
 	onOpenLink,
 	onLoadChecks,
 	variant = 'tree',
+	serverId,
 }: FoldersTreeProps) {
 	const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 	/** Folders whose list of checks is shown. */
@@ -454,6 +459,7 @@ export function FoldersTree({
 						<PanelRow
 							key={panel.panelId}
 							panel={panel}
+							serverId={serverId}
 							onSelect={() => onSelectPanel(folder.id, panel.panelId)}
 							// A row offers what its tab offers. A terminal's tab has a
 							// menu, a name to change, and a move to another folder; a
@@ -1058,6 +1064,7 @@ function ChecksChip({
 
 function PanelRow({
 	panel,
+	serverId,
 	onSelect,
 	onMenu,
 	onRename,
@@ -1065,6 +1072,7 @@ function PanelRow({
 	onDragEnd,
 }: Readonly<{
 	panel: FolderTreePanelRow;
+	serverId?: string | undefined;
 	onSelect: () => void;
 	onMenu?: (anchor: { x: number; y: number }) => void;
 	onRename?: (title: string) => void;
@@ -1208,6 +1216,9 @@ function PanelRow({
 					{panel.createdWorktree}
 				</span>
 			)}
+			{panel.kind === 'terminal' ? (
+				<TerminalWorkflowBadge serverId={serverId} sessionId={panel.sessionId} />
+			) : null}
 		</div>
 	);
 }

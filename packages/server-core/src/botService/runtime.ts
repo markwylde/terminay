@@ -8,7 +8,7 @@ import {
 import type { BotService } from './service.js';
 import { BotError, text, object } from './store.js';
 import { utf8 } from './messages.js';
-import { readBotImage } from './images.js';
+import { executionImagePath, readBotImage } from './images.js';
 import { BOT_TRIGGER_TOOLS, callTriggerTool } from './runtimeTriggers.js';
 
 const schema = (
@@ -161,14 +161,20 @@ export class BotExecutionRuntime {
 	register(id: string): void {
 		const record = this.service.sessions.get(id);
 		if (record.runtime) return;
+		const triggerMessageId =
+			record.origin.kind === 'chat' ? (record.origin.messageId ?? null) : null;
+		// Snapshotted at dispatch: the execution delivers exactly these images.
+		const triggerAttachments = triggerMessageId
+			? this.service.messages.get(record.botId, triggerMessageId).attachments
+			: [];
 		const runtime: BotExecutionRuntimeState = {
 			revision: 1,
 			epoch: this.service.messages.epoch(record.botId),
 			order: this.service.messages.sequence(record.botId) + 1,
-			triggerMessageId:
-				record.origin.kind === 'chat'
-					? (record.origin.messageId ?? null)
-					: null,
+			triggerMessageId,
+			...(triggerAttachments.length
+				? { triggerAttachments: structuredClone(triggerAttachments) }
+				: {}),
 			revoked: false,
 			supersededBy: null,
 			inbox: [],
@@ -321,9 +327,23 @@ export class BotExecutionRuntime {
 	briefing(id: string): string {
 		const r = this.service.sessions.get(id),
 			messages = this.service.messages,
-			trigger = r.runtime?.triggerMessageId
+			detail = r.runtime?.triggerMessageId
 				? messages.detail(r.botId, r.runtime.triggerMessageId, undefined, 2048)
-				: null;
+				: null,
+			images = r.runtime?.triggerAttachments ?? [];
+		// Only the triggering execution learns where its images were copied.
+		const trigger =
+			detail && images.length
+				? {
+						...detail,
+						attachments: images.map((a, index) => ({
+							name: a.name,
+							mime: a.mime,
+							size: a.size,
+							path: executionImagePath(id, index, a.mime),
+						})),
+					}
+				: detail;
 		const others = this.service.sessions
 			.list(r.botId)
 			.filter(

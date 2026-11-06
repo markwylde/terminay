@@ -712,12 +712,13 @@ export function TerminalTab(
 							serverId={terminalClientContext?.serverId}
 							sessionId={params?.sessionId}
 						/>
+						{recordingIndicator}
+						{macroTrigger}
+						{/* Last, so the dial sits just before the close button. */}
 						<TerminalWorkflowBadge
 							serverId={terminalClientContext?.serverId}
 							sessionId={params?.sessionId}
 						/>
-						{recordingIndicator}
-						{macroTrigger}
 					</>
 				}
 			/>

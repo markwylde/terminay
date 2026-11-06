@@ -303,3 +303,52 @@ export function shortAge(from: number, now: number): string {
 	if (hours < 48) return `${hours}h`;
 	return `${Math.round(hours / 24)}d`;
 }
+
+/** What the composer accepts; the server checks the same limits again. */
+export const BOT_CHAT_IMAGE_TYPES = [
+	'image/png',
+	'image/jpeg',
+	'image/gif',
+	'image/webp',
+] as const;
+export const BOT_CHAT_IMAGE_BYTES = 2 * 1024 * 1024;
+export const BOT_CHAT_IMAGES_PER_MESSAGE = 4;
+
+/**
+ * Which offered files join the pending images. Valid images are taken up to
+ * the per-message limit; the first refusal is reported, and images already
+ * pending are never touched.
+ */
+export function acceptChatImages<F extends { type: string; size: number }>(
+	pending: number,
+	files: readonly F[],
+): { accepted: F[]; refusal?: string } {
+	const accepted: F[] = [];
+	let refusal: string | undefined;
+	for (const file of files) {
+		if (!(BOT_CHAT_IMAGE_TYPES as readonly string[]).includes(file.type))
+			refusal ??= 'Only PNG, JPEG, GIF and WebP images can be attached.';
+		else if (file.size > BOT_CHAT_IMAGE_BYTES)
+			refusal ??= 'Images must be 2 MiB or smaller.';
+		else if (pending + accepted.length >= BOT_CHAT_IMAGES_PER_MESSAGE)
+			refusal ??= `A message can carry at most ${BOT_CHAT_IMAGES_PER_MESSAGE} images.`;
+		else accepted.push(file);
+	}
+	return refusal ? { accepted, refusal } : { accepted };
+}
+
+/** A send attempt's idempotency key. A retry of the same content reuses it, so
+ * a post whose response was lost is replayed rather than duplicated. */
+export interface ChatSendAttempt {
+	readonly signature: string;
+	readonly key: string;
+}
+export function chatSendAttempt(
+	previous: ChatSendAttempt | undefined,
+	signature: string,
+	fresh: () => string,
+): ChatSendAttempt {
+	return previous?.signature === signature
+		? previous
+		: { signature, key: fresh() };
+}

@@ -9,12 +9,14 @@ import {
 	Clock,
 	FolderOpen,
 	Globe,
+	History,
 	Radio,
 	Repeat,
 	SquareTerminal,
 	X,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import type { SessionsTrigger } from './BotSessionsPanel';
 import {
 	GroupedSelect,
 	type GroupedSelectGroup,
@@ -123,6 +125,7 @@ export function BotTriggerEditor({
 	initialKind,
 	onClose,
 	onSaved,
+	onShowSessions,
 }: Readonly<{
 	server: ServerBots;
 	bot: BotProfile;
@@ -131,6 +134,8 @@ export function BotTriggerEditor({
 	initialKind?: TriggerKind;
 	onClose: () => void;
 	onSaved: () => void;
+	/** Open the bot's Sessions tab filtered to the saved trigger. */
+	onShowSessions?: (trigger: SessionsTrigger) => void;
 }>) {
 	const [form, setForm] = useState<TriggerForm>(() =>
 		trigger
@@ -729,6 +734,18 @@ export function BotTriggerEditor({
 					/>{' '}
 					Enabled
 				</label>
+				{trigger && onShowSessions ? (
+					<button
+						type="button"
+						className="bots-btn"
+						onClick={() =>
+							onShowSessions({ id: trigger.id, name: trigger.name })
+						}
+						data-terminay-bot-trigger-editor-sessions={trigger.id}
+					>
+						<History size={14} aria-hidden="true" /> Sessions
+					</button>
+				) : null}
 				<button type="button" className="bots-btn" onClick={onClose}>
 					Cancel
 				</button>
