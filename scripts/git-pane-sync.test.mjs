@@ -14,6 +14,7 @@ await build({
     contents: `
       export { applyGitWorkspaceRefresh } from './src/workspace/useFileExplorerController.ts'
       export { createGitPaneSyncLog, isFreshGitPaneSync } from './src/workspace/gitPaneSyncLog.ts'
+      export { createGitListingMemory } from './src/workspace/gitListingMemory.ts'
     `,
     loader: 'ts',
     resolveDir: process.cwd(),
@@ -23,7 +24,7 @@ await build({
   outfile: output,
   platform: 'node',
 })
-const { applyGitWorkspaceRefresh, createGitPaneSyncLog, isFreshGitPaneSync } = await import(
+const { applyGitWorkspaceRefresh, createGitListingMemory, createGitPaneSyncLog, isFreshGitPaneSync } = await import(
   pathToFileURL(output).href
 )
 
@@ -161,4 +162,59 @@ test('every Git pane refresh names what raised it, and the reload control measur
     2,
     'both root-change paths in App raise a measured refresh',
   )
+})
+
+/** A folder shown for the first time starts from what the window remembers,
+ * and its first refresh settles it: a failure keeps it, a listing replaces it. */
+function seededRefresh({ fail }) {
+  const memory = createGitListingMemory()
+  const seed = {
+    referencesByPath: new Map(),
+    statuses: { '/workspace/alpha/work.txt': 'modified' },
+    worktrees: { gitAvailable: true, repoRoot: '/workspace/repo', defaultBranch: 'main', worktrees: [{ path: '/workspace/alpha' }] },
+  }
+  memory.remember('project-a', '/workspace/repo', seed)
+  const shown = { listing: memory.recall('project-a', '/workspace/repo') }
+  const calls = { preserved: 0, errors: 0 }
+  const run = applyGitWorkspaceRefresh({
+    gitClient: {
+      async list() {
+        if (fail) throw new Error('git.worktrees.list failed')
+        return { defaultBranch: null, repositoryRoot: null, state: 'not-a-repository', worktrees: [] }
+      },
+    },
+    project: { id: 'project-a', rootFolder: '/workspace/alpha' },
+    isCurrent: () => true,
+    publish: (projection) => {
+      shown.listing = projection
+      memory.remember('project-a', '/workspace/repo', projection)
+    },
+    preserveLastProjection: () => {
+      calls.preserved += 1
+    },
+    onOperationError: () => {
+      calls.errors += 1
+      return ''
+    },
+    onOperationSucceeded: () => undefined,
+  })
+  return { memory, seed, shown, calls, run }
+}
+
+test('a failed first listing keeps the listing a folder started from, and reports the failure', async () => {
+  const { memory, seed, shown, calls, run } = seededRefresh({ fail: true })
+  await run
+  assert.equal(shown.listing, seed)
+  assert.equal(memory.recall('project-a', '/workspace/repo'), seed)
+  assert.deepEqual(calls, { preserved: 1, errors: 1 })
+})
+
+test('a first listing with no worktrees replaces the listing a folder started from', async () => {
+  const { memory, seed, shown, calls, run } = seededRefresh({ fail: false })
+  await run
+  assert.notEqual(shown.listing, seed)
+  assert.deepEqual(shown.listing.worktrees.worktrees, [])
+  assert.deepEqual(shown.listing.statuses, {})
+  assert.equal(memory.recall('project-a', '/workspace/repo'), shown.listing)
+  assert.deepEqual(calls, { preserved: 0, errors: 0 })
 })
