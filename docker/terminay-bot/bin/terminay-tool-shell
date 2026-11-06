@@ -5,19 +5,25 @@ for name in $TERMINAY_CREDENTIAL_VARIABLES; do
 	unset "$name"
 done
 unset TERMINAY_CREDENTIAL_VARIABLES
-# Claude also prefixes MCP stdio launches. Bootstrap only our fixed, no-argument
-# adapter: it must supply work_acquire before ordinary commands can pass the gate.
-# Never evaluate this command string or allow extra arguments/metacharacters.
+# Claude also prefixes MCP stdio launches. Bootstrap only our fixed adapter
+# commands: the runtime adapter must supply work_acquire before ordinary
+# commands can pass the gate, and the Terminay MCP adapter reaches only its own
+# relay. Each keeps only its own pair. Never evaluate this command string or
+# allow other arguments/metacharacters.
 if [ "$#" -eq 1 ]; then
     case "$1" in
         /usr/local/bin/terminay-bot-mcp|\"/usr/local/bin/terminay-bot-mcp\"|\'/usr/local/bin/terminay-bot-mcp\')
-            unset BASH_ENV
+            unset BASH_ENV TERMINAY_MCP_SOCKET TERMINAY_MCP_TOKEN
             exec /usr/local/bin/terminay-bot-mcp
+            ;;
+        "/usr/local/bin/terminay-bot-mcp --terminay-mcp"|\"/usr/local/bin/terminay-bot-mcp\"\ --terminay-mcp|\'/usr/local/bin/terminay-bot-mcp\'\ --terminay-mcp|\'/usr/local/bin/terminay-bot-mcp\'\ \'--terminay-mcp\'|\"/usr/local/bin/terminay-bot-mcp\"\ \"--terminay-mcp\")
+            unset BASH_ENV TERMINAY_RUNTIME_SOCKET TERMINAY_RUNTIME_TOKEN
+            exec /usr/local/bin/terminay-bot-mcp --terminay-mcp
             ;;
     esac
 fi
 if [ -n "$TERMINAY_RUNTIME_SOCKET" ]; then
     /usr/local/bin/terminay-bot-mcp --check-work || exit 1
 fi
-unset TERMINAY_RUNTIME_TOKEN BASH_ENV
+unset TERMINAY_RUNTIME_TOKEN TERMINAY_MCP_TOKEN BASH_ENV
 exec /bin/bash -c "$1"

@@ -354,6 +354,7 @@ export async function openBotRuntimeBridge(
 		BASH_ENV: '/usr/local/bin/terminay-shell-env',
 		TERMINAY_RUNTIME_SOCKET: socket,
 		TERMINAY_RUNTIME_TOKEN: token,
+		...terminayRelay?.environment,
 	};
 	return {
 		servers: [
@@ -423,6 +424,8 @@ export async function openBotRuntimeBridge(
 
 interface TerminayRelay {
 	readonly secret: string;
+	/** The relay's own pair, carried by the agent process for its adapter. */
+	readonly environment: Readonly<Record<string, string>>;
 	readonly server: JsonValue;
 	close(): Promise<void>;
 }
@@ -584,17 +587,39 @@ async function openTerminayRelay(
 	} finally {
 		clearTimeout(timer);
 	}
+	// The adapter selects this relay's own pair. An image whose adapter cannot
+	// is refused here, before the agent is given a server that would fail.
+	const environment = {
+		TERMINAY_MCP_SOCKET: socket,
+		TERMINAY_MCP_TOKEN: secret,
+	};
+	try {
+		await driver.exec(
+			`terminay-bot-${botId}`,
+			['/usr/local/bin/terminay-bot-mcp', '--terminay-mcp', '--check-runtime'],
+			{
+				user: 'bot',
+				env: environment,
+				environmentNames: Object.keys(environment),
+				deadlineMs: 10000,
+			},
+		);
+	} catch {
+		await close();
+		throw new Error(
+			'its adapter could not connect. Rebuild the bot image and recreate the environment.',
+		);
+	}
 	return {
 		secret,
+		environment,
 		server: {
 			name: 'terminay',
 			command: '/usr/local/bin/terminay-bot-mcp',
-			args: [],
-			env: Object.entries({
-				BASH_ENV: '',
-				TERMINAY_RUNTIME_SOCKET: socket,
-				TERMINAY_RUNTIME_TOKEN: secret,
-			}).map(([name, value]) => ({ name, value })),
+			args: ['--terminay-mcp'],
+			env: Object.entries({ BASH_ENV: '', ...environment }).map(
+				([name, value]) => ({ name, value }),
+			),
 		},
 		close,
 	};
