@@ -6,12 +6,15 @@ import type {
 	BotProfile,
 	BotSessionRecord,
 } from '@terminay/protocol';
+import { Paperclip, X } from 'lucide-react';
 import {
 	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
+	type ClipboardEvent,
+	type DragEvent,
 	type KeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -19,9 +22,23 @@ import { ContextMenu } from '../../components/ContextMenu';
 import { recallBotChatRead, rememberBotChatRead } from '../localViewState';
 import { BotTranscript } from './BotTranscript';
 import { BotContextRail } from './BotContextRail';
+import {
+	BOT_CHAT_IMAGE_TYPES,
+	type ChatSendAttempt,
+	acceptChatImages,
+	chatSendAttempt,
+} from './botsModel';
 import type { BotConfigTab } from './BotTab';
 import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
 import { refusalText, type ServerBots } from './useServerBots';
+
+interface PendingImage {
+	readonly key: string;
+	readonly file: File;
+	/** Display name sent with the upload; pasted images get a generated one. */
+	readonly name: string;
+	readonly url: string;
+}
 
 export function BotChat({
 	server,
@@ -77,6 +94,72 @@ export function BotChat({
 		pinned = useRef(true),
 		cursor = useRef<string | undefined>(undefined),
 		reload = useRef<() => void>(() => {});
+	// Images waiting to be sent. Each keeps the upload token it was given, so a
+	// retry of the same attempt does not upload or post it twice.
+	const [pending, setPending] = useState<readonly PendingImage[]>([]),
+		[attachError, setAttachError] = useState<string>(),
+		[dragging, setDragging] = useState(false);
+	const picker = useRef<HTMLInputElement>(null),
+		pendingRef = useRef(pending),
+		attempt = useRef<ChatSendAttempt | undefined>(undefined),
+		tokens = useRef(new Map<string, string>()),
+		pasted = useRef(0);
+	pendingRef.current = pending;
+	useEffect(
+		() => () => {
+			for (const image of pendingRef.current) URL.revokeObjectURL(image.url);
+		},
+		[],
+	);
+	const addImages = (files: readonly File[]) => {
+		if (!files.length) return;
+		const { accepted, refusal } = acceptChatImages(
+			pendingRef.current.length,
+			files,
+		);
+		setAttachError(refusal);
+		if (!accepted.length) return;
+		setPending((current) => [
+			...current,
+			...accepted.map((file) => ({
+				key: crypto.randomUUID(),
+				file,
+				name:
+					file.name && file.name !== 'image.png'
+						? file.name
+						: `pasted-${++pasted.current}.${file.type.split('/')[1] ?? 'png'}`,
+				url: URL.createObjectURL(file),
+			})),
+		]);
+	};
+	const removeImage = (key: string) => {
+		setPending((current) => {
+			const gone = current.find((image) => image.key === key);
+			if (gone) URL.revokeObjectURL(gone.url);
+			return current.filter((image) => image.key !== key);
+		});
+		tokens.current.delete(key);
+		setAttachError(undefined);
+	};
+	const clearImages = (sent: readonly PendingImage[]) => {
+		const keys = new Set(sent.map((image) => image.key));
+		for (const image of sent) {
+			URL.revokeObjectURL(image.url);
+			tokens.current.delete(image.key);
+		}
+		setPending((current) => current.filter((image) => !keys.has(image.key)));
+	};
+	const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+		const files = [...event.clipboardData.files].filter((file) =>
+			file.type.startsWith('image/'),
+		);
+		if (!files.length) return;
+		// A screenshot paste carries no text; text alongside an image still pastes.
+		if (!event.clipboardData.types.includes('text/plain')) event.preventDefault();
+		addImages(files);
+	};
+	const hasFiles = (event: DragEvent) =>
+		[...event.dataTransfer.types].includes('Files');
 	const generation = useRef(0),
 		draftRef = useRef(draft);
 	draftRef.current = draft;
@@ -281,19 +364,27 @@ export function BotChat({
 	);
 	const items = useMemo(
 		() =>
-			ordered.map((message) => ({
-				kind:
-					message.author === 'user' ? ('user' as const) : ('agent' as const),
-				key: message.id,
-				text:
-					message.text +
-					message.attachments
-						.map(
-							(a) =>
-								`\n\n![${a.name.replace(/[\[\]]/g, '')}](bot-attachment:${a.id})`,
-						)
-						.join(''),
-			})),
+			ordered.map((message) =>
+				message.author === 'user'
+					? {
+							kind: 'user' as const,
+							key: message.id,
+							text: message.text,
+							attachments: message.attachments,
+						}
+					: {
+							kind: 'agent' as const,
+							key: message.id,
+							text:
+								message.text +
+								message.attachments
+									.map(
+										(a) =>
+											`\n\n![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
+									)
+									.join(''),
+						},
+			),
 		[ordered],
 	);
 	useLayoutEffect(() => {
@@ -353,18 +444,40 @@ export function BotChat({
 		}
 	};
 	const send = async () => {
-		if (sending || !draft.trim()) return;
+		const images = pendingRef.current;
+		if (sending || (!draft.trim() && !images.length)) return;
 		const text = draft,
 			view = generation.current;
+		// The same text and images reuse the previous attempt's key, so a post
+		// whose response was lost is replayed, not duplicated.
+		const current = chatSendAttempt(
+			attempt.current,
+			JSON.stringify([text, images.map((image) => image.key)]),
+			() => crypto.randomUUID(),
+		);
+		attempt.current = current;
 		setSending(true);
 		setError(undefined);
+		setAttachError(undefined);
 		try {
-			const result = await client.post(bot.id, text, crypto.randomUUID());
+			const uploads: string[] = [];
+			for (const image of images) {
+				let token = tokens.current.get(image.key);
+				if (!token) {
+					const bytes = new Uint8Array(await image.file.arrayBuffer());
+					token = (await client.upload(bot.id, image.name, bytes)).token;
+					tokens.current.set(image.key, token);
+				}
+				uploads.push(token);
+			}
+			const result = await client.post(bot.id, text, current.key, uploads);
+			attempt.current = undefined;
 			if (view === generation.current)
 				setMessages((current) =>
 					new Map(current).set(result.message.id, result.message),
 				);
 			if (draftRef.current === text) onDraftChange('');
+			clearImages(images);
 			pinned.current = true;
 			// Replying means the user has caught up.
 			rememberBotChatRead(bot.id, result.message.sequence);
@@ -372,7 +485,13 @@ export function BotChat({
 			if (result.error) setError(result.error);
 			server.refreshBot(bot.id);
 		} catch (cause) {
-			setError(refusalText(cause));
+			const message = refusalText(cause);
+			// Staged uploads expire or vanish on restart: upload again next time.
+			if (/no longer available/i.test(message)) {
+				for (const image of images) tokens.current.delete(image.key);
+				attempt.current = undefined;
+			}
+			setError(message);
 		} finally {
 			setSending(false);
 		}
@@ -631,11 +750,61 @@ export function BotChat({
 						</div>
 					) : null}
 					<form
+						className={dragging ? 'bots-composer--drop' : undefined}
+						data-terminay-bot-composer-form="true"
 						onSubmit={(event) => {
 							event.preventDefault();
 							void send();
 						}}
+						onDragOver={(event) => {
+							if (!hasFiles(event)) return;
+							event.preventDefault();
+							event.dataTransfer.dropEffect = 'copy';
+							setDragging(true);
+						}}
+						onDragLeave={(event) => {
+							if (!event.currentTarget.contains(event.relatedTarget as Node))
+								setDragging(false);
+						}}
+						onDrop={(event) => {
+							if (!hasFiles(event)) return;
+							event.preventDefault();
+							setDragging(false);
+							addImages([...event.dataTransfer.files]);
+						}}
 					>
+						{pending.length ? (
+							<ul
+								className="bots-composer__images"
+								aria-label="Images to send"
+								data-terminay-bot-pending-images="true"
+							>
+								{pending.map((image) => (
+									<li key={image.key} className="bots-composer__image">
+										<img src={image.url} alt={image.name} />
+										<button
+											type="button"
+											className="bots-composer__remove"
+											aria-label={`Remove ${image.name}`}
+											title={`Remove ${image.name}`}
+											disabled={sending}
+											onClick={() => removeImage(image.key)}
+										>
+											<X size={12} aria-hidden="true" />
+										</button>
+									</li>
+								))}
+							</ul>
+						) : null}
+						{attachError ? (
+							<p
+								className="bots-composer__refusal"
+								role="status"
+								data-terminay-bot-attach-error="true"
+							>
+								{attachError}
+							</p>
+						) : null}
 						<textarea
 							value={draft}
 							rows={2}
@@ -643,10 +812,34 @@ export function BotChat({
 							placeholder={`Message ${bot.name} · Enter to send`}
 							onChange={(event) => onDraftChange(event.target.value)}
 							onKeyDown={keyDown}
+							onPaste={onPaste}
 							data-terminay-bot-composer="true"
+						/>
+						<input
+							ref={picker}
+							type="file"
+							hidden
+							multiple
+							accept={BOT_CHAT_IMAGE_TYPES.join(',')}
+							data-terminay-bot-attach-input="true"
+							onChange={(event) => {
+								addImages([...(event.target.files ?? [])]);
+								event.target.value = '';
+							}}
 						/>
 						<div className="bots-composer__row">
 							<div className="bots-composer__actions">
+								<button
+									type="button"
+									className="bots-btn bots-btn--sm bots-btn--ghost bots-composer__attach"
+									aria-label="Attach images"
+									title="Attach images"
+									disabled={sending}
+									data-terminay-bot-attach="true"
+									onClick={() => picker.current?.click()}
+								>
+									<Paperclip size={16} aria-hidden="true" />
+								</button>
 								{messages.size ? (
 									<button
 										type="button"
@@ -666,7 +859,7 @@ export function BotChat({
 							<button
 								type="submit"
 								className="bots-btn bots-btn--primary"
-								disabled={sending || !draft.trim()}
+								disabled={sending || (!draft.trim() && !pending.length)}
 								data-terminay-bot-send="true"
 							>
 								{sending ? 'Posting…' : 'Send'}

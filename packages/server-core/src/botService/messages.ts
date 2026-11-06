@@ -26,6 +26,12 @@ import {
 import { BotError, text, object } from './store.js';
 import { botImageMime, BOT_IMAGE_BYTES } from './images.js';
 
+/** How long an uploaded image waits for the post that references it. */
+export const BOT_UPLOAD_STAGING_MS = 15 * 60 * 1000;
+interface Staged {
+	readonly asset: BotMessageAttachment;
+	readonly expiresAt: number;
+}
 const PAGE_BYTES = 8192,
 	STATE_BYTES = 16 * 1024 * 1024,
 	MAX_EVENTS = 2000;
@@ -105,6 +111,8 @@ function parse(value: unknown): State {
  * Atomic snapshots are bounded to 16 MiB, including revision history. */
 export class BotMessageStore extends EventEmitter {
 	private states = new Map<string, State>();
+	/** In memory: a restart drops staging, and load prunes the orphaned blobs. */
+	private staging = new Map<string, Map<string, Staged>>();
 	constructor(
 		private readonly root: string,
 		private readonly now = Date.now,
@@ -252,16 +260,26 @@ export class BotMessageStore extends EventEmitter {
 		executionId: string | null,
 		key: string,
 		attachments: readonly BotMessageAttachment[] = [],
+		uploads: readonly string[] = [],
 	): BotMessage {
 		text(body, 65536, 'message', true);
-		if (!body.trim() && !attachments.length)
+		if (!body.trim() && !attachments.length && !uploads.length)
 			throw new BotError('validation', 'Message cannot be empty');
 		text(key, 256, 'idempotency key');
-		if (attachments.length > 4)
+		if (attachments.length + uploads.length > 4)
 			throw new BotError('validation', 'At most four attachments per message');
+		// Lazy expiry: a post also discards expired staged images.
+		if (this.staging.has(botId)) this.pruneAttachments(botId);
 		const s = this.state(botId),
-			hash = digest(JSON.stringify({ author, body, executionId, attachments })),
+			hash = digest(
+				JSON.stringify(
+					uploads.length
+						? { author, body, executionId, uploads }
+						: { author, body, executionId, attachments },
+				),
+			),
 			prior = s.keys[key];
+		// Replay first: a retried post succeeds even after its uploads were consumed.
 		if (prior) {
 			if (prior.hash !== hash)
 				throw new BotError(
@@ -270,6 +288,7 @@ export class BotMessageStore extends EventEmitter {
 				);
 			return this.get(botId, prior.id);
 		}
+		if (uploads.length) attachments = [...attachments, ...this.staged(botId, uploads)];
 		if (this.latest(s).length >= 10000 || Object.keys(s.keys).length >= 20000)
 			throw new BotError('resource', 'Message history limit reached');
 		const next = structuredClone(s),
@@ -295,6 +314,8 @@ export class BotMessageStore extends EventEmitter {
 		next.rows.push(row);
 		next.keys[key] = { hash, id: messageId };
 		this.save(botId, next);
+		// Consumed only once persisted: a failed save leaves every token usable.
+		for (const token of uploads) this.staging.get(botId)?.delete(token);
 		return this.public(row);
 	}
 	private public(row: Row): BotMessage {
@@ -380,6 +401,7 @@ export class BotMessageStore extends EventEmitter {
 		};
 		this.change(next, 'messages.cleared', botId, 1);
 		this.save(botId, next);
+		this.staging.delete(botId);
 		rmSync(join(this.directory(botId), 'attachments'), {
 			recursive: true,
 			force: true,
@@ -387,6 +409,7 @@ export class BotMessageStore extends EventEmitter {
 	}
 	removeBot(botId: string): void {
 		this.states.delete(botId);
+		this.staging.delete(botId);
 		rmSync(this.directory(botId), { recursive: true, force: true });
 	}
 	list(botId: string, options: MessagePageOptions = {}): BotMessagePage {
@@ -680,11 +703,12 @@ export class BotMessageStore extends EventEmitter {
 	pruneAttachments(botId: string): void {
 		const directory = join(this.directory(botId), 'attachments');
 		if (!existsSync(directory)) return;
-		const used = new Set(
-			this.latest(this.state(botId))
+		const used = new Set([
+			...this.latest(this.state(botId))
 				.flatMap((r) => r.attachments)
 				.map((a) => a.id),
-		);
+			...[...this.live(botId).values()].map((s) => s.asset.id),
+		]);
 		for (const file of readdirSync(directory))
 			if (/^[a-f0-9]{24}$/.test(file) && !used.has(file))
 				rmSync(join(directory, file), { force: true });
@@ -728,6 +752,52 @@ export class BotMessageStore extends EventEmitter {
 			writeFileDurablySync(target, bytes, { mode: 0o600 });
 		}
 		return asset;
+	}
+	/** Live staged uploads; expired ones are dropped here, lazily (no timer). */
+	private live(botId: string): Map<string, Staged> {
+		const staged = this.staging.get(botId) ?? new Map<string, Staged>();
+		const now = this.now();
+		for (const [token, entry] of staged)
+			if (entry.expiresAt <= now) staged.delete(token);
+		if (staged.size) this.staging.set(botId, staged);
+		else this.staging.delete(botId);
+		return staged;
+	}
+	/** Stage one user image and return the token a post consumes. */
+	stage(
+		botId: string,
+		name: string,
+		bytes: Uint8Array,
+	): { token: string; attachment: Omit<BotMessageAttachment, 'id'> } {
+		this.pruneAttachments(botId);
+		if (this.live(botId).size >= 64)
+			throw new BotError('resource', 'Too many images are waiting to be sent');
+		const blob = this.putAttachment(botId, name, bytes),
+			asset = { ...blob, name },
+			token = randomBytes(12).toString('hex');
+		const staged = this.live(botId);
+		staged.set(token, { asset, expiresAt: this.now() + BOT_UPLOAD_STAGING_MS });
+		this.staging.set(botId, staged);
+		const { id: _, ...attachment } = asset;
+		return { token, attachment };
+	}
+	/** Resolve tokens for a post; any invalid token refuses the whole post. */
+	private staged(botId: string, uploads: readonly string[]): BotMessageAttachment[] {
+		if (new Set(uploads).size !== uploads.length)
+			throw new BotError('validation', 'An image was attached twice');
+		const staged = this.live(botId);
+		return uploads.map((token) => {
+			const entry =
+				typeof token === 'string' && /^[a-f0-9]{24}$/.test(token)
+					? staged.get(token)
+					: undefined;
+			if (!entry)
+				throw new BotError(
+					'validation',
+					'An attached image is no longer available; attach it again',
+				);
+			return { ...entry.asset };
+		});
 	}
 	attachment(
 		botId: string,

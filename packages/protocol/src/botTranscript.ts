@@ -17,7 +17,13 @@ export type PlanStep = Readonly<{
 }>;
 
 export type TranscriptItem =
-	| Readonly<{ kind: 'user'; key: string; text: string }>
+	| Readonly<{
+			kind: 'user';
+			key: string;
+			text: string;
+			/** Durable message images, shown after the plain text. */
+			attachments?: readonly Readonly<{ id: string; name: string }>[];
+	  }>
 	| Readonly<{ kind: 'agent'; key: string; text: string }>
 	| Readonly<{ kind: 'thought'; key: string; text: string }>
 	| Readonly<{

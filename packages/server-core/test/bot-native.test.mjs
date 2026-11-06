@@ -202,3 +202,57 @@ test('Codex cancellation asks the owned supervisor to interrupt before awaiting 
 	await assert.rejects(turn);
 	await assert.rejects(cancelled);
 });
+test('Claude receives message images as base64 content blocks after the text', async () => {
+	const f = fixture();
+	const init = f.client.initialize();
+	f.receive({
+		type: 'control_response',
+		response: { request_id: 'initialize', subtype: 'success' },
+	});
+	await init;
+	await f.client.open(null, null);
+	const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+	const turn = f.client.prompt('look', 1000, [
+		{ mime: 'image/png', bytes: png },
+		{ mime: 'image/webp', bytes: new Uint8Array([1]) },
+	]);
+	turn.catch(() => {});
+	const user = f.sent.find((m) => m.type === 'user');
+	assert.deepEqual(user.message.content[0], { type: 'text', text: 'look' });
+	assert.deepEqual(user.message.content[1], {
+		type: 'image',
+		source: {
+			type: 'base64',
+			media_type: 'image/png',
+			data: Buffer.from(png).toString('base64'),
+		},
+	});
+	assert.equal(user.message.content[2].source.media_type, 'image/webp');
+	f.client.dispose();
+});
+test('a prompt without images keeps plain string content', async () => {
+	const f = fixture();
+	await start(f);
+	assert.equal(f.sent.find((m) => m.type === 'user').message.content, 'check');
+	f.client.dispose();
+});
+test('Codex receives message images as --image arguments before the stdin prompt', () => {
+	const none = nativeArguments('codex-cli', null, 'autonomous', [], false);
+	assert.equal(none.includes('--image'), false);
+	assert.equal(none.at(-1), '-');
+	const one = nativeArguments('codex-cli', null, 'autonomous', [], false, [
+		'/tmp/terminay-attachments/x/1.png',
+	]);
+	assert.deepEqual(one.slice(-3), [
+		'--image',
+		'/tmp/terminay-attachments/x/1.png',
+		'-',
+	]);
+	const paths = [1, 2, 3, 4].map((n) => `/tmp/terminay-attachments/x/${n}.png`);
+	const four = nativeArguments('codex-cli', 'gpt', 'autonomous', [], false, paths);
+	assert.deepEqual(four.slice(-9), [...paths.flatMap((p) => ['--image', p]), '-']);
+	assert.equal(
+		nativeArguments('claude-code-cli', null, 'ask', [], false, paths).includes('--image'),
+		false,
+	);
+});

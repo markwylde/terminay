@@ -296,3 +296,100 @@ test('clearing an accepted message during dispatch cannot return a deleted row a
 	await assert.rejects(posting, /message log changed/);
 	assert.equal(r.service.messages.list(r.bot.id).total, 0);
 });
+const pngBytes = (n) =>
+	Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from([n])]);
+const settled = (r, id) =>
+	until(r.service, 'changed', () =>
+		['completed', 'failed', 'stopped'].includes(r.sessions.get(id).state),
+	);
+test('uploaded images reach only the triggering execution, in the container and as content blocks', async (t) => {
+	const execs = [];
+	const recordInput = join(mkdtempSync(join(tmpdir(), 'bot-input-')), 'in.jsonl');
+	const r = await setup(t, { execs, env: { FAKE_RECORD_INPUT: recordInput } });
+	await assert.rejects(
+		r.service.uploadUserImage(r.bot.id, 'notes.txt', Buffer.from('hello')),
+		/PNG, JPEG, GIF and WebP/,
+	);
+	await assert.rejects(
+		r.service.uploadUserImage(r.bot.id, 'big.png', Buffer.alloc(2 * 1024 * 1024 + 1)),
+		/2 MiB/,
+	);
+	const a = await r.service.uploadUserImage(r.bot.id, 'my shot.png', pngBytes(1));
+	const b = await r.service.uploadUserImage(r.bot.id, '../../etc/passwd.png', pngBytes(2));
+	const sent = await r.service.postUserMessage(r.bot.id, '', 'image-post', [a.token, b.token]);
+	assert.equal(sent.error, undefined, JSON.stringify(sent));
+	assert.deepEqual(sent.message.attachments.map((x) => x.name), ['my shot.png', '../../etc/passwd.png']);
+	await settled(r, sent.sessionId);
+	assert.equal(r.sessions.get(sent.sessionId).state, 'completed');
+	const writes = execs.filter((e) => e.args[0] === 'python3' && e.args[2]?.includes('os.replace'));
+	assert.deepEqual(writes.map((e) => e.args.slice(3)), [
+		[sent.sessionId, '1.png'],
+		[sent.sessionId, '2.png'],
+	]);
+	assert.ok(writes.every((e) => e.options.user === 'bot' && e.container === `terminay-bot-${r.bot.id}`));
+	assert.deepEqual(Buffer.from(writes[0].options.input), pngBytes(1));
+	const removal = (e) => e.args[2]?.includes('rmtree');
+	await until(r.service, 'changed', () => execs.some(removal));
+	const removed = execs.filter(removal);
+	assert.deepEqual(removed.map((e) => e.args[3]), [sent.sessionId]);
+	const { readFileSync } = await import('node:fs');
+	const user = JSON.parse(readFileSync(recordInput, 'utf8').trim().split('\n')[0]);
+	const blocks = user.message.content;
+	assert.equal(blocks.filter((x) => x.type === 'image').length, 2);
+	assert.equal(blocks[1].source.data, pngBytes(1).toString('base64'));
+	const briefing = JSON.parse(
+		blocks[0].text.split('\n').find((line) => line.startsWith('{"executionId":')),
+	);
+	assert.deepEqual(
+		briefing.triggerMessage.attachments.map((x) => x.path),
+		[1, 2].map((n) => `/tmp/terminay-attachments/${sent.sessionId}/${n}.png`),
+	);
+	const retry = await r.service.postUserMessage(r.bot.id, '', 'image-post', [a.token, b.token]);
+	assert.equal(retry.message.id, sent.message.id);
+	assert.equal(retry.sessionId, sent.sessionId);
+	const later = await r.service.send(r.bot.id, 'normal');
+	await settled(r, later.sessionId);
+	assert.equal(r.sessions.get(later.sessionId).runtime.triggerAttachments, undefined);
+	const lines = readFileSync(recordInput, 'utf8').trim().split('\n');
+	assert.equal(typeof JSON.parse(lines.at(-1)).message.content, 'string');
+});
+for (const [ending, options, text] of [
+	['stopped', {}, 'hold'],
+	['failed', { env: { FAKE_MCP_DISCONNECTED: '1' } }, 'look'],
+])
+	test(`image copies are removed when an execution is ${ending}`, async (t) => {
+		const execs = [];
+		const r = await setup(t, { ...options, execs });
+		const a = await r.service.uploadUserImage(r.bot.id, 'x.png', pngBytes(5));
+		const sent = await r.service.postUserMessage(r.bot.id, text, `end-${ending}`, [a.token]);
+		if (ending === 'stopped') {
+			await until(r.service, 'changed', () => r.sessions.get(sent.sessionId).state === 'running');
+			await r.service.stop(r.bot.id, sent.sessionId);
+		}
+		await settled(r, sent.sessionId);
+		assert.equal(r.sessions.get(sent.sessionId).state, ending);
+		const removal = (e) => e.args[2]?.includes('rmtree') && e.args[3] === sent.sessionId;
+		await until(r.service, 'changed', () => execs.some(removal));
+		assert.ok(execs.some((e) => e.args[2]?.includes('os.replace')));
+	});
+test('uploads to an unknown or deleted bot are refused', async (t) => {
+	const r = await setup(t);
+	await assert.rejects(r.service.uploadUserImage('zzzzzzzzzzzz', 'a.png', pngBytes(1)));
+	assert.equal(r.service.messages.count(r.bot.id), 0);
+});
+test('an execution whose snapshotted image disappeared fails explicitly and keeps the message', async (t) => {
+	const r = await setup(t);
+	const a = await r.service.uploadUserImage(r.bot.id, 'gone.png', pngBytes(3));
+	const original = r.service.messages.attachment.bind(r.service.messages);
+	r.service.messages.attachment = () => {
+		throw new Error('Attachment not found');
+	};
+	t.after(() => (r.service.messages.attachment = original));
+	const sent = await r.service.postUserMessage(r.bot.id, 'look', 'gone-post', [a.token]);
+	await settled(r, sent.sessionId);
+	const record = r.sessions.get(sent.sessionId);
+	assert.equal(record.state, 'failed');
+	assert.match(record.reason, /no longer available; send it again/);
+	assert.equal(r.service.messages.get(r.bot.id, sent.message.id).attachments.length, 1);
+});
+

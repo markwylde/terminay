@@ -3,7 +3,9 @@ import test from 'node:test';
 import type { BotProfile, BotSessionRecord } from '@terminay/protocol';
 import {
 	type BotEntry,
+	acceptChatImages,
 	botActivity,
+	chatSendAttempt,
 	filterCounts,
 	initials,
 	needsYou,
@@ -148,4 +150,32 @@ test('initials and ages are short enough for a card', () => {
 	assert.equal(shortAge(0, 4 * 60_000), '4m');
 	assert.equal(shortAge(0, 3 * 3_600_000), '3h');
 	assert.equal(shortAge(0, 72 * 3_600_000), '3d');
+});
+
+test('composer accepts PNG, JPEG, GIF and WebP up to 2 MiB and four per message', () => {
+	const img = (type: string, size = 10) => ({ type, size });
+	assert.deepEqual(
+		acceptChatImages(0, [img('image/png'), img('image/jpeg'), img('image/gif'), img('image/webp')])
+			.accepted.length,
+		4,
+	);
+	const text = acceptChatImages(0, [img('text/plain'), img('image/png')]);
+	assert.equal(text.accepted.length, 1);
+	assert.match(text.refusal ?? '', /PNG, JPEG, GIF and WebP/);
+	const big = acceptChatImages(0, [img('image/png', 2 * 1024 * 1024 + 1)]);
+	assert.deepEqual(big.accepted, []);
+	assert.match(big.refusal ?? '', /2 MiB/);
+	assert.equal(acceptChatImages(0, [img('image/png', 2 * 1024 * 1024)]).refusal, undefined);
+	const fifth = acceptChatImages(4, [img('image/png')]);
+	assert.deepEqual(fifth.accepted, []);
+	assert.match(fifth.refusal ?? '', /at most 4/);
+	assert.equal(acceptChatImages(3, [img('image/png'), img('image/png')]).accepted.length, 1);
+});
+
+test('a retry of the same content reuses its idempotency key', () => {
+	let n = 0;
+	const fresh = () => `key-${++n}`;
+	const first = chatSendAttempt(undefined, 'hello|a', fresh);
+	assert.equal(chatSendAttempt(first, 'hello|a', fresh).key, 'key-1');
+	assert.equal(chatSendAttempt(first, 'hello|a,b', fresh).key, 'key-2');
 });
