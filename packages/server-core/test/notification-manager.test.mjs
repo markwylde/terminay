@@ -80,7 +80,7 @@ test("a notification still present after five seconds is published", () => {
   const [record] = published(manager);
   assert.deepEqual(
     { ...record },
-    { id: "n-1", projectId: "project-a", sessionId: "session-a", source: "activity", kind: "agent-finished", raisedAt: 1_000 },
+    { id: "n-1", owner: "terminal", projectId: "project-a", sessionId: "session-a", source: "activity", kind: "agent-finished", raisedAt: 1_000 },
   );
 });
 
@@ -257,8 +257,8 @@ test("a snapshot and a replay can be scoped to one project", () => {
   manager.setActivity(owner("session-b", "project-b"), "attention");
   clock.advance(5_000);
   assert.equal(Object.keys(manager.snapshot().notifications).length, 2);
-  assert.deepEqual(Object.values(manager.snapshot("project-b").notifications).map((record) => record.sessionId), ["session-b"]);
-  assert.deepEqual(manager.replay(0, "project-a").events.map((event) => event.sessionId), ["session-a"]);
+  assert.deepEqual(Object.values(manager.snapshot({ projectId: "project-b", bots: true }).notifications).map((record) => record.sessionId), ["session-b"]);
+  assert.deepEqual(manager.replay(0, { projectId: "project-a", bots: true }).events.map((event) => event.sessionId), ["session-a"]);
 });
 
 test("a replay older than the retained events is a resync with the published snapshot", () => {
@@ -413,7 +413,7 @@ test("an OSC notification's message never becomes notification text", () => {
   const second = fed();
   second.activity.ingestPtyOutput(identity(), "\u001b]777;notify;Title;Body\u0007");
   second.clock.advance(5_000);
-  assert.deepEqual(Object.keys(published(second.manager)[0]).sort(), ["id", "kind", "projectId", "raisedAt", "sessionId", "source"]);
+  assert.deepEqual(Object.keys(published(second.manager)[0]).sort(), ["id", "kind", "owner", "projectId", "raisedAt", "sessionId", "source"]);
 });
 
 test("activity present before the manager is bound is re-established and settles again", () => {

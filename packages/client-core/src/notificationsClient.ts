@@ -4,7 +4,6 @@ import {
   NotificationSnapshotStore,
   type NotificationApplyResult,
   type NotificationEvent,
-  type NotificationRecord,
   type NotificationReplay,
   type NotificationSnapshot,
 } from "./notifications.js";
@@ -15,6 +14,22 @@ export const NOTIFICATION_OPERATIONS = Object.freeze({
   dismiss: "notifications.dismiss",
   event: "notifications",
 } as const);
+
+interface TerminalOwner {
+  readonly id: string;
+  readonly projectId: string;
+  readonly sessionId: string;
+}
+
+/** What a dismissal names: a terminal's notification or a bot's. */
+export type DismissibleNotification =
+  | TerminalOwner
+  | {
+      readonly id: string;
+      readonly botId: string;
+      /** The latest post this client was shown; a newer one stays. */
+      readonly throughSequence?: number;
+    };
 
 export interface NotificationClientTransport extends QueryCommandTransport {
   /** Notifications are a live server-owned projection, as activity is. */
@@ -55,13 +70,23 @@ export class NotificationClient {
   }
 
   /** Dismiss one notification. Its owner is named exactly; the server refuses
-   * an id that belongs to another terminal. */
-  async dismiss(notification: Pick<NotificationRecord, "id" | "projectId" | "sessionId">): Promise<void> {
-    await this.transport.command(NOTIFICATION_OPERATIONS.dismiss, {
-      id: notification.id,
-      projectId: notification.projectId,
-      sessionId: notification.sessionId,
-    });
+   * an id that belongs to another terminal or bot. Dismissing a bot's
+   * acknowledges its posts through the ones that record covers. */
+  async dismiss(notification: DismissibleNotification): Promise<void> {
+    await this.transport.command(
+      NOTIFICATION_OPERATIONS.dismiss,
+      "botId" in notification && notification.botId !== undefined
+        ? {
+            id: notification.id,
+            botId: notification.botId,
+            ...(notification.throughSequence === undefined ? {} : { throughSequence: notification.throughSequence }),
+          }
+        : {
+            id: notification.id,
+            projectId: (notification as TerminalOwner).projectId,
+            sessionId: (notification as TerminalOwner).sessionId,
+          },
+    );
   }
 
   async subscribe(): Promise<() => void> {

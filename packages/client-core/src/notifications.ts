@@ -7,26 +7,45 @@
  * host can fetch a fresh server snapshot.
  */
 
-export type NotificationSource = "activity" | "message";
-export type NotificationKind =
+export type NotificationSource = "activity" | "message" | "bot";
+export type TerminalNotificationKind =
   | "agent-finished"
   | "agent-waiting"
   | "agent-blocked"
   | "command-finished"
   | "attention"
   | "message";
+export type NotificationKind = TerminalNotificationKind | "bot-message";
 
-export interface NotificationRecord {
+/** A notification of one terminal. */
+export interface TerminalNotificationRecord {
   readonly id: string;
+  readonly owner: "terminal";
   readonly projectId: string;
   readonly sessionId: string;
-  readonly source: NotificationSource;
-  readonly kind: NotificationKind;
+  readonly source: "activity" | "message";
+  readonly kind: TerminalNotificationKind;
   /** Present only on a notification a process sent. Plain text. */
   readonly title?: string;
   readonly body?: string;
   readonly raisedAt: number;
 }
+
+/** One bot's unacknowledged posts. Only a client with bot authority sees it. */
+export interface BotNotificationRecord {
+  readonly id: string;
+  readonly owner: "bot";
+  readonly botId: string;
+  readonly source: "bot";
+  readonly kind: "bot-message";
+  /** Plain-text excerpt of the latest unacknowledged post. */
+  readonly body: string;
+  readonly count: number;
+  readonly throughSequence: number;
+  readonly raisedAt: number;
+}
+
+export type NotificationRecord = TerminalNotificationRecord | BotNotificationRecord;
 
 export interface NotificationSnapshot {
   readonly revision: number;
@@ -39,8 +58,11 @@ export interface NotificationEvent {
   readonly cursor: string;
   readonly type: "notification.published" | "notification.changed" | "notification.removed";
   readonly id: string;
-  readonly projectId: string;
-  readonly sessionId: string;
+  /** Absent from a server that predates bot notifications: a terminal event. */
+  readonly owner?: "terminal" | "bot";
+  readonly projectId?: string;
+  readonly sessionId?: string;
+  readonly botId?: string;
   readonly notification?: NotificationRecord;
 }
 
@@ -62,6 +84,7 @@ const MAX_TITLE_CHARS = 80;
 const MAX_BODY_CHARS = 280;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const KINDS: readonly string[] = ["agent-finished", "agent-waiting", "agent-blocked", "command-finished", "attention", "message"];
+const MAX_BOT_COUNT = 10_000;
 const EVENT_TYPES: readonly string[] = ["notification.published", "notification.changed", "notification.removed"];
 
 export class NotificationSnapshotStore {
@@ -171,8 +194,16 @@ function normalizeSnapshot(snapshot: NotificationSnapshot): NotificationSnapshot
   return freezeSnapshot({ revision: snapshot.revision, cursor: snapshot.cursor, notifications });
 }
 
-function normalizeRecord(value: NotificationRecord): NotificationRecord {
-  if (!value || typeof value !== "object" || !ID_PATTERN.test(value.id) || !ID_PATTERN.test(value.projectId) || !ID_PATTERN.test(value.sessionId) || (value.source !== "activity" && value.source !== "message") || !KINDS.includes(value.kind) || (value.kind === "message") !== (value.source === "message") || !Number.isFinite(value.raisedAt) || !isText(value.title, MAX_TITLE_CHARS) || !isText(value.body, MAX_BODY_CHARS)) {
+/** A record's owner decides which identity it carries, and it carries no
+ * other: a record that mixes a terminal and a bot is refused. */
+function normalizeRecord(raw: NotificationRecord): NotificationRecord {
+  if (!raw || typeof raw !== "object") throw new TypeError("notification is invalid");
+  const loose = raw as unknown as Record<string, unknown>;
+  if (loose.owner === "bot") return normalizeBotRecord(loose);
+  if (loose.owner !== undefined && loose.owner !== "terminal") throw new TypeError("notification is invalid");
+  if (loose.botId !== undefined) throw new TypeError("notification is invalid");
+  const value = raw as TerminalNotificationRecord;
+  if (typeof value.id !== "string" || !ID_PATTERN.test(value.id) || typeof value.projectId !== "string" || !ID_PATTERN.test(value.projectId) || typeof value.sessionId !== "string" || !ID_PATTERN.test(value.sessionId) || (value.source !== "activity" && value.source !== "message") || !KINDS.includes(value.kind) || (value.kind === "message") !== (value.source === "message") || !Number.isFinite(value.raisedAt) || !isText(value.title, MAX_TITLE_CHARS) || !isText(value.body, MAX_BODY_CHARS)) {
     throw new TypeError("notification is invalid");
   }
   // Only a notification a process sent carries text.
@@ -181,11 +212,38 @@ function normalizeRecord(value: NotificationRecord): NotificationRecord {
     : {};
   return Object.freeze({
     id: value.id,
+    owner: "terminal" as const,
     projectId: value.projectId,
     sessionId: value.sessionId,
     source: value.source,
     kind: value.kind,
     ...text,
+    raisedAt: value.raisedAt,
+  });
+}
+
+function normalizeBotRecord(value: Record<string, unknown>): BotNotificationRecord {
+  if (
+    typeof value.id !== "string" || !ID_PATTERN.test(value.id)
+    || typeof value.botId !== "string" || !ID_PATTERN.test(value.botId)
+    || value.projectId !== undefined || value.sessionId !== undefined
+    || value.source !== "bot" || value.kind !== "bot-message"
+    || typeof value.body !== "string" || !isText(value.body, MAX_BODY_CHARS)
+    || !Number.isSafeInteger(value.count) || (value.count as number) < 1 || (value.count as number) > MAX_BOT_COUNT
+    || !Number.isSafeInteger(value.throughSequence) || (value.throughSequence as number) < 0
+    || typeof value.raisedAt !== "number" || !Number.isFinite(value.raisedAt)
+  ) {
+    throw new TypeError("notification is invalid");
+  }
+  return Object.freeze({
+    id: value.id,
+    owner: "bot" as const,
+    botId: value.botId,
+    source: "bot" as const,
+    kind: "bot-message" as const,
+    body: value.body,
+    count: value.count as number,
+    throughSequence: value.throughSequence as number,
     raisedAt: value.raisedAt,
   });
 }
