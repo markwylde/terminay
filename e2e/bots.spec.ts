@@ -655,6 +655,53 @@ test.describe('Home › Bots', () => {
 		await expect(tab.locator('.bots-sess')).toHaveCount(3);
 	});
 
+	test('chat times every message, marks unread replies until left, and lists a repeating trigger once', async ({
+		mainWindow,
+		tempDir,
+	}) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Wren'));
+		await send(tab, 'hello');
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		// A reply read as it arrives opens no divider.
+		await expect(tab.locator('[data-terminay-bot-unread]')).toHaveCount(0);
+		await expect(transcript.locator('.bots-msg')).toHaveCount(2);
+		await expect(transcript.locator('.bots-msg time')).toHaveCount(2);
+
+		const row = await newTrigger(tab, 'Every so often', 'check in');
+		await row.locator('[data-terminay-bot-trigger-run]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await expect(
+			tab
+				.locator('[data-terminay-bot-session-row]')
+				.filter({ hasText: 'Every so often' }),
+		).toHaveAttribute('data-terminay-bot-session-state', 'completed', {
+			timeout: 30_000,
+		});
+
+		await chat(tab);
+		await expect(transcript.locator('.bots-msg')).toHaveCount(3);
+		const divider = tab.locator('[data-terminay-bot-unread]');
+		await expect(divider).toHaveText('1 new message');
+		await expect(
+			transcript.locator('[data-terminay-bot-unread] + .bots-msg'),
+		).toContainText('Wren');
+
+		const upcoming = tab.locator('[data-terminay-bot-upcoming] li');
+		await expect(upcoming).toHaveCount(1);
+		await expect(upcoming).toContainText('Every so often');
+		await expect(upcoming.getByLabel('Repeats')).toBeVisible();
+		await mainWindow.screenshot({
+		});
+
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await chat(tab);
+		await expect(transcript.locator('.bots-msg')).toHaveCount(3);
+		await expect(divider).toHaveCount(0);
+	});
+
 	test('a new message completes while an older execution is held', async ({
 		mainWindow,
 		tempDir,

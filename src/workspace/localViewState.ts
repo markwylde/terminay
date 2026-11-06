@@ -524,3 +524,54 @@ export function shouldActivateAdoptedTerminal(
 		options.rememberedSessionId === options.sessionId
 	);
 }
+
+/**
+ * How far this device has read each bot's chat, as the highest message
+ * sequence it has shown and then left. Which messages one device has looked at
+ * is that device's business, exactly like the selected tab.
+ */
+const BOT_READ_STORAGE_KEY = 'terminay.view.bot-chat-read.v1';
+const MAX_REMEMBERED_BOTS = 64;
+
+function readBotReads(): Record<string, number> {
+	try {
+		const raw = globalThis.localStorage?.getItem(BOT_READ_STORAGE_KEY);
+		if (raw === null || raw === undefined) return {};
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+			return {};
+		return Object.fromEntries(
+			Object.entries(parsed).filter(
+				(entry): entry is [string, number] =>
+					Number.isSafeInteger(entry[1]) && (entry[1] as number) >= 0,
+			),
+		);
+	} catch {
+		return {};
+	}
+}
+
+/** The last message sequence read on this device, or undefined if never seen. */
+export function recallBotChatRead(botId: string): number | undefined {
+	if (botId.length === 0) return undefined;
+	return readBotReads()[botId];
+}
+
+export function rememberBotChatRead(botId: string, sequence: number): void {
+	if (botId.length === 0 || !Number.isSafeInteger(sequence) || sequence < 0)
+		return;
+	const all = readBotReads();
+	if (all[botId] === sequence) return;
+	delete all[botId];
+	all[botId] = sequence;
+	try {
+		globalThis.localStorage?.setItem(
+			BOT_READ_STORAGE_KEY,
+			JSON.stringify(
+				Object.fromEntries(Object.entries(all).slice(-MAX_REMEMBERED_BOTS)),
+			),
+		);
+	} catch {
+		/* A device that cannot remember shows no unread divider. */
+	}
+}

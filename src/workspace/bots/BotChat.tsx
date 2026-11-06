@@ -16,6 +16,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { ContextMenu } from '../../components/ContextMenu';
+import { recallBotChatRead, rememberBotChatRead } from '../localViewState';
 import { BotTranscript } from './BotTranscript';
 import { BotContextRail } from './BotContextRail';
 import type { BotConfigTab } from './BotTab';
@@ -71,6 +72,8 @@ export function BotChat({
 		[clearing, setClearing] = useState(false);
 	const scroller = useRef<HTMLDivElement>(null),
 		transcript = useRef<HTMLDivElement>(null),
+		divider = useRef<HTMLDivElement>(null),
+		jumpPending = useRef(false),
 		pinned = useRef(true),
 		cursor = useRef<string | undefined>(undefined),
 		reload = useRef<() => void>(() => {});
@@ -207,6 +210,75 @@ export function BotChat({
 		() => [...messages.values()].sort((a, b) => a.sequence - b.sequence),
 		[messages],
 	);
+	// Read position: snapshotted when Chat is entered so the divider stays put
+	// while the user reads; written back when they leave.
+	const latest = ordered.at(-1)?.sequence;
+	const latestRef = useRef(latest);
+	latestRef.current = latest;
+	const [readThrough, setReadThrough] = useState<number>();
+	const [shown, setShown] = useState(
+		() => document.visibilityState !== 'hidden',
+	);
+	useEffect(() => {
+		const sync = () => setShown(document.visibilityState !== 'hidden');
+		document.addEventListener('visibilitychange', sync);
+		return () => document.removeEventListener('visibilitychange', sync);
+	}, []);
+	// The user is on this screen: Chat is showing and the window is not hidden.
+	const here = visible && shown;
+	// Layout timing, so the divider exists before the first scroll decision.
+	useLayoutEffect(() => {
+		if (!here) return;
+		const id = bot.id;
+		setReadThrough(recallBotChatRead(id));
+		jumpPending.current = true;
+		return () => {
+			if (latestRef.current !== undefined)
+				rememberBotChatRead(id, latestRef.current);
+			setReadThrough(undefined);
+		};
+	}, [here, bot.id]);
+	useEffect(() => {
+		// A bot never shown on this device starts read, so old history gets no
+		// divider; record that once the first page has loaded.
+		if (here && !loading && readThrough === undefined && latest !== undefined)
+			if (recallBotChatRead(bot.id) === undefined) {
+				rememberBotChatRead(bot.id, latest);
+				setReadThrough(latest);
+			}
+	}, [here, loading, readThrough, latest, bot.id]);
+	const seenLatest = useRef<number | undefined>(undefined);
+	useEffect(() => {
+		// A reply arriving while the user is reading at the bottom is seen, not
+		// new; a divider marks only what arrived while they were away.
+		const before = seenLatest.current;
+		seenLatest.current = latest;
+		if (
+			!here ||
+			latest === undefined ||
+			before === undefined ||
+			readThrough === undefined ||
+			latest <= before
+		)
+			return;
+		const divided = ordered.some(
+			(m) =>
+				m.sequence > readThrough && m.sequence <= before && m.author !== 'user',
+		);
+		if (!divided && pinned.current && document.hasFocus())
+			setReadThrough(latest);
+	}, [here, latest, readThrough, ordered]);
+	const unread = useMemo(() => {
+		if (readThrough === undefined) return undefined;
+		const fresh = ordered.filter(
+			(m) => m.sequence > readThrough && m.author !== 'user',
+		);
+		return fresh[0] ? { key: fresh[0].id, count: fresh.length } : undefined;
+	}, [ordered, readThrough]);
+	const times = useMemo(
+		() => new Map(ordered.map((m) => [m.id, m.createdAt])),
+		[ordered],
+	);
 	const items = useMemo(
 		() =>
 			ordered.map((message) => ({
@@ -225,9 +297,29 @@ export function BotChat({
 		[ordered],
 	);
 	useLayoutEffect(() => {
-		if (visible && pinned.current && scroller.current)
-			scroller.current.scrollTop = scroller.current.scrollHeight;
-	}, [items, visible]);
+		const viewport = scroller.current;
+		if (!visible || !viewport) return;
+		// Wait for the entry snapshot so the divider is in place before deciding.
+		const snapshotPending =
+			readThrough === undefined && recallBotChatRead(bot.id) !== undefined;
+		if (jumpPending.current && !loading && !snapshotPending) {
+			jumpPending.current = false;
+			const line = divider.current;
+			if (line) {
+				const top =
+					line.getBoundingClientRect().top -
+					viewport.getBoundingClientRect().top +
+					viewport.scrollTop;
+				// Open at the divider only when the unread run would not fit.
+				if (viewport.scrollHeight - top > viewport.clientHeight) {
+					pinned.current = false;
+					viewport.scrollTop = Math.max(0, top - 16);
+					return;
+				}
+			}
+		}
+		if (pinned.current) viewport.scrollTop = viewport.scrollHeight;
+	}, [items, visible, loading, readThrough, unread?.key, bot.id]);
 	useLayoutEffect(() => {
 		const viewport = scroller.current,
 			content = transcript.current;
@@ -274,6 +366,9 @@ export function BotChat({
 				);
 			if (draftRef.current === text) onDraftChange('');
 			pinned.current = true;
+			// Replying means the user has caught up.
+			rememberBotChatRead(bot.id, result.message.sequence);
+			setReadThrough(result.message.sequence);
 			if (result.error) setError(result.error);
 			server.refreshBot(bot.id);
 		} catch (cause) {
@@ -484,6 +579,8 @@ export function BotChat({
 					<BotTranscript
 						containerRef={transcript}
 						items={items}
+						messageTimes={times}
+						unread={unread ? { ...unread, ref: divider } : undefined}
 						bot={bot}
 						transport={server.transport}
 						onMessageMenu={(id, _text, x, y) => {
