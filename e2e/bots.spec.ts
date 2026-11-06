@@ -623,6 +623,51 @@ test.describe('Home › Bots', () => {
 		await expect(investigation).toHaveCount(1);
 	});
 
+	test('Terminay MCP access is off by default, saves on, and explains when the server has MCP off', async ({
+		appHarness,
+		mainWindow,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Workspace helper');
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		const toggle = tab.locator('[data-terminay-bot-terminay-mcp]');
+		const hint = tab.locator('[data-terminay-bot-terminay-mcp-disabled]');
+		await expect(toggle).toHaveAttribute('aria-checked', 'false');
+		await expect(hint).toHaveCount(0);
+		await toggle.scrollIntoViewIfNeeded();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('terminay-mcp-access-off.png'),
+		});
+
+		await toggle.click();
+		await tab.locator('[data-terminay-bot-profile-save]').click();
+		await expect(tab.locator('.bots-done')).toContainText('Saved');
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await toggle.scrollIntoViewIfNeeded();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('terminay-mcp-access-on.png'),
+		});
+
+		const settings = await appHarness.openSettingsWindow({
+			page: mainWindow,
+			sectionId: 'terminay-mcp',
+		});
+		await settings.getByLabel('Enable Terminay MCP server').uncheck();
+		await expect(settings.locator('.settings-status')).toContainText('Saved');
+		await settings.close();
+		await expect(hint).toBeVisible();
+		await expect(hint).toContainText('Settings › AI › Terminay MCP');
+		await expect(toggle).toBeEnabled();
+		await hint.scrollIntoViewIfNeeded();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('terminay-mcp-access-server-off.png'),
+		});
+	});
+
 	test('Stop ends a held turn, whether the agent honours the cancel or not', async ({
 		mainWindow,
 		tempDir,

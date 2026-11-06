@@ -113,3 +113,22 @@ test('Investigate failures defaults on, round-trips an explicit value and reject
 		store.save({ ...store.get(bot.id), investigateFailures: 'yes' }),
 	);
 });
+
+test('Terminay MCP access defaults off, round-trips an explicit value and rejects a non-boolean', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bots-store-mcp-access-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const path = join(root, 'bots.json');
+	const store = new BotStore(path);
+	const bot = store.save({ name: 'Bird', agentId: 'fake.agent' });
+	assert.equal(bot.terminayMcpAccess, false);
+	store.save({ ...store.get(bot.id), terminayMcpAccess: true });
+	assert.equal(new BotStore(path).get(bot.id).terminayMcpAccess, true);
+	// A profile written before the setting existed reads as off.
+	const raw = JSON.parse(readFileSync(path, 'utf8'));
+	for (const b of raw.bots) delete b.terminayMcpAccess;
+	writeFileSync(path, JSON.stringify(raw));
+	assert.equal(new BotStore(path).get(bot.id).terminayMcpAccess, false);
+	assert.throws(() =>
+		store.save({ ...store.get(bot.id), terminayMcpAccess: 'yes' }),
+	);
+});

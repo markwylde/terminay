@@ -141,10 +141,12 @@ export const BOT_RUNTIME_TOOLS = [
 export class BotExecutionRuntime {
 	private work = new Map<string, string>();
 	private secrets = new Map<string, { botId: string; token: string }>();
-	bindSecret(id: string, token: string): () => void {
+	/** Hold a secret injected into an execution, so diagnostics redact it.
+	 * `key` lets one execution hold more than one (ADR-0100). */
+	bindSecret(id: string, token: string, key = id): () => void {
 		const botId = this.service.sessions.get(id).botId;
-		this.secrets.set(id, { botId, token });
-		return () => this.secrets.delete(id);
+		this.secrets.set(key, { botId, token });
+		return () => this.secrets.delete(key);
 	}
 	sanitizeSecrets(botId: string, value: string): string {
 		for (const item of this.secrets.values())

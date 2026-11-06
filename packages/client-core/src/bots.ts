@@ -52,7 +52,9 @@ function profile(value: unknown): BotProfile {
 		typeof r.agentId !== 'string' ||
 		!['autonomous', 'ask'].includes(String(r.approvalMode)) ||
 		(r.investigateFailures !== undefined &&
-			typeof r.investigateFailures !== 'boolean')
+			typeof r.investigateFailures !== 'boolean') ||
+		(r.terminayMcpAccess !== undefined &&
+			typeof r.terminayMcpAccess !== 'boolean')
 	)
 		throw new TypeError('invalid bot profile');
 	return structuredClone(r) as unknown as BotProfile;

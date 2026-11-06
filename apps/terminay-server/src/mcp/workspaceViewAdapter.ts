@@ -512,6 +512,9 @@ export function createWorkspaceViewAdapter(
 					...optional('project', project(caller.projectId)),
 				};
 			}
+			// A bot has no client to place beside, so it places nothing.
+			if (context.bot !== undefined)
+				return optional('project', request.project);
 			// A chat: whatever is in front on its client.
 			const reply = await ask(context, 'layout', {}, undefined, signal);
 			const layout = isRecord(reply.layout) ? reply.layout : {};
@@ -593,6 +596,13 @@ export async function requestAgentView(
 	projectId: string | undefined,
 	signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
+	// A bot execution has no agent's client, whoever is viewing the bot, so it
+	// never reaches a client's view (ADR-0100).
+	if (context.bot !== undefined)
+		throw new ControlEndpointError(
+			'renderer_unavailable',
+			'A bot has no Terminay window of its own, so there is no view to read or change.',
+		);
 	const target = options.targetFor({
 		terminalSessionId: context.terminalSessionId,
 		projectId: context.projectId,
