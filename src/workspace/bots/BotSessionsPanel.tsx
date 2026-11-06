@@ -9,7 +9,7 @@ import type {
 	BotSessionRecord,
 	BotSessionState,
 } from '@terminay/protocol';
-import { Search, Square } from 'lucide-react';
+import { Search, Square, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { BotTranscript } from './BotTranscript';
 import { formatWhen } from './BotTriggersPanel';
@@ -20,6 +20,8 @@ import { useNow } from './useNow';
 import { refusalText, type ServerBots } from './useServerBots';
 
 type OriginFilter = 'all' | 'chat' | 'trigger' | 'run-now';
+/** The trigger a Sessions list is filtered to, named as it was when chosen. */
+export type SessionsTrigger = Readonly<{ id: string; name: string }>;
 type OutcomeFilter = 'all' | BotSessionState;
 
 const ORIGIN_LABELS: Readonly<Record<OriginFilter, string>> = {
@@ -54,8 +56,12 @@ export function BotSessionsPanel({
 	bot,
 	onOpenInChat,
 	selectedId,
+	trigger,
+	onClearTrigger,
 }: Readonly<{
 	selectedId?: string;
+	trigger?: SessionsTrigger;
+	onClearTrigger?: () => void;
 	server: ServerBots;
 	bot: BotProfile;
 	onOpenInChat: (sessionId: string) => void;
@@ -70,6 +76,11 @@ export function BotSessionsPanel({
 	useEffect(() => {
 		if (selectedId) setSelected(selectedId);
 	}, [selectedId]);
+	// Applying a trigger filter selects the newest of that trigger's sessions.
+	const triggerId = trigger?.id;
+	useEffect(() => {
+		if (triggerId !== undefined) setSelected(undefined);
+	}, [triggerId]);
 	const [error, setError] = useState<string>();
 	const recent = server.sessions.get(bot.id);
 
@@ -86,6 +97,7 @@ export function BotSessionsPanel({
 				...(origin === 'all' ? {} : { origin }),
 				...(outcome === 'all' ? {} : { state: outcome }),
 				...(query === '' ? {} : { search: query }),
+				...(triggerId === undefined ? {} : { triggerId }),
 			})
 			.then((sessions) => {
 				if (!live) return;
@@ -98,7 +110,7 @@ export function BotSessionsPanel({
 		return () => {
 			live = false;
 		};
-	}, [server.client, bot.id, origin, outcome, query, recent]);
+	}, [server.client, bot.id, origin, outcome, query, triggerId, recent]);
 
 	const record =
 		list?.find((s) => s.id === selected) ?? (selected ? undefined : list?.[0]);
@@ -149,6 +161,26 @@ export function BotSessionsPanel({
 							))}
 						</select>
 					</div>
+					{trigger ? (
+						<div
+							className="bots-filterchip"
+							data-terminay-bot-sessions-trigger={trigger.id}
+						>
+							<span className="bots-filterchip__label">
+								Trigger: <b>{trigger.name}</b>
+							</span>
+							<button
+								type="button"
+								className="bots-iconbtn bots-iconbtn--sm"
+								aria-label={`Show sessions from every trigger, not only ${trigger.name}`}
+								title="Clear trigger filter"
+								onClick={onClearTrigger}
+								data-terminay-bot-sessions-trigger-clear="true"
+							>
+								<X size={12} aria-hidden="true" />
+							</button>
+						</div>
+					) : null}
 				</div>
 				<div className="bots-scroll bots-slist__rows">
 					{error ? (
