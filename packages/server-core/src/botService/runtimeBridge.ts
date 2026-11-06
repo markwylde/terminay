@@ -4,6 +4,7 @@ import type { JsonValue } from '@terminay/protocol';
 import type { BotCredentialLease } from './credentials.js';
 import type { EngineDriver } from './engine.js';
 import { BOT_RUNTIME_TOOLS, type BotExecutionRuntime } from './runtime.js';
+import type { BotTerminayMcpHandler } from './service.js';
 import { BotError, object } from './store.js';
 import { BotTokenRedactor } from './tokens.js';
 
@@ -21,6 +22,8 @@ export async function openBotRuntimeBridge(
 	sessionId: string,
 	runtime: BotExecutionRuntime,
 	onDiagnostic?: (value: string) => void,
+	/** Opens the execution's Terminay MCP, when the bot has access (ADR-0100). */
+	terminay?: () => BotTerminayMcpHandler | undefined,
 ): Promise<BotRuntimeBridge> {
 	const token = randomBytes(32).toString('hex'),
 		socket = `/tmp/terminay-mcp-${sessionId}.sock`,
@@ -93,6 +96,13 @@ export async function openBotRuntimeBridge(
 		}
 		const connection = frame.connection;
 		if (!Number.isSafeInteger(connection) || Number(connection) < 1) return;
+		// The relay says an adapter disconnected: end only its requests.
+		if (frame.closed === true) {
+			for (const [key, controller] of requests)
+				if (key.startsWith(`${connection}:`)) controller.abort();
+			initialized.delete(Number(connection));
+			return;
+		}
 		const request = object(frame.message),
 			requestId = request.id;
 		if (
@@ -314,6 +324,32 @@ export async function openBotRuntimeBridge(
 	} finally {
 		clearTimeout(timer);
 	}
+	// Terminay MCP is optional: when it cannot be set up, the execution runs
+	// with its runtime tools and says so in Runner output.
+	let terminayRelay: TerminayRelay | undefined;
+	if (terminay !== undefined) {
+		try {
+			terminayRelay = await openTerminayRelay(
+				driver,
+				botId,
+				sessionId,
+				runtime,
+				terminay,
+			);
+		} catch (error) {
+			onDiagnostic?.(
+				diagnostic(
+					`Terminay MCP is unavailable for this execution: ${
+						error instanceof Error ? error.message : 'it could not start'
+					}`,
+				),
+			);
+		}
+	}
+	const closeAll = async () => {
+		await Promise.allSettled([terminayRelay?.close(), close()]);
+	};
+	const secrets = [token, ...(terminayRelay ? [terminayRelay.secret] : [])];
 	const environment = {
 		BASH_ENV: '/usr/local/bin/terminay-shell-env',
 		TERMINAY_RUNTIME_SOCKET: socket,
@@ -351,9 +387,10 @@ export async function openBotRuntimeBridge(
 				],
 				env: [],
 			},
+			...(terminayRelay === undefined ? [] : [terminayRelay.server]),
 		],
 		environment,
-		close,
+		close: closeAll,
 		assertConnected: () => {
 			if (!connected)
 				throw new BotError(
@@ -364,10 +401,13 @@ export async function openBotRuntimeBridge(
 		wrapCredential: (credential) => ({
 			...credential,
 			redact: (value) =>
-				credential.redact(value).split(token).join('[redacted]'),
+				secrets.reduce(
+					(text, secret) => text.split(secret).join('[redacted]'),
+					credential.redact(value),
+				),
 			stream: () => {
 				const first = credential.stream(),
-					second = new BotTokenRedactor([token]),
+					second = new BotTokenRedactor(secrets),
 					decoder = new StringDecoder('utf8');
 				return {
 					push: (chunk) => decoder.write(second.push(first.push(chunk))),
@@ -378,5 +418,184 @@ export async function openBotRuntimeBridge(
 				};
 			},
 		}),
+	};
+}
+
+interface TerminayRelay {
+	readonly secret: string;
+	readonly server: JsonValue;
+	close(): Promise<void>;
+}
+
+/**
+ * The execution's `terminay` relay (ADR-0100): its own supervised exec, socket
+ * and secret, so the container never holds the capability token. Each frame's
+ * secret is checked before the host's Terminay MCP sees it, which serves one
+ * MCP session per adapter connection.
+ */
+async function openTerminayRelay(
+	driver: EngineDriver,
+	botId: string,
+	sessionId: string,
+	runtime: BotExecutionRuntime,
+	openHandler: () => BotTerminayMcpHandler | undefined,
+): Promise<TerminayRelay | undefined> {
+	const relayId = randomBytes(12).toString('hex'),
+		secret = randomBytes(32).toString('hex'),
+		socket = `/tmp/terminay-mcp-${relayId}.sock`,
+		supervisor = `mcp-terminay-${relayId}`;
+	const handler = openHandler();
+	if (handler === undefined) return undefined;
+	const unbind = runtime.bindSecret(sessionId, secret, `${sessionId}:terminay`);
+	let stream: ReturnType<EngineDriver['execStream']>;
+	try {
+		stream = driver.execStream(
+			`terminay-bot-${botId}`,
+			['terminay-run', supervisor, '--', 'terminay-mcp-relay', relayId],
+			{ user: 'root' },
+		);
+	} catch (error) {
+		handler.close();
+		unbind();
+		throw error;
+	}
+	const expected = Buffer.from(secret);
+	const decoder = new StringDecoder('utf8');
+	let buffer = '',
+		closed = false,
+		closeTask: Promise<void> | undefined;
+	let readyResolve!: () => void, readyReject!: (e: Error) => void;
+	const ready = new Promise<void>((resolve, reject) => {
+		readyResolve = resolve;
+		readyReject = reject;
+	});
+	// A rejection before anyone awaits it must not go unhandled.
+	ready.catch(() => undefined);
+	const send = (connection: number, message: unknown) => {
+		if (closed) return;
+		if (stream.stdin.writableLength > 262144) {
+			void close();
+			return;
+		}
+		let line = `${JSON.stringify({ connection, message })}\n`;
+		if (Buffer.byteLength(line) > 131072) {
+			const id = (message as { id?: unknown }).id;
+			if (id === undefined) return;
+			line = `${JSON.stringify({
+				connection,
+				message: {
+					jsonrpc: '2.0',
+					id,
+					error: { code: -32603, message: 'MCP response exceeds relay limit' },
+				},
+			})}\n`;
+		}
+		stream.stdin.write(line);
+	};
+	const handle = (raw: unknown) => {
+		const frame = object(raw);
+		if (frame.ready === true) {
+			readyResolve();
+			return;
+		}
+		const connection = frame.connection;
+		if (!Number.isSafeInteger(connection) || Number(connection) < 1) return;
+		if (frame.closed === true) {
+			handler.closeConnection(Number(connection));
+			return;
+		}
+		const supplied = Buffer.from(
+			typeof frame.token === 'string' ? frame.token : '',
+		);
+		if (
+			supplied.length !== expected.length ||
+			!timingSafeEqual(supplied, expected)
+		) {
+			const message = frame.message;
+			const id =
+				message && typeof message === 'object' && !Array.isArray(message)
+					? (message as { id?: unknown }).id
+					: undefined;
+			if (id !== undefined)
+				send(Number(connection), {
+					jsonrpc: '2.0',
+					id,
+					error: { code: -32600, message: 'Execution capability refused' },
+				});
+			return;
+		}
+		handler.handle(Number(connection), frame.message, (message) =>
+			send(Number(connection), message),
+		);
+	};
+	const close = (): Promise<void> => {
+		if (closeTask) return closeTask;
+		closed = true;
+		readyReject(new Error('Terminay MCP relay closed before readiness'));
+		handler.close();
+		unbind();
+		closeTask = (async () => {
+			stream.stdin.end();
+			try {
+				await driver.exec(
+					`terminay-bot-${botId}`,
+					['terminay-run', '--kill', supervisor],
+					{ user: 'root', deadlineMs: 20000 },
+				);
+			} catch {
+				// The exec stream is killed below either way.
+			} finally {
+				stream.kill();
+			}
+		})();
+		return closeTask;
+	};
+	stream.once('error', () => void close());
+	stream.once('close', () => void close());
+	stream.stdin.on('error', () => void close());
+	stream.stdout.on('data', (bytes: Buffer) => {
+		buffer += decoder.write(bytes);
+		for (let at = buffer.indexOf('\n'); at >= 0; at = buffer.indexOf('\n')) {
+			const line = buffer.slice(0, at);
+			buffer = buffer.slice(at + 1);
+			if (Buffer.byteLength(line) > 131072) {
+				void close();
+				return;
+			}
+			if (!line.trim()) continue;
+			try {
+				handle(JSON.parse(line));
+			} catch {
+				void close();
+				return;
+			}
+		}
+		if (Buffer.byteLength(buffer) > 131072) void close();
+	});
+	const timer = setTimeout(
+		() => readyReject(new Error('Terminay MCP relay readiness deadline')),
+		10000,
+	);
+	try {
+		await ready;
+	} catch (error) {
+		await close();
+		throw error;
+	} finally {
+		clearTimeout(timer);
+	}
+	return {
+		secret,
+		server: {
+			name: 'terminay',
+			command: '/usr/local/bin/terminay-bot-mcp',
+			args: [],
+			env: Object.entries({
+				BASH_ENV: '',
+				TERMINAY_RUNTIME_SOCKET: socket,
+				TERMINAY_RUNTIME_TOKEN: secret,
+			}).map(([name, value]) => ({ name, value })),
+		},
+		close,
 	};
 }

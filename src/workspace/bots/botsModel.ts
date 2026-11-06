@@ -215,6 +215,11 @@ export function investigatesFailures(bot: Pick<BotProfile, 'investigateFailures'
 	return bot.investigateFailures !== false;
 }
 
+/** Terminay MCP access is off unless the profile turns it on (ADR-0100). */
+export function hasTerminayMcpAccess(bot: Pick<BotProfile, 'terminayMcpAccess'>): boolean {
+	return bot.terminayMcpAccess === true;
+}
+
 /** How many failures a failure investigation covers, listed or only counted. */
 function failureCount(origin: BotSessionRecord['origin']): number {
 	return origin.kind === 'failure'

@@ -200,6 +200,19 @@ test('with no client to talk to, a view tool fails instead of pretending', async
 	assert.equal(requests.length, 0);
 });
 
+test('a bot execution has no agent\'s client, even while a window is attached', async () => {
+	const { view, requests } = await fixture();
+	const bot = context({
+		terminalSessionId: 'bot:abcdefabcdef:abcdefabcdefabcdefabcdef',
+		projectId: AUTOMATION_SPACE_PROJECT_ID,
+		reach: 'workspace',
+		bot: { botId: 'abcdefabcdef', executionId: 'abcdefabcdefabcdefabcdef' },
+	});
+	await rejects(view.focusTab({ tab: 'sibling' }, bot, new AbortController().signal), 'renderer_unavailable');
+	await rejects(view.getLayout({}, bot, new AbortController().signal), 'renderer_unavailable');
+	assert.equal(requests.length, 0);
+});
+
 test('a client refusal keeps its meaning', async () => {
 	const { view, setAnswer } = await fixture();
 	setAnswer(() => ({ ok: false, error: { code: 'not_found', message: 'No such tab is open in this window.' } }));

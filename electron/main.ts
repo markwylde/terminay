@@ -87,6 +87,7 @@ import {
 	type ControlSocketPlacement,
 	type ControlPermissionGate,
 	type ControlRequestContext,
+	createBotTerminayMcpHost,
 	createControlEndpoint,
 	createMcpPermissionGate,
 	createNotificationControlAdapter,
@@ -2235,6 +2236,18 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			// Terminay's own words, so provider reports of them are not shown.
 			notesCalls: true,
 		},
+		// A bot execution's capability is minted here too, and only the bot
+		// service is handed this (ADR-0100).
+		botTerminayMcp: createBotTerminayMcpHost({
+			capabilities: mcpCapabilities,
+			socketPath: () => {
+				try {
+					return resolveMcpControlSocketPlacement().path;
+				} catch {
+					return undefined;
+				}
+			},
+		}),
 		connectedServers: {
 			backend: embeddedConnectedServersBackend,
 			vault: embeddedVault.vault,

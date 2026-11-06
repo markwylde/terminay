@@ -20,6 +20,7 @@ export function assertBotAuthority(
 				'capabilityId',
 				'mcpPrincipal',
 				'chatId',
+				'botExecutionId',
 				'mcp',
 			].some((key) => claims[key] !== undefined))
 	)

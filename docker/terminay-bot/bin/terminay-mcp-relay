@@ -31,12 +31,16 @@ def send(value):
     if len(line)>MAX_LINE: raise ValueError('Relay frame exceeds limit')
     sys.stdout.buffer.write(line)
     sys.stdout.buffer.flush()
-def close_client(cid):
+def close_client(cid, notify=True):
     client=clients.pop(cid,None)
     buffers.pop(cid,None)
     if client:
         selector.unregister(client)
         client.close()
+        # Tell the host, so it cancels only that connection's requests.
+        if notify:
+            try: send({'connection':cid,'closed':True})
+            except (OSError,ValueError): pass
 try:
     while True:
         for key,_ in selector.select():
@@ -70,7 +74,7 @@ try:
                 if source=='host':raise ValueError('Host frame exceeds limit')
                 close_client(source)
 finally:
-    for cid in list(clients):close_client(cid)
+    for cid in list(clients):close_client(cid, False)
     listener.close()
     try:os.unlink(path)
     except FileNotFoundError:pass

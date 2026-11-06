@@ -13,7 +13,9 @@ A view operation from an MCP caller SHALL be applied by exactly one client, the
 calling terminal's presentation lease, on the connection that holds it. For a
 chat caller, it SHALL be the client connection that sent the chat's most recent
 message, which the server SHALL hold in memory only and SHALL forget when that
-connection closes. When no agent's client exists, or it has not attached as
+connection closes. A bot execution caller SHALL have no agent's client, even
+when a client is viewing the bot or sent the message that started the execution.
+When no agent's client exists, or it has not attached as
 able to apply view operations, a view operation SHALL fail with
 `renderer_unavailable` and SHALL change nothing. No other client's view SHALL
 change because of an agent's view operation.
@@ -34,6 +36,11 @@ change because of an agent's view operation.
 
 - **WHEN** an automation terminal no client presents calls `move_tab`
 - **THEN** the call fails with `renderer_unavailable` and nothing moves
+
+#### Scenario: Bot calls a view operation
+
+- **WHEN** a user chats with a bot that has Terminay MCP access, and its execution calls `focus_tab`
+- **THEN** the call fails with `renderer_unavailable` and no client's view changes
 
 ### Requirement: View request relay
 
