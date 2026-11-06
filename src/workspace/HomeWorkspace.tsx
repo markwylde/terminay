@@ -392,7 +392,9 @@ export type HomeWorkspaceHandle = Readonly<{
 	open: (
 		target:
 			| AutomationTabTarget
-			| Readonly<{ kind: 'section'; section: HomeSection }>,
+			| Readonly<{ kind: 'section'; section: HomeSection }>
+			| Readonly<{ kind: 'bot'; serverId: string; botId: string }>
+			| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>,
 	) => void;
 	/**
 	 * Close the tab in front as a person would. Returns whether there was one.
@@ -656,7 +658,12 @@ export const HomeWorkspace = forwardRef<
 		ref,
 		() => ({
 			open: (target) => {
-				if (target.kind === 'section') openDescriptor(target);
+				if (
+					target.kind === 'section' ||
+					target.kind === 'bot' ||
+					target.kind === 'recording'
+				)
+					openDescriptor(target);
 				else openTarget(target);
 			},
 			requestCloseActiveTab: () => {

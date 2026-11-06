@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Dashboard Mockup</title>
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+:root {
+	--bg: #0f1318;
+	--panel: #151a21;
+	--panel-2: #1a2029;
+	--line: rgba(255,255,255,0.07);
+	--line-2: rgba(255,255,255,0.12);
+	--ink: #dce2f0;
+	--ink-2: rgba(220,226,240,0.62);
+	--ink-3: rgba(220,226,240,0.42);
+	--needs: #ff8f86;
+	--working: #f0c75e;
+	--done: #6fd394;
+	--idle: #6b7487;
+	--fail: #ff6b6b;
+	--link: #9ccfff;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+button { font: inherit; color: inherit; }
+
+/* Header */
+.hdr { display: flex; align-items: center; gap: 12px; padding: 14px 20px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+.hdr h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.hdr p { margin: 2px 0 0; font-size: 12px; color: var(--ink-2); }
+.hdr .grow { flex: 1; }
+.btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 6px; font-size: 12.5px; border: 1px solid var(--line-2); color: var(--ink); background: rgba(255,255,255,0.03); }
+.btn:hover { background: rgba(255,255,255,0.07); }
+.btn.primary { background: #2f6fd6; border-color: #3b7ce6; color: #fff; }
+.btn.primary:hover { background: #3a7ae0; }
+.btn svg { width: 14px; height: 14px; }
+.editbar { display: none; align-items: center; gap: 8px; }
+body.editing .editbar { display: flex; }
+body.editing .viewbar { display: none; }
+.hint { font-size: 12px; color: var(--ink-2); margin-right: 4px; }
+
+/* Grid */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); grid-auto-rows: minmax(150px, auto); grid-auto-flow: dense; gap: 12px; padding: 16px 20px 20px; }
+.w { --accent: #57b7ff; position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 13px 14px 14px; border-radius: 10px; background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 7%, var(--panel)) 0%, var(--panel) 70px); border: 1px solid var(--line); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--accent) 45%, transparent); transition: transform .12s, border-color .12s; }
+.w.wide { grid-column: span 2; }
+.w.tall { grid-row: span 2; }
+@media (max-width: 600px) { .w.wide { grid-column: span 1; } }
+.w-title { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+.chip { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; background: color-mix(in oklab, var(--accent) 20%, transparent); color: var(--accent); }
+.chip svg { width: 13px; height: 13px; }
+.w-title .more { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink-3); font-size: 11.5px; }
+.big { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: #fff; }
+.big small { font-size: 12.5px; font-weight: 500; color: var(--ink-2); margin-left: 6px; }
+.muted { color: var(--ink-2); font-size: 12px; }
+.row { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 6px 8px; margin: 0 -8px; border-radius: 6px; cursor: pointer; }
+.row:hover { background: rgba(255,255,255,0.05); }
+.row .t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.row .t b { font-weight: 600; }
+.row .t .sub { display: block; font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
+.row .m { font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.list { display: flex; flex-direction: column; gap: 1px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.pill { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { background: rgba(111,211,148,.14); color: var(--done); }
+.pill.fail { background: rgba(255,107,107,.14); color: var(--fail); }
+.pill.run { background: rgba(240,199,94,.14); color: var(--working); }
+.pill.need { background: rgba(255,143,134,.16); color: var(--needs); }
+.pill.idle { background: rgba(255,255,255,.07); color: var(--ink-2); }
+.linkbtn { all: unset; cursor: pointer; color: var(--link); font-size: 12px; }
+.linkbtn:hover { text-decoration: underline; }
+.ico { width: 14px; height: 14px; color: var(--ink-3); flex: 0 0 auto; }
+.x { all: unset; cursor: pointer; color: var(--ink-3); display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; }
+.x:hover { background: rgba(255,255,255,.08); color: var(--ink); }
+.x svg { width: 13px; height: 13px; }
+
+/* Needs you hero */
+.w.needs { border-color: rgba(255,143,134,.28); }
+.needs .big { color: var(--needs); }
+.needs-item { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: rgba(255,143,134,.06); border: 1px solid rgba(255,143,134,.14); cursor: pointer; }
+.needs-item:hover { background: rgba(255,143,134,.1); }
+.needs-item .nt { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.needs-item .nt .sub { display: block; font-size: 11.5px; color: var(--ink-3); }
+.needs-item code { font: 12px ui-monospace, monospace; background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 4px; }
+.needs-item .kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--needs); font-weight: 700; width: 64px; flex: 0 0 auto; }
+
+/* Agent ring */
+.ringwrap { display: flex; align-items: center; gap: 16px; }
+.legend { display: grid; grid-template-columns: auto auto; gap: 4px 10px; font-size: 12px; align-items: center; }
+.legend .n { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; color: #fff; }
+.legend .l { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+
+/* Workflow */
+.wf { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; padding: 7px 8px; margin: 0 -8px; border-radius: 6px; cursor: pointer; }
+.wf:hover { background: rgba(255,255,255,.05); }
+.steps { display: flex; gap: 3px; margin-top: 5px; }
+.steps i { height: 4px; flex: 1; border-radius: 2px; background: rgba(255,255,255,.09); }
+.steps i.d { background: var(--done); }
+.steps i.r { background: var(--working); }
+.steps i.f { background: var(--fail); }
+.steps i.n { background: var(--needs); }
+
+/* Run strip */
+.strip { display: flex; gap: 2px; align-items: flex-end; height: 44px; }
+.strip i { flex: 1; border-radius: 3px 3px 1px 1px; min-width: 3px; cursor: default; }
+.strip i.ok { background: var(--done); height: 100%; opacity: .85; }
+.strip i.fail { background: var(--fail); height: 100%; }
+.strip i.run { background: var(--working); height: 100%; }
+.strip i.skip { background: var(--idle); height: 45%; }
+.strip i:hover { opacity: 1; outline: 1px solid rgba(255,255,255,.5); }
+.kpis { display: flex; gap: 22px; align-items: baseline; }
+
+/* Bots */
+.avatar { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-weight: 700; font-size: 12px; color: #0f1318; position: relative; flex: 0 0 auto; }
+.avatar .st { position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--panel); }
+
+/* PR */
+.checks { display: flex; height: 6px; width: 90px; border-radius: 3px; overflow: hidden; gap: 2px; flex: 0 0 auto; }
+.checks i { display: block; height: 100%; }
+
+/* Projects */
+.proj-emoji { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; font-size: 13px; flex: 0 0 auto; }
+.mini { display: flex; gap: 8px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.mini span { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); }
+
+/* Quick actions */
+.qa { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.qa button { all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 8px; background: rgba(255,255,255,.03); border: 1px solid var(--line); font-size: 12.5px; }
+.qa button:hover { background: rgba(255,255,255,.07); border-color: var(--line-2); }
+.qa svg { width: 16px; height: 16px; color: var(--accent); }
+.qa kbd { margin-left: auto; font: 11px ui-monospace, monospace; color: var(--ink-3); }
+
+/* Edit mode */
+.tools { display: none; position: absolute; top: 8px; right: 8px; gap: 2px; padding: 2px; border-radius: 7px; background: #0b0e12; border: 1px solid var(--line-2); z-index: 2; }
+body.editing .tools { display: flex; }
+body.editing .w { cursor: grab; outline: 1px dashed rgba(156,207,255,.28); outline-offset: 2px; }
+body.editing .w > :not(.tools) { pointer-events: none; opacity: .75; }
+body.editing .w.dragging { opacity: .35; }
+body.editing .w.over { outline: 2px solid #57b7ff; }
+.tool { all: unset; cursor: pointer; display: grid; place-items: center; height: 22px; min-width: 22px; padding: 0 5px; border-radius: 5px; color: var(--ink-2); font-size: 11px; font-weight: 600; }
+.tool:hover { background: rgba(255,255,255,.1); color: #fff; }
+.tool.on { background: #2f6fd6; color: #fff; }
+.tool svg { width: 13px; height: 13px; }
+.sep { width: 1px; background: var(--line-2); margin: 3px 2px; }
+.tray { display: none; margin: 0 20px 24px; padding: 14px; border-radius: 10px; border: 1px dashed var(--line-2); }
+body.editing .tray { display: block; }
+.tray h3 { margin: 0 0 10px; font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); }
+.tray .items { display: flex; flex-wrap: wrap; gap: 8px; }
+.tray .empty { color: var(--ink-3); font-size: 12px; }
+.addchip { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.04); border: 1px solid var(--line-2); font-size: 12.5px; }
+.addchip:hover { background: rgba(255,255,255,.09); }
+.addchip svg { width: 13px; height: 13px; }
+.note { margin: 0 20px 18px; font-size: 11.5px; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<header class="hdr">
+	<div>
+		<h2>Home</h2>
+		<p>Your workspace at a glance.</p>
+	</div>
+	<div class="grow"></div>
+	<div class="viewbar"><button class="btn" id="customise"><i data-lucide="layout-grid"></i>Customise</button></div>
+	<div class="editbar">
+		<span class="hint">Drag to reorder · S / W / T sets size</span>
+		<button class="btn" id="reset"><i data-lucide="rotate-ccw"></i>Reset</button>
+		<button class="btn primary" id="done"><i data-lucide="check"></i>Done</button>
+	</div>
+</header>
+<main class="grid" id="grid"></main>
+<section class="tray" id="tray"><h3>Hidden widgets</h3><div class="items" id="trayItems"></div></section>
+<p class="note">Mockup only. The data is made up. The layout syncs through the server, so every device on that server shows the same dashboard.</p>
+
+<script>
+const SERVER = 'Local';
+const dial = (frac, tone) => {
+	const c = { running: 'var(--working)', alert: 'var(--needs)', done: 'var(--done)', idle: 'var(--idle)' }[tone];
+	const r = 13, C = 2 * Math.PI * r;
+	return `<svg width="34" height="34" viewBox="0 0 34 34" role="img" aria-label="${Math.round(frac*100)}%"><circle cx="17" cy="17" r="${r}" fill="none" stroke="rgba(255,255,255,.09)" stroke-width="4"/><circle cx="17" cy="17" r="${r}" fill="none" stroke="${c}" stroke-width="4" stroke-linecap="round" stroke-dasharray="${frac*C} ${C}" transform="rotate(-90 17 17)"/></svg>`;
+};
+const steps = (arr) => `<div class="steps">${arr.split('').map(s => `<i class="${s}"></i>`).join('')}</div>`;
+
+const runs = 'ok ok ok ok fail ok ok ok ok ok skip ok ok ok ok ok ok fail ok ok ok ok ok ok ok ok ok ok run'.split(' ');
+
+const WIDGETS = {
+	quick: { title: 'Quick actions', icon: 'zap', accent: '#a78bfa', size: 'wide', sizes: ['small','wide'], body: () => `
+		<div class="qa">
+			<button><i data-lucide="folder-plus"></i>New project<kbd>⌘⇧N</kbd></button>
+			<button><i data-lucide="bot"></i>New bot</button>
+			<button><i data-lucide="workflow"></i>New automation</button>
+			<button><i data-lucide="command"></i>Command Bar<kbd>⌘K</kbd></button>
+			<button><i data-lucide="settings"></i>Settings<kbd>⌘,</kbd></button>
+		</div>` },
+	needs: { title: 'Needs you', icon: 'bell-ring', accent: '#ff8f86', size: 'wide', cls: 'needs', more: '3 waiting', body: () => `
+		<div class="list" style="gap:6px">
+			<div class="needs-item"><span class="kind">Bot</span><span class="avatar" style="background:#7cc4ff">C</span><span class="nt"><b>Codexia</b> wants to run: <code>git push origin main</code><span class="sub">Permission request · 2m ago</span></span><button class="btn" style="padding:4px 9px">Review</button></div>
+			<div class="needs-item"><span class="kind">Workflow</span>${dial(.4,'alert').replace('34','22').replace('34','22')}<span class="nt"><b>Review</b> needs you · 2 of 5<span class="sub">terminay › claude · feature/home-widgets</span></span><span class="m">3m</span></div>
+			<div class="needs-item"><span class="kind">Agent</span><span class="dot" style="background:var(--needs)"></span><span class="nt"><b>codex</b> is waiting for input<span class="sub">terminay › Terminal 3</span></span><span class="m">8m</span></div>
+		</div>` },
+	agents: { title: 'Agents', icon: 'sparkles', accent: '#f0c75e', size: 'small', body: () => {
+		const d = [[1,'var(--needs)','Needs you'],[3,'var(--working)','Working'],[2,'var(--done)','Done'],[1,'var(--idle)','Idle']];
+		const tot = d.reduce((a,b)=>a+b[0],0), r=34, C=2*Math.PI*r; let off=0;
+		const segs = d.map(([n,c]) => { const len = n/tot*C - 3; const s = `<circle cx="44" cy="44" r="${r}" fill="none" stroke="${c}" stroke-width="10" stroke-dasharray="${len} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 44 44)"/>`; off += n/tot*C; return s; }).join('');
+		return `<div class="ringwrap"><svg width="88" height="88" viewBox="0 0 88 88">${segs}<text x="44" y="42" text-anchor="middle" fill="#fff" font-size="20" font-weight="700">${tot}</text><text x="44" y="57" text-anchor="middle" fill="rgba(220,226,240,.55)" font-size="10">agents</text></svg>
+		<div class="legend">${d.map(([n,c,l])=>`<span class="l"><span class="dot" style="background:${c}"></span>${l}</span><span class="n">${n}</span>`).join('')}</div></div>`; } },
+	workflows: { title: 'Workflows', icon: 'list-checks', accent: '#f0c75e', size: 'wide', more: '2 running · 1 finished', body: () => `
+		<div class="list">
+			<div class="wf">${dial(3/8,'running')}<div style="min-width:0"><div class="t" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><b>Implement</b> <span class="muted">· Customisable home dashboard</span></div>${steps('dddreeee')}</div><span class="m">3 of 8 · 14m</span></div>
+			<div class="wf">${dial(2/5,'alert')}<div style="min-width:0"><div><b>Review</b> <span class="muted">needs you · Bot D-Bus leak fix</span></div>${steps('ddnee')}</div><span class="m">2 of 5 · 3m</span></div>
+			<div class="wf">${dial(1,'done')}<div style="min-width:0"><div><b>All 6 steps done</b> <span class="muted">· Progress widget docs</span></div>${steps('dddddd')}</div><span class="m">17:20</span></div>
+		</div>` },
+	bots: { title: 'Bots', icon: 'bot', accent: '#7cc4ff', size: 'small', more: '2 bots', body: () => `
+		<div class="list">
+			<div class="row"><span class="avatar" style="background:#7cc4ff">C<span class="st" style="background:var(--needs)"></span></span><span class="t"><b>Codexia</b><span class="sub">Needs you · Running</span></span><span class="pill need">1</span></div>
+			<div class="row"><span class="avatar" style="background:#c4a1ff">R<span class="st" style="background:var(--idle)"></span></span><span class="t"><b>Reviewer</b><span class="sub">Idle · Running</span></span></div>
+		</div>
+		<div class="row" style="margin-top:auto"><i data-lucide="alarm-clock" class="ico"></i><span class="t muted">Next: <b style="color:var(--ink)">Nightly triage</b> · Codexia</span><span class="m">02:00</span></div>` },
+	sessions: { title: 'Bot sessions', icon: 'messages-square', accent: '#7cc4ff', size: 'small', body: () => `
+		<div class="list">
+			<div class="row"><span class="pill need">Needs you</span><span class="t">Push release branch</span><span class="m">2m</span></div>
+			<div class="row"><span class="pill ok">Done</span><span class="t">Investigate failed trigger</span><span class="m">41m</span></div>
+			<div class="row"><span class="pill ok">Done</span><span class="t">Triage new issues</span><span class="m">02:00</span></div>
+			<div class="row"><span class="pill fail">Failed</span><span class="t">Poll Gitea PRs</span><span class="m">Yest</span></div>
+		</div>` },
+	history: { title: 'Run history', icon: 'activity', accent: '#6fd394', size: 'wide', more: 'last 30 runs', body: () => `
+		<div class="kpis"><span class="big">93%<small>succeeded</small></span><span class="muted"><b style="color:var(--fail)">2</b> failed · <b style="color:var(--ink)">1</b> skipped · <b style="color:var(--working)">1</b> running</span></div>
+		<div class="strip">${runs.map((o,i)=>`<i class="${o}" title="Hourly heartbeat · ${({ok:'Succeeded',fail:'Failed',skip:'Skipped',run:'Running'})[o]} · ${String(7+Math.floor(i/2)).padStart(2,'0')}:${i%2?'30':'00'}"></i>`).join('')}</div>
+		<div class="list">
+			<div class="row"><span class="pill run">Running</span><span class="t">Hourly heartbeat</span><span class="m">21:45</span></div>
+			<div class="row"><span class="pill ok">Succeeded</span><span class="t">Hourly heartbeat</span><span class="m">21:30</span></div>
+			<div class="row"><span class="pill fail">Failed</span><span class="t">Nightly backup</span><span class="m">03:00</span></div>
+		</div>` },
+	projects: { title: 'Projects', icon: 'folder-kanban', accent: '#57b7ff', size: 'small', more: '2 open', body: () => `
+		<div class="list">
+			<div class="row"><span class="proj-emoji" style="background:rgba(240,199,94,.18)">🛠️</span><span class="t"><b>terminay</b><span class="sub">6 tabs · 4 terminals</span></span><span class="mini"><span><span class="dot" style="background:var(--needs)"></span>1</span><span><span class="dot" style="background:var(--working)"></span>3</span></span></div>
+			<div class="row"><span class="proj-emoji" style="background:rgba(111,211,148,.18)">🌐</span><span class="t"><b>website</b><span class="sub">2 tabs · 1 terminal</span></span><span class="mini"><span><span class="dot" style="background:var(--done)"></span>2</span></span></div>
+		</div>` },
+	notifications: { title: 'Notifications', icon: 'bell', accent: '#ff8f86', size: 'small', more: '3', body: () => `
+		<div class="list">
+			<div class="row"><span class="dot" style="background:var(--needs)"></span><span class="t">codex needs input<span class="sub">terminay › Terminal 3</span></span><button class="x" title="Dismiss"><i data-lucide="x"></i></button></div>
+			<div class="row"><span class="dot" style="background:var(--done)"></span><span class="t">claude finished<span class="sub">terminay › claude</span></span><button class="x" title="Dismiss"><i data-lucide="x"></i></button></div>
+			<div class="row"><span class="dot" style="background:var(--done)"></span><span class="t">npm test finished<span class="sub">website › Terminal 1</span></span><button class="x" title="Dismiss"><i data-lucide="x"></i></button></div>
+		</div>
+		<button class="linkbtn" style="margin-top:auto">Clear all</button>` },
+	prs: { title: 'Pull requests', icon: 'git-pull-request', accent: '#c4a1ff', size: 'wide', more: '2 open', body: () => {
+		const bar = (p,f,pe) => `<span class="checks" title="${p} passed · ${f} failed · ${pe} pending">${p?`<i style="flex:${p};background:var(--done)"></i>`:''}${f?`<i style="flex:${f};background:var(--fail)"></i>`:''}${pe?`<i style="flex:${pe};background:var(--working)"></i>`:''}</span>`;
+		return `<div class="list">
+			<div class="row"><i data-lucide="git-pull-request" class="ico" style="color:var(--done)"></i><span class="t"><b>#507</b> feat(home): customisable dashboard widgets<span class="sub">terminay › worktree-customisable-home-dashboard</span></span>${bar(14,0,6)}<span class="m">14/20 · 6 pending</span></div>
+			<div class="row"><i data-lucide="git-pull-request" class="ico" style="color:var(--fail)"></i><span class="t"><b>#504</b> fix(remote): reconnect on wake<span class="sub">terminay › fix-reconnect</span></span>${bar(17,2,0)}<span class="m" style="color:var(--fail)">2 failed</span></div>
+		</div>`; } },
+	automations: { title: 'Automations', icon: 'workflow', accent: '#6fd394', size: 'small', body: () => `
+		<div><span class="big">2<small>active</small></span></div>
+		<div class="row"><i data-lucide="calendar-clock" class="ico"></i><span class="t">Next: <b>Hourly heartbeat</b></span><span class="m">22:00</span></div>
+		<div class="row"><i data-lucide="calendar-clock" class="ico"></i><span class="t">Nightly backup</span><span class="m">03:00</span></div>` },
+	recordings: { title: 'Recordings', icon: 'film', accent: '#f59e8b', size: 'small', body: () => `
+		<div class="list">
+			<div class="row"><i data-lucide="play-circle" class="ico"></i><span class="t">Release dry-run<span class="sub">terminay · 4m 12s</span></span><span class="m">16:02</span></div>
+			<div class="row"><i data-lucide="play-circle" class="ico"></i><span class="t">E2E shard 3 debug<span class="sub">terminay · 11m 40s</span></span><span class="m">Yest</span></div>
+			<div class="row"><i data-lucide="play-circle" class="ico"></i><span class="t">Onboarding demo<span class="sub">website · 2m 05s</span></span><span class="m">3 Nov</span></div>
+		</div>` },
+	tabs: { title: 'Tabs', icon: 'panels-top-left', accent: '#57b7ff', size: 'small', body: () => `
+		<div style="display:flex;gap:26px"><span class="big">8<small>tabs</small></span><span class="big">5<small>terminals</small></span></div>
+		<div class="muted" style="margin-top:auto">2 files · 1 folder view</div>` },
+	connections: { title: 'Connections', icon: 'radio', accent: '#5eead4', size: 'small', body: () => `
+		<div class="row" style="cursor:default"><span class="dot" style="background:var(--done)"></span><span class="t"><b>${SERVER}</b><span class="sub">This Mac · connected</span></span></div>
+		<div class="row" style="cursor:default"><i data-lucide="smartphone" class="ico"></i><span class="t">0 of 1 paired devices connected</span></div>` },
+};
+
+const DEFAULT = ['quick','needs','agents','workflows','bots','history','prs','notifications','projects','sessions','automations','recordings','tabs','connections']
+	.map(id => ({ id, size: WIDGETS[id].size, hidden: id === 'connections' || id === 'tabs' }));
+let layout = JSON.parse(JSON.stringify(DEFAULT));
+
+function render() {
+	const grid = document.getElementById('grid');
+	grid.innerHTML = '';
+	layout.forEach((e, idx) => {
+		if (e.hidden) return;
+		const w = WIDGETS[e.id];
+		const el = document.createElement('section');
+		el.className = `w ${e.size} ${w.cls || ''}`;
+		el.style.setProperty('--accent', w.accent);
+		el.draggable = document.body.classList.contains('editing');
+		el.dataset.id = e.id;
+		const sizes = w.sizes || ['small','wide','tall'];
+		el.innerHTML = `
+			<div class="tools">
+				<button class="tool" title="Move earlier" data-a="left"><i data-lucide="chevron-left"></i></button>
+				<button class="tool" title="Move later" data-a="right"><i data-lucide="chevron-right"></i></button>
+				<span class="sep"></span>
+				${sizes.map(s => `<button class="tool ${e.size===s?'on':''}" title="${s}" data-a="size" data-s="${s}">${s[0].toUpperCase()}</button>`).join('')}
+				<span class="sep"></span>
+				<button class="tool" title="Hide" data-a="hide"><i data-lucide="eye-off"></i></button>
+			</div>
+			<div class="w-title"><span class="chip"><i data-lucide="${w.icon}"></i></span>${w.title}${w.more?`<span class="more">${w.more}</span>`:''}</div>
+			${w.body()}`;
+		grid.appendChild(el);
+	});
+	const tray = document.getElementById('trayItems');
+	const hidden = layout.filter(e => e.hidden);
+	tray.innerHTML = hidden.length ? hidden.map(e => `<button class="addchip" data-add="${e.id}"><i data-lucide="plus"></i>${WIDGETS[e.id].title}</button>`).join('') : '<span class="empty">Every widget is shown.</span>';
+	lucide.createIcons();
+}
+
+function move(id, delta) {
+	const vis = layout.filter(e => !e.hidden);
+	const i = vis.findIndex(e => e.id === id), j = i + delta;
+	if (j < 0 || j >= vis.length) return;
+	const a = layout.indexOf(vis[i]), b = layout.indexOf(vis[j]);
+	[layout[a], layout[b]] = [layout[b], layout[a]];
+	render();
+}
+
+document.getElementById('grid').addEventListener('click', ev => {
+	const t = ev.target.closest('.tool'); if (!t) return;
+	const id = t.closest('.w').dataset.id, e = layout.find(x => x.id === id);
+	if (t.dataset.a === 'left') move(id, -1);
+	if (t.dataset.a === 'right') move(id, 1);
+	if (t.dataset.a === 'size') { e.size = t.dataset.s; render(); }
+	if (t.dataset.a === 'hide') { e.hidden = true; render(); }
+});
+document.getElementById('trayItems').addEventListener('click', ev => {
+	const b = ev.target.closest('[data-add]'); if (!b) return;
+	const e = layout.find(x => x.id === b.dataset.add); e.hidden = false;
+	layout.splice(layout.indexOf(e), 1); layout.push(e); render();
+});
+let dragId = null;
+const grid = document.getElementById('grid');
+grid.addEventListener('dragstart', ev => { const w = ev.target.closest('.w'); dragId = w.dataset.id; w.classList.add('dragging'); ev.dataTransfer.effectAllowed = 'move'; });
+grid.addEventListener('dragend', ev => { ev.target.closest('.w')?.classList.remove('dragging'); document.querySelectorAll('.over').forEach(n => { n.classList.remove('over'); }); });
+grid.addEventListener('dragover', ev => { const w = ev.target.closest('.w'); if (!w || !dragId) return; ev.preventDefault(); document.querySelectorAll('.over').forEach(n => { n.classList.remove('over'); }); if (w.dataset.id !== dragId) w.classList.add('over'); });
+grid.addEventListener('drop', ev => {
+	ev.preventDefault(); const w = ev.target.closest('.w'); if (!w || !dragId || w.dataset.id === dragId) return;
+	const from = layout.findIndex(e => e.id === dragId); const [item] = layout.splice(from, 1);
+	const to = layout.findIndex(e => e.id === w.dataset.id); layout.splice(from <= to ? to + 1 : to, 0, item);
+	dragId = null; render();
+});
+document.getElementById('customise').onclick = () => { document.body.classList.add('editing'); render(); };
+document.getElementById('done').onclick = () => { document.body.classList.remove('editing'); render(); };
+document.getElementById('reset').onclick = () => { layout = JSON.parse(JSON.stringify(DEFAULT)); render(); };
+render();
+</script>
+</body>
+</html>
