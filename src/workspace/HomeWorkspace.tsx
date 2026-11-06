@@ -46,7 +46,7 @@ import {
 import type { AutomationForm } from './automations/automationsModel';
 import { requestBotFocus } from './bots/botFocus';
 import type { BotTabHost, BotTabTarget } from './bots/botTabHost';
-import { HOME_SECTION_ICONS, HomeView } from './HomeView';
+import { HOME_SECTION_ICONS, HomeView, type HomeViewProps } from './HomeView';
 import {
 	RecordingReplayPanel,
 	RecordingsListPanel,
@@ -92,7 +92,7 @@ type HomeTabsContextValue = Readonly<{
 		from?: string,
 	) => void;
 	openBot: (target: BotTabTarget, from?: string) => void;
-	renderSection: (section: 'home' | 'tabs') => ReactNode;
+	renderSection: (section: 'home' | 'tabs' | 'workflows') => ReactNode;
 	renderBots: (host: BotTabHost) => ReactNode;
 	renderBot: (
 		target: Readonly<{ serverId: string; botId: string }>,
@@ -417,8 +417,9 @@ export type HomeWorkspaceProps = Readonly<{
 	onOpenCommandBar: () => void;
 	onSectionChosenInDrawer?: () => void;
 	onSidebarWidthCommit: (width: number) => void;
-	/** The Home overview and the Tabs dashboard, which the window composes. */
-	renderSection: (section: 'home' | 'tabs') => ReactNode;
+	/** The Home overview, the Tabs dashboard, and the Workflows section,
+	 * which the window composes. */
+	renderSection: (section: 'home' | 'tabs' | 'workflows') => ReactNode;
 	/** The Bots section and each bot's tab, which the window composes. */
 	renderBots: (host: BotTabHost) => ReactNode;
 	renderBot: (
@@ -426,6 +427,8 @@ export type HomeWorkspaceProps = Readonly<{
 		host: BotTabHost,
 	) => ReactNode;
 	sidebarWidth: number;
+	/** Counts on the sidebar's section items. */
+	sectionBadges?: HomeViewProps['sectionBadges'];
 	/** A bot tab's icon: the bot's own avatar. */
 	renderBotIcon?: (
 		target: Readonly<{ serverId: string; botId: string }>,
@@ -458,6 +461,7 @@ export const HomeWorkspace = forwardRef<
 		sidebarWidth,
 		renderSidebarBots,
 		renderBotIcon,
+		sectionBadges,
 	},
 	ref,
 ) {
@@ -817,6 +821,7 @@ export const HomeWorkspace = forwardRef<
 			onOpenSection={openSection}
 			onSidebarWidthCommit={onSidebarWidthCommit}
 			sidebarWidth={sidebarWidth}
+			{...(sectionBadges === undefined ? {} : { sectionBadges })}
 			sidebarExtra={renderSidebarBots?.({
 				activeBot:
 					activeDescriptor?.kind === 'bot'

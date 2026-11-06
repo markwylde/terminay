@@ -39,6 +39,7 @@ export * from './mcp/controlSocketPlacement.js';
 export * from './mcp/dispatcher.js';
 export * from './mcp/permissionGate.js';
 export * from './mcp/stdio.js';
+export * from './mcp/botTerminayMcp.js';
 export * from './mcp/terminalAdapter.js';
 export * from './mcp/workspaceReach.js';
 export * from './remote/hostedHostKey.js';

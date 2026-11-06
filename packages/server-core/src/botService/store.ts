@@ -163,6 +163,14 @@ function profile(value: unknown): BotProfile {
 					: (() => {
 							throw new BotError('validation', 'invalid investigate failures setting');
 						})(),
+		terminayMcpAccess:
+			d.terminayMcpAccess === undefined
+				? false
+				: typeof d.terminayMcpAccess === 'boolean'
+					? d.terminayMcpAccess
+					: (() => {
+							throw new BotError('validation', 'invalid Terminay MCP access setting');
+						})(),
 		pinnedMemories: pins,
 		createdAt: d.createdAt as number,
 		updatedAt: d.updatedAt as number,
@@ -356,6 +364,7 @@ export class BotStore extends EventEmitter {
 			approvalMode: 'autonomous',
 			maxTurnMs: 30 * 60_000,
 			investigateFailures: true,
+			terminayMcpAccess: false,
 			pinnedMemories: [],
 			...previous,
 			...draft,

@@ -80,6 +80,7 @@ import {
 	CONTROL_LARGE_FRAME_OPERATIONS,
 	CONTROL_MAX_LARGE_FRAME_BYTES,
 	ControlEndpointError,
+	hasNoCallingTerminal,
 	MAX_MODEL_CONTEXT_BYTES,
 } from './controlEndpoint.js';
 import {
@@ -976,10 +977,11 @@ export function createServerControlDispatcher(
 		// cannot make never asks the user (ADR-0072).
 		const outOfReach = reachRefusal(request.op, params, context);
 		if (outOfReach !== undefined) return outOfReach;
-		// A chat has no terminal for a window to open in or a notification to be
-		// held for, so those tools are unavailable to it (ADR-0068).
+		// A chat or bot execution has no terminal for a window to open in or a
+		// notification to be held for, so those tools are unavailable to it
+		// (ADR-0068, ADR-0100).
 		if (
-			context.chat !== undefined &&
+			hasNoCallingTerminal(context) &&
 			CALLING_TERMINAL_OPERATIONS.has(request.op)
 		)
 			return {
@@ -1047,9 +1049,9 @@ export function createServerControlDispatcher(
 						context.reach === 'workspace' ||
 						!WORKSPACE_REACH_OPERATIONS.has(tool),
 				);
-				return context.chat === undefined
-					? reported
-					: withoutCallingTerminalTools(reported);
+				return hasNoCallingTerminal(context)
+					? withoutCallingTerminalTools(reported)
+					: reported;
 			}
 			const listHandler = options.handlers.listTerminals;
 			if (listHandler === undefined)

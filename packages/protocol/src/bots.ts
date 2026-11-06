@@ -78,6 +78,11 @@ export interface BotProfile {
 	readonly maxTurnMs: number;
 	/** Wake the bot to investigate its own failures. Missing reads as true. */
 	readonly investigateFailures?: boolean;
+	/**
+	 * Give each execution workspace-reach Terminay MCP, with no approval
+	 * prompts (ADR-0100). Missing reads as false.
+	 */
+	readonly terminayMcpAccess?: boolean;
 	readonly pinnedMemories: readonly string[];
 	readonly createdAt: number;
 	readonly updatedAt: number;
