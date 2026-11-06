@@ -54,6 +54,13 @@ export type BotObservationSource =
 			readonly exclude?: string;
 			readonly debounceMs?: number;
 	  };
+/** A failure cause that also stops any new execution of the bot. */
+export type BotFailureCause =
+	| 'engine'
+	| 'agent'
+	| 'image'
+	| 'disabled'
+	| 'processes';
 export interface BotSourceHealth {
 	readonly state:
 		| 'disabled'
@@ -71,6 +78,7 @@ export interface BotSourceHealth {
 	readonly nextRetry: number | null;
 	readonly nextCheck?: number | null;
 	readonly error: string | null;
+	readonly cause?: BotFailureCause | null;
 	readonly gap: string | null;
 	readonly remembered: number;
 }

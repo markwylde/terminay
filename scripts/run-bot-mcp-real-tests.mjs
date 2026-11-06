@@ -34,7 +34,7 @@ try {
 			'-s',
 			'docker/terminay-bot',
 			'-p',
-			'test_desktop_control.py',
+			'test_desktop_*.py',
 		],
 		{ stdio: 'inherit', cwd: root },
 	);

@@ -99,6 +99,7 @@ with tempfile.TemporaryDirectory() as d:
     calls=[]
     m.spawn=lambda args, **kwargs: calls.append(args)
     m.wait_path=lambda *args: None
+    m.prepare_desktop_dir=lambda *args: None
     m.start_desktop(passwd, os.getuid(), os.getgid(), 'abc123def456')
     assert calls[0][calls[0].index('-localhost')+1]=='yes'
     assert calls[0][calls[0].index('-SecurityTypes')+1]=='VncAuth'
@@ -110,6 +111,7 @@ test('the desktop owns an unprivileged sandboxed Chromium on the VNC display', (
 calls=[]
 m.spawn=lambda args, **kwargs: calls.append((args,kwargs))
 m.wait_path=lambda *args: None
+m.prepare_desktop_dir=lambda *args: None
 m.start_desktop('/private/password', 1000, 1000, 'abc123def456')
 args, options=calls[2]
 assert args==['terminay-browser']
@@ -399,6 +401,37 @@ test('desktop apps survive supervised session closure and end with their disposa
 		assert.equal(event.sessionCommandEnded, true);
 		assert.equal(event.desktopAppSurvived, true);
 	}
+	// Supervised commands never auto-launch a session bus that escapes their group.
+	run(
+		[
+			'exec',
+			'-i',
+			'-u',
+			'root',
+			'-e',
+			'TERMINAY_BOT_CONTAINER_TEST=1',
+			name,
+			'python3',
+			'-B',
+			'-',
+		],
+		{
+			input: spawnSync(
+				'cat',
+				[
+					new URL(
+						'../../../docker/terminay-bot/test_desktop_bus.py',
+						import.meta.url,
+					).pathname,
+				],
+				{ encoding: 'utf8' },
+			).stdout,
+		},
+	);
+	assert.match(
+		run(['exec', '-u', 'root', name, 'cat', '/run/terminay/desktop/bus']),
+		/^unix:path=\/tmp\/dbus-/,
+	);
 	// Keep an app open at shutdown, rather than merely stopping an idle service.
 	run(['exec', '-u', 'bot', name, 'terminay-app', 'launch', 'xclock']);
 	run(['exec', name, 'pidof', 'xclock']);

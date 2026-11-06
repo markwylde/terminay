@@ -94,6 +94,15 @@ lines.on('line', async (line) => {
 			.find((line) => line.startsWith('{"executionId":'));
 		if (briefing) prompt = JSON.parse(briefing).triggerMessage?.text ?? prompt;
 		ignoreCancel = prompt.includes('ignore-cancel');
+		if (prompt.includes('eagain')) {
+			// What Node prints when the container has no processes left.
+			process.stderr.write(
+				'node[12855]: pthread_create: Resource temporarily unavailable\n' +
+					'Error: spawn /usr/local/bin/codex EAGAIN\n',
+				() => process.exit(1),
+			);
+			return;
+		}
 		if (prompt.includes('permission')) {
 			send({
 				type: 'control_request',
