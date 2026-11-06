@@ -8548,12 +8548,57 @@ function App({
 		[],
 	);
 
+	/** Every attached server that serves automations, kept current. */
+	const automationEntries = useMemo<readonly AutomationConnectionEntry[]>(
+		() =>
+			connections.flatMap((connection) => {
+				const context =
+					connection === primary && primaryClientContext !== undefined
+						? primaryClientContext
+						: connection.context;
+				const serverId = connection.serverId ?? context?.serverId;
+				if (serverId === undefined || context === undefined) return [];
+				return [
+					{
+						serverId,
+						label: connection.label,
+						...(context.applicationClient === undefined
+							? {}
+							: { applicationClient: context.applicationClient }),
+						...(context.serverCapabilities === undefined
+							? {}
+							: { capabilities: context.serverCapabilities }),
+					},
+				];
+			}),
+		[connections, primary, primaryClientContext],
+	);
+	const serverAutomations = useServerAutomations(automationEntries);
+	const serverBots = useServerBots(automationEntries);
 	// The server decides what a notification is and when it is shown; this
 	// window lists what it published. A server that does not publish them
 	// leaves the window reading terminal activity itself.
 	const notificationClient =
 		byServerId.get(currentServerId)?.context?.notificationClient;
 	const publishedNotifications = usePublishedNotifications(notificationClient);
+	// The bots of the server that published the list, so a bot's row can name
+	// it. Bot ids are per server, so the row keeps the server with it.
+	const currentServerBotList = serverBots.get(currentServerId)?.bots;
+	const notificationBots = useMemo(
+		() =>
+			currentServerBotList === undefined
+				? undefined
+				: {
+						serverId: currentServerId,
+						bots: new Map(
+							currentServerBotList.map((bot) => [
+								bot.id,
+								{ name: bot.name, avatar: bot.avatar, colour: bot.colour },
+							]),
+						),
+					},
+		[currentServerBotList, currentServerId],
+	);
 	const terminalActivityItems = useMemo(() => {
 		const entries = projects.flatMap(
 			(project) => inventoryByProject[project.id] ?? [],
@@ -8562,6 +8607,7 @@ function App({
 			const notifications = publishedNotificationItems(
 				publishedNotifications,
 				entries,
+				notificationBots,
 			);
 			return {
 				items: notifications,
@@ -8570,7 +8616,7 @@ function App({
 			};
 		}
 		return buildTerminalActivityOverview(selectNotableEntries(entries));
-	}, [inventoryByProject, projects, publishedNotifications]);
+	}, [inventoryByProject, notificationBots, projects, publishedNotifications]);
 
 	// The application icon carries the same number as the Notifications control.
 	const notificationCount = terminalActivityItems.notificationCount;
@@ -8785,33 +8831,6 @@ function App({
 	 * Home's overview counts from the same sources the dashboard renders, so a
 	 * number there can never disagree with a row here.
 	 */
-	/** Every attached server that serves automations, kept current. */
-	const automationEntries = useMemo<readonly AutomationConnectionEntry[]>(
-		() =>
-			connections.flatMap((connection) => {
-				const context =
-					connection === primary && primaryClientContext !== undefined
-						? primaryClientContext
-						: connection.context;
-				const serverId = connection.serverId ?? context?.serverId;
-				if (serverId === undefined || context === undefined) return [];
-				return [
-					{
-						serverId,
-						label: connection.label,
-						...(context.applicationClient === undefined
-							? {}
-							: { applicationClient: context.applicationClient }),
-						...(context.serverCapabilities === undefined
-							? {}
-							: { capabilities: context.serverCapabilities }),
-					},
-				];
-			}),
-		[connections, primary, primaryClientContext],
-	);
-	const serverAutomations = useServerAutomations(automationEntries);
-	const serverBots = useServerBots(automationEntries);
 	// One projection per server; every terminal pane and tab reads its own
 	// pending approvals from it.
 	const serverMcpApprovals = useServerMcpApprovals(automationEntries);
@@ -9497,9 +9516,21 @@ function App({
 	const activateTerminalFromOverview = useCallback(
 		(item: TerminalActivityOverviewItem) => {
 			setIsActivityMenuOpen(false);
+			if (item.bot !== undefined) {
+				// The bot's tab, in Chat, on the server that published the row.
+				// Showing Chat is what acknowledges its posts.
+				selectHome();
+				openInHome({
+					kind: 'bot',
+					serverId: item.bot.serverId,
+					botId: item.bot.botId,
+					mode: 'chat',
+				});
+				return;
+			}
 			activatePanelInProject(item.projectId, item.panelId);
 		},
-		[activatePanelInProject],
+		[activatePanelInProject, openInHome, selectHome],
 	);
 
 	// Dismissing is the acknowledgement selecting the tab would report, routed
@@ -9508,16 +9539,26 @@ function App({
 		(item: TerminalActivityOverviewItem) => {
 			if (item.notificationId !== undefined && notificationClient !== undefined) {
 				// The server removes exactly this notification: an activity one by
-				// acknowledging its terminal, one a process sent by itself.
+				// acknowledging its terminal, one a process sent by itself, a bot's
+				// by acknowledging the posts it covers.
 				void notificationClient
-					.dismiss({
-						id: item.notificationId,
-						projectId: item.projectId,
-						sessionId: item.sessionId,
-					})
+					.dismiss(
+						item.bot === undefined
+							? {
+									id: item.notificationId,
+									projectId: item.projectId,
+									sessionId: item.sessionId,
+								}
+							: {
+									id: item.notificationId,
+									botId: item.bot.botId,
+									throughSequence: item.bot.throughSequence,
+								},
+					)
 					.catch(() => undefined);
 				return;
 			}
+			if (item.bot !== undefined) return;
 			const workspace = workspaceOfPanel(item.projectId, item.panelId);
 			workspace?.acknowledgeTerminal(item.sessionId);
 		},

@@ -205,8 +205,11 @@ function hiddenNotification(
 	value: JsonValue,
 	hidden: AutomationSpaceHiddenIds,
 ): boolean {
+	// A bot's notification belongs to no terminal space; bot authority alone
+	// decides who sees it (ADR-0100).
 	return (
 		isRecord(value) &&
+		value.owner !== 'bot' &&
 		(hiddenProject(hidden, value.projectId) ||
 			hiddenSession(hidden, value.sessionId))
 	);

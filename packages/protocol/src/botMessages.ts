@@ -70,6 +70,7 @@ export const BOT_MESSAGE_OPERATIONS = Object.freeze({
 	edit: 'bots.messages.edit',
 	remove: 'bots.messages.remove',
 	clear: 'bots.messages.clear',
+	acknowledge: 'bots.messages.acknowledge',
 	events: 'bots.messages.events',
 	attachment: 'bots.messages.attachment',
 	upload: 'bots.messages.upload',

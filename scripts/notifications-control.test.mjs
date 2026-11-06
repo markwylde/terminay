@@ -287,7 +287,9 @@ test('dismissal is the acknowledgement tab selection reports, without selecting'
 	);
 	// A published notification is dismissed on the server by its own id; a
 	// server that publishes none still takes the terminal's acknowledgement.
-	assert.match(dismiss, /notificationClient\s*\.dismiss\(\{\s*id: item\.notificationId,/);
+	// A bot's row names its bot instead of a terminal.
+	assert.match(dismiss, /notificationClient\s*\.dismiss\(\s*item\.bot === undefined\s*\?\s*\{\s*id: item\.notificationId,/);
+	assert.match(dismiss, /botId: item\.bot\.botId,\s*throughSequence: item\.bot\.throughSequence,/);
 	assert.match(dismiss, /\?\.acknowledgeTerminal\(item\.sessionId\);/);
 	assert.doesNotMatch(dismiss, /activateProject|activateTerminal\(/);
 });
