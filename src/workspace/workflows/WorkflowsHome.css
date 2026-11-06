@@ -396,8 +396,8 @@
 .workflows-home__column-head {
 	display: flex;
 	align-items: flex-start;
-	gap: 8px;
-	padding: 12px 12px 11px 14px;
+	gap: 10px;
+	padding: 14px 12px 14px 16px;
 	border-bottom: 1px solid var(--workflows-home-line);
 }
 
@@ -405,7 +405,7 @@
 	display: flex;
 	flex: 1 1 auto;
 	flex-direction: column;
-	gap: 2px;
+	gap: 4px;
 	min-width: 0;
 }
 
@@ -435,6 +435,7 @@
 	color: var(--workflows-home-faint);
 	font-family: var(--terminal-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
 	font-size: 11px;
+	line-height: 16px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
