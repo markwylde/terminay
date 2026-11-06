@@ -4,15 +4,23 @@ import json, os, selectors, socket, sys
 MAX_LINE = 131072
 
 def main():
-    path = os.environ.get('TERMINAY_RUNTIME_SOCKET', '')
-    token = os.environ.get('TERMINAY_RUNTIME_TOKEN', '')
+    # Arguments are parsed before any socket is opened. --terminay-mcp selects
+    # the Terminay MCP relay's own pair; there is never a fallback to the other.
+    args = sys.argv[1:]
+    prefix = 'TERMINAY_RUNTIME_'
+    if args[:1] == ['--terminay-mcp']:
+        prefix, args = 'TERMINAY_MCP_', args[1:]
+    if args not in ([], ['--check-work'], ['--check-runtime']):
+        raise ValueError('Invalid adapter arguments')
+    path = os.environ.get(prefix + 'SOCKET', '')
+    token = os.environ.get(prefix + 'TOKEN', '')
     if not path.startswith('/tmp/terminay-mcp-') or not path.endswith('.sock') or len(token) != 64:
         raise ValueError('Bot runtime capability unavailable')
     with socket.socket(socket.AF_UNIX) as peer:
         peer.settimeout(10)
         peer.connect(path)
-        if sys.argv[1:] in (['--check-work'], ['--check-runtime']):
-            peer.sendall((json.dumps({'token': token, 'message': {'jsonrpc':'2.0','id':1,'method':'runtime/check-work' if sys.argv[1:] == ['--check-work'] else 'initialize'}})+'\n').encode())
+        if args:
+            peer.sendall((json.dumps({'token': token, 'message': {'jsonrpc':'2.0','id':1,'method':'runtime/check-work' if args == ['--check-work'] else 'initialize'}})+'\n').encode())
             data = b''
             while b'\n' not in data and len(data) <= MAX_LINE:
                 chunk = peer.recv(65536)
@@ -21,7 +29,6 @@ def main():
             result = json.loads(data)
             if 'error' in result: raise ValueError('Bot runtime capability refused')
             return
-        if sys.argv[1:]: raise ValueError('Invalid adapter arguments')
         peer.settimeout(None)
         selector = selectors.DefaultSelector()
         selector.register(sys.stdin.fileno(), selectors.EVENT_READ, 'input')

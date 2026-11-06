@@ -16,6 +16,11 @@ import {
 import { BotError, object } from './store.js';
 
 export type BotNativeDriver = 'codex-cli' | 'claude-code-cli';
+/** Variables a server receives from the agent process rather than its config. */
+function isForwarded(name: string): boolean {
+	return name.startsWith('TERMINAY_RUNTIME_') || name.startsWith('TERMINAY_MCP_');
+}
+
 export function nativeArguments(
 	driver: BotNativeDriver,
 	model: string | null,
@@ -25,6 +30,9 @@ export function nativeArguments(
 	/** Container paths of the triggering message's images (Codex only). */
 	images: readonly string[] = [],
 ): string[] {
+	// Each server's socket and secret are forwarded from the agent process by
+	// name, never written into argv or the MCP config.
+	const forwarded: Record<string, string[]> = {};
 	const mcp = Object.fromEntries(
 		servers.map((raw) => {
 			const s = object(raw);
@@ -36,15 +44,14 @@ export function nativeArguments(
 						}),
 					)
 				: {};
+			forwarded[String(s.name)] = Object.keys(env).filter(isForwarded);
 			return [
 				String(s.name),
 				{
 					command: s.command,
 					args: s.args,
 					env: Object.fromEntries(
-						Object.entries(env).filter(
-							([key]) => !key.startsWith('TERMINAY_RUNTIME_'),
-						),
+						Object.entries(env).filter(([key]) => !isForwarded(key)),
 					),
 				},
 			];
@@ -97,9 +104,13 @@ export function nativeArguments(
 			`mcp_servers.${name}.command=${JSON.stringify(value.command)}`,
 			'-c',
 			`mcp_servers.${name}.args=${JSON.stringify(value.args)}`,
-			'-c',
-			`mcp_servers.${name}.env_vars=["TERMINAY_RUNTIME_SOCKET","TERMINAY_RUNTIME_TOKEN"]`,
 		);
+		const names = forwarded[name] ?? [];
+		if (names.length > 0)
+			config.push(
+				'-c',
+				`mcp_servers.${name}.env_vars=${JSON.stringify(names)}`,
+			);
 		for (const [key, envValue] of Object.entries(value.env))
 			config.push(
 				'-c',
