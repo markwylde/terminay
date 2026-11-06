@@ -837,6 +837,168 @@ test.describe('Home › Bots', () => {
 		await tab.locator('[data-terminay-bot-stop]').click();
 	});
 
+	test('images are attached by button, paste and drop, refused when invalid, and sent inline', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Magpie'));
+		const composer = tab.locator('[data-terminay-bot-composer]');
+		const form = tab.locator('[data-terminay-bot-composer-form]');
+		const thumbs = tab.locator(
+			'[data-terminay-bot-pending-images] .bots-composer__image',
+		);
+		const refusal = tab.locator('[data-terminay-bot-attach-error]');
+		const shot = async (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+		// Real PNGs, drawn in the renderer, so thumbnails have something to show.
+		const png = async (color: string): Promise<Buffer> =>
+			Buffer.from(
+				await mainWindow.evaluate((fill) => {
+					const canvas = document.createElement('canvas');
+					canvas.width = 160;
+					canvas.height = 100;
+					const g = canvas.getContext('2d')!;
+					g.fillStyle = fill;
+					g.fillRect(0, 0, 160, 100);
+					g.fillStyle = '#fff';
+					g.font = 'bold 28px sans-serif';
+					g.fillText('IMG', 50, 60);
+					return canvas.toDataURL('image/png').split(',')[1]!;
+				}, color),
+				'base64',
+			);
+		const transfer = (
+			target: Locator,
+			kind: 'paste' | 'drop',
+			file: { name: string; type: string; base64: string },
+		) =>
+			target.evaluate(
+				(el, { kind, file }) => {
+					const bytes = Uint8Array.from(atob(file.base64), (c) =>
+						c.charCodeAt(0),
+					);
+					const data = new DataTransfer();
+					data.items.add(new File([bytes], file.name, { type: file.type }));
+					if (kind === 'paste')
+						el.dispatchEvent(
+							new ClipboardEvent('paste', {
+								clipboardData: data,
+								bubbles: true,
+								cancelable: true,
+							}),
+						);
+					else {
+						for (const type of ['dragenter', 'dragover', 'drop'])
+							el.dispatchEvent(
+								new DragEvent(type, {
+									dataTransfer: data,
+									bubbles: true,
+									cancelable: true,
+								}),
+							);
+					}
+				},
+				{ kind, file },
+			);
+
+		// Attach with the paperclip button, through the file picker.
+		const chooser = mainWindow.waitForEvent('filechooser');
+		await tab.locator('[data-terminay-bot-attach]').click();
+		await (await chooser).setFiles({
+			name: 'blue.png',
+			mimeType: 'image/png',
+			buffer: await png('#3b82f6'),
+		});
+		await expect(thumbs).toHaveCount(1);
+		// Paste a screenshot; plain-text paste still reaches the draft.
+		await transfer(composer, 'paste', {
+			name: 'image.png',
+			type: 'image/png',
+			base64: (await png('#e8b931')).toString('base64'),
+		});
+		await expect(thumbs).toHaveCount(2);
+		await expect(
+			tab.getByRole('button', { name: 'Remove pasted-1.png' }),
+		).toBeVisible();
+		await composer.fill('');
+		await composer.focus();
+		await mainWindow.keyboard.insertText('typed text');
+		await expect(composer).toHaveValue('typed text');
+		// Drop an image onto the composer.
+		await transfer(form, 'drop', {
+			name: 'green.png',
+			type: 'image/png',
+			base64: (await png('#45c874')).toString('base64'),
+		});
+		await expect(thumbs).toHaveCount(3);
+		await shot('composer-pending-images');
+
+		// A non-image and an oversized image are refused; pending stay unchanged.
+		const input = tab.locator('[data-terminay-bot-attach-input]');
+		await input.setInputFiles({
+			name: 'notes.txt',
+			mimeType: 'text/plain',
+			buffer: Buffer.from('not an image'),
+		});
+		await expect(refusal).toContainText('PNG, JPEG, GIF and WebP');
+		await expect(thumbs).toHaveCount(3);
+		await input.setInputFiles({
+			name: 'huge.png',
+			mimeType: 'image/png',
+			buffer: Buffer.alloc(2 * 1024 * 1024 + 1),
+		});
+		await expect(refusal).toContainText('2 MiB');
+		await input.setInputFiles({
+			name: 'red.png',
+			mimeType: 'image/png',
+			buffer: await png('#ee6258'),
+		});
+		await expect(thumbs).toHaveCount(4);
+		await input.setInputFiles({
+			name: 'fifth.png',
+			mimeType: 'image/png',
+			buffer: await png('#a3abb9'),
+		});
+		await expect(refusal).toContainText('at most 4');
+		await expect(thumbs).toHaveCount(4);
+		await shot('composer-refusal');
+
+		// Removing a thumbnail drops that image.
+		for (const name of ['red.png', 'green.png', 'pasted-1.png'])
+			await tab.getByRole('button', { name: `Remove ${name}` }).click();
+		await expect(thumbs).toHaveCount(1);
+
+		// A send the server refuses keeps the draft and the pending images.
+		await input.setInputFiles({
+			name: 'fake.png',
+			mimeType: 'image/png',
+			buffer: Buffer.from('this is not really a png'),
+		});
+		await expect(thumbs).toHaveCount(2);
+		await tab.locator('[data-terminay-bot-send]').click();
+		await expect(tab.locator('[data-terminay-bot-chat-error]')).toContainText(
+			'PNG, JPEG, GIF and WebP',
+		);
+		await expect(composer).toHaveValue('typed text');
+		await expect(thumbs).toHaveCount(2);
+		await tab.getByRole('button', { name: 'Remove fake.png' }).click();
+
+		// An image-only message posts with Enter and shows the image inline.
+		await composer.fill('');
+		await expect(tab.locator('[data-terminay-bot-send]')).toBeEnabled();
+		await composer.press('Enter');
+		await expect(thumbs).toHaveCount(0);
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await expect(transcript.locator('img[alt="blue.png"]')).toBeVisible({
+			timeout: 30_000,
+		});
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		await expect(tab.locator('[data-terminay-bot-send]')).toBeDisabled();
+		await shot('chat-image-sent');
+	});
+
 	test('a turn running when Terminay is killed comes back interrupted', async ({
 		electronApp,
 		mainWindow,
