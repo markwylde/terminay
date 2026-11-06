@@ -12,6 +12,9 @@ import {
 	formatNotificationAge,
 	notificationHeadline,
 } from './notificationText';
+import { BotAvatar } from './bots/BotAvatar';
+import { botNotificationHeadline } from './publishedNotifications';
+import './bots/bots.css';
 
 export type {
 	TerminalActivityOverviewItem,
@@ -75,6 +78,51 @@ function ActivityRows({
 				const state = terminalOverviewStateToAgentState(item.state);
 				if (state === 'working') return null;
 				const age = formatNotificationAge(item.since, now);
+				const bot = item.bot;
+				if (bot !== undefined)
+					return (
+						<div
+							key={`bot:${bot.serverId}:${bot.botId}:${item.notificationId ?? ''}`}
+							className="terminal-activity-menu__row"
+							data-notification-bot={bot.botId}
+						>
+							<button
+								type="button"
+								className="terminal-activity-menu__item"
+								onClick={() => onActivate(item)}
+							>
+								<BotAvatar
+									bot={{ name: bot.name, avatar: bot.avatar, colour: bot.colour }}
+									size="sm"
+								/>
+								<span className="terminal-activity-menu__text">
+									<span className="terminal-activity-menu__title">
+										{botNotificationHeadline(bot.count)}
+									</span>
+									<span className="terminal-activity-menu__body terminal-activity-menu__body--excerpt">
+										{bot.excerpt}
+									</span>
+									<span className="terminal-activity-menu__source">
+										<span className="terminal-activity-menu__terminal">
+											{bot.name}
+										</span>
+									</span>
+									{age === null ? null : (
+										<span className="terminal-activity-menu__age">{age}</span>
+									)}
+								</span>
+							</button>
+							<button
+								type="button"
+								className="terminal-activity-menu__dismiss"
+								onClick={() => onDismiss(item)}
+								aria-label={`Dismiss ${bot.name}`}
+								title="Dismiss"
+							>
+								<X size={12} aria-hidden="true" />
+							</button>
+						</div>
+					);
 				return (
 					<div
 						key={`${item.projectId}:${item.panelId}:${item.sessionId}:${item.notificationId ?? ''}`}

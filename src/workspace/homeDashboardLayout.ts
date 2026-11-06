@@ -1,7 +1,7 @@
 /**
  * The Home overview's layout: which widgets show, in what order, at what size.
  *
- * The stored value is a server setting (ADR-0100) holding only ids, sizes, and
+ * The stored value is a server setting (ADR-0101) holding only ids, sizes, and
  * visibility. This module turns that value into what the grid shows, and makes
  * every edit the overview offers. It is pure, so it is tested without React.
  *

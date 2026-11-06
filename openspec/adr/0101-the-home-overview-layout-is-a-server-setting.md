@@ -1,4 +1,4 @@
-# ADR-0100: The Home overview layout is a server setting
+# ADR-0101: The Home overview layout is a server setting
 
 Status: accepted
 Date: 2026-11-06

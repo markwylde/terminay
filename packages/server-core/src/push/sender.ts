@@ -6,7 +6,10 @@ import {
 	sealPushPayload,
 } from '@terminay/protocol';
 import type { NotificationManager } from '../notifications/manager.js';
-import type { NotificationRecord } from '../notifications/types.js';
+import type {
+	NotificationRecord,
+	TerminalNotificationRecord,
+} from '../notifications/types.js';
 import type { PushEnrolmentStore } from './enrolments.js';
 
 const DEFAULT_COALESCE_MS = 250;
@@ -45,7 +48,7 @@ export interface PushSenderOptions {
 	 * automation terminal space.
 	 */
 	readonly describe: (
-		record: NotificationRecord,
+		record: TerminalNotificationRecord,
 	) => PushNotificationTitles | undefined;
 	readonly transport?: PushTransport;
 	readonly now?: () => number;
@@ -382,16 +385,22 @@ export class PushSender {
 		}
 	}
 
-	/** The published notifications that may leave the server, newest first. */
-	private visible(): NotificationRecord[] {
+	/**
+	 * The published notifications that may leave the server, newest first. A
+	 * bot's never does: it stays behind bot authority (ADR-0100).
+	 */
+	private visible(): TerminalNotificationRecord[] {
 		return Object.values(this.notifications.snapshot().notifications)
-			.filter((record) => this.describe(record) !== undefined)
+			.filter(
+				(record): record is TerminalNotificationRecord =>
+					record.owner === 'terminal' && this.describe(record) !== undefined,
+			)
 			.sort(
 				(a, b) => b.raisedAt - a.raisedAt || a.id.localeCompare(b.id),
 			);
 	}
 
-	private banner(record: NotificationRecord): PushBanner | undefined {
+	private banner(record: TerminalNotificationRecord): PushBanner | undefined {
 		const titles = this.describe(record);
 		if (titles === undefined) return undefined;
 		return {

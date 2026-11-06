@@ -811,6 +811,92 @@ test.describe('Home › Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('a bot post nobody is reading raises a notification that opens its Chat, and one read as it arrives raises none', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Lark'));
+		const bell = mainWindow.getByRole('button', { name: /^Notifications/ });
+		const menu = mainWindow.getByRole('menu', { name: 'Notifications' });
+		const botRow = menu.locator('[data-notification-bot]');
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+
+		// A reply read as it arrives is acknowledged and raises nothing, even
+		// once the settle period has passed.
+		await send(tab, 'hello');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		await mainWindow.waitForTimeout(7_000);
+		await bell.click();
+		await expect(botRow).toHaveCount(0);
+		await bell.click();
+
+		// A post while the tab shows Configure is not read, so it raises a row.
+		const trigger = await newTrigger(tab, 'Ping', 'check in');
+		await trigger.locator('[data-terminay-bot-trigger-run]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		const sessions = tab
+			.locator('[data-terminay-bot-session-row]')
+			.filter({ hasText: 'Ping' });
+		await expect(sessions.first()).toHaveAttribute(
+			'data-terminay-bot-session-state',
+			'completed',
+			{ timeout: 30_000 },
+		);
+		await expect(mainWindow.locator('.notifications-count')).toHaveText('1', {
+			timeout: 15_000,
+		});
+		await bell.click();
+		await expect(botRow).toHaveCount(1);
+		await expect(botRow).toContainText('New message');
+		await expect(botRow).toContainText('Lark');
+		// Let the popover finish fading in.
+		await mainWindow.waitForTimeout(300);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-notification-row.png'),
+		});
+
+		// Dismissing it changes no tab, and the device's own divider still
+		// marks the post when Chat is opened.
+		await botRow.getByRole('button', { name: 'Dismiss Lark' }).click();
+		await expect(botRow).toHaveCount(0);
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+		await expect(
+			tab.locator('[data-terminay-bot-mode-button="configure"]'),
+		).toHaveAttribute('aria-pressed', 'true');
+		await bell.click();
+		await expect(menu).toHaveCount(0);
+		await chat(tab);
+		await expect(tab.locator('[data-terminay-bot-unread]')).toHaveText(
+			'1 new message',
+		);
+
+		// Activating a row opens the bot's Chat and clears the notification.
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await trigger.locator('[data-terminay-bot-trigger-run]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await expect(mainWindow.locator('.notifications-count')).toHaveText('1', {
+			timeout: 30_000,
+		});
+		await bell.click();
+		await botRow.locator('.terminal-activity-menu__item').click();
+		await expect(menu).toHaveCount(0);
+		await expect(
+			tab.locator('[data-terminay-bot-mode-button="chat"]'),
+		).toHaveAttribute('aria-pressed', 'true');
+		await expect(tab.locator('[data-terminay-bot-composer]')).toBeVisible();
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+		await bell.click();
+		await expect(botRow).toHaveCount(0);
+		await mainWindow.waitForTimeout(300);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-notification-cleared.png'),
+		});
+	});
+
 	test('a trigger opens its own sessions, and the filter clears from the chip, the tab and a session request', async ({
 		mainWindow,
 		tempDir,

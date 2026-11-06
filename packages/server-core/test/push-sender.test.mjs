@@ -642,3 +642,21 @@ test("a server composed without push advertises no push capability", async (t) =
   assert.equal(composition.push, undefined);
   assert.equal(composition.coreOptions.capabilities.includes(FEATURE_CAPABILITIES.push), false);
 });
+
+test("a bot's notification never leaves the server: no banner, and the pushed count leaves it out", async () => {
+  const described = [];
+  const h = harness({ describe: (record) => { described.push(record.owner); return { terminalTitle: "T", projectTitle: "P" }; } });
+  const device = enrolment();
+  h.enrolments.set("device-a", device);
+  h.notifications.setBot("bot-a", { count: 2, body: "Build is green", throughSequence: 4, raisedAt: 1 });
+  await h.run(5_000);
+  await h.run(250);
+  assert.equal(h.requests.length, 0, "a bot post alone pushes nothing");
+
+  await publish(h, "session-a");
+  const state = await h.opened(device);
+  assert.equal(state.count, 1);
+  assert.equal(state.outstanding.length, 1);
+  assert.equal(state.banner.sessionId, "session-a");
+  assert.ok(!described.includes("bot"), "a bot record is never even described for a banner");
+});

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
 	type ActivityNotificationKind,
+	type BotNotificationRecord,
+	type BotNotificationState,
 	MAX_NOTIFICATION_BODY_CHARS,
 	MAX_NOTIFICATION_TITLE_CHARS,
 	MAX_SENT_NOTIFICATIONS_PER_TERMINAL,
@@ -12,7 +14,9 @@ import {
 	type NotificationRecord,
 	type NotificationReplay,
 	type NotificationSnapshot,
+	type NotificationVisibility,
 	type SentNotificationText,
+	type TerminalNotificationRecord,
 } from './types.js';
 
 const DEFAULT_MAX_EVENTS = 1024;
@@ -69,6 +73,7 @@ export class NotificationManager {
 	private readonly createId: () => string;
 	private readonly entries = new Map<string, Entry>();
 	private readonly activityIds = new Map<string, string>();
+	private readonly botIds = new Map<string, string>();
 	private readonly sends = new Map<string, number[]>();
 	private readonly events: NotificationEvent[] = [];
 	private readonly listeners = new Set<NotificationListener>();
@@ -140,8 +145,9 @@ export class NotificationManager {
 			return;
 		}
 		if (existing === undefined) {
-			const record: NotificationRecord = Object.freeze({
+			const record: TerminalNotificationRecord = Object.freeze({
 				id: this.createId(),
+				owner: 'terminal',
 				projectId: owner.projectId,
 				sessionId: owner.sessionId,
 				source: 'activity',
@@ -152,20 +158,82 @@ export class NotificationManager {
 			this.add(record);
 			return;
 		}
-		if (
-			existing.record.kind === kind &&
-			existing.record.projectId === owner.projectId
-		)
+		const current = existing.record as TerminalNotificationRecord;
+		if (current.kind === kind && current.projectId === owner.projectId)
 			return;
 		this.update(
 			existing,
 			Object.freeze({
-				...existing.record,
+				...current,
 				projectId: owner.projectId,
 				kind,
 				raisedAt,
 			}),
 		);
+	}
+
+	/**
+	 * Set, change, or clear the one notification a bot holds for its
+	 * unacknowledged posts. Only the bot service calls this. A change keeps the
+	 * record, its settle deadline, and its publication state.
+	 */
+	setBot(botId: string, state: BotNotificationState | undefined): void {
+		if (this.stopped) return;
+		if (typeof botId !== 'string' || botId.length === 0)
+			throw new TypeError('notification bot is invalid');
+		const existingId = this.botIds.get(botId);
+		const existing =
+			existingId === undefined ? undefined : this.entries.get(existingId);
+		if (state === undefined) {
+			if (existing !== undefined) this.remove(existing);
+			return;
+		}
+		if (
+			!Number.isSafeInteger(state.count) ||
+			state.count < 1 ||
+			!Number.isSafeInteger(state.throughSequence) ||
+			state.throughSequence < 0 ||
+			!Number.isFinite(state.raisedAt)
+		)
+			throw new TypeError('bot notification state is invalid');
+		const fields = {
+			body: [...plainText(state.body)]
+				.slice(0, MAX_NOTIFICATION_BODY_CHARS)
+				.join(''),
+			count: state.count,
+			throughSequence: state.throughSequence,
+			raisedAt: state.raisedAt,
+		};
+		if (existing === undefined) {
+			const record: BotNotificationRecord = Object.freeze({
+				id: this.createId(),
+				owner: 'bot',
+				botId,
+				source: 'bot',
+				kind: 'bot-message',
+				...fields,
+			});
+			this.botIds.set(botId, record.id);
+			this.add(record);
+			return;
+		}
+		const current = existing.record as BotNotificationRecord;
+		if (
+			current.body === fields.body &&
+			current.count === fields.count &&
+			current.throughSequence === fields.throughSequence &&
+			current.raisedAt === fields.raisedAt
+		)
+			return;
+		this.update(existing, Object.freeze({ ...current, ...fields }));
+	}
+
+	/** The record a client names, when it is this bot's. */
+	findBot(id: string, botId: string): BotNotificationRecord | undefined {
+		const record = this.entries.get(id)?.record;
+		return record?.owner === 'bot' && record.botId === botId
+			? record
+			: undefined;
 	}
 
 	/**
@@ -176,7 +244,7 @@ export class NotificationManager {
 		owner: NotificationOwner,
 		text: SentNotificationText,
 		handle?: string,
-	): NotificationRecord {
+	): TerminalNotificationRecord {
 		assertOwner(owner);
 		const title =
 			text.title === undefined ? undefined : plainText(text.title);
@@ -197,8 +265,9 @@ export class NotificationManager {
 					'this terminal sent no notification with that handle',
 				);
 			this.countSend(owner.sessionId);
-			const { title: _title, ...rest } = existing.record;
-			const next: NotificationRecord = Object.freeze({
+			const { title: _title, ...rest } =
+				existing.record as TerminalNotificationRecord;
+			const next: TerminalNotificationRecord = Object.freeze({
 				...rest,
 				...shown,
 				body,
@@ -213,8 +282,9 @@ export class NotificationManager {
 				'this terminal holds the most notifications it may send',
 			);
 		this.countSend(owner.sessionId);
-		const record: NotificationRecord = Object.freeze({
+		const record: TerminalNotificationRecord = Object.freeze({
 			id: this.createId(),
+			owner: 'terminal',
 			projectId: owner.projectId,
 			sessionId: owner.sessionId,
 			source: 'message',
@@ -239,9 +309,9 @@ export class NotificationManager {
 	find(
 		id: string,
 		owner: NotificationOwner,
-	): NotificationRecord | undefined {
+	): TerminalNotificationRecord | undefined {
 		const record = this.entries.get(id)?.record;
-		return record !== undefined &&
+		return record?.owner === 'terminal' &&
 			record.projectId === owner.projectId &&
 			record.sessionId === owner.sessionId
 			? record
@@ -259,18 +329,14 @@ export class NotificationManager {
 	/** Remove what processes sent to a terminal: the user interacted with it. */
 	removeSent(sessionId: string): void {
 		for (const entry of [...this.entries.values()]) {
-			if (
-				entry.record.sessionId === sessionId &&
-				entry.record.source === 'message'
-			)
-				this.remove(entry);
+			if (isSent(entry.record, sessionId)) this.remove(entry);
 		}
 	}
 
 	/** Remove every record of a terminal: it closed. */
 	removeSession(sessionId: string): void {
 		for (const entry of [...this.entries.values()]) {
-			if (entry.record.sessionId === sessionId) this.remove(entry);
+			if (isTerminal(entry.record, sessionId)) this.remove(entry);
 		}
 		this.sends.delete(sessionId);
 	}
@@ -278,27 +344,28 @@ export class NotificationManager {
 	/** Follow a terminal to the project its panel was moved to. */
 	rehomeSession(sessionId: string, projectId: string): void {
 		for (const entry of [...this.entries.values()]) {
-			if (
-				entry.record.sessionId !== sessionId ||
-				entry.record.projectId === projectId
-			)
+			const record = entry.record;
+			if (!isTerminal(record, sessionId) || record.projectId === projectId)
 				continue;
 			// A project-scoped client must see the record leave one project and
 			// arrive in the other, so the move is a removal and a publication.
 			if (entry.published)
 				this.commit('notification.removed', entry.record, false);
-			entry.record = Object.freeze({ ...entry.record, projectId });
+			entry.record = Object.freeze({ ...record, projectId });
 			if (entry.published)
 				this.commit('notification.published', entry.record, true);
 		}
 	}
 
-	snapshot(projectId?: string): NotificationSnapshot {
+	/**
+	 * The published set. With no visibility, the whole set, for in-process
+	 * readers that apply their own filter; a client read always passes one.
+	 */
+	snapshot(visibility?: NotificationVisibility): NotificationSnapshot {
 		const notifications: Record<string, NotificationRecord> = {};
 		for (const [id, entry] of this.entries) {
 			if (!entry.published) continue;
-			if (projectId !== undefined && entry.record.projectId !== projectId)
-				continue;
+			if (!visible(entry.record, visibility)) continue;
 			notifications[id] = entry.record;
 		}
 		return Object.freeze({
@@ -308,7 +375,10 @@ export class NotificationManager {
 		});
 	}
 
-	replay(afterRevision = 0, projectId?: string): NotificationReplay {
+	replay(
+		afterRevision = 0,
+		visibility?: NotificationVisibility,
+	): NotificationReplay {
 		if (!Number.isSafeInteger(afterRevision) || afterRevision < 0)
 			throw new RangeError('afterRevision must be a non-negative safe integer');
 		if (afterRevision > this.currentRevision)
@@ -318,15 +388,14 @@ export class NotificationManager {
 			return {
 				kind: 'resync',
 				events: [],
-				snapshot: this.snapshot(projectId),
+				snapshot: this.snapshot(visibility),
 			};
 		}
 		return {
 			kind: 'events',
 			events: this.events.filter(
 				(event) =>
-					event.revision > afterRevision &&
-					(projectId === undefined || event.projectId === projectId),
+					event.revision > afterRevision && visible(event, visibility),
 			),
 		};
 	}
@@ -368,7 +437,10 @@ export class NotificationManager {
 		const { record } = entry;
 		this.disarm(entry);
 		this.entries.delete(record.id);
-		if (this.activityIds.get(record.sessionId) === record.id)
+		if (record.owner === 'bot') {
+			if (this.botIds.get(record.botId) === record.id)
+				this.botIds.delete(record.botId);
+		} else if (this.activityIds.get(record.sessionId) === record.id)
 			this.activityIds.delete(record.sessionId);
 		if (entry.published) this.commit('notification.removed', record, false);
 	}
@@ -387,15 +459,28 @@ export class NotificationManager {
 		if (this.currentRevision === Number.MAX_SAFE_INTEGER)
 			throw new RangeError('notification revision exhausted');
 		this.currentRevision += 1;
-		const event: NotificationEvent = Object.freeze({
+		const base = {
 			revision: this.currentRevision,
 			cursor: String(this.currentRevision),
 			type,
 			id: record.id,
-			projectId: record.projectId,
-			sessionId: record.sessionId,
-			...(withRecord ? { notification: record } : {}),
-		});
+		};
+		const event: NotificationEvent = Object.freeze(
+			record.owner === 'bot'
+				? {
+						...base,
+						owner: 'bot' as const,
+						botId: record.botId,
+						...(withRecord ? { notification: record } : {}),
+					}
+				: {
+						...base,
+						owner: 'terminal' as const,
+						projectId: record.projectId,
+						sessionId: record.sessionId,
+						...(withRecord ? { notification: record } : {}),
+					},
+		);
 		this.events.push(event);
 		while (this.events.length > this.maxEvents) this.events.shift();
 		const state = this.snapshot();
@@ -410,9 +495,7 @@ export class NotificationManager {
 
 	private sentEntry(sessionId: string, handle: string): Entry | undefined {
 		const entry = this.entries.get(handle);
-		return entry !== undefined &&
-			entry.record.sessionId === sessionId &&
-			entry.record.source === 'message'
+		return entry !== undefined && isSent(entry.record, sessionId)
 			? entry
 			: undefined;
 	}
@@ -420,11 +503,7 @@ export class NotificationManager {
 	private sentCount(sessionId: string): number {
 		let count = 0;
 		for (const entry of this.entries.values()) {
-			if (
-				entry.record.sessionId === sessionId &&
-				entry.record.source === 'message'
-			)
-				count += 1;
+			if (isSent(entry.record, sessionId)) count += 1;
 		}
 		return count;
 	}
@@ -475,6 +554,31 @@ const LINE_BREAKS = new RegExp(
 	`[\\t\\n\\r${String.fromCharCode(0x2028, 0x2029)}]+`,
 	'gu',
 );
+
+function isTerminal(
+	record: NotificationRecord,
+	sessionId: string,
+): record is TerminalNotificationRecord {
+	return record.owner === 'terminal' && record.sessionId === sessionId;
+}
+
+function isSent(record: NotificationRecord, sessionId: string): boolean {
+	return isTerminal(record, sessionId) && record.source === 'message';
+}
+
+/** Whether a reader may see a record or event of this owner. */
+export function visible(
+	item: NotificationRecord | NotificationEvent,
+	visibility: NotificationVisibility | undefined,
+): boolean {
+	if (visibility === undefined) return true;
+	if (item.owner === 'bot')
+		return visibility.bots && visibility.projectId === undefined;
+	return (
+		visibility.projectId === undefined ||
+		item.projectId === visibility.projectId
+	);
+}
 
 function codePoints(value: string): number {
 	return [...value].length;

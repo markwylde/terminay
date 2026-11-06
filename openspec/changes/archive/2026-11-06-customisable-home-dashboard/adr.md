@@ -16,7 +16,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0100-the-home-overview-layout-is-a-server-setting.md - the overview layout is shared across devices as a server setting; Home tab arrangement stays per-device.
+- openspec/adr/0101-the-home-overview-layout-is-a-server-setting.md - the overview layout is shared across devices as a server setting; Home tab arrangement stays per-device.
 
 ## Notes
 

@@ -48,7 +48,25 @@ interface State {
 	events: BotRuntimeEvent[];
 	keys: Record<string, { hash: string; id: string }>;
 	imported: boolean;
+	/**
+	 * Latest sequence whose bot posts are acknowledged, shared by every client.
+	 * Missing in state written before acknowledgement existed; it then reads as
+	 * the sequence at load, so history raises nothing.
+	 */
+	acknowledged?: number;
 }
+
+/** One bot's unacknowledged posts, as its notification shows them. */
+export interface BotUnacknowledgedPosts {
+	readonly count: number;
+	readonly body: string;
+	readonly raisedAt: number;
+	readonly throughSequence: number;
+}
+
+/** What a notification says of a post with images and no text. */
+export const BOT_IMAGE_ONLY_EXCERPT = 'Sent an image';
+const EXCERPT_CHARS = 280;
 interface Cursor {
 	botId: string;
 	epoch: string;
@@ -90,7 +108,10 @@ function parse(value: unknown): State {
 		!Array.isArray(d.rows) ||
 		!Array.isArray(d.events) ||
 		typeof d.epoch !== 'string' ||
-		!Number.isSafeInteger(d.sequence)
+		!Number.isSafeInteger(d.sequence) ||
+		(d.acknowledged !== undefined &&
+			(!Number.isSafeInteger(d.acknowledged) ||
+				(d.acknowledged as number) < 0))
 	)
 		throw new BotError('state_unreadable', 'Invalid bot communication state');
 	for (const raw of d.rows) {
@@ -144,7 +165,9 @@ export class BotMessageStore extends EventEmitter {
 			events: [],
 			keys: {},
 			imported: false,
+			acknowledged: 0,
 		};
+		if (s.acknowledged === undefined) s.acknowledged = s.sequence;
 		if (!loaded)
 			writeFileDurablySync(
 				join(directory, 'messages.json'),
@@ -155,7 +178,11 @@ export class BotMessageStore extends EventEmitter {
 		if (loaded) this.pruneAttachments(botId);
 		return s;
 	}
-	private save(botId: string, next: State): void {
+	private save(
+		botId: string,
+		next: State,
+		event: 'changed' | 'acknowledged' = 'changed',
+	): void {
 		const bytes = JSON.stringify(next);
 		if (Buffer.byteLength(bytes) > STATE_BYTES)
 			throw new BotError(
@@ -167,7 +194,7 @@ export class BotMessageStore extends EventEmitter {
 			mode: 0o600,
 		});
 		this.states.set(botId, next);
-		this.emit('changed', botId);
+		this.emit(event, botId);
 	}
 	private change(
 		s: State,
@@ -254,6 +281,45 @@ export class BotMessageStore extends EventEmitter {
 	count(botId: string): number {
 		return this.latest(this.state(botId)).length;
 	}
+	acknowledgedSequence(botId: string): number {
+		const s = this.state(botId);
+		return s.acknowledged ?? s.sequence;
+	}
+	/**
+	 * Acknowledge bot posts through the sequence a client observed. Monotonic and
+	 * clamped to the current sequence; a post after it stays unacknowledged.
+	 * Writes nothing when it does not advance.
+	 */
+	acknowledge(botId: string, throughSequence: number): number {
+		if (!Number.isSafeInteger(throughSequence) || throughSequence < 0)
+			throw new BotError('validation', 'Invalid sequence');
+		const s = this.state(botId),
+			current = s.acknowledged ?? s.sequence,
+			target = Math.min(throughSequence, s.sequence);
+		if (target <= current) return current;
+		this.save(botId, { ...s, acknowledged: target }, 'acknowledged');
+		return target;
+	}
+	/** The bot's posts after its acknowledged sequence, or none. */
+	unacknowledged(botId: string): BotUnacknowledgedPosts | undefined {
+		const s = this.state(botId),
+			through = s.acknowledged ?? s.sequence,
+			posts = this.latest(s).filter(
+				(row) => row.author === 'bot' && row.sequence > through,
+			);
+		const latest = posts[0];
+		if (latest === undefined) return undefined;
+		const words = latest.text.replace(/\s+/gu, ' ').trim();
+		return {
+			count: posts.length,
+			body:
+				words.length > 0
+					? [...words].slice(0, EXCERPT_CHARS).join('')
+					: BOT_IMAGE_ONLY_EXCERPT,
+			raisedAt: latest.createdAt,
+			throughSequence: latest.sequence,
+		};
+	}
 	post(
 		botId: string,
 		author: 'user' | 'bot',
@@ -314,6 +380,8 @@ export class BotMessageStore extends EventEmitter {
 		};
 		next.rows.push(row);
 		next.keys[key] = { hash, id: messageId };
+		// A user posting has read what came before it.
+		if (author === 'user') next.acknowledged = change;
 		this.save(botId, next);
 		// Consumed only once persisted: a failed save leaves every token usable.
 		for (const token of uploads) this.staging.get(botId)?.delete(token);
@@ -412,6 +480,7 @@ export class BotMessageStore extends EventEmitter {
 		this.states.delete(botId);
 		this.staging.delete(botId);
 		rmSync(this.directory(botId), { recursive: true, force: true });
+		this.emit('removed', botId);
 	}
 	list(botId: string, options: MessagePageOptions = {}): BotMessagePage {
 		const s = this.state(botId),

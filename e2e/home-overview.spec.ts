@@ -4,7 +4,7 @@ import { activeHome, frontHomeTab } from './support/home-tabs';
 
 /**
  * The Home overview: its widget catalogue, the quick actions, and edit mode.
- * The layout is a server setting (ADR-0100), so a change outlives a reload.
+ * The layout is a server setting (ADR-0101), so a change outlives a reload.
  */
 
 const homeControl = (page: Page) =>
