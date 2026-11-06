@@ -22,6 +22,8 @@ export function nativeArguments(
 	mode: BotApprovalMode,
 	servers: readonly JsonValue[],
 	token: boolean,
+	/** Container paths of the triggering message's images (Codex only). */
+	images: readonly string[] = [],
 ): string[] {
 	const mcp = Object.fromEntries(
 		servers.map((raw) => {
@@ -111,6 +113,7 @@ export function nativeArguments(
 		'--dangerously-bypass-approvals-and-sandbox',
 		...(model ? ['--model', model] : []),
 		...config,
+		...images.flatMap((path) => ['--image', path]),
 		'-',
 	];
 }
@@ -231,7 +234,12 @@ export class BotNativeClient extends EventEmitter {
 			);
 		return true;
 	}
-	prompt(prompt: string, maxTurnMs: number): Promise<void> {
+	/** `images` reach Claude Code as content blocks; Codex receives them as `--image` launch arguments. */
+	prompt(
+		prompt: string,
+		maxTurnMs: number,
+		images: readonly { mime: string; bytes: Uint8Array }[] = [],
+	): Promise<void> {
 		if (!this.initialized || this.active || this.closed)
 			return Promise.reject(
 				new BotError('unavailable', 'Native agent is not ready'),
@@ -252,7 +260,22 @@ export class BotNativeClient extends EventEmitter {
 		else
 			this.write({
 				type: 'user',
-				message: { role: 'user', content: prompt },
+				message: {
+					role: 'user',
+					content: images.length
+						? [
+								{ type: 'text', text: prompt },
+								...images.map((image) => ({
+									type: 'image',
+									source: {
+										type: 'base64',
+										media_type: image.mime,
+										data: Buffer.from(image.bytes).toString('base64'),
+									},
+								})),
+							]
+						: prompt,
+				},
 				parent_tool_use_id: null,
 				session_id: '',
 			});

@@ -174,8 +174,22 @@ export async function runtime(root, options = {}) {
 			writeFileSync(join(records, sid), String(child.pid));
 			return child;
 		},
-		async exec(_container, args) {
+		async inspect(kind, name) {
+			if (kind !== 'container' || options.containerMissing) return undefined;
+			return {
+				State: { Running: true },
+				Config: {
+					Labels: {
+						'terminay.server': 'server',
+						'terminay.bot': name.replace('terminay-bot-', ''),
+						'terminay.managed': '1',
+					},
+				},
+			};
+		},
+		async exec(container, args, execOptions) {
 			calls.push(args);
+			if (options.execs) options.execs.push({ container, args, options: execOptions });
 			if (args[0] === 'terminay-run') {
 				await kill(args[1] === '--kill' ? args[2] : undefined);
 			}

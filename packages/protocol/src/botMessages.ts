@@ -4,6 +4,16 @@ export interface BotMessageAttachment {
 	readonly mime: string;
 	readonly size: number;
 }
+/** A staged user image; `token` is consumed by the post that references it. */
+export interface BotMessageUpload {
+	readonly token: string;
+	readonly attachment: Omit<BotMessageAttachment, 'id'>;
+}
+export const BOT_MESSAGE_UPLOAD_LIMITS = Object.freeze({
+	bytes: 2 * 1024 * 1024,
+	perMessage: 4,
+	mimes: Object.freeze(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+});
 export interface BotMessage {
 	readonly id: string;
 	readonly botId: string;
@@ -62,4 +72,5 @@ export const BOT_MESSAGE_OPERATIONS = Object.freeze({
 	clear: 'bots.messages.clear',
 	events: 'bots.messages.events',
 	attachment: 'bots.messages.attachment',
+	upload: 'bots.messages.upload',
 });
