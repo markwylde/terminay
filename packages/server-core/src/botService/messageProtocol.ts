@@ -75,10 +75,27 @@ export function createBotMessageOperations(
 	const commands: OperationRegistries['commands'] = {
 		[op.post]: async (r) => {
 			const p = data(r);
+			const uploads = p.uploads === undefined ? [] : p.uploads;
+			if (!Array.isArray(uploads) || uploads.length > 4)
+				throw new BotError('validation', 'At most four images per message');
 			const result = await service.postUserMessage(
 				p.botId,
-				text(p.text, 65536, 'message'),
+				text(p.text, 65536, 'message', uploads.length > 0),
 				text(p.key, 128, 'idempotency key'),
+				uploads.map((u) => text(u, 24, 'upload token')),
+			);
+			assertBotAuthority(r.context);
+			return { result: json(result) };
+		},
+		[op.upload]: async (r) => {
+			const p = data(r);
+			const body = r.body;
+			if (!(body instanceof Uint8Array))
+				throw new BotError('validation', 'An image body is required');
+			const result = await service.uploadUserImage(
+				p.botId,
+				text(p.name, 256, 'image name'),
+				body,
 			);
 			assertBotAuthority(r.context);
 			return { result: json(result) };

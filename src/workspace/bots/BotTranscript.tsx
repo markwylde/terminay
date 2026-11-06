@@ -119,9 +119,22 @@ export const BotTranscript = memo(function BotTranscript({
 					</span>
 					<div className="bots-msg__main">
 						<MessageHead who="You" at={at} />
-						<div className="bots-msg__body bots-msg__body--plain">
-							{block.item.text}
-						</div>
+						{block.item.text ? (
+							<div className="bots-msg__body bots-msg__body--plain">
+								{block.item.text}
+							</div>
+						) : null}
+						{block.item.attachments?.length ? (
+							<AgentText
+								text={block.item.attachments
+									.map(
+										(a) =>
+											`![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
+									)
+									.join('\n\n')}
+								imageLoader={imageLoader}
+							/>
+						) : null}
 					</div>
 				</div>
 			);

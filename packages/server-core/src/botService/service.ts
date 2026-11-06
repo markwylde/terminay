@@ -12,6 +12,7 @@ import type {
 	BotAgent,
 	BotDraft,
 	BotMessage,
+	BotMessageAttachment,
 	BotProfile,
 	BotSessionOrigin,
 	BotSessionRecord,
@@ -35,6 +36,12 @@ import type {
 import { botFailure } from './failure.js';
 import type { BotMemories } from './memories.js';
 import { BotMessageStore } from './messages.js';
+import {
+	BOT_IMAGE_BYTES,
+	botImageMime,
+	removeExecutionImages,
+	writeExecutionImages,
+} from './images.js';
 import type { BotNativeClient } from './native.js';
 import { type BotQueuedTurn, BotTurnQueue } from './queue.js';
 import { BotExecutionRuntime } from './runtime.js';
@@ -542,10 +549,35 @@ export class BotService extends EventEmitter {
 			lease?.release();
 		}
 	}
+	/** Stage one user-supplied image; its bytes are untrusted and sniffed by the store. */
+	async uploadUserImage(
+		botId: string,
+		name: string,
+		bytes: Uint8Array,
+	): Promise<{ token: string; attachment: Omit<BotMessageAttachment, 'id'> }> {
+		this.assertEnabled(botId);
+		if (bytes.length < 1 || bytes.length > BOT_IMAGE_BYTES)
+			throw new BotError('validation', 'Images must be 2 MiB or smaller');
+		return this.serialize(botId, async () => {
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
+			const safe = await this.redactMessage(botId, name);
+			try {
+				botImageMime(bytes);
+			} catch {
+				throw new BotError(
+					'validation',
+					'Only PNG, JPEG, GIF and WebP images can be attached',
+				);
+			}
+			return this.messages.stage(botId, safe, bytes);
+		});
+	}
 	async postUserMessage(
 		botId: string,
 		body: string,
 		key: string,
+		uploads: readonly string[] = [],
 	): Promise<{
 		message: BotMessage;
 		sessionId?: string;
@@ -553,7 +585,7 @@ export class BotService extends EventEmitter {
 		error?: string;
 	}> {
 		this.assertEnabled(botId);
-		text(body, 65536, 'message');
+		text(body, 65536, 'message', uploads.length > 0);
 		const message = await this.serialize(botId, async () => {
 			if (this.deleting.has(botId))
 				throw new BotError('conflict', 'This bot is being deleted.');
@@ -561,7 +593,15 @@ export class BotService extends EventEmitter {
 			this.importMessages(botId);
 			const safe = await this.redactMessage(botId, body),
 				safeKey = await this.redactMessage(botId, key);
-			return this.messages.post(botId, 'user', safe, null, safeKey);
+			return this.messages.post(
+				botId,
+				'user',
+				safe,
+				null,
+				safeKey,
+				[],
+				uploads,
+			);
 		});
 		if (message.dispatch?.state === 'started' && message.dispatch.executionId)
 			return { message, sessionId: message.dispatch.executionId };
@@ -699,7 +739,13 @@ export class BotService extends EventEmitter {
 				'bot restart reconciliation is not complete',
 			);
 		this.assertEnabled(botId);
-		text(prompt, (origin.kind === 'chat' ? 64 : 80) * 1024, 'message');
+		// An image-only chat message has empty text; its images are the content.
+		text(
+			prompt,
+			(origin.kind === 'chat' ? 64 : 80) * 1024,
+			'message',
+			origin.kind === 'chat' && !!origin.messageId,
+		);
 		return this.serialize(botId, async () => {
 			if (this.deleting.has(botId))
 				throw new BotError('conflict', 'This bot is being deleted.');
@@ -919,8 +965,23 @@ export class BotService extends EventEmitter {
 		this.runtime.changed(record.id, 'execution.running');
 		let failureReason = 'agent not ready';
 		this.starting.add(record.id);
+		// The trigger message's images, as snapshotted at dispatch.
+		let images: { mime: string; bytes: Uint8Array }[] = [];
+		let imagePaths: string[] = [];
+		let imageDriver: EngineDriver | undefined;
 		try {
 			this.requireSignIn(this.bots.get(record.botId).signIn);
+			const snapshot = record.runtime?.triggerAttachments ?? [];
+			try {
+				images = snapshot.map((a) =>
+					this.messages.attachment(record.botId, a.id),
+				);
+			} catch {
+				throw new BotError(
+					'not_found',
+					'An attached image is no longer available; send it again.',
+				);
+			}
 			if (!live) {
 				const agent = this.agent(record.snapshot.agentId);
 				failureReason = 'container engine unavailable';
@@ -955,6 +1016,18 @@ export class BotService extends EventEmitter {
 							),
 						},
 					);
+				if (images.length) {
+					failureReason =
+						'The attached images could not be copied into the bot container.';
+					imageDriver = driver;
+					imagePaths = await writeExecutionImages(
+						driver,
+						this.hooks.serverId ?? 'server',
+						record.botId,
+						record.id,
+						images,
+					);
+				}
 				const credential = await this.hooks.credentials.acquire(
 					record.botId,
 					record.snapshot,
@@ -991,6 +1064,7 @@ export class BotService extends EventEmitter {
 					botId: record.botId,
 					sessionId: record.id,
 					snapshot: record.snapshot,
+					images: imagePaths,
 					agent,
 					sessionEnvironment: { ...sessionEnvironment, ...bridge.environment },
 					credential: bridge.wrapCredential(credential),
@@ -1034,6 +1108,7 @@ export class BotService extends EventEmitter {
 			await live.runner.client.prompt(
 				`${first ? `${record.snapshot.context}\n\n` : ''}${this.runtime.briefing(record.id)}\n\n${record.origin.kind === 'chat' ? '' : item.prompt}`,
 				record.snapshot.maxTurnMs,
+				first ? images : [],
 			);
 			if (!live.closing) bridge?.assertConnected();
 			if (!live.closing)
@@ -1086,6 +1161,8 @@ export class BotService extends EventEmitter {
 			if (live) live.turn = false;
 			if (live?.closing) await live.stop;
 			else if (live) await this.closeLive(record.id, 'end');
+			if (imageDriver)
+				await removeExecutionImages(imageDriver, record.botId, record.id);
 			this.runtime.revoke(record.id);
 			this.runtime.release(record.id);
 			this.runtime.changed(record.id, 'execution.finished');

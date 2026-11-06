@@ -171,6 +171,23 @@ function parseRecord(value: unknown): BotSessionRecord {
 			throw new Error('invalid execution runtime');
 		if (r.triggerMessageId !== null) sessionId(r.triggerMessageId);
 		if (r.supersededBy !== null) sessionId(r.supersededBy);
+		if (r.triggerAttachments !== undefined) {
+			if (!Array.isArray(r.triggerAttachments) || r.triggerAttachments.length > 4)
+				throw new Error('invalid execution attachments');
+			for (const raw of r.triggerAttachments) {
+				const a = object(raw);
+				if (
+					typeof a.id !== 'string' ||
+					!/^[a-f0-9]{24}$/.test(a.id) ||
+					!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
+						String(a.mime),
+					) ||
+					!Number.isSafeInteger(a.size)
+				)
+					throw new Error('invalid execution attachments');
+				text(a.name, 256, 'attachment name');
+			}
+		}
 		const keys = object(r.keys);
 		if (Object.keys(keys).length > 256)
 			throw new Error('invalid execution retry state');
