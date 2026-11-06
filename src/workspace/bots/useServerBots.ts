@@ -100,7 +100,8 @@ export type ServerBots = Readonly<{
 /** The sessions a card and the rail show; the Sessions tab pages its own. */
 const RECENT_SESSIONS = 20;
 const REFETCH_DELAY_MS = 120;
-const UPCOMING_COUNT = 3;
+/** Wide enough that a trigger firing every minute does not hide the rest. */
+const UPCOMING_COUNT = 250;
 const UPCOMING_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function supportsBots(capabilities: readonly string[] | undefined) {

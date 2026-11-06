@@ -10,7 +10,7 @@ import {
 
 import type { BotProfile } from '@terminay/protocol';
 import { Check, ChevronRight, Circle, LoaderCircle, X } from 'lucide-react';
-import { memo, useEffect, useMemo, useState, type Ref } from 'react';
+import { Fragment, memo, useEffect, useMemo, useState, type Ref } from 'react';
 import { BotAvatar } from './BotAvatar';
 import {
 	botMarkdownImagePaths,
@@ -26,8 +26,19 @@ export const BotTranscript = memo(function BotTranscript({
 	active = false,
 	transport,
 	containerRef,
+	messageTimes,
+	unread,
 }: Readonly<{
 	active?: boolean;
+	/** Chat: each message's posting time. When given, every message is its own
+	 * block with avatar, author and time instead of folding into one turn. */
+	messageTimes?: ReadonlyMap<string, number>;
+	/** Chat: the first unread message and how many there are. */
+	unread?: Readonly<{
+		key: string;
+		count: number;
+		ref?: Ref<HTMLDivElement>;
+	}>;
 	containerRef?: Ref<HTMLDivElement>;
 	transport?: BotIoTransport;
 	items: readonly TranscriptItem[];
@@ -47,112 +58,176 @@ export const BotTranscript = memo(function BotTranscript({
 					)
 				: io.image(bot.id, path, { signal });
 	}, [transport, bot.id]);
-	const blocks = useMemo(() => turnBlocks(items), [items]);
+	const separate = messageTimes !== undefined;
+	const blocks = useMemo(() => turnBlocks(items, separate), [items, separate]);
 	const activeBlock = [...blocks]
 		.reverse()
 		.find((block) => block.kind === 'agent');
 	return (
 		<div
 			ref={containerRef}
-			className="bots-tx"
+			className={separate ? 'bots-tx bots-tx--chat' : 'bots-tx'}
 			data-terminay-bot-transcript={items.length}
 		>
 			{blocks.map((block) => {
-				if (block.kind === 'user')
-					return (
+				const key = block.kind === 'agent' ? block.key : block.item.key;
+				const rendered = renderBlock(block);
+				return unread?.key === key && rendered ? (
+					<Fragment key={key}>
 						<div
-							className="bots-msg bots-msg--user"
-							key={block.item.key}
-							data-terminay-message-key={block.item.key}
-							tabIndex={onMessageMenu ? 0 : undefined}
-							onContextMenu={(event) => {
-								if (onMessageMenu) {
-									event.preventDefault();
-									onMessageMenu(
-										block.item.key,
-										block.item.text,
-										event.clientX,
-										event.clientY,
-									);
-								}
-							}}
+							className="bots-unread"
+							ref={unread.ref}
+							data-terminay-bot-unread={unread.count}
 						>
-							<span className="bots-msg__you" aria-hidden="true">
-								You
+							<span>
+								{unread.count} new message{unread.count === 1 ? '' : 's'}
 							</span>
-							<div className="bots-msg__main">
-								<div className="bots-msg__who">You</div>
-								<div className="bots-msg__body bots-msg__body--plain">
-									{block.item.text}
-								</div>
-							</div>
 						</div>
-					);
-				if (block.kind === 'other') {
-					const item = block.item;
-					if (item.kind === 'plan')
-						return <PlanList key={item.key} steps={item.steps} />;
-					if (item.kind === 'truncated')
-						return (
-							<div
-								className="bots-note bots-note--warn"
-								key={item.key}
-								data-terminay-bot-truncated="true"
-							>
-								This transcript reached its size limit. Later updates were not
-								kept.
-							</div>
-						);
-					return null;
-				}
-				// One agent turn: a single avatar and name over its thoughts,
-				// tool runs and replies, in order.
-				return (
-					<div className="bots-msg" key={block.key}>
-						<BotAvatar bot={bot} size="sm" />
-						<div className="bots-msg__main bots-msg__turn">
-							<div className="bots-msg__who">{bot.name}</div>
-							{block.parts.map((part) => {
-								if (Array.isArray(part))
-									return part.length === 1 ? (
-										<ToolEntry
-											key={part[0]!.key}
-											item={part[0]!}
-											active={active && block === activeBlock}
-										/>
-									) : (
-										<ToolGroup
-											key={part[0]!.key}
-											tools={part}
-											active={active && block === activeBlock}
-										/>
-									);
-								if (part.kind === 'thought')
-									return (
-										<details className="bots-thought" key={part.key}>
-											<summary>Thinking</summary>
-											<div>{part.text}</div>
-										</details>
-									);
-								if (part.kind === 'agent')
-									return (
-										<AgentText
-											key={part.key}
-											text={part.text}
-											messageKey={part.key}
-											imageLoader={imageLoader}
-											onMessageMenu={onMessageMenu}
-										/>
-									);
-								return null;
-							})}
-						</div>
-					</div>
+						{rendered}
+					</Fragment>
+				) : (
+					rendered
 				);
 			})}
 		</div>
 	);
+	function renderBlock(block: TurnBlock) {
+		const at = messageTimes?.get(
+			block.kind === 'agent' ? block.key : block.item.key,
+		);
+		if (block.kind === 'user')
+			return (
+				<div
+					className="bots-msg bots-msg--user"
+					key={block.item.key}
+					data-terminay-message-key={block.item.key}
+					tabIndex={onMessageMenu ? 0 : undefined}
+					onContextMenu={(event) => {
+						if (onMessageMenu) {
+							event.preventDefault();
+							onMessageMenu(
+								block.item.key,
+								block.item.text,
+								event.clientX,
+								event.clientY,
+							);
+						}
+					}}
+				>
+					<span className="bots-msg__you" aria-hidden="true">
+						You
+					</span>
+					<div className="bots-msg__main">
+						<MessageHead who="You" at={at} />
+						<div className="bots-msg__body bots-msg__body--plain">
+							{block.item.text}
+						</div>
+					</div>
+				</div>
+			);
+		if (block.kind === 'other') {
+			const item = block.item;
+			if (item.kind === 'plan')
+				return <PlanList key={item.key} steps={item.steps} />;
+			if (item.kind === 'truncated')
+				return (
+					<div
+						className="bots-note bots-note--warn"
+						key={item.key}
+						data-terminay-bot-truncated="true"
+					>
+						This transcript reached its size limit. Later updates were not kept.
+					</div>
+				);
+			return null;
+		}
+		// One agent turn: a single avatar and name over its thoughts,
+		// tool runs and replies, in order.
+		return (
+			<div className="bots-msg" key={block.key}>
+				<BotAvatar bot={bot} size="sm" />
+				<div className="bots-msg__main bots-msg__turn">
+					<MessageHead who={bot.name} at={at} />
+					{block.parts.map((part) => {
+						if (Array.isArray(part))
+							return part.length === 1 ? (
+								<ToolEntry
+									key={part[0]!.key}
+									item={part[0]!}
+									active={active && block === activeBlock}
+								/>
+							) : (
+								<ToolGroup
+									key={part[0]!.key}
+									tools={part}
+									active={active && block === activeBlock}
+								/>
+							);
+						if (part.kind === 'thought')
+							return (
+								<details className="bots-thought" key={part.key}>
+									<summary>Thinking</summary>
+									<div>{part.text}</div>
+								</details>
+							);
+						if (part.kind === 'agent')
+							return (
+								<AgentText
+									key={part.key}
+									text={part.text}
+									messageKey={part.key}
+									imageLoader={imageLoader}
+									onMessageMenu={onMessageMenu}
+								/>
+							);
+						return null;
+					})}
+				</div>
+			</div>
+		);
+	}
 });
+
+function MessageHead({ who, at }: Readonly<{ who: string; at?: number }>) {
+	if (at === undefined) return <div className="bots-msg__who">{who}</div>;
+	return (
+		<div className="bots-msg__head">
+			<span className="bots-msg__who">{who}</span>
+			<time
+				className="bots-msg__time"
+				dateTime={new Date(at).toISOString()}
+				title={new Date(at).toLocaleString(undefined, {
+					dateStyle: 'full',
+					timeStyle: 'medium',
+				})}
+			>
+				{messageTime(at)}
+			</time>
+		</div>
+	);
+}
+
+/** Today's messages by clock time; older ones with a day, then a date. */
+export function messageTime(at: number, now = Date.now()): string {
+	const date = new Date(at),
+		today = new Date(now);
+	const time = date.toLocaleTimeString(undefined, {
+		hour: '2-digit',
+		minute: '2-digit',
+	});
+	const startOfDay = (d: Date) =>
+		new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+	const days = Math.round((startOfDay(today) - startOfDay(date)) / 86_400_000);
+	if (days <= 0) return time;
+	if (days === 1) return `Yesterday ${time}`;
+	if (days < 7)
+		return `${date.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
+	return `${date.toLocaleDateString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		...(date.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' }),
+	})} ${time}`;
+}
 
 type AgentPart = TranscriptItem | ToolItem[];
 type TurnBlock =
@@ -163,7 +238,10 @@ type TurnBlock =
 /** Groups the flat transcript into turns. Answered permission echoes are
  * dropped (a pending one is asked above the composer); runs of tool calls
  * fold into one line. */
-function turnBlocks(items: readonly TranscriptItem[]): TurnBlock[] {
+function turnBlocks(
+	items: readonly TranscriptItem[],
+	separate = false,
+): TurnBlock[] {
 	const blocks: TurnBlock[] = [];
 	for (const item of items) {
 		if (item.kind === 'permission') continue;
@@ -176,7 +254,7 @@ function turnBlocks(items: readonly TranscriptItem[]): TurnBlock[] {
 			continue;
 		}
 		let last = blocks[blocks.length - 1];
-		if (last?.kind !== 'agent') {
+		if (last?.kind !== 'agent' || (separate && item.kind === 'agent')) {
 			last = { kind: 'agent', key: item.key, parts: [] };
 			blocks.push(last);
 		}

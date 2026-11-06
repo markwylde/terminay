@@ -1,8 +1,16 @@
 import type { BotProfile, BotSessionRecord } from '@terminay/protocol';
-import { Brain, FolderOpen, Monitor, SquareTerminal, Zap } from 'lucide-react';
+import {
+	Brain,
+	FolderOpen,
+	Monitor,
+	Repeat,
+	SquareTerminal,
+	Zap,
+} from 'lucide-react';
 import { BotDesktopCanvas } from './BotDesktopView';
 import { formatWhen } from './BotTriggersPanel';
 import { SESSION_STATE_LABELS, sessionTitle, shortAge } from './botsModel';
+import { distinctUpcoming } from './triggersModel';
 import { useNow } from './useNow';
 import type { ServerBots } from './useServerBots';
 import type { BotConfigTab } from './BotTab';
@@ -142,12 +150,25 @@ export function BotContextRail({
 					<p className="bots-faint">No upcoming firings.</p>
 				) : (
 					<ul className="bots-upnext" data-terminay-bot-upcoming="true">
-						{(server.upcoming.get(bot.id) ?? []).slice(0, 3).map((firing) => (
-							<li key={`${firing.triggerId}:${firing.at}`}>
-								<span className="bots-mono">{formatWhen(firing.at)}</span>
-								<span>{firing.triggerName}</span>
-							</li>
-						))}
+						{distinctUpcoming(server.upcoming.get(bot.id) ?? [])
+							.slice(0, 3)
+							.map((firing) => (
+								<li key={firing.triggerId}>
+									<span className="bots-mono">{formatWhen(firing.at)}</span>
+									<span className="bots-upnext__name">
+										{firing.triggerName}
+									</span>
+									{firing.repeats ? (
+										<Repeat
+											size={12}
+											className="bots-upnext__repeat"
+											aria-label="Repeats"
+										>
+											<title>Repeats</title>
+										</Repeat>
+									) : null}
+								</li>
+							))}
 					</ul>
 				)}
 			</section>
