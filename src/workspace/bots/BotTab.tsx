@@ -14,7 +14,7 @@ import {
 } from './BotEnvironmentPanel';
 import { BotMemoriesPanel } from './BotMemoriesPanel';
 import { BotProfilePanel } from './BotProfilePanel';
-import { BotSessionsPanel } from './BotSessionsPanel';
+import { BotSessionsPanel, type SessionsTrigger } from './BotSessionsPanel';
 import { BotTriggersPanel } from './BotTriggersPanel';
 import { subscribeBotFocus } from './botFocus';
 import { BOT_ACTIVITY_LABELS, botActivity } from './botsModel';
@@ -52,6 +52,9 @@ export function BotTab({
 	const [configTab, setConfigTab] = useState<BotConfigTab>('profile');
 	const [envTab, setEnvTab] = useState<BotEnvironmentSubTab>('overview');
 	const [chatSessionId, setChatSessionId] = useState<string>();
+	// Sessions filtered to one trigger, entered from that trigger's Sessions
+	// action. The name is the one the trigger had when the filter was applied.
+	const [sessionsTrigger, setSessionsTrigger] = useState<SessionsTrigger>();
 	const [draft, setDraft] = useState('');
 	const [availabilityError, setAvailabilityError] = useState<string>();
 	const bot = server?.bots.find((candidate) => candidate.id === botId);
@@ -79,6 +82,7 @@ export function BotTab({
 		return subscribeBotFocus(server.serverId, botId, (target) => {
 			if (target.mode !== undefined) setMode(target.mode);
 			if (target.sessionId !== undefined) {
+				setSessionsTrigger(undefined);
 				setMode('configure');
 				setConfigTab('sessions');
 				setChatSessionId(target.sessionId);
@@ -199,6 +203,7 @@ export function BotTab({
 					onDraftChange={setDraft}
 					visible={host.isVisible}
 					onConfigure={(tab, sub) => {
+						if (tab === 'sessions') setSessionsTrigger(undefined);
 						setConfigTab(tab);
 						if (sub !== undefined) setEnvTab(sub);
 						setMode('configure');
@@ -214,7 +219,10 @@ export function BotTab({
 								role="tab"
 								aria-selected={configTab === tab}
 								className={configTab === tab ? 'bots-ctabs--on' : ''}
-								onClick={() => setConfigTab(tab)}
+								onClick={() => {
+									if (tab === 'sessions') setSessionsTrigger(undefined);
+									setConfigTab(tab);
+								}}
 								data-terminay-bot-config-tab={tab}
 							>
 								{CONFIG_LABELS[tab]}
@@ -242,13 +250,23 @@ export function BotTab({
 						) : configTab === 'memories' ? (
 							<BotMemoriesPanel server={server} bot={bot} />
 						) : configTab === 'triggers' ? (
-							<BotTriggersPanel server={server} bot={bot} />
+							<BotTriggersPanel
+								server={server}
+								bot={bot}
+								onShowSessions={(trigger) => {
+									setSessionsTrigger(trigger);
+									setChatSessionId(undefined);
+									setConfigTab('sessions');
+								}}
+							/>
 						) : (
 							<BotSessionsPanel
 								onOpenTriggers={() => setConfigTab('triggers')}
 								selectedId={chatSessionId}
 								server={server}
 								bot={bot}
+								trigger={sessionsTrigger}
+								onClearTrigger={() => setSessionsTrigger(undefined)}
 								onOpenInChat={(sessionId) => {
 									setChatSessionId(sessionId);
 									setMode('chat');

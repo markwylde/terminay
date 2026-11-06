@@ -130,6 +130,8 @@ export function createBotOperations(service: BotService): OperationRegistries {
 							origin: typeof d.origin === 'string' ? d.origin : undefined,
 							state: typeof d.state === 'string' ? d.state : undefined,
 							search: typeof d.search === 'string' ? d.search : undefined,
+							triggerId:
+								typeof d.triggerId === 'string' ? d.triggerId : undefined,
 						}),
 					);
 				},

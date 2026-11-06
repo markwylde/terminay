@@ -494,7 +494,12 @@ export class BotsClient {
 	}
 	async sessions(
 		botId: string,
-		filter: { origin?: string; state?: string; search?: string } = {},
+		filter: {
+			origin?: string;
+			state?: string;
+			search?: string;
+			triggerId?: string;
+		} = {},
 		options: QueryOptions = {},
 	): Promise<BotSessionRecord[]> {
 		const response = await this.read(

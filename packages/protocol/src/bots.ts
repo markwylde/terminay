@@ -5,6 +5,7 @@ import type {
 	BotSourceHealth,
 } from './botSources.js';
 import type { JsonValue } from './errors.js';
+import type { BotMessageAttachment } from './botMessages.js';
 
 export const BOTS_CAPABILITY = 'bots.v1';
 export const BOT_EVENTS = { changed: 'bots.changed' } as const;
@@ -157,6 +158,8 @@ export interface BotExecutionRuntimeState {
 	readonly epoch: string;
 	readonly order: number;
 	readonly triggerMessageId: string | null;
+	/** The trigger message's attachments, snapshotted at dispatch. */
+	readonly triggerAttachments?: readonly BotMessageAttachment[];
 	readonly revoked: boolean;
 	readonly supersededBy: string | null;
 	readonly inbox: readonly BotExecutionInboxMessage[];

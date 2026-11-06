@@ -216,16 +216,160 @@ test('below 60 columns beside the expanded panel the panel stays a rail, and the
 
 // 5.5
 
-test('the tab shows done over total and a red marker while a step failed or needs input', () => {
-	const summary = model.tabSummary(attached([step('a', 'done'), step('b', 'needs_input'), step('c', 'not_started')]));
-	assert.deepEqual([summary.done, summary.total, summary.alert], [1, 3, true]);
-	const markup = renderToStaticMarkup(React.createElement(badge.WorkflowTabProgress, { summary }));
-	assert.match(markup, />1\/3</);
-	assert.match(markup, /terminal-tab-workflow-alert/);
-	const calm = model.tabSummary(attached([step('a', 'done'), step('b', 'running')]));
-	assert.equal(calm.alert, false);
-	assert.ok(!renderToStaticMarkup(React.createElement(badge.WorkflowTabProgress, { summary: calm })).includes('alert"'));
-	assert.equal(renderToStaticMarkup(React.createElement(badge.WorkflowTabProgress, { summary: undefined })), '');
+const seenStore = await bundle('src/workspace/workflows/workflowSeen.ts', 'seen.cjs');
+const MIN = 60_000;
+
+test('the dial is amber and filled to done over total while a step runs, with no count as text', () => {
+	const steps = [
+		step('a', 'done'), step('b', 'done'), step('c', 'done'),
+		{ ...step('d', 'running', { startedAt: 0 }), title: 'Implement' },
+		step('e', 'not_started'), step('f', 'not_started'), step('g', 'not_started'), step('h', 'not_started'),
+	];
+	const summary = model.tabSummary(attached(steps), 14 * MIN);
+	assert.equal(summary.tone, 'running');
+	assert.equal(summary.fraction, 3 / 8);
+	assert.equal(summary.label, 'Implement · 3 of 8 · 14m');
+	assert.equal(summary.completionKey, undefined);
+	assert.equal(summary.ticking, true);
+	const markup = renderToStaticMarkup(React.createElement(badge.WorkflowDial, { summary }));
+	assert.match(markup, /workflow-dial--running/);
+	assert.match(markup, /aria-label="Implement · 3 of 8 · 14m"/);
+	assert.match(markup, /title="Implement · 3 of 8 · 14m"/);
+	assert.ok(!markup.includes('3/8'), 'no count drawn as text');
+});
+
+test('needing the user or a failed step makes the dial red, and the name says so', () => {
+	const needs = model.tabSummary(
+		attached([step('a', 'done'), step('b', 'done'), { ...step('c', 'needs_input', { startedAt: 0 }), title: 'Review' }, step('d', 'not_started'), step('e', 'not_started')]),
+		3 * MIN,
+	);
+	assert.equal(needs.tone, 'alert');
+	assert.equal(needs.label, 'Review needs you · 2 of 5 · 3m');
+	const mixed = model.tabSummary(
+		attached([{ ...step('a', 'failed'), title: 'Build' }, { ...step('b', 'running', { startedAt: 0 }), title: 'Implement' }]),
+		MIN,
+	);
+	assert.equal(mixed.tone, 'alert');
+	assert.equal(mixed.label, 'Implement · 0 of 2 · 1m · Build failed');
+	const failedOnly = model.tabSummary(attached([step('a', 'done'), { ...step('b', 'failed'), title: 'Build' }, step('c', 'not_started')]));
+	assert.equal(failedOnly.tone, 'alert');
+	assert.equal(failedOnly.label, 'Build failed · 1 of 3');
+});
+
+test('between steps the dial is grey and names the next step; finished is full green', () => {
+	const idle = model.tabSummary(attached([step('a', 'done'), { ...step('b', 'not_started'), title: 'Verify' }]));
+	assert.equal(idle.tone, 'idle');
+	assert.equal(idle.fraction, 0.5);
+	assert.equal(idle.label, 'Next: Verify · 1 of 2');
+	assert.equal(idle.ticking, false);
+	const finished = model.tabSummary(attached([step('a', 'done', { endedAt: 10 }), step('b', 'done', { endedAt: 25 })]));
+	assert.equal(finished.tone, 'done');
+	assert.equal(finished.fraction, 1);
+	assert.equal(finished.label, 'All 2 steps done');
+	assert.equal(finished.completionKey, 'wf-1:25');
+});
+
+test('the time is since the step started, across needing the user', () => {
+	const back = model.tabSummary(attached([step('a', 'running', { startedAt: 0 })]), 20 * MIN);
+	assert.equal(back.label, 'Step a · 0 of 1 · 20m');
+});
+
+test('an unrestorable workflow is a full red ring named as such; no workflow, no dial', () => {
+	const summary = model.tabSummary({ sessionId: 'session-a', state: 'unrestorable' });
+	assert.deepEqual([summary.tone, summary.fraction, summary.label], ['alert', 1, 'Workflow could not be restored']);
+	assert.match(renderToStaticMarkup(React.createElement(badge.WorkflowDial, { summary })), /workflow-dial__arc/);
+	assert.equal(model.tabSummary(undefined), undefined);
+	const empty = renderToStaticMarkup(React.createElement(badge.WorkflowDial, { summary: { ...summary, tone: 'idle', fraction: 0 } }));
+	assert.ok(!empty.includes('workflow-dial__arc'), 'an empty dial draws only its track');
+});
+
+test('a reopened workflow that finishes again is a new completion', () => {
+	const first = model.completionKey({ id: 'wf-1', steps: [step('a', 'done', { endedAt: 10 })] });
+	const again = model.completionKey({ id: 'wf-1', steps: [step('a', 'done', { endedAt: 99 })] });
+	assert.notEqual(first, again);
+	assert.equal(model.completionKey({ id: 'wf-1', steps: [step('a', 'running')] }), undefined);
+	assert.equal(model.completionKey({ id: 'wf-1', steps: [] }), undefined);
+});
+
+test('a completion is seen once its terminal was active and stops being, or goes away', () => {
+	const committed = [];
+	const tracker = new seenStore.WorkflowSeenTracker((key) => committed.push(key));
+	tracker.update(undefined, true);
+	tracker.update('wf-1:25', true);
+	assert.deepEqual(committed, [], 'not seen while still active');
+	tracker.update('wf-1:25', false);
+	assert.deepEqual(committed, ['wf-1:25']);
+	tracker.update('wf-1:25', false);
+	assert.deepEqual(committed, ['wf-1:25'], 'committed once');
+
+	const changed = [];
+	const t2 = new seenStore.WorkflowSeenTracker((key) => changed.push(key));
+	t2.update('wf-1:25', true);
+	t2.update(undefined, true); // reopened while active
+	t2.update(undefined, false);
+	assert.deepEqual(changed, [], 'a completion that changed first is not seen');
+	t2.update('wf-1:99', false); // finished again in the background
+	assert.deepEqual(changed, []);
+
+	const gone = [];
+	const t3 = new seenStore.WorkflowSeenTracker((key) => gone.push(key));
+	t3.update('wf-2:5', true);
+	t3.end();
+	assert.deepEqual(gone, ['wf-2:5'], 'going away while showing it counts as seen');
+});
+
+test('seen completions are kept on the device, shared across windows, and capped', () => {
+	const stored = new Map();
+	const listeners = new Set();
+	globalThis.localStorage = {
+		getItem: (k) => (stored.has(k) ? stored.get(k) : null),
+		setItem: (k, v) => stored.set(k, String(v)),
+	};
+	globalThis.addEventListener = (type, fn) => type === 'storage' && listeners.add(fn);
+	globalThis.removeEventListener = (type, fn) => listeners.delete(fn);
+	try {
+		seenStore.resetWorkflowSeenForTests();
+		assert.equal(seenStore.isWorkflowCompletionSeen('wf-1:1'), false);
+		seenStore.markWorkflowCompletionSeen('wf-1:1');
+		assert.equal(seenStore.isWorkflowCompletionSeen('wf-1:1'), true);
+		assert.deepEqual(JSON.parse(stored.get(seenStore.WORKFLOW_SEEN_STORAGE_KEY)), ['wf-1:1']);
+
+		// Another window writes; this one hears the storage event.
+		let heard = 0;
+		const unsubscribe = seenStore.subscribeWorkflowSeen(() => heard++);
+		stored.set(seenStore.WORKFLOW_SEEN_STORAGE_KEY, JSON.stringify(['wf-9:9', 'wf-1:1']));
+		for (const fn of listeners) fn({ key: seenStore.WORKFLOW_SEEN_STORAGE_KEY });
+		assert.equal(heard, 1);
+		assert.equal(seenStore.isWorkflowCompletionSeen('wf-9:9'), true);
+		// A write here keeps the other window's entry.
+		seenStore.markWorkflowCompletionSeen('wf-2:2');
+		assert.deepEqual(JSON.parse(stored.get(seenStore.WORKFLOW_SEEN_STORAGE_KEY)), ['wf-2:2', 'wf-9:9', 'wf-1:1']);
+		unsubscribe();
+
+		for (let i = 0; i < seenStore.WORKFLOW_SEEN_LIMIT + 5; i++) seenStore.markWorkflowCompletionSeen(`wf-x:${i}`);
+		const list = JSON.parse(stored.get(seenStore.WORKFLOW_SEEN_STORAGE_KEY));
+		assert.equal(list.length, seenStore.WORKFLOW_SEEN_LIMIT);
+		assert.equal(list[0], `wf-x:${seenStore.WORKFLOW_SEEN_LIMIT + 4}`);
+		assert.equal(seenStore.isWorkflowCompletionSeen('wf-1:1'), false, 'the oldest are evicted');
+
+		// Storage that throws still records the completion in this window.
+		globalThis.localStorage = {
+			getItem: () => {
+				throw new Error('blocked');
+			},
+			setItem: () => {
+				throw new Error('blocked');
+			},
+		};
+		seenStore.resetWorkflowSeenForTests();
+		seenStore.markWorkflowCompletionSeen('wf-3:3');
+		assert.equal(seenStore.isWorkflowCompletionSeen('wf-3:3'), true);
+	} finally {
+		delete globalThis.localStorage;
+		delete globalThis.addEventListener;
+		delete globalThis.removeEventListener;
+		seenStore.resetWorkflowSeenForTests();
+	}
 });
 
 // 6.1 / 6.2: Settings › Workflows

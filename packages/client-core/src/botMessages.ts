@@ -3,6 +3,7 @@ import {
 	type BotMessage,
 	type BotMessagePage,
 	type BotMessageDetail,
+	type BotMessageUpload,
 	type BotRuntimeEventPage,
 	type JsonValue,
 	assertJsonValue,
@@ -58,10 +59,39 @@ export class BotMessagesClient {
 		botId: string,
 		text: string,
 		key: string,
+		uploads: readonly string[] = [],
 	): Promise<{ message: BotMessage; sessionId?: string; error?: string }> {
 		return record(
-			await this.transport.command(op.post, { botId, text, key }),
+			await this.transport.command(op.post, {
+				botId,
+				text,
+				key,
+				...(uploads.length ? { uploads: [...uploads] } : {}),
+			}),
 		) as unknown as { message: BotMessage; sessionId?: string; error?: string };
+	}
+	/** Stages one image for a later post. The server sniffs its type and bounds its size. */
+	async upload(
+		botId: string,
+		name: string,
+		bytes: Uint8Array,
+	): Promise<BotMessageUpload> {
+		const r = record(
+			await this.transport.commandWithBody(op.upload, { botId, name }, bytes),
+		);
+		const a = r.attachment as Record<string, unknown> | undefined;
+		if (
+			typeof r.token !== 'string' ||
+			!/^[a-f0-9]{24}$/.test(r.token) ||
+			!a ||
+			typeof a.name !== 'string' ||
+			typeof a.size !== 'number' ||
+			!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
+				String(a.mime),
+			)
+		)
+			throw new TypeError('Invalid upload response');
+		return r as unknown as BotMessageUpload;
 	}
 	async edit(
 		botId: string,

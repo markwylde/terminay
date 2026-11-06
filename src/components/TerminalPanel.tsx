@@ -78,9 +78,11 @@ import { WorkflowPanel } from '../workspace/workflows/WorkflowPanel';
 import {
 	panelMode,
 	reservedWidth,
+	tabSummary,
 	WORKFLOW_RAIL_WIDTH,
 } from '../workspace/workflows/workflowPanelModel';
 import { useWorkflowPanelSetting } from '../workspace/workflows/workflowPanelSetting';
+import { useMarkWorkflowSeen } from '../workspace/workflows/workflowSeen';
 import type { TerminalPanelParams } from './TerminalTab';
 import {
 	clearTerminalViewport,
@@ -570,6 +572,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const terminalWorkflow = useTerminalWorkflow(
 		terminalClientContext?.serverId,
 		props.params.sessionId,
+	);
+	// A finished workflow's dial hides once the user has had this terminal
+	// active and moved on. The pane does it, not the tab: at phone width
+	// there is no tab strip, but every layout has the pane.
+	useMarkWorkflowSeen(
+		tabSummary(terminalWorkflow.view)?.completionKey,
+		props.params.isFocused === true,
 	);
 	const workflowSetting = useWorkflowPanelSetting();
 	const [workflowGeometry, setWorkflowGeometry] = useState<

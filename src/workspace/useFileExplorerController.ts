@@ -16,6 +16,7 @@ import {
 	toContainedProjectRelativePath,
 } from '../pathUtils';
 import { loadServerGitWorkspace } from '../services/git/serverGitWorkspaceAdapter';
+import type { GitListingMemory } from './gitListingMemory';
 import { parseWorktreeProperties } from '../services/git/worktreeProperties';
 import type { FileViewerMode } from '../types/fileViewer';
 import type {
@@ -95,6 +96,18 @@ type Options = {
 	 * changes the project's root; a folder's root is the server's to resolve.
 	 */
 	project: ProjectTab;
+	/**
+	 * The window's last listing per project. A workspace mounted for a folder
+	 * shown for the first time starts from it, rather than from an empty
+	 * listing that would draw every folder card without its facts.
+	 */
+	listingMemory?: GitListingMemory;
+	/**
+	 * The project's own root, which keys `listingMemory`. A linked folder's
+	 * `project.rootFolder` is its worktree, but the listing is the whole
+	 * repository's and is the same whichever folder asks for it.
+	 */
+	listingRoot?: string;
 };
 
 function joinPath(dirPath: string, name: string): string {
@@ -309,6 +322,8 @@ export function useFileExplorerController({
 	onOperationSucceeded: reportOperationSucceeded,
 	onSetError,
 	project,
+	listingMemory,
+	listingRoot,
 }: Options) {
 	// Reporting an outcome is something a load does when it finishes, not
 	// something it depends on. The callbacks are read at that moment, so the
@@ -338,11 +353,20 @@ export function useFileExplorerController({
 	const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>(
 		{},
 	);
+	// What this window last listed for the project, read once as this
+	// workspace mounts; its own root refresh replaces it.
+	const [recalledListing] = useState(() =>
+		listingRoot === undefined
+			? undefined
+			: listingMemory?.recall(project.id, listingRoot),
+	);
 	const [gitStatuses, setGitStatuses] = useState<
 		Record<string, FileExplorerGitStatus>
-	>({});
+	>(() => ({ ...(recalledListing?.statuses ?? {}) }));
 	const [worktreePanelStatus, setWorktreePanelStatus] =
-		useState<WorktreePanelStatus | null>(EMPTY_WORKTREE_PANEL_STATUS);
+		useState<WorktreePanelStatus | null>(
+			() => recalledListing?.worktrees ?? EMPTY_WORKTREE_PANEL_STATUS,
+		);
 	const [deletingWorktreePaths, setDeletingWorktreePaths] = useState<
 		Set<string>
 	>(() => new Set());
@@ -353,7 +377,7 @@ export function useFileExplorerController({
 	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
 		useState<FileExplorerNameDialogState | null>(null);
 	const referencesRef = useRef<ReadonlyMap<string, GitWorktreeReference>>(
-		new Map(),
+		recalledListing?.referencesByPath ?? new Map(),
 	);
 	const worktreeDeleteQueueRef = useRef(Promise.resolve());
 	const gitStatusRefreshScheduleRef = useRef<RefreshSchedule | undefined>(
@@ -493,7 +517,13 @@ export function useFileExplorerController({
 	);
 
 	const gitPaneSyncLogRef = useRef<GitPaneSyncLog>(createGitPaneSyncLog());
-	const shownGitProjectionRef = useRef<string | null>(null);
+	const shownGitProjectionRef = useRef<string | null>(
+		recalledListing === undefined
+			? null
+			: JSON.stringify([recalledListing.statuses, recalledListing.worktrees]),
+	);
+	const listingMemoryRef = useRef({ listingMemory, listingRoot });
+	listingMemoryRef.current = { listingMemory, listingRoot };
 	const refreshGitStatusesForRoot = useCallback(async (
 		rootFolder: string,
 		markAsCurrent = false,
@@ -522,6 +552,9 @@ export function useFileExplorerController({
 		}
 		gitRefreshRequestIdRef.current += 1;
 		const requestId = gitRefreshRequestIdRef.current;
+		// The project root this listing is taken under. A listing that lands
+		// after the project's root changed is not remembered for the new one.
+		const requestedListingRoot = listingMemoryRef.current.listingRoot;
 		await applyGitWorkspaceRefresh({
 			gitClient,
 			project: { id: project.id, rootFolder: targetRootFolder },
@@ -538,6 +571,16 @@ export function useFileExplorerController({
 				const changed = shownGitProjectionRef.current !== shown;
 				shownGitProjectionRef.current = shown;
 				referencesRef.current = projection.referencesByPath;
+				const memory = listingMemoryRef.current;
+				if (
+					memory.listingRoot !== undefined &&
+					memory.listingRoot === requestedListingRoot
+				)
+					memory.listingMemory?.remember(
+						project.id,
+						memory.listingRoot,
+						projection,
+					);
 				setGitStatuses((current) =>
 					sameGitStatuses(current, projection.statuses)
 						? current
