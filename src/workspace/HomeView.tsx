@@ -2,7 +2,7 @@
  * Home's shell: its sidebar, beside whatever Home is showing.
  *
  * Home is not a project, so its sidebar holds no Explorer, Documentation,
- * Agents, or Changes panes. It lists Home's five sections and opens each as a
+ * Agents, or Changes panes. It lists Home's six sections and opens each as a
  * tab. It reuses the project sidebar's geometry — the same split layout, width
  * separator, and narrow-layout drawer — so it inherits the drawer's focus and
  * dismissal rules rather than defining its own.
@@ -11,7 +11,7 @@
  * nothing typed into one of its tabs is lost by looking elsewhere.
  */
 
-import { Bot, Film, House, LayoutList, Workflow } from 'lucide-react';
+import { Bot, Film, House, LayoutList, ListChecks, Workflow } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useRef } from 'react';
 import {
 	NARROW_LAYOUT_MEDIA_QUERY,
@@ -30,6 +30,7 @@ export const HOME_SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
 	home: <House size={15} aria-hidden="true" />,
 	recordings: <Film size={15} aria-hidden="true" />,
 	tabs: <LayoutList size={15} aria-hidden="true" />,
+	workflows: <ListChecks size={15} aria-hidden="true" />,
 };
 
 const ID_PREFIX = 'home-section';
@@ -56,6 +57,14 @@ export type HomeViewProps = Readonly<{
 	sidebarWidth: number;
 	/** Shown under the sections: the bot roster. */
 	sidebarExtra?: ReactNode;
+	/** A count shown on a section's item, such as workflows that need you. */
+	sectionBadges?: Partial<Record<HomeSection, HomeSectionBadge>>;
+}>;
+
+export type HomeSectionBadge = Readonly<{
+	count: number;
+	/** Said after the section's name, e.g. "2 workflows need you". */
+	label: string;
 }>;
 
 export function HomeView({
@@ -69,6 +78,7 @@ export function HomeView({
 	onSidebarWidthCommit,
 	sidebarWidth,
 	sidebarExtra,
+	sectionBadges,
 }: HomeViewProps) {
 	const itemRefs = useRef(new Map<HomeSection, HTMLButtonElement | null>());
 	const showsSidebar = isSidebarVisible && isActive;
@@ -147,6 +157,9 @@ export function HomeView({
 							>
 								{HOME_SECTIONS.map((candidate) => {
 									const current = candidate === currentSection;
+									const badge = sectionBadges?.[candidate];
+									const shownBadge =
+										badge !== undefined && badge.count > 0 ? badge : undefined;
 									return (
 										<button
 											key={candidate}
@@ -157,6 +170,11 @@ export function HomeView({
 											role="tab"
 											id={`${ID_PREFIX}-item-${candidate}`}
 											aria-selected={current}
+											{...(shownBadge === undefined
+												? {}
+												: {
+														'aria-label': `${HOME_SECTION_LABELS[candidate]}, ${shownBadge.label}`,
+													})}
 											tabIndex={candidate === tabStop ? 0 : -1}
 											className={`home-sidebar__section${current ? ' home-sidebar__section--active' : ''}`}
 											data-terminay-home-section-tab={candidate}
@@ -166,6 +184,15 @@ export function HomeView({
 											<span className="home-sidebar__label">
 												{HOME_SECTION_LABELS[candidate]}
 											</span>
+											{shownBadge === undefined ? null : (
+												<span
+													className="home-sidebar__badge"
+													aria-hidden="true"
+													data-terminay-home-section-badge={candidate}
+												>
+													{shownBadge.count}
+												</span>
+											)}
 										</button>
 									);
 								})}
