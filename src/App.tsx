@@ -5799,6 +5799,9 @@ const ProjectWorkspace = memo(forwardRef<
 						isActive ? (
 							<FoldersColumn
 								folders={folderTreeRows}
+								{...(terminalClientContext?.serverId === undefined
+									? {}
+									: { serverId: terminalClientContext.serverId })}
 								idPrefix={`folders-column-${project.id}`}
 								collapsedFolderIds={collapsedFolderIds}
 								onToggleFolderCollapsed={(folderId) =>
