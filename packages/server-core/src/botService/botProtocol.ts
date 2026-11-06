@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
 	assertJsonValue,
+	botTriggerOrigin,
 	type BotDraft,
 	type BotTriggerDraft,
 	type BotUpcomingCursor,
@@ -102,16 +103,18 @@ export function createBotOperations(service: BotService): OperationRegistries {
 					service.bots.get(botId);
 					return json({
 						botId,
-						items: service.queue.list(botId).map((i) => ({
-							id: i.id,
-							kind: i.origin.kind === 'chat' ? 'chat' : 'trigger',
-							sessionId: i.sessionId,
-							triggerId: i.origin.kind === 'chat' ? null : i.origin.triggerId,
-							triggerName:
-								i.origin.kind === 'chat' ? null : i.origin.triggerName,
-							fireTime: i.origin.kind === 'chat' ? null : i.origin.fireTime,
-							enqueuedAt: i.arrival,
-						})),
+						items: service.queue.list(botId).map((i) => {
+							const trigger = botTriggerOrigin(i.origin);
+							return {
+								id: i.id,
+								kind: trigger ? 'trigger' : i.origin.kind,
+								sessionId: i.sessionId,
+								triggerId: trigger?.triggerId ?? null,
+								triggerName: trigger?.triggerName ?? null,
+								fireTime: trigger?.fireTime ?? null,
+								enqueuedAt: i.arrival,
+							};
+						}),
 					});
 				},
 				[op.get]: (request) => json(service.bots.get(bot(payload(request)))),

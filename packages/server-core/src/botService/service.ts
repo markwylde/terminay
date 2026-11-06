@@ -33,7 +33,8 @@ import type {
 	BotEnvironmentDefinition,
 	BotEnvironmentService,
 } from './environment.js';
-import { botFailure } from './failure.js';
+import { botFailure, botFailureCause } from './failure.js';
+import { botProcessCount, classifyProcessFailure } from './processExhaustion.js';
 import type { BotMemories } from './memories.js';
 import { BotMessageStore } from './messages.js';
 import {
@@ -50,8 +51,9 @@ import {
 	openBotRuntimeBridge,
 } from './runtimeBridge.js';
 import { BotSessionStore } from './sessions.js';
-import { BotError, BotStore, text } from './store.js';
+import { BotBlockedError, BotError, BotStore, text } from './store.js';
 import { BotTriggers } from './triggers.js';
+import { BotFailureFollowUps } from './failureFollowUps.js';
 
 export interface BotAgents {
 	botAgentContributions(): readonly {
@@ -135,6 +137,7 @@ export class BotService extends EventEmitter {
 	>();
 	readonly queue: BotTurnQueue;
 	readonly triggers: BotTriggers;
+	readonly failureFollowUps: BotFailureFollowUps;
 	readonly connections = new BotConnectionResources((id) =>
 		this.hooks.closeConnection?.(id),
 	);
@@ -153,7 +156,7 @@ export class BotService extends EventEmitter {
 		Promise<{ warning: string | null }>
 	>();
 	private readonly mutations = new Map<string, Promise<unknown>>();
-	private readonly now: () => number;
+	readonly now: () => number;
 	private revision = 0;
 	private initialized = false;
 	private reconciling?: Promise<void>;
@@ -184,6 +187,71 @@ export class BotService extends EventEmitter {
 		this.messages.on('changed', messageChanged);
 		this.detach.push(() => this.messages.off('changed', messageChanged));
 		this.triggers = new BotTriggers(this, bots, this.now);
+		this.failureFollowUps = new BotFailureFollowUps(
+			join(sessions.root, '..', 'failure-follow-ups'),
+			{
+				now: this.now,
+				investigates: (botId) => {
+					try {
+						const bot = this.bots.get(botId);
+						return (
+							bot.enabled !== false &&
+							bot.investigateFailures !== false &&
+							!this.deleting.has(botId)
+						);
+					} catch {
+						return false;
+					}
+				},
+				sessions: (botId) => this.sessions.list(botId),
+				redact: (botId, value) => this.redactMessage(botId, value),
+				dispatch: (botId, prompt, origin, id) =>
+					this.send(botId, prompt, undefined, origin, () => true, id),
+				abandon: (id) => {
+					try {
+						const r = this.sessions.get(id);
+						if (
+							r.state === 'queued' &&
+							![...this.queue.list(r.botId), ...this.queue.active(r.botId)].some(
+								(i) => i.sessionId === id,
+							)
+						)
+							this.sessions.patch(id, {
+								state: 'stopped',
+								open: false,
+								endedAt: this.now(),
+								reason: 'The failure investigation could not be queued.',
+							});
+					} catch {}
+				},
+				firingFor: (botId, sessionId) => {
+					try {
+						return (
+							this.triggers.firings(botId).find((f) => f.sessionId === sessionId)
+								?.id ?? null
+						);
+					} catch {
+						return null;
+					}
+				},
+				setTimeout: (fn, ms) => setTimeout(fn, ms),
+				clearTimeout: (handle) =>
+					clearTimeout(handle as ReturnType<typeof setTimeout>),
+			},
+		);
+		const sessionState = ({
+			record,
+		}: {
+			record: BotSessionRecord;
+			previous: string;
+		}) => {
+			if (record.state === 'failed' || record.state === 'timed-out')
+				void this.failureFollowUps.execution(record);
+			else if (!['queued', 'running', 'needs-you'].includes(record.state))
+				void this.failureFollowUps.drain(record.botId);
+		};
+		this.sessions.on('state', sessionState);
+		this.detach.push(() => this.sessions.off('state', sessionState));
 		this.queue = new BotTurnQueue({
 			run: (item) => this.run(item),
 			suspend: (id) => this.suspend(id),
@@ -214,6 +282,7 @@ export class BotService extends EventEmitter {
 				this.sessions.patch(item.sessionId, {
 					state: 'failed',
 					reason: 'session cleanup failed; bot remains blocked',
+					cause: 'engine',
 				});
 			},
 		});
@@ -426,6 +495,8 @@ export class BotService extends EventEmitter {
 			expectedRevision,
 		);
 		this.register(bot);
+		if (bot.investigateFailures === false || bot.enabled === false)
+			this.failureFollowUps.clear(bot.id);
 		if (previous && previous.enabled !== bot.enabled) {
 			this.triggers.availability(bot.id, bot.enabled !== false);
 			if (bot.enabled === false) this.queue.pause(bot.id);
@@ -495,6 +566,7 @@ export class BotService extends EventEmitter {
 		else await this.hooks.environment.remove(botId, deleteHome);
 		this.hooks.environment.forget?.(botId);
 		this.triggers.removeBot(botId);
+		this.failureFollowUps.removeBot(botId);
 		await this.hooks.removeTriggers?.(botId);
 		this.sessions.removeBot(botId);
 		this.messages.removeBot(botId);
@@ -511,8 +583,8 @@ export class BotService extends EventEmitter {
 	}
 	assertEnabled(botId: string): void {
 		if (this.bots.get(botId).enabled === false)
-			throw new BotError(
-				'unavailable',
+			throw new BotBlockedError(
+				'disabled',
 				'Bot is disabled. Enable bot to run it.',
 			);
 	}
@@ -521,6 +593,7 @@ export class BotService extends EventEmitter {
 			throw new BotError('validation', 'enabled must be boolean');
 		const bot = this.bots.get(botId);
 		this.bots.save({ ...bot, enabled }, revision);
+		if (!enabled) this.failureFollowUps.clear(botId);
 		this.triggers.availability(botId, enabled);
 		if (enabled) this.queue.unblock(botId);
 		else {
@@ -734,8 +807,8 @@ export class BotService extends EventEmitter {
 	): Promise<{ sessionId: string; queueId: string }> {
 		if (!this.initialized) await this.reconcile();
 		if (!this.initialized)
-			throw new BotError(
-				'unavailable',
+			throw new BotBlockedError(
+				'engine',
 				'bot restart reconciliation is not complete',
 			);
 		this.assertEnabled(botId);
@@ -936,8 +1009,8 @@ export class BotService extends EventEmitter {
 	}
 	private requireSignIn(signIn: BotProfile['signIn']): void {
 		if (signIn.kind === 'none')
-			throw new BotError(
-				'unavailable',
+			throw new BotBlockedError(
+				'agent',
 				'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.',
 			);
 	}
@@ -994,8 +1067,8 @@ export class BotService extends EventEmitter {
 				failureReason = 'agent not ready';
 				const status = await this.hooks.agents.botAgentStatus(agent.id);
 				if (!status.available)
-					throw new BotError(
-						'unavailable',
+					throw new BotBlockedError(
+						'agent',
 						'The bot agent is not ready. Check its sign-in and rebuild the bot image.',
 					);
 				const configFiles = botAgentConfigFiles(
@@ -1131,9 +1204,18 @@ export class BotService extends EventEmitter {
 					() =>
 						'Startup diagnostics unavailable: sign-in could not be read safely.',
 				);
+				// The agent's stderr (with any EAGAIN) is in the runner output tail.
+				const processFailure = await classifyProcessFailure(
+					`${cause}\n${this.sessions.get(record.id).runnerOutput.slice(-8192)}`,
+					async () =>
+						botProcessCount(
+							await this.hooks.driver(),
+							`terminay-bot-${record.botId}`,
+						),
+				).catch(() => null);
 				const reason = await this.redactMessage(
 					record.botId,
-					botFailure(error)?.message ?? failureReason,
+					processFailure?.reason ?? botFailure(error)?.message ?? failureReason,
 				).catch(() => failureReason);
 				this.sessions.runner(
 					record.id,
@@ -1142,6 +1224,9 @@ export class BotService extends EventEmitter {
 				this.sessions.patch(record.id, {
 					state: 'failed',
 					reason,
+					cause: processFailure
+						? processFailure.cause
+						: botFailureCause(error),
 					endedAt: this.now(),
 					permission: null,
 					permissions: [],
@@ -1374,9 +1459,12 @@ export class BotService extends EventEmitter {
 				);
 			}
 		this.initialized = cleaned;
+		if (cleaned)
+			void this.failureFollowUps.reconcile(this.bots.list().map((b) => b.id));
 	}
 
 	async shutdown(): Promise<void> {
+		this.failureFollowUps.stop();
 		this.triggers.stop();
 		await this.triggers.idle();
 		this.initialized = false;

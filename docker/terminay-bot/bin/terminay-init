@@ -123,6 +123,14 @@ def wait_path(path, deadline):
         os.close(fd)
 
 
+def prepare_desktop_dir(uid, gid):
+    """The desktop session publishes its D-Bus address here for supervised commands."""
+    desktop_dir = os.path.join(RUN, "desktop")
+    os.makedirs(desktop_dir, mode=0o755, exist_ok=True)
+    os.chown(desktop_dir, uid, gid)
+    os.chmod(desktop_dir, 0o755)
+
+
 def start_desktop(passwd_path, uid, gid, bot_id):
     os.makedirs("/tmp/.X11-unix", mode=0o1777, exist_ok=True)
     spawn(["Xvnc", ":1", "-rfbport", "5901", "-rfbauth", passwd_path, "-SecurityTypes", "VncAuth",
@@ -130,6 +138,7 @@ def start_desktop(passwd_path, uid, gid, bot_id):
     wait_path("/tmp/.X11-unix/X1", time.monotonic() + 10)
     env = {"HOME": HOME, "USER": "bot", "DISPLAY": ":1", "PATH": "/usr/local/bin:/usr/bin:/bin",
            "TERMINAY_BOT_ID": bot_id, "LANG": "C.UTF-8"}
+    prepare_desktop_dir(uid, gid)
     spawn(["terminay-desktop-session"], uid=uid, gid=gid, env=env)
     # The desktop owns the browser, independently of agent/tool process groups.
     # Keep Chromium's sandbox enabled; it runs as the unprivileged bot user.

@@ -210,13 +210,69 @@ export function needsYou(entries: readonly BotEntry[]): NeedsYouEntry[] {
 	return result.sort((a, b) => a.since - b.since);
 }
 
-/** A session's title: its trigger's name, or the chat's first words. */
+/** Investigate failures is on unless the profile turns it off. */
+export function investigatesFailures(bot: Pick<BotProfile, 'investigateFailures'>): boolean {
+	return bot.investigateFailures !== false;
+}
+
+/** How many failures a failure investigation covers, listed or only counted. */
+function failureCount(origin: BotSessionRecord['origin']): number {
+	return origin.kind === 'failure'
+		? origin.failures.length + origin.overflow
+		: 0;
+}
+
+/** A session's title: its trigger's name, a failure investigation, or the chat's first words. */
 export function sessionTitle(session: BotSessionRecord): string {
+	if (session.origin.kind === 'failure') {
+		const n = failureCount(session.origin);
+		return n > 1 ? `Investigate failure (${n} failures)` : 'Investigate failure';
+	}
 	if (session.origin.kind !== 'chat') return session.origin.triggerName;
 	const text = session.queuedMessage?.text?.trim();
 	if (text) return text.length > 80 ? `${text.slice(0, 79)}…` : text;
 	return 'Chat';
 }
+
+export type SessionOrigin = BotSessionRecord['origin']['kind'];
+export type SessionOriginFilter = 'all' | SessionOrigin;
+/** The Sessions origin filter, in menu order. */
+export const SESSION_ORIGIN_FILTER_LABELS: Readonly<
+	Record<SessionOriginFilter, string>
+> = {
+	all: 'Any origin',
+	chat: 'Chat',
+	trigger: 'Trigger',
+	'run-now': 'Run now',
+	failure: 'Failure',
+};
+/** The short chip on a session row. */
+export const SESSION_ORIGIN_CHIPS: Readonly<Record<SessionOrigin, string>> = {
+	chat: 'Message',
+	'run-now': 'Manual',
+	trigger: 'Trigger',
+	failure: 'Investigate',
+};
+/** What started a session, as its detail view says it. */
+export function sessionOriginLabel(origin: BotSessionRecord['origin']): string {
+	switch (origin.kind) {
+		case 'chat':
+			return 'Chat';
+		case 'failure':
+			return 'Investigate failure';
+		case 'run-now':
+			return `Run now · ${origin.triggerName}`;
+		case 'trigger':
+			return `Trigger · ${origin.triggerName}`;
+	}
+}
+export const FAILURE_KIND_LABELS: Readonly<
+	Record<'execution' | 'firing' | 'condition', string>
+> = {
+	execution: 'Execution failed',
+	firing: 'Firing could not start',
+	condition: 'Condition check failed',
+};
 
 export const SESSION_STATE_LABELS: Readonly<Record<BotSessionState, string>> = {
 	completed: 'Completed',

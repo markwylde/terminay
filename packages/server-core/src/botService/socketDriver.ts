@@ -277,6 +277,7 @@ export class SocketDriver implements EngineDriver {
 					system_cpu_usage?: number;
 				};
 				memory_stats?: { usage?: number };
+				pids_stats?: { current?: number; limit?: number };
 			}>(
 				'GET',
 				`/containers/${enc(name)}/stats?stream=false`,
@@ -297,6 +298,9 @@ export class SocketDriver implements EngineDriver {
 							100
 						: 0,
 				MemUsageBytes: stats.memory_stats?.usage ?? 0,
+				// Read by the engine, never by exec: exec needs a free process.
+				PIDs: stats.pids_stats?.current ?? null,
+				PidsLimit: stats.pids_stats?.limit ?? null,
 			});
 		}
 		if (kind === 'container' && action === 'ls') {

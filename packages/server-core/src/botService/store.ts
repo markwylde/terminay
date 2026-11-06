@@ -6,6 +6,7 @@ import {
 	type BotDraft,
 	type BotEnvironmentSetSettings,
 	type BotEnvironmentSettings,
+	type BotFailureCause,
 	type BotProfile,
 	type BotResourceLimits,
 	type BotSignIn,
@@ -31,6 +32,14 @@ export class BotError extends Error {
 		super(message);
 		this.code =
 			code === 'busy' ? 'resource' : code === 'timeout' ? 'deadline' : code;
+	}
+}
+/** A failure whose cause also stops any new execution of the bot. */
+export class BotBlockedError extends BotError {
+	readonly failureCause: BotFailureCause;
+	constructor(failureCause: BotFailureCause, message: string) {
+		super('unavailable', message);
+		this.failureCause = failureCause;
 	}
 }
 export class BotImageBuildError extends BotError {
@@ -146,6 +155,14 @@ function profile(value: unknown): BotProfile {
 		signIn: signIn(d.signIn),
 		approvalMode: d.approvalMode,
 		maxTurnMs: d.maxTurnMs as number,
+		investigateFailures:
+			d.investigateFailures === undefined
+				? true
+				: typeof d.investigateFailures === 'boolean'
+					? d.investigateFailures
+					: (() => {
+							throw new BotError('validation', 'invalid investigate failures setting');
+						})(),
 		pinnedMemories: pins,
 		createdAt: d.createdAt as number,
 		updatedAt: d.updatedAt as number,
@@ -338,6 +355,7 @@ export class BotStore extends EventEmitter {
 			signIn: { kind: 'none' },
 			approvalMode: 'autonomous',
 			maxTurnMs: 30 * 60_000,
+			investigateFailures: true,
 			pinnedMemories: [],
 			...previous,
 			...draft,

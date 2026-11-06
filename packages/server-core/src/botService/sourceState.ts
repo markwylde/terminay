@@ -53,6 +53,8 @@ export interface SourceCheckpoint {
 	health: BotSourceHealth;
 	resumeBaseline?: boolean;
 	recovery?: { after: number; through: number };
+	/** A condition-check failure episode is open until a check succeeds. */
+	failureEpisode?: boolean;
 }
 interface State {
 	version: 1;
@@ -339,6 +341,11 @@ export class BotSourceStore {
 						throw new Error('Invalid source checkpoint');
 					object(cp.health);
 					if (
+						cp.failureEpisode !== undefined &&
+						typeof cp.failureEpisode !== 'boolean'
+					)
+						throw new Error('Invalid failure episode');
+					if (
 						cp.cursor !== undefined &&
 						(typeof cp.cursor !== 'string' ||
 							Buffer.byteLength(cp.cursor) > 4096)
@@ -432,9 +439,11 @@ export class BotSourceStore {
 			...cp.health,
 			lastSuccess: at,
 			error: null,
+			cause: null,
 			remembered: cp.ids.length,
 			...(pending.length ? { lastFired: at } : {}),
 		};
+		cp.failureEpisode = false;
 		s.checkpoints[t.id] = structuredClone(cp);
 		s.pending.push(...pending);
 		this.save(t.botId, s);

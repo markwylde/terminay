@@ -261,6 +261,7 @@ export function BotTab({
 							/>
 						) : (
 							<BotSessionsPanel
+								onOpenTriggers={() => setConfigTab('triggers')}
 								selectedId={chatSessionId}
 								server={server}
 								bot={bot}

@@ -6,6 +6,7 @@ import type {
 import { previewSchedule } from '../scheduleEngine/scheduler.js';
 import { isObservation, observationSource, exact } from './sourceValidation.js';
 import { TRIGGER_EVENT_KINDS } from '../scheduleEngine/types.js';
+import { failureCause } from './sessions.js';
 import { BotError, object, text } from './store.js';
 
 export function triggerTime(value: unknown): number {
@@ -141,5 +142,8 @@ export function storedFiring(value: unknown): BotTriggerFiring {
 		outcome: d.outcome as BotTriggerFiring['outcome'],
 		sessionId: d.sessionId === null ? null : triggerId(d.sessionId),
 		reason: d.reason === null ? null : text(d.reason, 1024, 'firing reason'),
+		...(d.cause === undefined || d.cause === null
+			? {}
+			: { cause: failureCause(d.cause) }),
 	};
 }

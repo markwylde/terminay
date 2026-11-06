@@ -50,7 +50,9 @@ function profile(value: unknown): BotProfile {
 		!/^[a-z0-9]{12}$/.test(r.id) ||
 		typeof r.name !== 'string' ||
 		typeof r.agentId !== 'string' ||
-		!['autonomous', 'ask'].includes(String(r.approvalMode))
+		!['autonomous', 'ask'].includes(String(r.approvalMode)) ||
+		(r.investigateFailures !== undefined &&
+			typeof r.investigateFailures !== 'boolean')
 	)
 		throw new TypeError('invalid bot profile');
 	return structuredClone(r) as unknown as BotProfile;
