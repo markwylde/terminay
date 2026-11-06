@@ -8,6 +8,7 @@ import {
 	ShellProfilesClient,
 	TerminayAiClient,
 	TerminayClientFacade,
+	WORKFLOWS_CAPABILITY,
 } from '@terminay/client-core';
 import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { DockviewReact } from 'dockview-react';
@@ -22,6 +23,7 @@ import {
 	History,
 	House,
 	LayoutDashboard,
+	ListChecks,
 	Loader2,
 	Mic,
 	Play,
@@ -443,6 +445,11 @@ import {
 	useServerWorkflows,
 	WorkflowsContext,
 } from './workspace/workflows/useServerWorkflows';
+import { WorkflowsHome } from './workspace/workflows/WorkflowsHome';
+import {
+	buildWorkflowRows,
+	needsYouCount,
+} from './workspace/workflows/workflowsHomeModel';
 import {
 	type AutomationConnectionEntry,
 	useServerAutomations,
@@ -750,6 +757,8 @@ type ProjectWorkspaceProps = {
 	onShowDashboard: () => void;
 	/** Recordings live in Home, so a project hands this one back up too. */
 	onShowRecordings: () => void;
+	/** Workflows live in Home too. */
+	onShowWorkflows: () => void;
 	/** Closing the tab in front with no tab open closes the project, when no
 	 * folder of it holds a panel either. */
 	onCloseActiveWithNoPanel: (projectId: string) => void;
@@ -1539,6 +1548,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onTerminalTabDrag,
 			onShowDashboard,
 			onShowRecordings,
+			onShowWorkflows,
 			onCloseActiveWithNoPanel,
 			searchPlaces,
 			sidebarWidth,
@@ -4296,6 +4306,19 @@ const ProjectWorkspace = memo(forwardRef<
 				},
 				{
 					group: 'Workspace',
+					icon: <ListChecks size={18} strokeWidth={2.1} />,
+					id: 'show-workflows',
+					title: 'Show workflows',
+					description: 'See every workflow and what needs you, in Home.',
+					searchText: 'show workflows home checklist steps progress needs you',
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						onShowWorkflows();
+					},
+				},
+				{
+					group: 'Workspace',
 					icon: <PanelBottom size={18} strokeWidth={2.1} />,
 					id: 'toggle-status-bar',
 					title: isStatusBarVisible ? 'Hide status bar' : 'Show status bar',
@@ -4408,6 +4431,7 @@ const ProjectWorkspace = memo(forwardRef<
 			setProjectRootFolderToWorkingDirectory,
 			onShowDashboard,
 			onShowRecordings,
+			onShowWorkflows,
 			onToggleStatusBar,
 			isStatusBarVisible,
 			openProfileChooser,
@@ -8812,6 +8836,29 @@ function App({
 	const serverAppWindows = useServerAppWindows(automationEntries);
 	// Workflows and their templates, one projection per server (ADR-0097).
 	const serverWorkflows = useServerWorkflows(automationEntries);
+	// Home's Workflows section: each workflow named by the dashboard's row for
+	// its terminal, so it shows only terminals this window lists.
+	const workflowRows = useMemo(
+		() => buildWorkflowRows(dashboardSources, serverWorkflows),
+		[dashboardSources, serverWorkflows],
+	);
+	// Loading until every server that serves workflows has been read once.
+	const workflowsLoading = automationEntries.some(
+		(entry) =>
+			entry.applicationClient !== undefined &&
+			entry.capabilities?.includes(WORKFLOWS_CAPABILITY) === true &&
+			!serverWorkflows.has(entry.serverId),
+	);
+	const workflowsNeedingYou = needsYouCount(workflowRows);
+	const workflowBadges = useMemo(
+		() => ({
+			workflows: {
+				count: workflowsNeedingYou,
+				label: `${workflowsNeedingYou} ${workflowsNeedingYou === 1 ? 'workflow needs' : 'workflows need'} you`,
+			},
+		}),
+		[workflowsNeedingYou],
+	);
 	// An MCP agent the user is talking to here reads and arranges this
 	// window's panes through the server (ADR-0070). The window is described
 	// afresh for each request, so a request always sees what is on screen.
@@ -9006,6 +9053,10 @@ function App({
 	openHomeSectionRef.current = openHomeSection;
 	const showRecordings = useCallback(
 		() => openHomeSection('recordings'),
+		[openHomeSection],
+	);
+	const showWorkflows = useCallback(
+		() => openHomeSection('workflows'),
 		[openHomeSection],
 	);
 	const automationsData = useMemo<AutomationsData>(
@@ -9595,8 +9646,14 @@ function App({
 	const [hasShownHome, setHasShownHome] = useState(isHomeSelected);
 	if (isHomeSelected && !hasShownHome) setHasShownHome(true);
 	const renderHomeSection = useCallback(
-		(section: 'home' | 'tabs') =>
-			section === 'home' ? (
+		(section: 'home' | 'tabs' | 'workflows') =>
+			section === 'workflows' ? (
+				<WorkflowsHome
+					rows={workflowRows}
+					loading={workflowsLoading}
+					onOpen={(row) => activateDashboardRow(row.serverId, row.panel)}
+				/>
+			) : section === 'home' ? (
 				<HomeOverview
 					now={automationClock}
 					overview={homeOverview}
@@ -9618,6 +9675,8 @@ function App({
 			homeOverview,
 			openAutomationsFromOverview,
 			openHomeSection,
+			workflowRows,
+			workflowsLoading,
 		],
 	);
 	// The commands that are the workspace view's own. None needs a project, so
@@ -9665,6 +9724,15 @@ function App({
 					isMac,
 				),
 				onSelect: run(() => openHomeSection('tabs')),
+			},
+			{
+				group: 'Workspace',
+				icon: <ListChecks size={18} strokeWidth={2.1} />,
+				id: 'show-workflows',
+				title: 'Show workflows',
+				description: 'See every workflow and what needs you, in Home.',
+				searchText: 'show workflows home checklist steps progress needs you',
+				onSelect: run(() => openHomeSection('workflows')),
 			},
 			{
 				group: 'Workspace',
@@ -10726,6 +10794,7 @@ function App({
 						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
 						onSidebarWidthCommit={setHomeSidebarWidth}
 						renderSection={renderHomeSection}
+						sectionBadges={workflowBadges}
 						renderBots={(host) => (
 							<BotsSection servers={serverBots} host={host} />
 						)}
@@ -10839,6 +10908,7 @@ function App({
 							onAddProject={createServerProject}
 							onShowDashboard={selectHome}
 							onShowRecordings={showRecordings}
+							onShowWorkflows={showWorkflows}
 							onCloseActiveWithNoPanel={closeProjectWithNoPanels}
 							searchPlaces={searchPlacesNow}
 							onToggleStatusBar={toggleStatusBar}
