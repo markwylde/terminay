@@ -10,17 +10,18 @@ import {
 	sanitizeHomeLayout,
 } from './homeTabs.ts';
 
-test('Home lists exactly five sections, Bots between Tabs and Automations', () => {
+test('Home lists exactly six sections, Bots between Tabs and Automations, Workflows before Recordings', () => {
 	assert.deepEqual(HOME_SECTIONS, [
 		'home',
 		'tabs',
 		'bots',
 		'automations',
+		'workflows',
 		'recordings',
 	]);
 	assert.deepEqual(
 		HOME_SECTIONS.map((section) => HOME_SECTION_LABELS[section]),
-		['Home', 'Tabs', 'Bots', 'Automations', 'Recordings'],
+		['Home', 'Tabs', 'Bots', 'Automations', 'Workflows', 'Recordings'],
 	);
 });
 

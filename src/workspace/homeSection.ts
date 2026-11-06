@@ -3,7 +3,7 @@
  *
  * Home is the one place in a workspace that is not a project, so it is where
  * workspace-wide things live: an overview, the tab dashboard, bots,
- * automations, and recordings. The sidebar is a menu over exactly these five,
+ * automations, workflows, and recordings. The sidebar is a menu over exactly these six,
  * in this order.
  */
 
@@ -12,6 +12,7 @@ export const HOME_SECTIONS = [
 	'tabs',
 	'bots',
 	'automations',
+	'workflows',
 	'recordings',
 ] as const;
 export type HomeSection = (typeof HOME_SECTIONS)[number];
@@ -32,4 +33,5 @@ export const HOME_SECTION_LABELS: Record<HomeSection, string> = {
 	home: 'Home',
 	recordings: 'Recordings',
 	tabs: 'Tabs',
+	workflows: 'Workflows',
 };

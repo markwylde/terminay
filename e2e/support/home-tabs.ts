@@ -41,7 +41,7 @@ export async function closeFrontHomeTab(page: Page): Promise<void> {
 
 export async function expectHomeSection(
 	page: Page,
-	section: 'home' | 'tabs' | 'automations' | 'recordings' | 'none',
+	section: 'home' | 'tabs' | 'automations' | 'workflows' | 'recordings' | 'none',
 ): Promise<void> {
 	await expect(activeHome(page)).toHaveAttribute(
 		'data-terminay-home-view',
