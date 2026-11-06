@@ -2,6 +2,7 @@ import {
 	createBotServerService,
 	installedBotAgentCatalog,
 } from '../packages/server-core/src/botService/composition';
+import type { BotTerminayMcpHost } from '../packages/server-core/src/botService/service';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, watch as watchFileSystem } from 'node:fs';
@@ -382,6 +383,12 @@ export interface ServerTerminalAuthorityOptions {
 	readonly agentChatMcp?: NonNullable<
 		ServerCoreCompositionOptions['agentChat']
 	>['mcp'];
+	/**
+	 * How a bot execution with Terminay MCP access reaches it, set by the host
+	 * that serves the control socket. Only the bot service receives it
+	 * (ADR-0100). Without it, no bot has Terminay MCP.
+	 */
+	readonly botTerminayMcp?: BotTerminayMcpHost;
 	/** Diagnostics for chat sessions: lifecycle only, never text. */
 	readonly onAgentChatDiagnostic?: NonNullable<
 		ServerCoreCompositionOptions['agentChat']
@@ -1086,6 +1093,9 @@ export class ServerTerminalAuthority {
 						},
 						imageContextPath:
 							options.botImageContextPath ?? resolve('docker/terminay-bot'),
+						...(options.botTerminayMcp === undefined
+							? {}
+							: { terminayMcp: options.botTerminayMcp }),
 					})
 				: undefined;
 		this.composition = createServerCoreComposition({

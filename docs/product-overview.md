@@ -226,7 +226,13 @@ an inline prompt in the calling terminal's pane, answerable from any client
 with authority to create terminals on that server. The caller is a terminal or
 an agent chat (ADR-0068); a chat's capability is minted only by the server's
 agent chat service, from the chat's recorded reach, and its approvals appear in
-the chat itself. See
+the chat itself. A third caller kind is a bot execution (ADR-0100). A bot gets
+one only when its Profile turns on **Terminay MCP access**, which is off by
+default. Each of its executions then holds a workspace-reach capability, minted
+by the bot service and relayed into the container without its token. Turning
+the setting on counts as standing approval: Ask Permission groups run for that
+bot without a prompt, and only Never Allow still refuses. Turning it off revokes
+every running execution's access at once. See
 [MCP permissions](../openspec/specs/mcp-permissions/spec.md).
 
 An agent can show the user an **app window**: a floating window in the terminal
