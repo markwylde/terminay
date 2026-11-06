@@ -4,8 +4,9 @@ import type {
 	BotTriggerFiring,
 	BotUpcomingFiring,
 } from '@terminay/protocol';
-import { Play, Plus, Trash2, X, Zap } from 'lucide-react';
+import { History, Play, Plus, Trash2, X, Zap } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { SessionsTrigger } from './BotSessionsPanel';
 import {
 	BotTriggerEditor,
 	SOURCE_DESCRIPTIONS,
@@ -65,7 +66,13 @@ export function formatWhen(at: number): string {
 export function BotTriggersPanel({
 	server,
 	bot,
-}: Readonly<{ server: ServerBots; bot: BotProfile }>) {
+	onShowSessions,
+}: Readonly<{
+	server: ServerBots;
+	bot: BotProfile;
+	/** Open the bot's Sessions tab filtered to this trigger. */
+	onShowSessions: (trigger: SessionsTrigger) => void;
+}>) {
 	const now = useNow(60000);
 	const [triggers, setTriggers] = useState<readonly BotTrigger[]>();
 	const [firings, setFirings] = useState<readonly BotTriggerFiring[]>([]);
@@ -419,6 +426,18 @@ export function BotTriggersPanel({
 																<button
 																	type="button"
 																	className="bots-iconbtn bots-iconbtn--sm"
+																	aria-label={`Sessions for ${t.name}`}
+																	title="Sessions"
+																	onClick={() =>
+																		onShowSessions({ id: t.id, name: t.name })
+																	}
+																	data-terminay-bot-trigger-sessions={t.id}
+																>
+																	<History size={14} aria-hidden="true" />
+																</button>
+																<button
+																	type="button"
+																	className="bots-iconbtn bots-iconbtn--sm"
 																	aria-label={`Delete ${t.name}`}
 																	title="Delete"
 																	onClick={() => setConfirmDelete(t.id)}
@@ -458,6 +477,7 @@ export function BotTriggersPanel({
 									: (triggers?.find((t) => t.id === editing.id) ?? editing)
 							}
 							onClose={() => setEditorHidden(true)}
+							onShowSessions={onShowSessions}
 							onSaved={() => {
 								setEditing(undefined);
 								void load();
