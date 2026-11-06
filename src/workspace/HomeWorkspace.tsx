@@ -83,6 +83,8 @@ type HomeTabsContextValue = Readonly<{
 	commandBarShortcutLabel?: string;
 	dirtyIds: ReadonlySet<string>;
 	isCompact: boolean;
+	/** Whether Home is in front of the window's projects. */
+	isActive: boolean;
 	forceClose: (id: string, why?: string) => void;
 	onOpenCommandBar: () => void;
 	openSection: (section: HomeSection) => void;
@@ -172,15 +174,18 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 		);
 		return () => subscription.dispose();
 	}, [api]);
+	// On screen only while Home itself is in front: a bot tab behind a
+	// project is not being looked at.
+	const onScreen = isVisible && home.isActive;
 	const botHost = useMemo<BotTabHost>(
 		() => ({
 			openBot: (target) => openBot(target, id),
 			setTitle: host.setTitle,
 			close: (why) => forceClose(id, why),
-			isVisible,
+			isVisible: onScreen,
 			compact: isCompact,
 		}),
-		[forceClose, host.setTitle, id, isCompact, isVisible, openBot],
+		[forceClose, host.setTitle, id, isCompact, onScreen, openBot],
 	);
 
 	let content: ReactNode;
@@ -392,7 +397,8 @@ export type HomeWorkspaceHandle = Readonly<{
 	open: (
 		target:
 			| AutomationTabTarget
-			| Readonly<{ kind: 'section'; section: HomeSection }>,
+			| Readonly<{ kind: 'section'; section: HomeSection }>
+			| (BotTabTarget & Readonly<{ kind: 'bot' }>),
 	) => void;
 	/**
 	 * Close the tab in front as a person would. Returns whether there was one.
@@ -657,6 +663,7 @@ export const HomeWorkspace = forwardRef<
 		() => ({
 			open: (target) => {
 				if (target.kind === 'section') openDescriptor(target);
+				else if (target.kind === 'bot') openBot(target);
 				else openTarget(target);
 			},
 			requestCloseActiveTab: () => {
@@ -670,7 +677,7 @@ export const HomeWorkspace = forwardRef<
 				return descriptor === undefined ? undefined : homeTabSection(descriptor);
 			},
 		}),
-		[openDescriptor, openTarget, requestClose],
+		[openBot, openDescriptor, openTarget, requestClose],
 	);
 
 	const handleReady = useCallback(
@@ -765,6 +772,7 @@ export const HomeWorkspace = forwardRef<
 			automations,
 			dirtyIds,
 			forceClose,
+			isActive,
 			isCompact,
 			onOpenCommandBar,
 			openBot,
@@ -786,6 +794,7 @@ export const HomeWorkspace = forwardRef<
 			commandBarShortcutLabel,
 			dirtyIds,
 			forceClose,
+			isActive,
 			isCompact,
 			onOpenCommandBar,
 			openBot,

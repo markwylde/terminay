@@ -131,6 +131,20 @@ export function createBotMessageOperations(
 				),
 			};
 		},
+		[op.acknowledge]: async (r) => {
+			const p = data(r);
+			const through = p.throughSequence;
+			if (!Number.isSafeInteger(through) || (through as number) < 0)
+				throw new BotError('validation', 'Invalid sequence');
+			return {
+				result: json({
+					acknowledgedSequence: service.messages.acknowledge(
+						p.botId,
+						through as number,
+					),
+				}),
+			};
+		},
 		[op.clear]: async (r) => {
 			const p = data(r);
 			if (p.confirmed !== true)

@@ -24,7 +24,10 @@ import {
 	BotTokenService,
 	createBotServerService,
 	createServerCoreComposition,
+	NotificationManager,
+	TerminalActivityService,
 } from '../dist/index.js';
+import { BotMessagesClient } from '@terminay/client-core';
 import { startBotSocketServer } from './fixtures/bot-socket-server.mjs';
 import { until } from './fixtures/bot-test-runtime.mjs';
 
@@ -82,7 +85,10 @@ function vault() {
 		},
 	};
 }
-async function setup(t, { legacyPin = false, ...options } = {}) {
+async function setup(
+	t,
+	{ legacyPin = false, composition: compositionOptions = {}, ...options } = {},
+) {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), 'bots-composed-')));
 	const original = {
 		PATH: process.env.PATH,
@@ -169,6 +175,7 @@ async function setup(t, { legacyPin = false, ...options } = {}) {
 		bots: service,
 		ptyFactory: pty,
 		allowUnresolvedTestSessions: true,
+		...compositionOptions,
 	});
 	await composition.start();
 	const clients = [];
@@ -991,4 +998,72 @@ test('pending deletion completes on server restart when the original verified en
 	} finally {
 		await restarted.shutdown();
 	}
+});
+
+/** Re-read `read` until `check` holds; the settle timer runs on its own. */
+async function eventually(read, check, ms = 5000) {
+	const deadline = Date.now() + ms;
+	for (;;) {
+		const value = await read();
+		if (check(value)) return value;
+		if (Date.now() > deadline) assert.fail(`never held: ${JSON.stringify(value)}`);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
+test('a bot post is published as a notification only to bot-authorized clients, and acknowledgement or dismissal clears it', {
+	timeout: 30000,
+}, async (t) => {
+	const notifications = new NotificationManager({ settleMs: 50 });
+	const r = await setup(t, {
+		composition: {
+			activity: new TerminalActivityService({ serverId: 'composed-bots' }),
+			notifications,
+		},
+	});
+	const writer = await r.connect();
+	const reader = await r.connect({ clientId: 'read', authScope: 'read' });
+	const bot = await writer.bots.save({ name: 'Bird', agentId: agent.id });
+	const snapshot = async (c) =>
+		Object.values(
+			(await c.client.query('notifications.snapshot', {})).result.notifications,
+		);
+	const post = (text, key) =>
+		r.service.messages.post(bot.id, 'bot', text, 'a'.repeat(24), key);
+
+	const first = post('Build is green', 'p1');
+	const [record] = await eventually(() => snapshot(writer), (rows) => rows.length === 1);
+	assert.deepEqual(
+		[record.owner, record.botId, record.count, record.body, record.throughSequence],
+		['bot', bot.id, 1, 'Build is green', first.sequence],
+	);
+	assert.deepEqual(await snapshot(reader), [], 'a read-only client sees no bot record');
+	await assert.rejects(
+		reader.client.command('notifications.dismiss', { id: record.id, botId: bot.id }),
+	);
+
+	// Acknowledging through what was seen clears it for everyone.
+	await new BotMessagesClient(writer.transport).acknowledge(bot.id, first.sequence);
+	await eventually(() => snapshot(writer), (rows) => rows.length === 0);
+	await assert.rejects(
+		new BotMessagesClient(reader.transport).acknowledge(bot.id, first.sequence),
+	);
+
+	// A post after the dismissed record survives the dismissal.
+	post('Deploying', 'p2');
+	const [second] = await eventually(() => snapshot(writer), (rows) => rows.length === 1);
+	const racing = post('Deployed', 'p3');
+	// The client dismisses what it was shown; the record has since grown.
+	await writer.client.command('notifications.dismiss', {
+		id: second.id,
+		botId: bot.id,
+		throughSequence: second.throughSequence,
+	});
+	const [left] = await eventually(
+		() => snapshot(writer),
+		(rows) => rows.length === 1 && rows[0].throughSequence === racing.sequence,
+	);
+	assert.deepEqual([left.count, left.body], [1, 'Deployed']);
+	await writer.client.command('notifications.dismiss', { id: left.id, botId: bot.id });
+	await eventually(() => snapshot(writer), (rows) => rows.length === 0);
 });

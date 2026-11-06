@@ -2,7 +2,7 @@ import {
 	type McpApprovalDetail,
 	type NotificationManager,
 	type NotificationManagerError,
-	type NotificationRecord,
+	type TerminalNotificationRecord,
 	plainText,
 } from '@terminay/server-core';
 import type {
@@ -31,7 +31,9 @@ export interface NotificationControlAdapterOptions {
 	 * terminal. Absent, only notifications the calling terminal sent can be
 	 * dismissed.
 	 */
-	readonly dismiss?: (record: NotificationRecord) => boolean | Promise<boolean>;
+	readonly dismiss?: (
+		record: TerminalNotificationRecord,
+	) => boolean | Promise<boolean>;
 	/** Whether the caller can address this terminal of this project. */
 	readonly reaches?: (
 		context: ControlRequestContext,
@@ -104,17 +106,21 @@ export function createNotificationControlAdapter(
 		},
 	};
 
-	/** The published notifications of terminals the caller can address. */
+	/**
+	 * The published notifications of terminals the caller can address. A bot's
+	 * notification belongs to no terminal and is never reachable here.
+	 */
 	function reachable(
 		context: ControlRequestContext,
-	): Readonly<Record<string, NotificationRecord>> {
+	): Readonly<Record<string, TerminalNotificationRecord>> {
 		const all = notifications.snapshot().notifications;
-		const result: Record<string, NotificationRecord> = {};
+		const result: Record<string, TerminalNotificationRecord> = {};
 		for (const [id, record] of Object.entries(all))
 			if (
-				options.reaches?.(context, record) ??
-				(record.projectId === context.projectId &&
-					record.sessionId === context.terminalSessionId)
+				record.owner === 'terminal' &&
+				(options.reaches?.(context, record) ??
+					(record.projectId === context.projectId &&
+						record.sessionId === context.terminalSessionId))
 			)
 				result[id] = record;
 		return result;

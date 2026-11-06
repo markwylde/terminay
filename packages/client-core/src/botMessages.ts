@@ -108,6 +108,14 @@ export class BotMessagesClient {
 	): Promise<void> {
 		await this.transport.command(op.remove, { botId, messageId, revision });
 	}
+	/** Acknowledge this bot's posts through the latest sequence this client has
+	 * observed; later posts keep their notification. */
+	async acknowledge(botId: string, throughSequence: number): Promise<void> {
+		await this.transport.command(
+			op.acknowledge,
+			json({ botId, throughSequence }),
+		);
+	}
 	async clear(botId: string): Promise<void> {
 		await this.transport.command(op.clear, { botId, confirmed: true });
 	}

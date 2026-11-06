@@ -54,7 +54,11 @@ import {
 	createAiOperationHandlers,
 } from './aiService/index.js';
 import { createServerCore, type ServerCore } from './connection.js';
-import { createBotOperations, type BotService } from './botService/index.js';
+import {
+	BotNotificationFeed,
+	createBotOperations,
+	type BotService,
+} from './botService/index.js';
 import { OrderedEventJournal } from './events.js';
 import {
 	createExtensionOperationHandlers,
@@ -1674,7 +1678,27 @@ export function createServerCoreComposition(
 							/* a terminal that has just exited has nothing to acknowledge */
 						}
 					},
+					...(options.bots === undefined
+						? {}
+						: {
+								acknowledgeBot: (botId: string, throughSequence: number) => {
+									try {
+										options.bots?.messages.acknowledge(botId, throughSequence);
+									} catch {
+										/* a bot deleted meanwhile has nothing to acknowledge */
+									}
+								},
+							}),
 				});
+	// The bot service is a bot notification's only source (ADR-0100).
+	const botNotifications =
+		notifications === undefined || options.bots === undefined
+			? undefined
+			: new BotNotificationFeed(
+					options.bots.messages,
+					(botId, posts) => notifications.setBot(botId, posts),
+					() => options.bots?.bots.list().map((bot) => bot.id) ?? [],
+				);
 	const push =
 		notifications === undefined || options.push === undefined
 			? undefined
@@ -2311,6 +2335,7 @@ export function createServerCoreComposition(
 			await attempt(() => language?.dispose());
 			await attempt(() => automationOperations?.dispose());
 			await attempt(async () => {
+				botNotifications?.close();
 				options.bots?.off('changed', botChanged);
 				options.bots?.off('messages-changed', botMessagesChanged);
 				options.bots?.off('engine-changed', botEngineChanged);
