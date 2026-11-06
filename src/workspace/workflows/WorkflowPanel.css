@@ -360,21 +360,49 @@
 }
 
 /* The workflow marker on a terminal's tab. */
-.terminal-tab-workflow {
+/* A terminal's workflow progress dial, on its tab and its rows. The same
+   tones as the rail's markers. Never shrinks: titles shorten first. */
+.workflow-dial {
+  --workflow-tone: #6e7681;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
   margin-left: 4px;
-  font-size: 11px;
-  color: var(--text-secondary, #9aa4af);
-  font-variant-numeric: tabular-nums;
 }
 
-.terminal-tab-workflow-alert {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #f85149;
+.workflow-dial svg {
+  display: block;
+}
+
+.workflow-dial__track {
+  stroke: currentColor;
+  opacity: 0.28;
+}
+
+.workflow-dial__arc {
+  stroke: var(--workflow-tone);
+  stroke-linecap: butt;
+}
+
+.workflow-dial--done {
+  --workflow-tone: #3fb950;
+}
+
+.workflow-dial--running {
+  --workflow-tone: #d29922;
+}
+
+.workflow-dial--alert {
+  --workflow-tone: #f85149;
+}
+
+/* A red dial is red all the way round its track too, so it reads at a glance. */
+.workflow-dial--alert .workflow-dial__track {
+  stroke: var(--workflow-tone);
+  opacity: 0.45;
 }
 
 /* Confirming a launch that replaces an unfinished workflow. */
