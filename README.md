@@ -4,7 +4,7 @@ A desktop terminal workspace that keeps shells, files, agents, and remote access
 
 ![Terminay workspace screenshot](https://terminay.com/screenshots/terminay-hero-workspace.png)
 
-[![Specification progress](docs/spec-progress.svg?v=1793994606)](openspec/README.md)
+[![Specification progress](docs/spec-progress.svg?v=1793998844)](openspec/README.md)
 
 ## What it does
 
