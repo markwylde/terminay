@@ -67,6 +67,10 @@ import { usePixelServer } from './pixel/usePixelServer';
 import type { TerminalLauncherView } from './types/terminalLaunchers';
 import { useServerTerminalLaunchers } from './workspace/useServerTerminalLaunchers';
 import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
+import {
+	createGitListingMemory,
+	type GitListingMemory,
+} from './workspace/gitListingMemory';
 import { publishStatusBarVisibility } from './shared/statusBarVisibility';
 import {
 	aggregateAgentStatusForTerminal,
@@ -795,6 +799,9 @@ type ProjectWorkspaceProps = {
 	onSidebarWidthCommit: (width: number) => void;
 	/** The folders of this project the tree draws collapsed, on this device. */
 	collapsedFolderIds: ReadonlySet<string>;
+	/** The window's last Git listing per project, which a folder shown for the
+	 * first time starts from. */
+	gitListingMemory: GitListingMemory;
 	onToggleFolderCollapsed: (projectId: string, folderId: string) => void;
 	foldersColumnTab: FoldersColumnTabId;
 	onFoldersColumnTabChange: (
@@ -1501,6 +1508,7 @@ const ProjectWorkspace = memo(forwardRef<
 			folder,
 			foldersColumnTab,
 			collapsedFolderIds,
+			gitListingMemory,
 			onToggleFolderCollapsed,
 			compactAgentsHost,
 			onCompactAgentActivated,
@@ -2968,6 +2976,8 @@ const ProjectWorkspace = memo(forwardRef<
 			onOperationSucceeded: clearFeatureFailure,
 			onSetError: setErrorText,
 			project: explorerProject,
+			listingMemory: gitListingMemory,
+			...(project.rootFolder ? { listingRoot: project.rootFolder } : {}),
 		});
 		const worktreePanelStatusRef = useRef(worktreePanelStatus);
 		worktreePanelStatusRef.current = worktreePanelStatus;
@@ -6524,6 +6534,9 @@ function App({
 	// A pending activation survives the remount that switching servers causes:
 	// the target project only exists once its collection has mounted.
 	const pendingServerActivationRef = useRef<CompositionTabHandle | null>(null);
+	// One per window: every folder workspace of a project starts from what
+	// the window last listed for it.
+	const [gitListingMemory] = useState(createGitListingMemory);
 	const auxiliaryRouteController = useMemo(
 		() => auxiliaryRoutes ?? createAuxiliaryRouteController(),
 		[auxiliaryRoutes],
@@ -10801,6 +10814,7 @@ function App({
 							onSidebarWidthCommit={commitSidebarWidth}
 							foldersColumnTab={foldersColumnTabFor(project.id)}
 							collapsedFolderIds={collapsedFolderSetFor(project.id)}
+							gitListingMemory={gitListingMemory}
 							onToggleFolderCollapsed={toggleFolderCollapsed}
 							onFoldersColumnTabChange={selectFoldersColumnTab}
 							compactAgentsHost={compactAgentsHost}

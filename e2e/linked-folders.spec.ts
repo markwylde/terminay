@@ -2932,3 +2932,138 @@ test('a folder collapses to its title line from its toggle or the keyboard, show
 	await expect(rows).toHaveCount(1);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
+
+/**
+ * Watch, from inside the page, every committed state of the Folders tree on
+ * screen, and record each moment the card of folder `name` stops being named
+ * `name` or its facts line stops holding every one of `facts`. A
+ * MutationObserver runs before the browser paints, so a gap of a single
+ * commit is still caught.
+ */
+async function watchFactsGaps(
+	page: Page,
+	name: string,
+	facts: readonly string[],
+): Promise<void> {
+	const folderId = await folderGroup(page, name).getAttribute(
+		'data-folder-id',
+	);
+	if (folderId === null) throw new Error(`${name} has no folder id.`);
+	await page.evaluate(
+		({ id, label, expected }) => {
+			const state = window as unknown as {
+				__factsGaps?: string[];
+				__factsWatch?: MutationObserver;
+			};
+			state.__factsGaps = [];
+			const check = (): void => {
+				const column = document.querySelector(
+					'.project-workspace--active [data-terminay-folders-column="true"]',
+				);
+				if (column === null) return;
+				const header = column.querySelector(
+					`[data-folder-id="${id}"] [data-folder-header="true"]`,
+				);
+				if (header === null) {
+					state.__factsGaps?.push('card missing');
+					return;
+				}
+				const shown = `"${header.textContent?.replace(/\s+/g, ' ').trim()}"`;
+				const name = header
+					.querySelector('.folders-tree__text > .folders-tree__name')
+					?.textContent?.trim();
+				if (name !== label) state.__factsGaps?.push(`card renamed: ${shown}`);
+				const line = header.querySelector('.folders-tree__facts');
+				if (line === null) {
+					state.__factsGaps?.push(`card without facts: ${shown}`);
+					return;
+				}
+				for (const fact of expected)
+					if (!line.textContent?.includes(fact))
+						state.__factsGaps?.push(`facts without ${fact}: ${shown}`);
+			};
+			state.__factsWatch = new MutationObserver(check);
+			state.__factsWatch.observe(document.body, {
+				subtree: true,
+				childList: true,
+				attributes: true,
+				characterData: true,
+			});
+			check();
+		},
+		{ id: folderId, label: name, expected: [...facts] },
+	);
+}
+
+async function stopWatchingFactsGaps(page: Page): Promise<string[]> {
+	return await page.evaluate(() => {
+		const state = window as unknown as {
+			__factsGaps?: string[];
+			__factsWatch?: MutationObserver;
+		};
+		state.__factsWatch?.disconnect();
+		return [...new Set(state.__factsGaps ?? [])];
+	});
+}
+
+test('a worktree card keeps its facts on screen while another folder is created or first selected', async ({
+	createWorkspace,
+	mainWindow,
+}, testInfo) => {
+	const shoot = async (name: string): Promise<void> => {
+		await testInfo.attach(name, {
+			body: await foldersColumn(mainWindow).screenshot(),
+			contentType: 'image/png',
+		});
+	};
+	const repo = await repository(createWorkspace, 'lf-facts-kept', [
+		'alpha',
+		'beta',
+	]);
+	// alpha holds work that main does not, so its card has a facts line.
+	await writeFile(join(repo.worktree('alpha'), 'work.txt'), 'one\ntwo\n', 'utf8');
+	await git(repo.worktree('alpha'), 'add', '.');
+	await git(repo.worktree('alpha'), 'commit', '-m', 'work');
+	await setProjectRoot(mainWindow, repo.root);
+	const facts = folderRow(mainWindow, 'alpha').locator('.folders-tree__facts');
+	await expect(facts).toContainText('+2', { timeout: 15_000 });
+	await expect(facts).toContainText('no PR');
+	await shoot('1-before-alpha-facts');
+
+	// Selecting a folder this window has not shown yet.
+	await watchFactsGaps(mainWindow, 'alpha', ['+2', 'no PR']);
+	await selectFolder(mainWindow, 'beta');
+	await expect(facts).toContainText('+2');
+	await shoot('2-beta-first-selected');
+	await mainWindow.waitForTimeout(1_500);
+	const onFirstSelect = await stopWatchingFactsGaps(mainWindow);
+	// What beta started from is replaced by what is listed since: alpha takes
+	// another line, and the tree beta shows says so.
+	await writeFile(
+		join(repo.worktree('alpha'), 'work.txt'),
+		'one\ntwo\nthree\n',
+		'utf8',
+	);
+	await git(repo.worktree('alpha'), 'commit', '-am', 'more work');
+	await expect(facts).toContainText('+3', { timeout: 15_000 });
+
+	// A terminal creating a worktree, as an agent starting a workflow does: the
+	// terminal is moved into the new folder and that folder comes to the front.
+	await selectFolder(mainWindow, 'General');
+	await run(mainWindow, `cd "${repo.root}"`);
+	await watchFactsGaps(mainWindow, 'alpha', ['+3', 'no PR']);
+	await run(mainWindow, 'git worktree add ../gamma-tree -b gamma');
+	await expect(folderRow(mainWindow, 'gamma')).toHaveClass(
+		/folders-tree__row--selected/,
+		{ timeout: 15_000 },
+	);
+	await expect(facts).toContainText('+3');
+	await shoot('3-gamma-created-and-in-front');
+	await mainWindow.waitForTimeout(1_500);
+	const onWorktreeAdded = await stopWatchingFactsGaps(mainWindow);
+
+	expect({ onFirstSelect, onWorktreeAdded }).toEqual({
+		onFirstSelect: [],
+		onWorktreeAdded: [],
+	});
+});
