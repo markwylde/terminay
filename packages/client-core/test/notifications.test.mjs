@@ -118,3 +118,59 @@ test("the client converges on the server snapshot after a live replay gap", asyn
 test("a transport without subscriptions is refused", () => {
   assert.throws(() => new NotificationClient({ query: async () => null, command: async () => null }));
 });
+
+const botRecord = (id, overrides = {}) => ({
+  id,
+  owner: "bot",
+  botId: "bot-a",
+  source: "bot",
+  kind: "bot-message",
+  body: "Build is green",
+  count: 2,
+  throughSequence: 7,
+  raisedAt: 5,
+  ...overrides,
+});
+
+test("a record from a server that names no owner reads as a terminal record", () => {
+  const store = new NotificationSnapshotStore();
+  store.applySnapshot({ revision: 1, cursor: "1", notifications: { "n-1": record("n-1") } });
+  assert.equal(store.snapshot.notifications["n-1"].owner, "terminal");
+});
+
+test("a bot record is kept with its bot identity and nothing of a terminal", () => {
+  const store = new NotificationSnapshotStore();
+  const bot = botRecord("n-2");
+  store.applyEvent({ revision: 1, cursor: "1", type: "notification.published", id: "n-2", owner: "bot", botId: "bot-a", notification: bot });
+  assert.deepEqual({ ...store.snapshot.notifications["n-2"] }, bot);
+  store.applyEvent({ revision: 2, cursor: "2", type: "notification.removed", id: "n-2", owner: "bot", botId: "bot-a" });
+  assert.deepEqual(store.snapshot.notifications, {});
+});
+
+test("a record mixing a terminal and a bot, or missing its owner's identity, is refused", () => {
+  const refuse = (notification) =>
+    assert.throws(() => new NotificationSnapshotStore().applySnapshot({ revision: 1, cursor: "1", notifications: { [notification.id]: notification } }), TypeError);
+  refuse(botRecord("n-1", { projectId: "project-a" }));
+  refuse(botRecord("n-1", { sessionId: "session-a" }));
+  refuse(botRecord("n-1", { botId: undefined }));
+  refuse(botRecord("n-1", { count: 0 }));
+  refuse(botRecord("n-1", { body: "x".repeat(281) }));
+  refuse(record("n-1", { botId: "bot-a" }));
+  refuse(record("n-1", { owner: "terminal", projectId: undefined }));
+  refuse(record("n-1", { owner: "someone" }));
+});
+
+test("dismissing a bot notification names the bot and no terminal", async () => {
+  const sent = [];
+  const client = new NotificationClient({
+    query: async () => ({ revision: 0, cursor: "0", notifications: {} }),
+    command: async (operation, payload) => { sent.push([operation, payload]); return {}; },
+    subscribe: async () => () => {},
+  });
+  await client.dismiss({ id: "n-2", botId: "bot-a" });
+  await client.dismiss({ id: "n-1", projectId: "project-a", sessionId: "session-a" });
+  assert.deepEqual(sent, [
+    ["notifications.dismiss", { id: "n-2", botId: "bot-a" }],
+    ["notifications.dismiss", { id: "n-1", projectId: "project-a", sessionId: "session-a" }],
+  ]);
+});

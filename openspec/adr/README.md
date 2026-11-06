@@ -121,3 +121,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0096](./0096-bots-use-terminay-owned-native-cli-drivers.md) | Bots use Terminay-owned native CLI drivers adapted from Atlas | accepted, supersedes ACP and adapter installation choices in part | 2026-11-04 |
 | [0098](./0098-project-reach-may-curate-workflow-templates-behind-an-asking-group.md) | Project reach may curate the server's workflow templates, behind a group that asks | accepted, supersedes ADR-0072 in part | 2026-11-04 |
 | [0099](./0099-a-bot-is-woken-by-its-own-failures-never-by-a-failures-failure.md) | A bot is woken by its own failures, never by a failure's failure | accepted | 2026-11-06 |
+| [0100](./0100-a-notification-belongs-to-one-terminal-or-one-bot.md) | A notification belongs to one terminal or one bot | accepted, supersedes 0061 in part | 2026-11-06 |

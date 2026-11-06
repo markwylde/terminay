@@ -172,3 +172,30 @@ test("activity and agent snapshots, deltas, events, and targeted commands withho
   const capableEvent = event("activity", { sessionId: "auto-1" });
   assert.equal(project(capableEvent, undefined, { clientCapabilities: capable }), capableEvent);
 });
+
+test("a bot's notification passes through automation-space withholding untouched", async () => {
+  const workspace = workspaceWithSpace();
+  const visibility = createAutomationSpaceVisibility(workspace, () => [{ projectId: SPACE, sessionId: "auto-1" }]);
+  const terminal = (id, projectId, sessionId) => ({ id, owner: "terminal", projectId, sessionId, source: "activity", kind: "attention", raisedAt: 1 });
+  const bot = { id: "n-bot", owner: "bot", botId: "bot-a", source: "bot", kind: "bot-message", body: "hi", count: 1, throughSequence: 2, raisedAt: 1 };
+  const operations = withholdAutomationSpaceOperations({
+    queries: new Map([
+      ["notifications.snapshot", () => ({ revision: 3, cursor: "3", notifications: { "n-auto": terminal("n-auto", SPACE, "auto-1"), "n-bot": bot } })],
+      ["notifications.delta", () => ({ kind: "events", events: [
+        { type: "notification.published", id: "n-auto", owner: "terminal", projectId: SPACE, sessionId: "auto-1" },
+        { type: "notification.published", id: "n-bot", owner: "bot", botId: "bot-a", notification: bot },
+        { type: "notification.removed", id: "n-bot", owner: "bot", botId: "bot-a" },
+      ] })],
+    ]),
+    commands: new Map(),
+    policies: new Map(),
+  }, visibility);
+  const request = (operation) => ({
+    body: new Uint8Array(),
+    envelope: { operation, payload: {} },
+    context: { authScope: "write", clientId: "c", connectionId: "k", signal: new AbortController().signal, clientCapabilities: ["workspace.v1"] },
+  });
+  const query = (operation) => operations.queries.get(operation)(request(operation));
+  assert.deepEqual(Object.keys((await query("notifications.snapshot")).notifications), ["n-bot"]);
+  assert.deepEqual((await query("notifications.delta")).events.map((event) => `${event.type}:${event.id}`), ["notification.published:n-bot", "notification.removed:n-bot"]);
+});

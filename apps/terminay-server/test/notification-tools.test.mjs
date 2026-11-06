@@ -271,3 +271,25 @@ test("any process holding the terminal's capability can send and dismiss over th
     await endpoint.stop()
   }
 })
+
+test("the notification tools never list or resolve a bot's notification, whatever the caller's reach", async () => {
+  // Publishes at once, so the bot record is in the published set.
+  const notifications = new NotificationManager({ setTimeout: (handler) => { handler(); return 0 }, clearTimeout: () => {} })
+  notifications.setActivity({ projectId: "project-a", sessionId: "session-1" }, "agent-finished")
+  notifications.setBot("bot-a", { count: 1, body: "Build is green", throughSequence: 3, raisedAt: 5 })
+  const botId = Object.values(notifications.snapshot().notifications).find((record) => record.owner === "bot").id
+  const dismissed = []
+  const adapter = createNotificationControlAdapter({
+    notifications,
+    dismiss: (record) => { dismissed.push(record.id); return true },
+    // Workspace reach: every terminal is addressable.
+    reaches: () => true,
+  })
+  const listed = await adapter.listNotifications({}, context())
+  assert.deepEqual(listed.notifications.map((entry) => entry.kind), ["agent-finished"])
+  const refused = await adapter.dismissNotification({ notification: botId }, context())
+  assert.equal(refused.ok, false)
+  assert.equal(refused.error.code, "not_found")
+  assert.deepEqual(dismissed, [])
+  assert.ok(notifications.snapshot().notifications[botId] !== undefined, "the bot's notification remains")
+})

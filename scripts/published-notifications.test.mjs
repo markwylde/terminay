@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { publishedNotificationItems } from '../src/workspace/publishedNotifications.ts';
+import {
+	botNotificationHeadline,
+	publishedNotificationItems,
+} from '../src/workspace/publishedNotifications.ts';
 
 function entry(title, overrides = {}) {
 	return {
@@ -206,4 +209,101 @@ test('an untracked terminal lists no activity notification, agent ones included'
 
 test('nothing published lists nothing', () => {
 	assert.deepEqual(publishedNotificationItems(snapshot(), [entry('a')]), []);
+});
+
+function botRecord(id, botId, overrides = {}) {
+	return {
+		id,
+		owner: 'bot',
+		botId,
+		source: 'bot',
+		kind: 'bot-message',
+		body: 'Build is green',
+		count: 2,
+		throughSequence: 9,
+		raisedAt: 500,
+		...overrides,
+	};
+}
+
+const bots = (serverId, entries) => ({
+	serverId,
+	bots: new Map(entries.map(([id, name]) => [id, { name, avatar: 'B', colour: '#7cc4f5' }])),
+});
+
+test('a bot notification is listed as a bot row in the attention group, newest first among attention rows', () => {
+	const items = publishedNotificationItems(
+		snapshot(
+			record('n-1', 'build', 'agent-finished', { raisedAt: 900 }),
+			record('n-2', 'shell', 'attention', { raisedAt: 100 }),
+			botRecord('n-3', 'bot-bird'),
+		),
+		[entry('build'), entry('shell')],
+		bots('local', [['bot-bird', 'Bird']]),
+	);
+	assert.deepEqual(
+		items.map((item) => item.notificationId),
+		['n-3', 'n-2', 'n-1'],
+	);
+	assert.deepEqual(items[0].bot, {
+		serverId: 'local',
+		botId: 'bot-bird',
+		name: 'Bird',
+		avatar: 'B',
+		colour: '#7cc4f5',
+		count: 2,
+		throughSequence: 9,
+		excerpt: 'Build is green',
+	});
+	assert.equal(items[0].state, 'attention');
+	assert.equal(items[0].since, 500);
+	assert.equal(items[0].title, 'Bird');
+});
+
+test('a bot this window does not know is not listed', () => {
+	const items = publishedNotificationItems(
+		snapshot(botRecord('n-1', 'bot-gone')),
+		[],
+		bots('local', [['bot-bird', 'Bird']]),
+	);
+	assert.deepEqual(items, []);
+	assert.deepEqual(
+		publishedNotificationItems(snapshot(botRecord('n-1', 'bot-bird')), []),
+		[],
+		'without the server\'s bots, no bot row',
+	);
+});
+
+test('the Show indicator settings never hide a bot row', () => {
+	const items = publishedNotificationItems(
+		snapshot(
+			record('n-1', 'build', 'agent-finished'),
+			botRecord('n-2', 'bot-bird'),
+		),
+		[entry('build', { status: 'done', indicatorsSuppressed: true })],
+		bots('local', [['bot-bird', 'Bird']]),
+	);
+	assert.deepEqual(items.map((item) => item.notificationId), ['n-2']);
+});
+
+test('the same bot id on two servers is two rows, each kept with its own server', () => {
+	const a = publishedNotificationItems(
+		snapshot(botRecord('n-1', 'bot-same')),
+		[],
+		bots('server-a', [['bot-same', 'Bird']]),
+	);
+	const b = publishedNotificationItems(
+		snapshot(botRecord('n-1', 'bot-same')),
+		[],
+		bots('server-b', [['bot-same', 'Robin']]),
+	);
+	assert.deepEqual(
+		[...a, ...b].map((item) => [item.bot.serverId, item.bot.name]),
+		[['server-a', 'Bird'], ['server-b', 'Robin']],
+	);
+});
+
+test('a bot row reads how many posts are waiting', () => {
+	assert.equal(botNotificationHeadline(1), 'New message');
+	assert.equal(botNotificationHeadline(3), '3 new messages');
 });
