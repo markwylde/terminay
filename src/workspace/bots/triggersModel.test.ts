@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	describeCondition,
+	distinctUpcoming,
 	emptyTriggerForm,
 	formFromTrigger,
 	formToDraft,
@@ -111,4 +112,21 @@ test('the last firing per trigger is the newest', () => {
 	]);
 	assert.equal(latest.get('a')?.outcome, 'failed');
 	assert.equal(latest.get('b')?.outcome, 'skipped');
+});
+
+test('upcoming shows each trigger once at its next firing, marking repeats', () => {
+	const minute = (n: number) => NOW + n * 60_000;
+	const list = distinctUpcoming([
+		{ triggerId: 'pr', triggerName: 'Greet PRs', at: minute(2) },
+		{ triggerId: 'pr', triggerName: 'Greet PRs', at: minute(1) },
+		{ triggerId: 'daily', triggerName: 'Daily digest', at: minute(90) },
+		{ triggerId: 'pr', triggerName: 'Greet PRs', at: minute(3) },
+	]);
+	assert.deepEqual(
+		list.map((f) => [f.triggerId, f.at, f.repeats]),
+		[
+			['pr', minute(1), true],
+			['daily', minute(90), false],
+		],
+	);
 });
