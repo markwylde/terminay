@@ -204,7 +204,7 @@ export type HomeDashboardWidgetEntry = {
 	hidden: boolean;
 };
 
-/** Server setting: the Home overview layout (ADR-0100). Empty means the
+/** Server setting: the Home overview layout (ADR-0101). Empty means the
  * default layout. */
 export type HomeDashboardSettings = {
 	widgets: HomeDashboardWidgetEntry[];

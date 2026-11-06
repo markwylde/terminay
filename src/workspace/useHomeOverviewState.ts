@@ -1,6 +1,6 @@
 /**
  * The Home overview's two pieces of state that are not derived from the
- * workspace: its layout, saved as a server setting (ADR-0100), and the most
+ * workspace: its layout, saved as a server setting (ADR-0101), and the most
  * recent recordings, read on demand.
  */
 

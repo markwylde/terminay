@@ -3,7 +3,7 @@
  * arrange.
  *
  * Which widgets show, in what order and at what size, is the server setting
- * `homeDashboard` (ADR-0100), edited through `homeDashboardLayout`. This file
+ * `homeDashboard` (ADR-0101), edited through `homeDashboardLayout`. This file
  * renders that layout and offers edit mode; every number comes from
  * `homeOverviewModel`, and each widget lives in `homeOverviewWidgets`.
  */

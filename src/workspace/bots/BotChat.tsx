@@ -330,6 +330,23 @@ export function BotChat({
 				setReadThrough(latest);
 			}
 	}, [here, loading, readThrough, latest, bot.id]);
+	// Looking at Chat acknowledges the bot's posts for every client, so its
+	// notification clears everywhere. Only what this client has loaded is
+	// acknowledged: a post still on its way keeps its notification. The
+	// per-device read position above is separate and stays as it is.
+	const acknowledged = useRef<{ botId: string; through: number } | undefined>(
+		undefined,
+	);
+	useEffect(() => {
+		if (!here || loading || latest === undefined) return;
+		const last = acknowledged.current;
+		if (last?.botId === bot.id && last.through >= latest) return;
+		acknowledged.current = { botId: bot.id, through: latest };
+		void client.acknowledge(bot.id, latest).catch(() => {
+			// Try again on the next change rather than leave it acknowledged here.
+			if (acknowledged.current?.through === latest) acknowledged.current = last;
+		});
+	}, [here, loading, latest, bot.id, client]);
 	const seenLatest = useRef<number | undefined>(undefined);
 	useEffect(() => {
 		// A reply arriving while the user is reading at the bottom is seen, not

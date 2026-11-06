@@ -471,6 +471,15 @@
   overflow-wrap: anywhere;
 }
 
+/* A bot's latest post can run to 280 characters; the row shows its start. */
+.terminal-activity-menu__body--excerpt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
 .terminal-activity-menu__age {
   color: rgba(220, 226, 240, 0.42);
   font-size: 11px;

@@ -7,7 +7,7 @@ import {
 	normalizeSettingsAndSecrets,
 } from '../dist/settings/index.js';
 
-// ADR-0100: the Home overview layout is a server setting, and MCP cannot reach it.
+// ADR-0101: the Home overview layout is a server setting, and MCP cannot reach it.
 
 test('the Home overview layout is a server setting with an empty default', () => {
 	assert.equal(classifySetting('homeDashboard'), 'server');
