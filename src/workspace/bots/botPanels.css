@@ -837,6 +837,29 @@
 	width: auto;
 	flex: 1;
 }
+.bots-filterchip {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	padding: 3px 4px 3px 10px;
+	border: 1px solid var(--bots-start-bg);
+	border-radius: 999px;
+	background: var(--bots-start-bg);
+	color: var(--bots-start);
+	font-size: 12px;
+}
+.bots-filterchip__label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bots-filterchip__label b {
+	color: var(--bots-strong);
+	font-weight: 600;
+}
 .bots-stool p {
 	font-size: 11.5px;
 }

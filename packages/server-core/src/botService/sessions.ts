@@ -302,7 +302,12 @@ export class BotSessionStore extends EventEmitter {
 	}
 	list(
 		botId: string,
-		filter: { origin?: string; state?: string; search?: string } = {},
+		filter: {
+			origin?: string;
+			state?: string;
+			search?: string;
+			triggerId?: string;
+		} = {},
 	): BotSessionRecord[] {
 		botEnvironmentId(botId);
 		return [...this.entries.values()]
@@ -311,6 +316,9 @@ export class BotSessionStore extends EventEmitter {
 					e.record.botId === botId &&
 					(!filter.origin || e.record.origin.kind === filter.origin) &&
 					(!filter.state || e.record.state === filter.state) &&
+					(!filter.triggerId ||
+						(e.record.origin.kind !== 'chat' &&
+							e.record.origin.triggerId === filter.triggerId)) &&
 					(!filter.search ||
 						JSON.stringify([...e.updates, ...e.pending])
 							.toLocaleLowerCase()
