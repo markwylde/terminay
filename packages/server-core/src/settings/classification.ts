@@ -16,6 +16,8 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
 	disableStdin: 'server',
 	fileViewer: 'server',
 	gitPushAgent: 'server',
+	// The Home overview layout: widget ids, sizes, and visibility (ADR-0101).
+	homeDashboard: 'server',
 	pixel: 'server',
 	terminayMcp: 'server',
 	ignoreBracketedPasteMode: 'server',

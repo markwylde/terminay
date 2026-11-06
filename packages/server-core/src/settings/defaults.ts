@@ -29,6 +29,8 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 	// On: a program names its tab with OSC 0 / OSC 2. A name a person gave
 	// the tab always wins.
 	programSetTabTitles: true,
+	// The Home overview layout; empty is the default layout (ADR-0101).
+	homeDashboard: { widgets: [] },
 	// On: new zsh, bash, fish, and PowerShell terminals load Terminay's shell
 	// integration after the user's own startup files (ADR-0082).
 	shellIntegration: true,

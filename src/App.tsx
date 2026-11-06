@@ -13,6 +13,7 @@ import {
 import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { DockviewReact } from 'dockview-react';
 import {
+	Bot as BotIcon,
 	CircleStop,
 	Eraser,
 	FolderPlus,
@@ -458,11 +459,17 @@ import { BotTab } from './workspace/bots/BotTab';
 import { BotsSection } from './workspace/bots/BotsSection';
 import { BotTabIcon, BotsSidebarList } from './workspace/bots/BotsSidebarList';
 import { requestNewBot } from './workspace/bots/botFocus';
-import { useServerBots } from './workspace/bots/useServerBots';
+import { botEntries, useServerBots } from './workspace/bots/useServerBots';
 import {
 	HomeOverview,
 	type HomeOverviewAutomationTarget,
+	type HomeWidgetActions,
 } from './workspace/HomeOverview';
+import {
+	useHomeDashboardLayout,
+	useHomeRecordings,
+} from './workspace/useHomeOverviewState';
+import type { HomeDashboardSettings } from './types/settings';
 import {
 	HomeWorkspace,
 	type HomeWorkspaceHandle,
@@ -9032,13 +9039,31 @@ function App({
 								isRunning: remoteStatus.isRunning,
 								pairedDeviceCount: remoteStatus.pairedDeviceCount,
 							},
+				bots: botEntries(serverBots),
+				botServers: [...serverBots.values()].map((server) => ({
+					serverId: server.serverId,
+					serverLabel: server.label,
+					available: server.status !== 'error',
+				})),
+				workflowsByServer: new Map(
+					[...serverWorkflows.values()].map((server) => [
+						server.serverId,
+						[...server.workflows.values()],
+					]),
+				),
+				notifications: terminalActivityItems.notifications,
+				now: automationClock,
 			}),
 		[
+			automationClock,
 			automationSources,
 			currentServerId,
 			dashboardSources,
 			projectTabSources,
 			remoteStatus,
+			serverBots,
+			serverWorkflows,
+			terminalActivityItems.notifications,
 		],
 	);
 	// Something elsewhere — an overview widget, the Command Bar, the missed-run
@@ -9684,6 +9709,133 @@ function App({
 		};
 	}, [isActivityMenuOpen]);
 
+	// The overview layout is a server setting of the server this window works
+	// in (ADR-0101); edits are saved in order and a failed save rolls back.
+	const saveHomeDashboard = useCallback(
+		async (layout: HomeDashboardSettings) => {
+			const nextSettings = { ...settingsRef.current, homeDashboard: layout };
+			settingsRef.current = nextSettings;
+			const updated = await settingsClient.update<typeof nextSettings>(
+				nextSettings as unknown as JsonValue,
+			);
+			settingsRef.current = updated;
+			return updated.homeDashboard;
+		},
+		[settingsClient],
+	);
+	const homeDashboard = useHomeDashboardLayout(
+		settings.homeDashboard,
+		saveHomeDashboard,
+	);
+	const homeRecordings = useHomeRecordings(
+		automationSectionServers.find(
+			(server) => server.serverId === currentServerId,
+		),
+		isHomeSelected,
+	);
+	// An overview row names a panel by server, project, and id. It is resolved
+	// now, so a row drawn before its panel closed activates nothing.
+	const activatePanelFromOverview = useCallback(
+		(
+			serverId: string,
+			projectId: string,
+			panelId: string,
+			sessionId?: string,
+		) => {
+			const here = serverId === currentServerId;
+			const entry = here
+				? inventoryByProject[projectId]?.find((item) => item.panelId === panelId)
+				: undefined;
+			if (here && entry === undefined) return;
+			const session = sessionId ?? entry?.sessionId;
+			activateDashboardRow(serverId, {
+				agents: [],
+				color: entry?.color ?? '',
+				emoji: entry?.emoji ?? '',
+				isAgentStatus: entry?.isAgentStatus ?? false,
+				kind: 'panel',
+				panelId,
+				panelKind: entry?.kind ?? 'terminal',
+				projectId,
+				status: 'idle',
+				title: entry?.title ?? '',
+				...(session === undefined ? {} : { sessionId: session }),
+				...(entry?.folderId === undefined ? {} : { folderId: entry.folderId }),
+			});
+			// A file or folder panel has no session for that path to activate.
+			if (entry !== undefined && entry.kind !== 'terminal')
+				activatePanelInProject(projectId, panelId, entry.folderId);
+		},
+		[
+			activateDashboardRow,
+			activatePanelInProject,
+			currentServerId,
+			inventoryByProject,
+		],
+	);
+	const homeOverviewActions = useMemo<HomeWidgetActions>(
+		() => ({
+			onOpenTabs: () => openHomeSection('tabs'),
+			onOpenAutomations: openAutomationsFromOverview,
+			onActivatePanel: activatePanelFromOverview,
+			onActivateAgent: activateDashboardAgent,
+			onOpenBot: (serverId, botId) => {
+				selectHome();
+				openInHome({ kind: 'bot', serverId, botId });
+			},
+			onActivateNotification: activateTerminalFromOverview,
+			onDismissNotification: dismissNotification,
+			onDismissAllNotifications: dismissAllNotifications,
+			onOpenRecording: (recordingId) => {
+				selectHome();
+				openInHome({ kind: 'recording', serverId: currentServerId, recordingId });
+			},
+			quickActions: {
+				onNewProject: () => void createServerProject(),
+				onNewBot: () => {
+					openHomeSection('bots');
+					requestNewBot();
+				},
+				onNewAutomation: () => openAutomationsFromOverview({ kind: 'create' }),
+				onOpenCommandBar: () => setIsViewCommandBarOpen(true),
+				onOpenSettings: () => void auxiliaryRouteController.openSettings(),
+				shortcuts: {
+					newProject: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'new-project',
+						isMac,
+					),
+					commandBar: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-command-bar',
+						isMac,
+					),
+					settings: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-settings',
+						isMac,
+					),
+				},
+			},
+		}),
+		[
+			activateDashboardAgent,
+			activatePanelFromOverview,
+			activateTerminalFromOverview,
+			auxiliaryRouteController,
+			createServerProject,
+			currentServerId,
+			dismissAllNotifications,
+			dismissNotification,
+			isMac,
+			openAutomationsFromOverview,
+			openHomeSection,
+			openInHome,
+			selectHome,
+			settings.keyboardShortcuts,
+		],
+	);
+
 	const [hasShownHome, setHasShownHome] = useState(isHomeSelected);
 	if (isHomeSelected && !hasShownHome) setHasShownHome(true);
 	const renderHomeSection = useCallback(
@@ -9696,10 +9848,13 @@ function App({
 				/>
 			) : section === 'home' ? (
 				<HomeOverview
+					actions={homeOverviewActions}
+					layout={homeDashboard.layout}
+					layoutSaveFailed={homeDashboard.saveFailed}
 					now={automationClock}
+					onLayoutChange={homeDashboard.change}
 					overview={homeOverview}
-					onOpenAutomations={openAutomationsFromOverview}
-					onOpenTabs={() => openHomeSection('tabs')}
+					recordings={homeRecordings}
 				/>
 			) : (
 				<WorkspaceDashboard
@@ -9713,7 +9868,12 @@ function App({
 			activateDashboardRow,
 			automationClock,
 			dashboardSources,
+			homeDashboard.change,
+			homeDashboard.layout,
+			homeDashboard.saveFailed,
 			homeOverview,
+			homeOverviewActions,
+			homeRecordings,
 			openAutomationsFromOverview,
 			openHomeSection,
 			workflowRows,
@@ -9751,6 +9911,18 @@ function App({
 				description: 'Run something on a schedule or when something happens.',
 				searchText: 'new automation create schedule trigger cron',
 				onSelect: run(() => openAutomationsFromOverview({ kind: 'create' })),
+			},
+			{
+				group: 'Workspace',
+				icon: <BotIcon size={18} strokeWidth={2.1} />,
+				id: 'new-bot',
+				title: 'New bot',
+				description: 'Make a bot that works on your behalf.',
+				searchText: 'new bot create agent assistant',
+				onSelect: run(() => {
+					openHomeSection('bots');
+					requestNewBot();
+				}),
 			},
 			{
 				group: 'Workspace',

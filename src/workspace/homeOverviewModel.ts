@@ -13,11 +13,32 @@
  * see that server right now" is a different one.
  */
 
+import type { SessionWorkflow } from '@terminay/client-core';
 import type { AgentState } from '../types/agentStatus';
+import type { TerminalActivityOverviewItem } from './activityStates.ts';
+import type { BotEntry } from './bots/botsModel.ts';
 import type { DashboardServerSource } from './crossServerRows.ts';
 import { namesServers } from './crossServerRows.ts';
 import type { DashboardAgent } from './dashboardRows.ts';
 import { buildDashboardGroups } from './dashboardRows.ts';
+import {
+	buildAttention,
+	buildBotItems,
+	buildBotSessionItems,
+	buildProjectItems,
+	buildPullRequestItems,
+	buildWorkflowItems,
+	type HomeAttentionItem,
+	type HomeBotItem,
+	type HomeBotSessionItem,
+	type HomeProjectItem,
+	type HomePullRequestItem,
+	type HomeWorkflowItem,
+	needsYouAgents,
+	needsYouBotSessions,
+	needsYouWorkflows,
+	nextBotTrigger,
+} from './homeOverviewItems.ts';
 
 /** One attached connection, as the overview sees it. */
 export type HomeOverviewSource = DashboardServerSource &
@@ -80,6 +101,20 @@ export type HomeOverviewInput = Readonly<{
 	automationSources?: readonly HomeOverviewAutomationSource[];
 	/** How many recent runs to list. */
 	recentRunLimit?: number;
+	/** Every bot across servers, as the Bots section lists them. */
+	bots?: readonly BotEntry[];
+	/** Each attached server's bots status; a server absent here serves none. */
+	botServers?: readonly Readonly<{
+		serverId: string;
+		serverLabel: string;
+		available: boolean;
+	}>[];
+	/** Workflows by server id: the workflows of that server's terminals. */
+	workflowsByServer?: ReadonlyMap<string, readonly SessionWorkflow[]>;
+	/** What the Notifications control lists. */
+	notifications?: readonly TerminalActivityOverviewItem[];
+	/** Epoch ms, for workflow times. */
+	now?: number;
 }>;
 
 export type HomeOverviewServerRef = Readonly<{
@@ -174,6 +209,8 @@ export type HomeOverviewAutomations = Readonly<{
 	nextRun?: HomeOverviewActiveAutomation;
 	/** Most recent first. */
 	recentRuns: readonly HomeOverviewRecentRun[];
+	/** The last thirty runs, most recent first, and how they went. */
+	history: HomeOverviewRunHistory;
 	/** Every automation, enabled or not, over the servers that answered. */
 	total: number;
 	unavailable: readonly HomeOverviewServerRef[];
@@ -181,16 +218,74 @@ export type HomeOverviewAutomations = Readonly<{
 	isEmpty: boolean;
 }>;
 
+export type HomeOverviewRunHistory = Readonly<{
+	runs: readonly HomeOverviewRecentRun[];
+	succeeded: number;
+	/** Failed and timed out. */
+	failed: number;
+	running: number;
+	skipped: number;
+	cancelled: number;
+	/** Succeeded over succeeded, failed, and timed out; undefined with none. */
+	successRate?: number;
+}>;
+
+/** A list over the servers that could answer, naming those that could not. */
+export type HomeOverviewList<T> = Readonly<{
+	items: readonly T[];
+	unavailable: readonly HomeOverviewServerRef[];
+}>;
+
 export type HomeOverview = Readonly<{
 	projects: HomeOverviewCount;
+	projectItems: readonly HomeProjectItem[];
 	tabs: HomeOverviewCount;
 	terminals: HomeOverviewCount;
 	agents: HomeOverviewAgents;
 	connections: HomeOverviewConnections;
 	automations: HomeOverviewAutomations;
+	attention: HomeOverviewList<HomeAttentionItem>;
+	workflows: HomeOverviewList<HomeWorkflowItem>;
+	pullRequests: HomeOverviewList<HomePullRequestItem>;
+	bots: HomeOverviewList<HomeBotItem> &
+		Readonly<{
+			nextTrigger?: HomeBotItem & { nextTrigger: { name: string; at: number } };
+		}>;
+	botSessions: readonly HomeBotSessionItem[];
+	notifications: readonly TerminalActivityOverviewItem[];
 }>;
 
 export const DEFAULT_RECENT_RUN_LIMIT = 5;
+export const RUN_HISTORY_LIMIT = 30;
+
+function runHistory(
+	runs: readonly HomeOverviewRecentRun[],
+): HomeOverviewRunHistory {
+	const window = runs.slice(0, RUN_HISTORY_LIMIT);
+	let succeeded = 0;
+	let failed = 0;
+	let running = 0;
+	let skipped = 0;
+	let cancelled = 0;
+	for (const run of window) {
+		if (run.outcome === 'success') succeeded += 1;
+		else if (run.outcome === 'failure' || run.outcome === 'timed-out')
+			failed += 1;
+		else if (run.outcome === 'running') running += 1;
+		else if (run.outcome === 'skipped') skipped += 1;
+		else cancelled += 1;
+	}
+	const finished = succeeded + failed;
+	return Object.freeze({
+		runs: Object.freeze(window),
+		succeeded,
+		failed,
+		running,
+		skipped,
+		cancelled,
+		...(finished === 0 ? {} : { successRate: succeeded / finished }),
+	});
+}
 
 function ref(
 	source: Readonly<{ serverId: string; serverLabel: string }>,
@@ -345,6 +440,7 @@ function summarizeAutomations(
 		active: Object.freeze(active),
 		...(nextRun === undefined ? {} : { nextRun }),
 		recentRuns: Object.freeze(runs.slice(0, Math.max(0, recentRunLimit))),
+		history: runHistory(runs),
 		total,
 		unavailable: Object.freeze(unavailable),
 		isEmpty: total === 0 && runs.length === 0 && unavailable.length === 0,
@@ -360,9 +456,74 @@ export function buildHomeOverview(input: HomeOverviewInput): HomeOverview {
 	const nameServers = namesServers([
 		...sources,
 		...(input.automationSources ?? []),
+		...(input.botServers ?? []),
 	]);
+
+	// Workflows and pull requests name panels, which only the server whose
+	// inventory this window holds can give; every other server is named.
+	const held = sources.find(
+		(source) => source.available && source.hasInventory,
+	);
+	const notHeld = Object.freeze([
+		...offline,
+		...sources
+			.filter((source) => source.available && !source.hasInventory)
+			.map((source) => ref(source, 'not-held')),
+	]);
+	const workflowItems =
+		held === undefined
+			? []
+			: buildWorkflowItems(
+					held.serverId,
+					held.serverLabel,
+					nameServers,
+					held.inventoryByProject,
+					input.workflowsByServer?.get(held.serverId) ?? [],
+					input.now ?? Date.now(),
+				);
+	const pullRequestItems =
+		held === undefined
+			? []
+			: buildPullRequestItems(
+					held.serverId,
+					held.serverLabel,
+					nameServers,
+					held.projects,
+					held.inventoryByProject,
+				);
+	const bots = input.bots ?? [];
+	const botUnavailable = Object.freeze(
+		(input.botServers ?? [])
+			.filter((item) => !item.available)
+			.map((item) => ref(item, 'offline')),
+	);
+	const botItems = buildBotItems(bots, nameServers);
+	const nextTrigger = nextBotTrigger(botItems);
+	const attention = buildAttention(
+		needsYouAgents(sources, nameServers),
+		needsYouBotSessions(bots, nameServers),
+		needsYouWorkflows(workflowItems),
+	);
+
 	return Object.freeze({
 		...workspace,
+		projectItems: buildProjectItems(sources, nameServers),
+		attention: Object.freeze({
+			items: attention,
+			unavailable: Object.freeze([...notHeld, ...botUnavailable]),
+		}),
+		workflows: Object.freeze({ items: workflowItems, unavailable: notHeld }),
+		pullRequests: Object.freeze({
+			items: pullRequestItems,
+			unavailable: notHeld,
+		}),
+		bots: Object.freeze({
+			items: botItems,
+			unavailable: botUnavailable,
+			...(nextTrigger === undefined ? {} : { nextTrigger }),
+		}),
+		botSessions: buildBotSessionItems(bots, nameServers),
+		notifications: Object.freeze([...(input.notifications ?? [])]),
 		connections: Object.freeze({
 			attached: sources.length,
 			available: sources.length - offline.length,

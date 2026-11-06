@@ -1,63 +1,213 @@
 /**
- * Home's overview section: the workspace in a handful of widgets.
+ * Home's overview section: the workspace in a grid of widgets the user can
+ * arrange.
  *
- * A renderer over `homeOverviewModel`. Every number comes from there, so this
- * file decides only how a count reads and where activating a widget goes: the
- * project and agent widgets to Tabs, which holds their detail, and the
- * automation widgets to Automations.
+ * Which widgets show, in what order and at what size, is the server setting
+ * `homeDashboard` (ADR-0101), edited through `homeDashboardLayout`. This file
+ * renders that layout and offers edit mode; every number comes from
+ * `homeOverviewModel`, and each widget lives in `homeOverviewWidgets`.
  */
 
 import {
-	CalendarClock,
+	Activity,
+	Bell,
+	BellRing,
+	Bot,
+	Check,
+	ChevronLeft,
+	ChevronRight,
+	EyeOff,
+	Film,
 	FolderKanban,
-	History,
+	GitPullRequest,
+	GripVertical,
+	LayoutGrid,
+	ListChecks,
+	MessagesSquare,
 	PanelsTopLeft,
+	Plus,
 	Radio,
+	RotateCcw,
 	Sparkles,
 	Workflow,
+	Zap,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
 import {
-	HOME_OVERVIEW_AGENT_GROUP_LABELS,
-	HOME_OVERVIEW_AGENT_GROUPS,
-	type HomeOverview as HomeOverviewModel,
-	type HomeOverviewCount,
-	type HomeOverviewRunOutcome,
-	type HomeOverviewServerRef,
-} from './homeOverviewModel.ts';
+	type ComponentType,
+	type DragEvent,
+	type ReactNode,
+	useState,
+} from 'react';
+import type {
+	HomeDashboardSettings,
+	HomeDashboardWidgetSize,
+} from '../types/settings';
+import {
+	type HomeWidgetId,
+	hiddenWidgets,
+	moveWidgetBefore,
+	moveWidgetBy,
+	type ResolvedHomeWidget,
+	resetLayout,
+	setWidgetHidden,
+	setWidgetSize,
+	visibleWidgets,
+} from './homeDashboardLayout';
+import type {
+	HomeOverview as HomeOverviewModel,
+	HomeOverviewServerRef,
+} from './homeOverviewModel';
+import {
+	AgentsWidget,
+	AutomationsWidget,
+	BotSessionsWidget,
+	BotsWidget,
+	ConnectionsWidget,
+	type HomeRecordingsState,
+	type HomeWidgetActions,
+	type HomeWidgetProps,
+	NeedsYouWidget,
+	NotificationsWidget,
+	ProjectsWidget,
+	PullRequestsWidget,
+	QuickActionsWidget,
+	RecordingsWidget,
+	RunHistoryWidget,
+	TabsWidget,
+	WorkflowsWidget,
+} from './homeOverviewWidgets';
+import './homeOverview.css';
 
-/** What activating an automation widget asks the Automations section to show. */
-export type HomeOverviewAutomationTarget =
-	| Readonly<{ kind: 'list' }>
-	| Readonly<{ kind: 'create' }>
-	| Readonly<{ kind: 'automation'; serverId: string; automationId: string }>
-	| Readonly<{
-			kind: 'run';
-			serverId: string;
-			automationId: string;
-			runId: string;
-	  }>;
+export type {
+	HomeOverviewAutomationTarget,
+	HomeQuickActions,
+	HomeRecordingsState,
+	HomeWidgetActions,
+} from './homeOverviewWidgets';
 
 export type HomeOverviewProps = Readonly<{
 	overview: HomeOverviewModel;
-	onOpenTabs: () => void;
-	onOpenAutomations: (target: HomeOverviewAutomationTarget) => void;
+	actions: HomeWidgetActions;
+	recordings: HomeRecordingsState;
+	/** The layout to show: the server's, or an edit still being saved. */
+	layout: HomeDashboardSettings;
+	onLayoutChange: (next: HomeDashboardSettings) => void;
+	/** The last layout change could not be saved. */
+	layoutSaveFailed?: boolean;
 	/** Epoch ms used to phrase times relative to now. */
 	now?: number;
 }>;
 
-const OUTCOME_LABELS: Record<HomeOverviewRunOutcome, string> = {
-	cancelled: 'Cancelled',
-	failure: 'Failed',
-	running: 'Running',
-	skipped: 'Skipped',
-	success: 'Succeeded',
-	'timed-out': 'Timed out',
+type WidgetSpec = Readonly<{
+	icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean | 'true' }>;
+	Body: ComponentType<HomeWidgetProps>;
+	/** A short count beside the title. */
+	meta?: (overview: HomeOverviewModel) => string | undefined;
+	unavailable?: (
+		overview: HomeOverviewModel,
+	) => readonly HomeOverviewServerRef[];
+	/** Emphasised while it holds anything. */
+	urgent?: (overview: HomeOverviewModel) => boolean;
+}>;
+
+const WIDGETS: Readonly<Record<HomeWidgetId, WidgetSpec>> = {
+	'quick-actions': { icon: Zap, Body: QuickActionsWidget },
+	'needs-you': {
+		icon: BellRing,
+		Body: NeedsYouWidget,
+		meta: (o) =>
+			o.attention.items.length === 0
+				? undefined
+				: `${o.attention.items.length} waiting`,
+		unavailable: (o) => o.attention.unavailable,
+		urgent: (o) => o.attention.items.length > 0,
+	},
+	agents: {
+		icon: Sparkles,
+		Body: AgentsWidget,
+		unavailable: (o) => o.agents.unavailable,
+	},
+	workflows: {
+		icon: ListChecks,
+		Body: WorkflowsWidget,
+		meta: (o) => {
+			const running = o.workflows.items.filter(
+				(item) => item.rank !== 'finished',
+			).length;
+			const finished = o.workflows.items.length - running;
+			const parts = [
+				running > 0 ? `${running} active` : undefined,
+				finished > 0 ? `${finished} finished` : undefined,
+			].filter((part) => part !== undefined);
+			return parts.length === 0 ? undefined : parts.join(' · ');
+		},
+		unavailable: (o) => o.workflows.unavailable,
+	},
+	bots: {
+		icon: Bot,
+		Body: BotsWidget,
+		meta: (o) =>
+			o.bots.items.length === 0
+				? undefined
+				: `${o.bots.items.length} ${o.bots.items.length === 1 ? 'bot' : 'bots'}`,
+		unavailable: (o) => o.bots.unavailable,
+	},
+	'run-history': {
+		icon: Activity,
+		Body: RunHistoryWidget,
+		meta: (o) =>
+			o.automations.history.runs.length === 0
+				? undefined
+				: `last ${o.automations.history.runs.length} runs`,
+		unavailable: (o) => o.automations.unavailable,
+	},
+	'pull-requests': {
+		icon: GitPullRequest,
+		Body: PullRequestsWidget,
+		meta: (o) =>
+			o.pullRequests.items.length === 0
+				? undefined
+				: `${o.pullRequests.items.length} open`,
+		unavailable: (o) => o.pullRequests.unavailable,
+	},
+	notifications: {
+		icon: Bell,
+		Body: NotificationsWidget,
+		meta: (o) =>
+			o.notifications.length === 0 ? undefined : String(o.notifications.length),
+	},
+	projects: {
+		icon: FolderKanban,
+		Body: ProjectsWidget,
+		unavailable: (o) => o.projects.unavailable,
+	},
+	'bot-sessions': {
+		icon: MessagesSquare,
+		Body: BotSessionsWidget,
+	},
+	automations: {
+		icon: Workflow,
+		Body: AutomationsWidget,
+		unavailable: (o) => o.automations.unavailable,
+	},
+	recordings: { icon: Film, Body: RecordingsWidget },
+	tabs: {
+		icon: PanelsTopLeft,
+		Body: TabsWidget,
+		unavailable: (o) => o.tabs.unavailable,
+	},
+	connections: {
+		icon: Radio,
+		Body: ConnectionsWidget,
+		unavailable: (o) => o.connections.unavailable,
+	},
 };
 
-function plural(count: number, singular: string, pluralForm = `${singular}s`) {
-	return count === 1 ? singular : pluralForm;
-}
+const SIZE_LABELS: Record<HomeDashboardWidgetSize, string> = {
+	small: 'Small',
+	wide: 'Wide',
+	tall: 'Tall',
+};
 
 function describeUnavailable(
 	unavailable: readonly HomeOverviewServerRef[],
@@ -77,41 +227,137 @@ function describeUnavailable(
 	return parts.join(' · ');
 }
 
-function formatTime(at: number, now: number): string {
-	const date = new Date(at);
-	const sameDay = new Date(now).toDateString() === date.toDateString();
-	const time = date.toLocaleTimeString([], {
-		hour: '2-digit',
-		minute: '2-digit',
-	});
-	return sameDay
-		? time
-		: `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+function EditTools({
+	item,
+	isFirst,
+	isLast,
+	onMove,
+	onResize,
+	onHide,
+}: Readonly<{
+	item: ResolvedHomeWidget;
+	isFirst: boolean;
+	isLast: boolean;
+	onMove: (delta: number) => void;
+	onResize: (size: HomeDashboardWidgetSize) => void;
+	onHide: () => void;
+}>) {
+	const title = item.definition.title;
+	return (
+		<div
+			className="home-widget__tools"
+			data-terminay-home-widget-tools={item.id}
+		>
+			<span className="home-widget__grip" aria-hidden="true">
+				<GripVertical size={13} />
+			</span>
+			<button
+				type="button"
+				className="home-widget__tool"
+				aria-label={`Move ${title} earlier`}
+				data-terminay-home-widget-move="earlier"
+				disabled={isFirst}
+				onClick={() => onMove(-1)}
+			>
+				<ChevronLeft size={13} aria-hidden="true" />
+			</button>
+			<button
+				type="button"
+				className="home-widget__tool"
+				aria-label={`Move ${title} later`}
+				data-terminay-home-widget-move="later"
+				disabled={isLast}
+				onClick={() => onMove(1)}
+			>
+				<ChevronRight size={13} aria-hidden="true" />
+			</button>
+			<span className="home-widget__tool-sep" aria-hidden="true" />
+			<fieldset className="home-widget__sizes">
+				<legend className="home-sr-only">{`${title} size`}</legend>
+				{item.definition.sizes.map((size) => (
+					<button
+						key={size}
+						type="button"
+						aria-pressed={item.size === size}
+						aria-label={SIZE_LABELS[size]}
+						title={SIZE_LABELS[size]}
+						data-terminay-home-widget-resize={size}
+						className={`home-widget__tool${item.size === size ? ' home-widget__tool--on' : ''}`}
+						onClick={() => onResize(size)}
+					>
+						{SIZE_LABELS[size].slice(0, 1)}
+					</button>
+				))}
+			</fieldset>
+			<span className="home-widget__tool-sep" aria-hidden="true" />
+			<button
+				type="button"
+				className="home-widget__tool"
+				aria-label={`Hide ${title}`}
+				data-terminay-home-widget-hide="true"
+				onClick={onHide}
+			>
+				<EyeOff size={13} aria-hidden="true" />
+			</button>
+		</div>
+	);
 }
 
-function Widget({
+function WidgetFrame({
+	item,
+	overview,
+	editing,
+	tools,
 	children,
-	icon,
-	id,
-	onActivate,
-	title,
-	unavailable,
+	dragProps,
+	isDropTarget,
+	isDragging,
 }: Readonly<{
+	item: ResolvedHomeWidget;
+	overview: HomeOverviewModel;
+	editing: boolean;
+	tools: ReactNode;
 	children: ReactNode;
-	icon: ReactNode;
-	id: string;
-	onActivate?: () => void;
-	title: string;
-	unavailable?: readonly HomeOverviewServerRef[];
+	dragProps: Record<string, unknown>;
+	isDropTarget: boolean;
+	isDragging: boolean;
 }>) {
-	const note = describeUnavailable(unavailable ?? []);
-	const body = (
-		<>
-			<span className="home-widget__title">
-				{icon}
-				{title}
-			</span>
-			<span className="home-widget__body">{children}</span>
+	const spec = WIDGETS[item.id];
+	const Icon = spec.icon;
+	const meta = spec.meta?.(overview);
+	const note = describeUnavailable(spec.unavailable?.(overview) ?? []);
+	const urgent = spec.urgent?.(overview) === true;
+	const classes = [
+		'home-widget',
+		`home-widget--${item.size}`,
+		urgent ? 'home-widget--urgent' : '',
+		editing ? 'home-widget--editing' : '',
+		isDropTarget ? 'home-widget--drop-target' : '',
+		isDragging ? 'home-widget--dragging' : '',
+	]
+		.filter(Boolean)
+		.join(' ');
+	return (
+		<section
+			className={classes}
+			data-terminay-home-widget={item.id}
+			data-terminay-home-widget-size={item.size}
+			aria-label={item.definition.title}
+			{...dragProps}
+		>
+			{tools}
+			<header className="home-widget__title">
+				<span className="home-widget__chip" aria-hidden="true">
+					<Icon size={13} aria-hidden="true" />
+				</span>
+				<h3 className="home-widget__heading">{item.definition.title}</h3>
+				{meta === undefined || editing ? null : (
+					<span className="home-widget__meta">{meta}</span>
+				)}
+			</header>
+			<div className="home-widget__body" inert={editing ? true : undefined}>
+				{children}
+			</div>
 			{note === undefined ? null : (
 				<span
 					className="home-widget__unavailable"
@@ -120,231 +366,192 @@ function Widget({
 					{note}
 				</span>
 			)}
-		</>
-	);
-	return onActivate === undefined ? (
-		<section className="home-widget" data-terminay-home-widget={id}>
-			{body}
 		</section>
-	) : (
-		<button
-			type="button"
-			className="home-widget home-widget--action"
-			data-terminay-home-widget={id}
-			onClick={onActivate}
-		>
-			{body}
-		</button>
-	);
-}
-
-function Count({
-	count,
-	label,
-}: Readonly<{ count: HomeOverviewCount | number; label: string }>) {
-	const value = typeof count === 'number' ? count : count.value;
-	return (
-		<span className="home-widget__count">
-			<span className="home-widget__number" data-terminay-home-count={label}>
-				{value}
-			</span>
-			<span className="home-widget__unit">{label}</span>
-		</span>
 	);
 }
 
 export function HomeOverview({
+	actions,
+	layout,
+	layoutSaveFailed = false,
 	now = Date.now(),
-	onOpenAutomations,
-	onOpenTabs,
+	onLayoutChange,
 	overview,
+	recordings,
 }: HomeOverviewProps) {
-	const { agents, automations, connections, projects, tabs, terminals } =
-		overview;
-	const devices = connections.devices;
+	const [editing, setEditing] = useState(false);
+	const [dragging, setDragging] = useState<string>();
+	const [dropTarget, setDropTarget] = useState<string>();
+	const shown = visibleWidgets(layout);
+	const hidden = hiddenWidgets(layout);
+	const props: HomeWidgetProps = { overview, actions, recordings, now };
+
+	const dragPropsFor = (id: string): Record<string, unknown> =>
+		editing
+			? {
+					draggable: true,
+					onDragStart: (event: DragEvent) => {
+						event.dataTransfer.effectAllowed = 'move';
+						event.dataTransfer.setData('text/plain', id);
+						setDragging(id);
+					},
+					onDragEnd: () => {
+						setDragging(undefined);
+						setDropTarget(undefined);
+					},
+					onDragOver: (event: DragEvent) => {
+						if (dragging === undefined || dragging === id) return;
+						event.preventDefault();
+						event.dataTransfer.dropEffect = 'move';
+						if (dropTarget !== id) setDropTarget(id);
+					},
+					onDrop: (event: DragEvent) => {
+						event.preventDefault();
+						const moving = dragging;
+						setDragging(undefined);
+						setDropTarget(undefined);
+						if (moving === undefined || moving === id) return;
+						// Dropping on a later widget puts the dragged one after it, so a
+						// drag to the right moves right; on an earlier one, before it.
+						const order = shown.map((item) => item.id as string);
+						const from = order.indexOf(moving);
+						const to = order.indexOf(id);
+						const before = from < to ? (order[to + 1] ?? null) : id;
+						onLayoutChange(moveWidgetBefore(layout, moving, before));
+					},
+				}
+			: {};
 
 	return (
-		<div className="home-section home-overview" data-terminay-home-overview>
-			<header className="home-section__header">
-				<h2 className="home-section__heading">Home</h2>
-				<p className="home-section__subheading">Your workspace at a glance.</p>
-			</header>
-			<div className="home-overview__grid">
-				<Widget
-					icon={<FolderKanban size={14} aria-hidden="true" />}
-					id="projects"
-					onActivate={onOpenTabs}
-					title="Projects"
-					unavailable={projects.unavailable}
-				>
-					<Count count={projects} label={plural(projects.value, 'project')} />
-				</Widget>
-				<Widget
-					icon={<PanelsTopLeft size={14} aria-hidden="true" />}
-					id="tabs"
-					onActivate={onOpenTabs}
-					title="Tabs"
-					unavailable={tabs.unavailable}
-				>
-					<Count count={tabs} label={plural(tabs.value, 'tab')} />
-					<Count
-						count={terminals}
-						label={plural(terminals.value, 'terminal')}
-					/>
-				</Widget>
-				<Widget
-					icon={<Sparkles size={14} aria-hidden="true" />}
-					id="agents"
-					onActivate={onOpenTabs}
-					title="Agents"
-					unavailable={agents.unavailable}
-				>
-					{HOME_OVERVIEW_AGENT_GROUPS.map((group) => (
-						<span
-							key={group}
-							className={`home-widget__count home-widget__count--${group}`}
-							data-terminay-home-agent-group={group}
-						>
-							<span className="home-widget__number">{agents[group]}</span>
-							<span className="home-widget__unit">
-								{HOME_OVERVIEW_AGENT_GROUP_LABELS[group]}
-							</span>
-						</span>
-					))}
-				</Widget>
-				<Widget
-					icon={<Radio size={14} aria-hidden="true" />}
-					id="connections"
-					title="Connections"
-					unavailable={connections.unavailable}
-				>
-					<Count
-						count={connections.available}
-						label={`of ${connections.attached} ${plural(connections.attached, 'server')} connected`}
-					/>
-					{devices.state === 'on' ? (
-						<Count
-							count={devices.connected}
-							label={`remote ${plural(devices.connected, 'device')} connected`}
-						/>
-					) : (
-						<span className="home-widget__note">
-							{devices.state === 'off'
-								? 'Remote access is off'
-								: 'Remote access status unavailable'}
-						</span>
-					)}
-				</Widget>
-				<Widget
-					icon={<Workflow size={14} aria-hidden="true" />}
-					id="automations"
-					title="Automations"
-					unavailable={automations.unavailable}
-				>
-					{automations.isEmpty ? (
-						<span className="home-widget__empty">
-							<span className="home-widget__note">No automations yet.</span>
-							<button
-								type="button"
-								className="home-widget__link"
-								data-terminay-home-create-automation="true"
-								onClick={() => onOpenAutomations({ kind: 'create' })}
-							>
-								Create an automation
-							</button>
-						</span>
-					) : (
+		<div
+			className={`home-section home-overview${editing ? ' home-overview--editing' : ''}`}
+			data-terminay-home-overview
+			data-terminay-home-overview-editing={editing ? 'true' : undefined}
+		>
+			<header className="home-section__header home-overview__header">
+				<div className="home-overview__heading-box">
+					<h2 className="home-section__heading">Home</h2>
+					<p className="home-section__subheading">
+						{editing
+							? 'Drag widgets or use the arrows to reorder. S, W, and T set the size.'
+							: 'Your workspace at a glance.'}
+					</p>
+				</div>
+				{layoutSaveFailed ? (
+					<span
+						className="home-overview__save-failed"
+						role="status"
+						data-terminay-home-layout-save-failed
+					>
+						Couldn't save the layout.
+					</span>
+				) : null}
+				<div className="home-overview__header-actions">
+					{editing ? (
 						<>
 							<button
 								type="button"
-								className="home-widget__link home-widget__count"
-								onClick={() => onOpenAutomations({ kind: 'list' })}
+								className="home-overview__button"
+								data-terminay-home-layout-reset
+								onClick={() => onLayoutChange(resetLayout(layout))}
 							>
-								<span className="home-widget__number">
-									{automations.active.length}
-								</span>
-								<span className="home-widget__unit">active</span>
+								<RotateCcw size={14} aria-hidden="true" />
+								Reset
 							</button>
-							{automations.nextRun === undefined ? (
-								<span className="home-widget__note">No scheduled run</span>
-							) : (
-								<button
-									type="button"
-									className="home-widget__link home-widget__row"
-									data-terminay-home-next-run="true"
-									onClick={() => {
-										const next = automations.nextRun;
-										if (next === undefined) return;
-										onOpenAutomations({
-											kind: 'automation',
-											serverId: next.serverId,
-											automationId: next.automationId,
-										});
-									}}
-								>
-									<CalendarClock size={13} aria-hidden="true" />
-									<span className="home-widget__row-text">
-										Next: {automations.nextRun.name}
-										{automations.nextRun.serverLabel === undefined
-											? ''
-											: ` · ${automations.nextRun.serverLabel}`}
-									</span>
-									<span className="home-widget__row-meta">
-										{automations.nextRun.nextRunAt === undefined
-											? ''
-											: formatTime(automations.nextRun.nextRunAt, now)}
-									</span>
-								</button>
-							)}
+							<button
+								type="button"
+								className="home-overview__button home-overview__button--primary"
+								data-terminay-home-layout-done
+								onClick={() => setEditing(false)}
+							>
+								<Check size={14} aria-hidden="true" />
+								Done
+							</button>
 						</>
-					)}
-				</Widget>
-				<Widget
-					icon={<History size={14} aria-hidden="true" />}
-					id="recent-runs"
-					title="Recent runs"
-				>
-					{automations.recentRuns.length === 0 ? (
-						<span className="home-widget__note">No runs yet.</span>
 					) : (
-						<ul className="home-widget__list">
-							{automations.recentRuns.map((run) => (
-								<li key={`${run.serverId}:${run.runId}`}>
-									<button
-										type="button"
-										className="home-widget__link home-widget__row"
-										data-terminay-home-run={run.runId}
-										data-terminay-home-run-outcome={run.outcome}
-										onClick={() =>
-											onOpenAutomations({
-												kind: 'run',
-												serverId: run.serverId,
-												automationId: run.automationId,
-												runId: run.runId,
-											})
-										}
-									>
-										<span
-											className={`home-widget__outcome home-widget__outcome--${run.outcome}`}
-										>
-											{OUTCOME_LABELS[run.outcome]}
-										</span>
-										<span className="home-widget__row-text">
-											{run.automationName}
-											{run.serverLabel === undefined
-												? ''
-												: ` · ${run.serverLabel}`}
-										</span>
-										<span className="home-widget__row-meta">
-											{formatTime(run.startedAt, now)}
-										</span>
-									</button>
-								</li>
-							))}
-						</ul>
+						<button
+							type="button"
+							className="home-overview__button"
+							data-terminay-home-customise
+							onClick={() => setEditing(true)}
+						>
+							<LayoutGrid size={14} aria-hidden="true" />
+							Customise
+						</button>
 					)}
-				</Widget>
+				</div>
+			</header>
+			<div className="home-overview__grid">
+				{shown.map((item, index) => {
+					const spec = WIDGETS[item.id];
+					const Body = spec.Body;
+					return (
+						<WidgetFrame
+							key={item.id}
+							item={item}
+							overview={overview}
+							editing={editing}
+							isDragging={dragging === item.id}
+							isDropTarget={dropTarget === item.id}
+							dragProps={dragPropsFor(item.id)}
+							tools={
+								editing ? (
+									<EditTools
+										item={item}
+										isFirst={index === 0}
+										isLast={index === shown.length - 1}
+										onMove={(delta) =>
+											onLayoutChange(moveWidgetBy(layout, item.id, delta))
+										}
+										onResize={(size) =>
+											onLayoutChange(setWidgetSize(layout, item.id, size))
+										}
+										onHide={() =>
+											onLayoutChange(setWidgetHidden(layout, item.id, true))
+										}
+									/>
+								) : null
+							}
+						>
+							<Body {...props} />
+						</WidgetFrame>
+					);
+				})}
+				{shown.length === 0 ? (
+					<p className="home-overview__none">
+						Every widget is hidden. Choose Customise to add some back.
+					</p>
+				) : null}
 			</div>
+			{editing ? (
+				<section
+					className="home-overview__tray"
+					aria-label="Hidden widgets"
+					data-terminay-home-hidden-widgets
+				>
+					<h3 className="home-overview__tray-heading">Hidden widgets</h3>
+					{hidden.length === 0 ? (
+						<p className="home-overview__tray-empty">Every widget is shown.</p>
+					) : (
+						<div className="home-overview__tray-items">
+							{hidden.map((item) => (
+								<button
+									key={item.id}
+									type="button"
+									className="home-overview__add"
+									data-terminay-home-widget-add={item.id}
+									onClick={() =>
+										onLayoutChange(setWidgetHidden(layout, item.id, false))
+									}
+								>
+									<Plus size={13} aria-hidden="true" />
+									{item.definition.title}
+								</button>
+							))}
+						</div>
+					)}
+				</section>
+			) : null}
 		</div>
 	);
 }
