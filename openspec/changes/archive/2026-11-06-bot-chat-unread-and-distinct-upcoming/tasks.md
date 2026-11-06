@@ -14,4 +14,4 @@
 
 - [x] 3.1 Typecheck, lint, unit tests
 - [x] 3.2 Run the app and check Chat and the rail by eye (Docker E2E: new test plus all 19 bots tests pass; screenshot reviewed)
-- [ ] 3.3 Pull request checks green
+- [x] 3.3 Pull request checks green
