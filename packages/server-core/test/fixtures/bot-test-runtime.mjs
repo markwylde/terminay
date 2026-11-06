@@ -166,7 +166,7 @@ export async function runtime(root, options = {}) {
 				'python3',
 				[
 					new URL('./bot-relay-host.py', import.meta.url).pathname,
-					sid.slice(4),
+					args[4],
 				],
 				{ stdio: ['pipe', 'pipe', 'pipe'], detached: true },
 			);
@@ -225,6 +225,9 @@ export async function runtime(root, options = {}) {
 		},
 	};
 	const hooks = {
+		...(options.terminayMcp === undefined
+			? {}
+			: { terminayMcp: options.terminayMcp }),
 		agents: {
 			botAgentContributions: () => [
 				{
@@ -255,8 +258,9 @@ export async function runtime(root, options = {}) {
 		},
 		removeHelpers: async () => calls.push(['remove-helpers']),
 		activity: (...a) => activity.push(a),
-		process: (o) =>
-			new BotAgentProcess({
+		process: (o) => {
+			options.onProcess?.(o);
+			return new BotAgentProcess({
 				...o,
 				spawn: (_command, env) => {
 					spawnedEnvironments.push(env);
@@ -273,7 +277,8 @@ export async function runtime(root, options = {}) {
 					writeFileSync(join(records, o.sessionId), String(child.pid));
 					return child;
 				},
-			}),
+			});
+		},
 	};
 	const service = new BotService(bots, sessions, memories, hooks);
 	await service.reconcile();

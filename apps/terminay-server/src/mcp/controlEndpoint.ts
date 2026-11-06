@@ -237,10 +237,49 @@ export function isChatCallerKey(callerKey: string): boolean {
 	return callerKey.startsWith(CHAT_CALLER_PREFIX);
 }
 
+/**
+ * A capability held by one execution of a bot that has Terminay MCP access
+ * (ADR-0100). Its `terminalSessionId` is the reserved key
+ * `bot:<botId>:<executionId>`, which names no terminal.
+ */
+export interface ControlBotPrincipal {
+	readonly botId: string;
+	readonly executionId: string;
+}
+
+const BOT_CALLER_PREFIX = 'bot:';
+
+/** The reserved caller key for a bot execution; never a terminal session id. */
+export function botCallerKey(botId: string, executionId: string): string {
+	return `${BOT_CALLER_PREFIX}${botId}:${executionId}`;
+}
+
+/** Whether a caller key names a bot execution rather than a terminal. */
+export function isBotCallerKey(callerKey: string): boolean {
+	return callerKey.startsWith(BOT_CALLER_PREFIX);
+}
+
+/** Whether a caller key is reserved for a caller that has no terminal. */
+function isReservedCallerKey(callerKey: string): boolean {
+	return isChatCallerKey(callerKey) || isBotCallerKey(callerKey);
+}
+
+/** Whether the caller has no terminal of its own: a chat or a bot execution. */
+export function hasNoCallingTerminal(scope: {
+	readonly chat?: ControlChatPrincipal;
+	readonly bot?: ControlBotPrincipal;
+}): boolean {
+	return scope.chat !== undefined || scope.bot !== undefined;
+}
+
+const BOT_ID_PATTERN = /^[a-z0-9]{12}$/;
+const BOT_EXECUTION_ID_PATTERN = /^[a-z0-9]{24}$/;
+
 export interface ControlCapabilityScope {
 	/**
 	 * Immutable server-owned caller identity, never supplied by a request: a
-	 * terminal session id, or `chat:<chatId>` for a chat.
+	 * terminal session id, `chat:<chatId>` for a chat, or
+	 * `bot:<botId>:<executionId>` for a bot execution.
 	 */
 	readonly terminalSessionId: string;
 	/** Immutable server-owned project identity, never supplied by a request. */
@@ -250,6 +289,8 @@ export interface ControlCapabilityScope {
 	readonly reach?: ControlReach;
 	/** Present only when the caller is a chat, which has no terminal. */
 	readonly chat?: ControlChatPrincipal;
+	/** Present only when the caller is a bot execution, which has no terminal. */
+	readonly bot?: ControlBotPrincipal;
 }
 
 export interface ControlCapabilityLease extends ControlCapabilityScope {
@@ -566,6 +607,7 @@ interface StoredCapability {
 	readonly reach: ControlReach;
 	readonly issuedAt: number;
 	readonly chat?: ControlChatPrincipal;
+	readonly bot?: ControlBotPrincipal;
 }
 
 /**
@@ -610,8 +652,8 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 				'The local control endpoint is disabled.',
 			);
 		assertScopeId(terminalSessionId, 'terminal session id');
-		// The chat key space is reserved, so no terminal can hold a chat's key.
-		if (isChatCallerKey(terminalSessionId))
+		// The chat and bot key spaces are reserved, so no terminal can hold them.
+		if (isReservedCallerKey(terminalSessionId))
 			throw new TypeError('invalid terminal session id');
 		assertScopeId(projectId, 'project id');
 		this.assertScope(scope);
@@ -703,6 +745,65 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		return this.revokeSession(chatCallerKey(chatId));
 	}
 
+	/**
+	 * Mint the single capability of one bot execution, with workspace reach
+	 * and no calling terminal. Only the bot service is handed this, and it
+	 * decides from the bot record (ADR-0100).
+	 */
+	mintBot(botId: string, executionId: string): ControlCapabilityLease {
+		if (!this.enabled)
+			throw new ControlEndpointError(
+				'forbidden',
+				'The local control endpoint is disabled.',
+			);
+		if (!BOT_ID_PATTERN.test(botId)) throw new TypeError('invalid bot id');
+		if (!BOT_EXECUTION_ID_PATTERN.test(executionId))
+			throw new TypeError('invalid bot execution id');
+		const callerKey = botCallerKey(botId, executionId);
+		this.revokeSession(callerKey);
+		const token = this.uniqueToken();
+		const digest = hashToken(token);
+		const issuedAt = this.now();
+		const bot = Object.freeze({ botId, executionId });
+		this.capabilities.set(digest.toString('hex'), {
+			digest,
+			terminalSessionId: callerKey,
+			projectId: AUTOMATION_SPACE_ID,
+			scope: 'write',
+			reach: 'workspace',
+			issuedAt,
+			bot,
+		});
+		this.changed();
+		return Object.freeze({
+			token,
+			terminalSessionId: callerKey,
+			projectId: AUTOMATION_SPACE_ID,
+			scope: 'write' as const,
+			...reachField('workspace'),
+			issuedAt,
+			bot,
+		});
+	}
+
+	/**
+	 * End one bot execution's capability, or, with no execution id, every
+	 * capability the bot's executions hold. Revocation aborts their in-flight
+	 * requests through the revocation listeners.
+	 */
+	revokeBot(botId: string, executionId?: string): number {
+		let count = 0;
+		for (const capability of [...this.capabilities.values()])
+			if (
+				capability.bot?.botId === botId &&
+				(executionId === undefined ||
+					capability.bot.executionId === executionId) &&
+				this.revokeDigest(capability.digest)
+			)
+				count += 1;
+		return count;
+	}
+
 	private uniqueToken(): string {
 		let token = this.tokenFactory();
 		let attempts = 0;
@@ -759,7 +860,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		let count = 0;
 		for (const capability of [...this.capabilities.values()])
 			if (
-				capability.chat === undefined &&
+				!hasNoCallingTerminal(capability) &&
 				capability.issuedAt <= issuedBefore &&
 				!runningSessions.has(capability.terminalSessionId) &&
 				this.revokeDigest(capability.digest)
@@ -794,7 +895,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 		let followed = false;
 		for (const [key, capability] of [...this.capabilities]) {
 			if (
-				capability.chat !== undefined ||
+				hasNoCallingTerminal(capability) ||
 				capability.terminalSessionId !== terminalSessionId
 			)
 				continue;
@@ -832,6 +933,7 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 			scope: capability.scope,
 			...reachField(capability.reach),
 			...(capability.chat === undefined ? {} : { chat: capability.chat }),
+			...(capability.bot === undefined ? {} : { bot: capability.bot }),
 		};
 	}
 
@@ -872,8 +974,9 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
 	snapshot(): readonly PersistedControlCapability[] {
 		const result: PersistedControlCapability[] = [];
 		for (const [digest, capability] of this.capabilities) {
-			// A chat lives only in server memory, so its capability is never saved.
-			if (capability.chat !== undefined) continue;
+			// A chat or bot execution lives only in server memory, so its
+			// capability is never saved.
+			if (hasNoCallingTerminal(capability)) continue;
 			result.push({
 				digest,
 				terminalSessionId: capability.terminalSessionId,
@@ -989,7 +1092,7 @@ function parsePersistedCapability(
 		return undefined;
 	try {
 		assertScopeId(terminalSessionId, 'terminal session id');
-		if (isChatCallerKey(terminalSessionId)) return undefined;
+		if (isReservedCallerKey(terminalSessionId)) return undefined;
 		assertScopeId(projectId, 'project id');
 		// Workspace reach is valid only for the automation space; a saved entry
 		// claiming it for anything else is discarded, never honoured.
@@ -1204,6 +1307,19 @@ function normalizeScope(
 		typeof value.chat.chatId === 'string' &&
 		value.terminalSessionId === chatCallerKey(value.chat.chatId)
 			? { chat: Object.freeze({ chatId: value.chat.chatId }) }
+			: {}),
+		// Likewise a bot execution, under its own reserved key (ADR-0100).
+		...(isPlainObject(value.bot) &&
+		typeof value.bot.botId === 'string' &&
+		typeof value.bot.executionId === 'string' &&
+		value.terminalSessionId ===
+			botCallerKey(value.bot.botId, value.bot.executionId)
+			? {
+					bot: Object.freeze({
+						botId: value.bot.botId,
+						executionId: value.bot.executionId,
+					}),
+				}
 			: {}),
 	};
 }

@@ -9,6 +9,7 @@ import {
 	filterCounts,
 	initials,
 	investigatesFailures,
+	hasTerminayMcpAccess,
 	needsYou,
 	SESSION_ORIGIN_CHIPS,
 	SESSION_ORIGIN_FILTER_LABELS,
@@ -161,6 +162,9 @@ test('Investigate failures reads as on unless a profile turns it off', () => {
 	assert.equal(investigatesFailures(bot('b', 'Bird')), true);
 	assert.equal(investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: true }), true);
 	assert.equal(investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: false }), false);
+	assert.equal(hasTerminayMcpAccess(bot('b', 'Bird')), false);
+	assert.equal(hasTerminayMcpAccess({ ...bot('b', 'Bird'), terminayMcpAccess: true }), true);
+	assert.equal(hasTerminayMcpAccess({ ...bot('b', 'Bird'), terminayMcpAccess: false }), false);
 });
 
 test('failure investigations have their own filter, chip, label and title', () => {

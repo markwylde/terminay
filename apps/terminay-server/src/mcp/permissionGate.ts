@@ -1,7 +1,8 @@
-import type {
-	McpApprovalDetail,
-	McpApprovalService,
-	McpPermissionGroup,
+import {
+	deniedMessage,
+	type McpApprovalDetail,
+	type McpApprovalService,
+	type McpPermissionGroup,
 } from '@terminay/server-core';
 import type {
 	ControlError,
@@ -56,6 +57,19 @@ export function createMcpPermissionGate(
 				context.terminalSessionId,
 			);
 			if (policy === 'allow') return undefined;
+			// Turning on a bot's Terminay MCP access is the user's standing
+			// approval: Ask runs without a prompt, and only Never Allow still
+			// refuses. A bot never creates an approval or a grant (ADR-0100).
+			if (context.bot !== undefined)
+				return policy === 'deny'
+					? {
+							ok: false,
+							error: {
+								code: 'permission_denied',
+								message: deniedMessage(group),
+							},
+						}
+					: undefined;
 			let description: McpApprovalDescription | undefined;
 			if (policy === 'ask') {
 				const described = await options.describe(request);

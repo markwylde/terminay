@@ -10,10 +10,12 @@ import type {
 	BotSignIn,
 } from '@terminay/protocol';
 import { useEffect, useMemo, useState } from 'react';
+import { useOptionalTerminalSettings } from '../../hooks/useTerminalSettings';
 import { BotSignInSection } from './BotSignInSection';
 import {
 	botActivity,
 	ENVIRONMENT_LABELS,
+	hasTerminayMcpAccess,
 	investigatesFailures,
 } from './botsModel';
 import { GroupedSelect } from './GroupedSelect';
@@ -65,6 +67,7 @@ type ProfileForm = Readonly<{
 	approvalMode: BotApprovalMode;
 	maxTurnMinutes: string;
 	investigateFailures: boolean;
+	terminayMcpAccess: boolean;
 }>;
 
 function formFromBot(bot: BotProfile): ProfileForm {
@@ -79,6 +82,7 @@ function formFromBot(bot: BotProfile): ProfileForm {
 		approvalMode: bot.approvalMode,
 		maxTurnMinutes: String(Math.round(bot.maxTurnMs / 60_000)),
 		investigateFailures: investigatesFailures(bot),
+		terminayMcpAccess: hasTerminayMcpAccess(bot),
 	};
 }
 
@@ -130,6 +134,8 @@ export function BotProfilePanel({
 	onDeleted: (warning?: string) => void;
 }>) {
 	const [form, setForm] = useState<ProfileForm>(() => formFromBot(bot));
+	const { settings } = useOptionalTerminalSettings();
+	const mcpEnabled = settings?.terminayMcp?.enabled !== false;
 	const [base, setBase] = useState(bot);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string>();
@@ -186,6 +192,7 @@ export function BotProfilePanel({
 				approvalMode,
 				maxTurnMs: Number(form.maxTurnMinutes) * 60_000,
 				investigateFailures: form.investigateFailures,
+				terminayMcpAccess: form.terminayMcpAccess,
 			})
 			.then((next) => {
 				setBase(next);
@@ -398,6 +405,40 @@ export function BotProfilePanel({
 								When a session, trigger run or trigger check fails, the bot
 								starts a session to find out why. At most six an hour.
 							</small>
+						</div>
+					</div>
+					<div className="bots-form__row">
+						<div className="bots-field">
+							<span id="bots-terminay-mcp-label">Terminay MCP access</span>
+							<div className="bots-check">
+								<button
+									type="button"
+									role="switch"
+									aria-checked={form.terminayMcpAccess}
+									aria-labelledby="bots-terminay-mcp-label"
+									aria-describedby="bots-terminay-mcp-help"
+									className="bots-toggle"
+									onClick={() =>
+										update({ terminayMcpAccess: !form.terminayMcpAccess })
+									}
+									data-terminay-bot-terminay-mcp="true"
+								/>
+							</div>
+							<small id="bots-terminay-mcp-help" className="bots-faint">
+								Like Pixel, the bot can see and control every project, terminal
+								and app setting that Terminay MCP reaches, without asking. Only
+								permissions set to Never Allow still stop it. Turning this off
+								takes the access away at once.
+							</small>
+							{!mcpEnabled ? (
+								<small
+									className="bots-need"
+									data-terminay-bot-terminay-mcp-disabled="true"
+								>
+									Terminay MCP is turned off in Settings › AI › Terminay MCP.
+									This applies once it is turned on.
+								</small>
+							) : null}
 						</div>
 					</div>
 					<div className="bots-actionrow">

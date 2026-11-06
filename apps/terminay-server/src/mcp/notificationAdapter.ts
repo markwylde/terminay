@@ -5,9 +5,10 @@ import {
 	type NotificationRecord,
 	plainText,
 } from '@terminay/server-core';
-import type {
-	ControlOperation,
-	ControlRequestContext,
+import {
+	type ControlOperation,
+	type ControlRequestContext,
+	hasNoCallingTerminal,
 } from './controlEndpoint.js';
 import {
 	type NotificationControlAdapter,
@@ -72,7 +73,7 @@ export function createNotificationControlAdapter(
 		dismissNotification: async (params, context) => {
 			// One this terminal sent goes whether or not it has been shown yet.
 			if (
-				context.chat === undefined &&
+				!hasNoCallingTerminal(context) &&
 				notifications.dismissSent(context.terminalSessionId, params.notification)
 			)
 				return { notification: params.notification, dismissed: true };
