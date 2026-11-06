@@ -10,6 +10,7 @@
  * switcher never resizes a terminal and dismissing it never costs a relayout.
  */
 
+import { TerminalWorkflowBadge } from './workflows/WorkflowTabBadge';
 import { FolderPlus, House, Plus, Search, Server, X } from 'lucide-react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import type { CSSProperties, ReactNode } from 'react';
@@ -154,6 +155,12 @@ function CompactSwitcherPanel({
 						</span>
 					)}
 				</span>
+				{panel.panelKind === 'terminal' ? (
+					<TerminalWorkflowBadge
+						serverId={panel.serverId}
+						sessionId={panel.sessionId}
+					/>
+				) : null}
 			</button>
 			<button
 				type="button"

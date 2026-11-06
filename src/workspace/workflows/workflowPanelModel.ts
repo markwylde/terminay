@@ -67,35 +67,93 @@ export function doneCount(workflow: Workflow): number {
 	return workflow.steps.filter((step) => step.status === 'done').length;
 }
 
-/** What a terminal's tab shows: done over total, and whether anything needs attention. */
+/** The tone of a workflow's progress dial: red, amber, green, or grey. */
+export type WorkflowDialTone = 'alert' | 'running' | 'done' | 'idle';
+
+/** What a terminal's tab and rows show for its workflow: a dial and its name. */
 export interface WorkflowTabSummary {
 	readonly done: number;
 	readonly total: number;
-	readonly alert: boolean;
+	readonly tone: WorkflowDialTone;
+	/** The share of the ring that is filled, from 0 to 1. */
+	readonly fraction: number;
+	/** Set only when every step is done: names this one completion, so a
+	 * workflow that reopens and finishes again is a new completion. */
+	readonly completionKey?: string;
+	/** True while a step is running or needs the user: the time moves. */
+	readonly ticking: boolean;
+	/** The tooltip and accessible name, in words. */
 	readonly label: string;
+}
+
+/** The completion a finished workflow is at: its id and its latest step end. */
+export function completionKey(workflow: Workflow): string | undefined {
+	if (workflow.steps.length === 0) return undefined;
+	if (!workflow.steps.every((step) => step.status === 'done')) return undefined;
+	const ends = workflow.steps.map((step) => step.endedAt ?? 0);
+	return `${workflow.id}:${Math.max(...ends)}`;
 }
 
 export function tabSummary(
 	view: SessionWorkflow | undefined,
+	now: number = Date.now(),
 ): WorkflowTabSummary | undefined {
 	if (view === undefined) return undefined;
 	if (view.state === 'unrestorable')
 		return {
 			done: 0,
 			total: 0,
-			alert: true,
+			tone: 'alert',
+			fraction: 1,
+			ticking: false,
 			label: 'Workflow could not be restored',
 		};
+	const { steps } = view.workflow;
 	const done = doneCount(view.workflow);
-	const total = view.workflow.steps.length;
-	const alert = view.workflow.steps.some(
-		(step) => step.status === 'failed' || step.status === 'needs_input',
-	);
+	const total = steps.length;
+	const fraction = total === 0 ? 0 : done / total;
+	const count = `${done} of ${total}`;
+	const key = completionKey(view.workflow);
+	if (key !== undefined)
+		return {
+			done,
+			total,
+			tone: 'done',
+			fraction: 1,
+			completionKey: key,
+			ticking: false,
+			label: `All ${total} ${total === 1 ? 'step' : 'steps'} done`,
+		};
+	const active = steps.find((step) => isActive(step.status));
+	const failed = steps.filter((step) => step.status === 'failed');
+	const tone: WorkflowDialTone =
+		failed.length > 0 || steps.some((step) => step.status === 'needs_input')
+			? 'alert'
+			: active !== undefined
+				? 'running'
+				: 'idle';
+	const failures = failed.map((step) => `${step.title} failed`);
+	let parts: string[];
+	if (active !== undefined) {
+		const name =
+			active.status === 'needs_input' ? `${active.title} needs you` : active.title;
+		const time =
+			active.startedAt === null ? [] : [formatDuration(now - active.startedAt)];
+		parts = [name, count, ...time, ...failures];
+	} else if (failures.length > 0) {
+		const [first, ...rest] = failures;
+		parts = [first as string, count, ...rest];
+	} else {
+		const next = steps.find((step) => step.status !== 'done');
+		parts = next === undefined ? [count] : [`Next: ${next.title}`, count];
+	}
 	return {
 		done,
 		total,
-		alert,
-		label: `Workflow ${view.workflow.name}: ${done} of ${total} done${alert ? ', needs attention' : ''}`,
+		tone,
+		fraction,
+		ticking: active !== undefined,
+		label: parts.join(' · '),
 	};
 }
 
