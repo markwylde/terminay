@@ -194,8 +194,25 @@ export type DictationSettings = {
 	maxDurationSeconds: number;
 };
 
+export type HomeDashboardWidgetSize = 'small' | 'wide' | 'tall';
+
+/** One widget's place in the Home overview. `id` may name a widget a newer
+ * client knows; such an entry is kept and not shown. */
+export type HomeDashboardWidgetEntry = {
+	id: string;
+	size: HomeDashboardWidgetSize;
+	hidden: boolean;
+};
+
+/** Server setting: the Home overview layout (ADR-0100). Empty means the
+ * default layout. */
+export type HomeDashboardSettings = {
+	widgets: HomeDashboardWidgetEntry[];
+};
+
 export type TerminalSettings = {
 	agentIntegration: AgentIntegrationSettings;
+	homeDashboard: HomeDashboardSettings;
 	aiTabMetadata: AiTabMetadataSettings;
 	dictation: DictationSettings;
 	gitPushAgent: GitPushAgentSettings;
