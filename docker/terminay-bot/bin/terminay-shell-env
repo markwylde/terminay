@@ -6,4 +6,4 @@ fi
 for terminay_credential_name in $TERMINAY_CREDENTIAL_VARIABLES; do
     unset "$terminay_credential_name"
 done
-unset terminay_credential_name TERMINAY_CREDENTIAL_VARIABLES TERMINAY_RUNTIME_TOKEN BASH_ENV
+unset terminay_credential_name TERMINAY_CREDENTIAL_VARIABLES TERMINAY_RUNTIME_TOKEN TERMINAY_MCP_TOKEN BASH_ENV

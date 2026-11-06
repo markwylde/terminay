@@ -85,8 +85,12 @@ test('4.2 fingerprint covers shipped scripts, sorted manifests, uid and new agen
 		(await planBotImage(directory, [agent], 501, 20)).fingerprint,
 	);
 	await writeFile(path.join(directory, 'bin/terminay-init'), '# changed');
+	const changed = await planBotImage(directory, [agent], 1000, 1000);
+	assert.notEqual(first.fingerprint, changed.fingerprint);
+	// A changed MCP adapter makes every existing bot image out of date.
+	await writeFile(path.join(directory, 'bin/terminay-bot-mcp'), '# changed');
 	assert.notEqual(
-		first.fingerprint,
+		changed.fingerprint,
 		(await planBotImage(directory, [agent], 1000, 1000)).fingerprint,
 	);
 	assert.match(
