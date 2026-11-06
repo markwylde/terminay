@@ -116,7 +116,7 @@ Each row SHALL show name, source, enabled state, health and a useful last-check 
 
 Each trigger SHALL offer edit, enable/disable, delete and Run now. Run now on a time trigger SHALL enqueue a manual session even when that trigger is disabled; on an observation source it SHALL perform one real check and apply its condition, recording manual origin for any accepted events. It SHALL not fabricate file/SSE events. A disabled bot SHALL reject Run now with an Enable action. Test source SHALL be separate from Run now.
 
-The tab SHALL show upcoming scheduled firings/checks in time order for seven days, labelled as checks where conditional. The context rail SHALL show the next three. Continuous sources SHALL show connection/watch state rather than invented firing dates.
+The tab SHALL show upcoming scheduled firings/checks in time order for seven days, labelled as checks where conditional. The context rail SHALL show the next three distinct triggers to fire, each once at its next firing, with a repeat mark on a trigger that fires again within the window. Continuous sources SHALL show connection/watch state rather than invented firing dates.
 
 #### Scenario: Wide bot panel
 
@@ -137,6 +137,11 @@ The tab SHALL show upcoming scheduled firings/checks in time order for seven day
 
 - **WHEN** a bot has an hourly time trigger and a minute-based HTTP check
 - **THEN** the upcoming list interleaves their due times and distinguishes checks from unconditional sessions
+
+#### Scenario: Repeating trigger in the rail
+
+- **WHEN** a bot has a trigger firing every minute and a daily trigger
+- **THEN** the context rail lists each trigger once at its next firing, and the every-minute trigger shows a repeat mark
 
 ### Requirement: Automations keep their behaviour on the shared scheduler
 
