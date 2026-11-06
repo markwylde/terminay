@@ -11,7 +11,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
-import { containerSourceRunner } from '../dist/botService/sourceRunner.js';
+import {
+	containerSourceRunner,
+	SourceRunError,
+} from '../dist/botService/sourceRunner.js';
 import {
 	BotSourceStore,
 	evaluateObservation,
@@ -398,4 +401,161 @@ test('source canonical corruption restores the last complete batch and preserves
 	writeFileSync(path, future);
 	assert.throws(() => new BotSourceStore(root).pending(botId), /version/);
 	assert.equal(readFileSync(path, 'utf8'), future);
+});
+
+// A fake engine whose source exec ends the way `script` decides.
+function endingRunner(script, { cleanupFails = false } = {}) {
+	const vault = {
+		status: () => ({ entries: [] }),
+		put: async () => {},
+		withSecret: async (_id, fn) => fn(Buffer.from('header-secret')),
+	};
+	const driver = {
+		async exec() {
+			if (cleanupFails) throw new Error('kill failed');
+		},
+		execStream() {
+			const child = new EventEmitter();
+			child.stdin = new PassThrough();
+			child.stdout = new PassThrough();
+			child.stderr = new PassThrough();
+			child.kill = () => {
+				if (!child.stdout.writableEnded) child.stdout.end();
+				return true;
+			};
+			child.stdin.once('data', () => queueMicrotask(() => script(child)));
+			return child;
+		},
+	};
+	return containerSourceRunner({
+		driver: async () => driver,
+		start: async () => {},
+		activity: () => {},
+		vault,
+	});
+}
+const commandSource = {
+	kind: 'command',
+	command: '/home/bot/poll.sh',
+	intervalMs: 60000,
+	match: { kind: 'output' },
+};
+const httpSource = {
+	kind: 'http',
+	url: 'https://example.test',
+	headers: { Authorization: `@vault:bot:${botId}:trigger:${id}:header:x` },
+	intervalMs: 60000,
+};
+async function runEnding(script, source = commandSource, options = {}, extra) {
+	const runner = endingRunner(script, extra);
+	try {
+		await runner.run(
+			botId,
+			source,
+			{
+				signal: options.signal ?? new AbortController().signal,
+				test: options.test,
+			},
+			async () => {},
+		);
+	} catch (error) {
+		return error;
+	}
+	assert.fail('run should fail');
+}
+
+test('a worker that cannot be executed (exit 127) is reported as not executable', async () => {
+	const error = await runEnding((child) => {
+		child.stderr.write(
+			'terminay-run: exec failed: [Errno 2] No such file or directory\n',
+		);
+		child.stdout.end();
+		child.emit('exit', 127, null);
+	});
+	assert.ok(error instanceof SourceRunError);
+	assert.equal(error.outcome, 'not-executable');
+	assert.match(error.message, /could not be executed.*recreate the bot/);
+	assert.equal(error.diagnostics.exitCode, 127);
+	assert.equal(error.cleaned, true);
+});
+
+test('exit 126 is also not executable', async () => {
+	const error = await runEnding((child) => {
+		child.stdout.end();
+		child.emit('exit', 126, null);
+	});
+	assert.equal(error.outcome, 'not-executable');
+});
+
+test('a run that ends without output for another reason is interrupted, keeps exit and redacted stderr, and never says recreate', async () => {
+	const error = await runEnding((child) => {
+		child.stderr.write('connection reset; token header-secret\n');
+		child.stdout.end();
+		child.emit('exit', 137, null);
+	}, httpSource);
+	assert.equal(error.outcome, 'interrupted');
+	assert.equal(error.code, 'unavailable');
+	assert.doesNotMatch(error.message, /recreate/i);
+	assert.equal(error.diagnostics.exitCode, 137);
+	assert.match(error.diagnostics.stderr, /\[redacted\]/);
+	assert.doesNotMatch(error.diagnostics.stderr, /header-secret/);
+});
+
+test('a broken exec stream is interrupted with an unknown exit status', async () => {
+	const error = await runEnding((child) => {
+		child.emit('error', new Error('socket hang up'));
+	});
+	assert.equal(error.outcome, 'interrupted');
+	assert.equal(error.diagnostics.exitCode, null);
+});
+
+test('a cancelled run is reported as cancelled, not interrupted', async () => {
+	const controller = new AbortController();
+	const error = await runEnding(() => controller.abort(), commandSource, {
+		signal: controller.signal,
+	});
+	assert.ok(!(error instanceof SourceRunError));
+	assert.equal(error.code, 'conflict');
+});
+
+test('a run past its own time limit names the limit and is not interrupted', async () => {
+	const error = await runEnding(() => {}, { ...commandSource, timeoutMs: 50 });
+	assert.ok(error instanceof SourceRunError);
+	assert.equal(error.outcome, 'deadline');
+	assert.equal(error.code, 'deadline');
+	assert.match(error.message, /exceeded its 0 s limit/);
+});
+
+test('a trigger test longer than the test window names the 10 s limit', async () => {
+	const error = await runEnding(() => {}, commandSource, { test: true });
+	assert.equal(error.outcome, 'deadline');
+	assert.match(error.message, /exceeded its 10 s limit/);
+});
+
+test('failed cleanup keeps the run error and marks it not cleaned', async () => {
+	const error = await runEnding(
+		(child) => {
+			child.stdout.end();
+			child.emit('exit', 1, null);
+		},
+		commandSource,
+		{},
+		{ cleanupFails: true },
+	);
+	assert.equal(error.outcome, 'interrupted');
+	assert.equal(error.cleaned, false);
+});
+
+test('stderr is bounded while read and a partial first line is dropped', async () => {
+	const error = await runEnding((child) => {
+		// About 3 MiB of multibyte stderr.
+		for (let i = 0; i < 120_000; i++)
+			child.stderr.write(`línea ${i} — ünïcödé\n`);
+		child.stdout.end();
+		child.emit('exit', 1, null);
+	});
+	const bytes = Buffer.byteLength(error.diagnostics.stderr);
+	assert.ok(bytes > 0 && bytes <= 4096, `stderr tail is ${bytes} bytes`);
+	assert.match(error.diagnostics.stderr, /^línea \d+ — ünïcödé\n/);
+	assert.match(error.diagnostics.stderr, /línea 119999/);
 });

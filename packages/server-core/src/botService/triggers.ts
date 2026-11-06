@@ -14,7 +14,13 @@ import {
 	type ScheduleEngine,
 	type TriggerEvent,
 } from '../scheduleEngine/index.js';
+import { botFailureCause } from './failure.js';
+import {
+	botProcessCount,
+	classifyProcessFailure,
+} from './processExhaustion.js';
 import type { BotService } from './service.js';
+import { SourceRunError } from './sourceRunner.js';
 import {
 	BotSourceStore,
 	evaluateObservation,
@@ -28,8 +34,6 @@ import {
 	integer,
 	isObservation,
 } from './sourceValidation.js';
-import { botFailureCause } from './failure.js';
-import { botProcessCount, classifyProcessFailure } from './processExhaustion.js';
 import {
 	BotBlockedError,
 	BotError,
@@ -65,6 +69,8 @@ export class BotTriggers {
 	private started = false;
 	private stopped = false;
 	private timeZone?: string;
+	/** Delay before an interrupted polled check is retried once. */
+	sourceRetryDelayMs = 5000;
 	constructor(
 		private service: BotService,
 		private store: BotStore,
@@ -306,7 +312,9 @@ export class BotTriggers {
 			}
 		});
 		this.service.invalidate(t.botId);
-		const health = started as import('@terminay/protocol').BotSourceHealth | null;
+		const health = started as
+			| import('@terminay/protocol').BotSourceHealth
+			| null;
 		if (health && report)
 			void this.service.failureFollowUps.accept(t.botId, {
 				kind: 'condition',
@@ -344,42 +352,91 @@ export class BotTriggers {
 				cause: null,
 				nextRetry: null,
 			});
-			await this.classified(t.botId, () =>
-				runner.run(
-				t.botId,
-				source,
-				{
-					signal: controller.signal,
-					cursor:
-						t.recovery === 'ignore-gap'
-							? undefined
-							: this.observations.checkpoint(t).cursor,
-					test,
-				},
-				async (value) => {
-					if (controller.signal.aborted || (!test && !this.current(t))) return;
-					if (observe) {
-						await observe(value);
-						return;
+			const once = () =>
+				this.classified(t.botId, () =>
+					runner.run(
+						t.botId,
+						source,
+						{
+							signal: controller.signal,
+							cursor:
+								t.recovery === 'ignore-gap'
+									? undefined
+									: this.observations.checkpoint(t).cursor,
+							test,
+						},
+						async (value) => {
+							if (controller.signal.aborted || (!test && !this.current(t)))
+								return;
+							if (observe) {
+								await observe(value);
+								return;
+							}
+							if (value.status && !value.snapshot) {
+								this.health(t, {
+									state:
+										value.status === 'waiting'
+											? 'waiting'
+											: value.status === 'connected'
+												? 'connected'
+												: 'watching',
+								});
+								return;
+							}
+							await this.acceptObservation(t, value, this.now());
+							this.attempts.delete(t.id);
+						},
+					),
+				);
+			try {
+				await once();
+			} catch (error) {
+				if (
+					test ||
+					controller.signal.aborted ||
+					!(source.kind === 'command' || source.kind === 'http') ||
+					!(error instanceof SourceRunError) ||
+					error.outcome !== 'interrupted' ||
+					!error.cleaned ||
+					!this.current(t)
+				)
+					throw error;
+				// One interruption (host sleep, container startup, a broken exec
+				// stream) is retried once before it counts as a failed check.
+				const delay = this.sourceRetryDelayMs;
+				this.health(t, {
+					state: 'retrying',
+					error: await this.sourceReason(t.botId, error),
+					cause: null,
+					nextRetry: this.now() + delay,
+				});
+				await new Promise<void>((resolve) => {
+					const timer = setTimeout(done, delay);
+					timer.unref?.();
+					function done() {
+						clearTimeout(timer);
+						controller.signal.removeEventListener('abort', done);
+						resolve();
 					}
-					if (value.status && !value.snapshot) {
-						this.health(t, {
-							state:
-								value.status === 'waiting'
-									? 'waiting'
-									: value.status === 'connected'
-										? 'connected'
-										: 'watching',
-						});
-						return;
-					}
-					await this.acceptObservation(t, value, this.now());
-					this.attempts.delete(t.id);
-				},
-			));
+					controller.signal.addEventListener('abort', done, { once: true });
+				});
+				if (controller.signal.aborted || !this.current(t))
+					throw new BotError('conflict', 'Source cancelled');
+				this.health(t, {
+					state: 'checking',
+					lastAttempt: this.now(),
+					error: null,
+					cause: null,
+					nextRetry: null,
+				});
+				await once();
+			}
 		};
 		const task = work()
-			.catch((error) => {
+			.catch(async (error) => {
+				if (controller.signal.aborted || this.stopped || !this.find(t.id))
+					return;
+				const reason = await this.sourceReason(t.botId, error);
 				if (controller.signal.aborted || this.stopped || !this.find(t.id))
 					return;
 				const attempts = (this.attempts.get(t.id) ?? 0) + 1;
@@ -391,10 +448,7 @@ export class BotTriggers {
 				const delay = Math.min(60000, 1000 * 2 ** (attempts - 1));
 				this.health(t, {
 					state: blocked ? 'blocked' : retry ? 'retrying' : 'failed',
-					error:
-						error instanceof Error
-							? error.message.slice(0, 1024)
-							: 'Source failed',
+					error: reason,
 					cause: botFailureCause(error),
 					nextRetry: retry ? this.now() + delay : null,
 					gap: continuous
@@ -424,6 +478,33 @@ export class BotTriggers {
 		});
 		return task;
 	}
+	/**
+	 * A source failure as shown in health and failure follow-ups. A run that
+	 * ended without a result adds its exit status and a stderr tail redacted
+	 * with the bot's secrets; the tail is omitted if redaction is unavailable.
+	 */
+	private async sourceReason(botId: string, error: unknown): Promise<string> {
+		if (!(error instanceof SourceRunError))
+			return error instanceof Error
+				? error.message.slice(0, 1024)
+				: 'Source failed';
+		const { exitCode, stderr } = error.diagnostics;
+		let tail = '';
+		if (stderr.trim())
+			try {
+				const safe = Buffer.from(
+					(await this.service.redactMessage(botId, stderr)).trim(),
+				);
+				tail = safe
+					.subarray(Math.max(0, safe.length - 1024))
+					.toString('utf8')
+					.replace(/^\uFFFD+/, '');
+			} catch {
+				tail = '';
+			}
+		const exit = exitCode === null ? 'exit unknown' : `exit ${exitCode}`;
+		return `${error.message} (${exit})${tail ? `: ${tail}` : ''}`;
+	}
 	/** A source that cannot start a process is classified with engine evidence. */
 	private async classified(
 		botId: string,
@@ -432,7 +513,13 @@ export class BotTriggers {
 		try {
 			await run();
 		} catch (error) {
-			const message = error instanceof Error ? error.message : '';
+			// The worker's stderr is evidence too: a fork failure appears only there.
+			const message =
+				error instanceof SourceRunError
+					? `${error.message}\n${error.diagnostics.stderr}`
+					: error instanceof Error
+						? error.message
+						: '';
 			const failure = await classifyProcessFailure(message, async () =>
 				botProcessCount(
 					await this.service.driverForRuntime(),
