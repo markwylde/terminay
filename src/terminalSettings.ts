@@ -7,6 +7,9 @@ import {
 import {
 	FOLDERS_COLUMN_TAB_IDS,
 	type FoldersColumnTabId,
+	type HomeDashboardSettings,
+	type HomeDashboardWidgetEntry,
+	type HomeDashboardWidgetSize,
 	SIDEBAR_GROUP_IDS,
 	SIDEBAR_PANEL_IDS,
 	type SidebarGroupId,
@@ -48,6 +51,7 @@ const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
 	'disableStdin',
 	'fileViewer',
 	'gitPushAgent',
+	'homeDashboard',
 	'pixel',
 	'terminayMcp',
 	'ignoreBracketedPasteMode',
@@ -452,6 +456,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	autoCloseTerminalOnExitZero: false,
 	keepTerminalsAfterQuit: '5m',
 	moveTerminalsIntoNewWorktreeFolders: true,
+	homeDashboard: { widgets: [] },
 	programSetTabTitles: true,
 	shellIntegration: true,
 	updateChannel: 'stable',
@@ -2570,6 +2575,44 @@ function normalizeThemeColor(
 	return value;
 }
 
+const HOME_DASHBOARD_SIZES: readonly HomeDashboardWidgetSize[] = [
+	'small',
+	'wide',
+	'tall',
+];
+const HOME_DASHBOARD_ID = /^[a-z][a-z0-9-]{0,63}$/;
+const HOME_DASHBOARD_MAX_WIDGETS = 64;
+
+/**
+ * The Home overview layout as stored. Malformed entries are dropped and a
+ * repeated id keeps its first entry. An id this client does not know is kept,
+ * so an older client never erases a newer client's widgets.
+ */
+export function normalizeHomeDashboardSettings(
+	input: unknown,
+): HomeDashboardSettings {
+	const raw =
+		typeof input === 'object' && input !== null
+			? (input as { widgets?: unknown }).widgets
+			: undefined;
+	if (!Array.isArray(raw)) return { widgets: [] };
+	const seen = new Set<string>();
+	const widgets: HomeDashboardWidgetEntry[] = [];
+	for (const item of raw) {
+		if (widgets.length >= HOME_DASHBOARD_MAX_WIDGETS) break;
+		if (typeof item !== 'object' || item === null) continue;
+		const { id, size, hidden } = item as Record<string, unknown>;
+		if (typeof id !== 'string' || !HOME_DASHBOARD_ID.test(id)) continue;
+		if (seen.has(id)) continue;
+		if (!HOME_DASHBOARD_SIZES.includes(size as HomeDashboardWidgetSize))
+			continue;
+		if (typeof hidden !== 'boolean') continue;
+		seen.add(id);
+		widgets.push({ id, size: size as HomeDashboardWidgetSize, hidden });
+	}
+	return { widgets };
+}
+
 export function normalizeTerminalSettings(
 	candidate: unknown,
 ): TerminalSettings {
@@ -2830,6 +2873,7 @@ export function normalizeTerminalSettings(
 			typeof input.moveTerminalsIntoNewWorktreeFolders === 'boolean'
 				? input.moveTerminalsIntoNewWorktreeFolders
 				: defaultTerminalSettings.moveTerminalsIntoNewWorktreeFolders,
+		homeDashboard: normalizeHomeDashboardSettings(input.homeDashboard),
 		programSetTabTitles:
 			typeof input.programSetTabTitles === 'boolean'
 				? input.programSetTabTitles
