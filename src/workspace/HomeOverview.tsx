@@ -100,7 +100,6 @@ export type HomeOverviewProps = Readonly<{
 
 type WidgetSpec = Readonly<{
 	icon: ComponentType<{ size?: number; 'aria-hidden'?: boolean | 'true' }>;
-	accent: string;
 	Body: ComponentType<HomeWidgetProps>;
 	/** A short count beside the title. */
 	meta?: (overview: HomeOverviewModel) => string | undefined;
@@ -112,10 +111,9 @@ type WidgetSpec = Readonly<{
 }>;
 
 const WIDGETS: Readonly<Record<HomeWidgetId, WidgetSpec>> = {
-	'quick-actions': { icon: Zap, accent: 'violet', Body: QuickActionsWidget },
+	'quick-actions': { icon: Zap, Body: QuickActionsWidget },
 	'needs-you': {
 		icon: BellRing,
-		accent: 'red',
 		Body: NeedsYouWidget,
 		meta: (o) =>
 			o.attention.items.length === 0
@@ -126,13 +124,11 @@ const WIDGETS: Readonly<Record<HomeWidgetId, WidgetSpec>> = {
 	},
 	agents: {
 		icon: Sparkles,
-		accent: 'amber',
 		Body: AgentsWidget,
 		unavailable: (o) => o.agents.unavailable,
 	},
 	workflows: {
 		icon: ListChecks,
-		accent: 'amber',
 		Body: WorkflowsWidget,
 		meta: (o) => {
 			const running = o.workflows.items.filter(
@@ -149,7 +145,6 @@ const WIDGETS: Readonly<Record<HomeWidgetId, WidgetSpec>> = {
 	},
 	bots: {
 		icon: Bot,
-		accent: 'blue',
 		Body: BotsWidget,
 		meta: (o) =>
 			o.bots.items.length === 0
@@ -159,7 +154,6 @@ const WIDGETS: Readonly<Record<HomeWidgetId, WidgetSpec>> = {
 	},
 	'run-history': {
 		icon: Activity,
-		accent: 'green',
 		Body: RunHistoryWidget,
 		meta: (o) =>
 			o.automations.history.runs.length === 0
@@ -169,7 +163,6 @@ const WIDGETS: Readonly<Record<HomeWidgetId, WidgetSpec>> = {
 	},
 	'pull-requests': {
 		icon: GitPullRequest,
-		accent: 'purple',
 		Body: PullRequestsWidget,
 		meta: (o) =>
 			o.pullRequests.items.length === 0
@@ -179,38 +172,32 @@ const WIDGETS: Readonly<Record<HomeWidgetId, WidgetSpec>> = {
 	},
 	notifications: {
 		icon: Bell,
-		accent: 'red',
 		Body: NotificationsWidget,
 		meta: (o) =>
 			o.notifications.length === 0 ? undefined : String(o.notifications.length),
 	},
 	projects: {
 		icon: FolderKanban,
-		accent: 'sky',
 		Body: ProjectsWidget,
 		unavailable: (o) => o.projects.unavailable,
 	},
 	'bot-sessions': {
 		icon: MessagesSquare,
-		accent: 'blue',
 		Body: BotSessionsWidget,
 	},
 	automations: {
 		icon: Workflow,
-		accent: 'green',
 		Body: AutomationsWidget,
 		unavailable: (o) => o.automations.unavailable,
 	},
-	recordings: { icon: Film, accent: 'coral', Body: RecordingsWidget },
+	recordings: { icon: Film, Body: RecordingsWidget },
 	tabs: {
 		icon: PanelsTopLeft,
-		accent: 'sky',
 		Body: TabsWidget,
 		unavailable: (o) => o.tabs.unavailable,
 	},
 	connections: {
 		icon: Radio,
-		accent: 'teal',
 		Body: ConnectionsWidget,
 		unavailable: (o) => o.connections.unavailable,
 	},
@@ -343,7 +330,6 @@ function WidgetFrame({
 	const classes = [
 		'home-widget',
 		`home-widget--${item.size}`,
-		`home-widget--accent-${spec.accent}`,
 		urgent ? 'home-widget--urgent' : '',
 		editing ? 'home-widget--editing' : '',
 		isDropTarget ? 'home-widget--drop-target' : '',

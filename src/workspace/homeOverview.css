@@ -1,9 +1,10 @@
 /*
- * Home overview: a grid of widgets, each with its own accent.
+ * Home overview: a grid of flat, neutral widgets.
  *
- * Status colours (needs you, working, done, failed) are reserved for status
- * and always come with a label. Accents identify a widget and tint only its
- * chip, its top edge, and the wash behind its title.
+ * Colour means one of two things here and nothing else: a status (needs
+ * you, working, done, failed), always with a label, or a project's own
+ * colour. A widget never has a colour of its own, so nothing reads as
+ * belonging to a project it isn't part of.
  */
 
 .home-overview {
@@ -123,7 +124,6 @@
 /* --- Widget frame -------------------------------------------------------- */
 
 .home-widget {
-	--home-accent: #57b7ff;
 	position: relative;
 	box-sizing: border-box;
 	display: flex;
@@ -131,16 +131,10 @@
 	gap: 10px;
 	min-width: 0;
 	padding: 13px 14px 14px;
-	border-radius: 10px;
+	border-radius: 8px;
 	color: var(--home-ink);
-	background: linear-gradient(
-		180deg,
-		color-mix(in oklab, var(--home-accent) 7%, var(--home-panel)) 0,
-		var(--home-panel) 72px
-	);
-	border: 1px solid var(--home-line);
-	box-shadow: inset 0 1px 0
-		color-mix(in oklab, var(--home-accent) 45%, transparent);
+	background: rgba(255, 255, 255, 0.035);
+	border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .home-widget--wide {
@@ -157,33 +151,6 @@
 	}
 }
 
-.home-widget--accent-violet {
-	--home-accent: #a78bfa;
-}
-.home-widget--accent-red {
-	--home-accent: #ff8f86;
-}
-.home-widget--accent-amber {
-	--home-accent: #f0c75e;
-}
-.home-widget--accent-blue {
-	--home-accent: #7cc4ff;
-}
-.home-widget--accent-green {
-	--home-accent: #6fd394;
-}
-.home-widget--accent-purple {
-	--home-accent: #c4a1ff;
-}
-.home-widget--accent-sky {
-	--home-accent: #57b7ff;
-}
-.home-widget--accent-coral {
-	--home-accent: #f59e8b;
-}
-.home-widget--accent-teal {
-	--home-accent: #5eead4;
-}
 
 .home-widget--urgent {
 	border-color: rgba(255, 143, 134, 0.3);
@@ -200,11 +167,7 @@
 	display: inline-grid;
 	place-items: center;
 	flex: 0 0 auto;
-	width: 22px;
-	height: 22px;
-	border-radius: 6px;
-	color: var(--home-accent);
-	background: color-mix(in oklab, var(--home-accent) 20%, transparent);
+	color: var(--home-ink-3);
 }
 
 .home-widget__heading {
@@ -663,7 +626,7 @@ span.home-widget__headline {
 
 .home-quick__icon {
 	display: inline-flex;
-	color: var(--home-accent);
+	color: var(--home-ink-2);
 }
 
 .home-quick__label {
