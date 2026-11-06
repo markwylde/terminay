@@ -120,7 +120,13 @@ if [ "${TERMINAY_DESKTOP_BUS:-}" != 1 ]; then
  exec dbus-run-session -- "$0" run
 fi
 pids=()
-cleanup() { for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; }
+# Publish the bus for supervised commands (terminay_bus.py); remove it on exit.
+bus_file=/run/terminay/desktop/bus
+if [ -d "${bus_file%/*}" ]; then
+ printf '%s\n' "$DBUS_SESSION_BUS_ADDRESS" > "$bus_file.$$"
+ mv -f "$bus_file.$$" "$bus_file"
+fi
+cleanup() { rm -f "$bus_file"; for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; }
 trap cleanup EXIT
 trap 'exit 0' INT TERM
 for component in xfsettingsd xfwm4 xfce4-panel xfdesktop; do

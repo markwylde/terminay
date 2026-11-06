@@ -35,7 +35,8 @@ A bot SHALL have:
 - instructions of at most 32 KiB of UTF-8;
 - one agent and one model;
 - a sign-in (see bot-environment);
-- an approval mode.
+- an approval mode;
+- an **Investigate failures** setting, on unless the user turns it off (see bot-failure-follow-up).
 
 The agent SHALL be chosen only from the bot agents that installed extensions contribute. The model SHALL be chosen only from the models that agent lists, or **Default**, which leaves the choice to the agent. Terminay SHALL NOT keep a provider or model list of its own.
 
@@ -67,6 +68,11 @@ Saving a profile SHALL apply to sessions that start after the save.
 
 - **WHEN** a user saves a bot with the name of another bot on the same server
 - **THEN** the save is refused, naming the conflict
+
+#### Scenario: Investigate failures defaults on
+
+- **WHEN** a user creates a bot without touching Investigate failures, or opens a bot saved before the setting existed
+- **THEN** the profile shows Investigate failures on
 
 ### Requirement: Creating bots
 
@@ -256,9 +262,9 @@ The first answer from any device SHALL decide a request. Later answers SHALL rec
 
 ### Requirement: Sessions
 
-Every user-message execution and every trigger run SHALL be a session of exactly one bot. A session SHALL record:
+Every user-message execution, every trigger run and every failure investigation SHALL be a session of exactly one bot. A session SHALL record:
 
-- its origin: chat, trigger (naming the trigger), or Run now;
+- its origin: chat, trigger (naming the trigger), Run now, or failure (naming the failures it was started for);
 - the agent and model it ran with;
 - its start time, end time, and duration;
 - its state: queued, running, suspended, needs you, completed, stopped, timed out, failed, or interrupted;
@@ -267,8 +273,9 @@ Every user-message execution and every trigger run SHALL be a session of exactly
 The Sessions tab SHALL:
 
 - list a bot's sessions, newest first;
-- filter them by origin and by outcome, and search them by text;
+- filter them by origin, including failure, and by outcome, and search them by text;
 - show a selected session's transcript and its runner output;
+- for a failure session, show the failures it was started for, each linking to the failed session or trigger;
 - offer Stop on a running session;
 - offer a return to the shared message log without resuming the selected execution.
 
@@ -281,6 +288,11 @@ The Sessions tab SHALL:
 
 - **WHEN** a user opens an ended execution
 - **THEN** its diagnostics are shown independently of the shared chat, and sending another message creates a fresh execution
+
+#### Scenario: Failure session
+
+- **WHEN** a trigger run fails and the server starts a failure investigation
+- **THEN** a session with origin failure appears, the Failure origin filter shows it, and opening it links to the failed trigger run
 
 ### Requirement: Session storage bounds and redaction
 

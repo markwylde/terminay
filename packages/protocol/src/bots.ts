@@ -1,4 +1,5 @@
 import type {
+	BotFailureCause,
 	BotObservationSource,
 	BotRecoveryPolicy,
 	BotSourceHealth,
@@ -74,6 +75,8 @@ export interface BotProfile {
 	readonly signIn: BotSignIn;
 	readonly approvalMode: BotApprovalMode;
 	readonly maxTurnMs: number;
+	/** Wake the bot to investigate its own failures. Missing reads as true. */
+	readonly investigateFailures?: boolean;
 	readonly pinnedMemories: readonly string[];
 	readonly createdAt: number;
 	readonly updatedAt: number;
@@ -90,6 +93,16 @@ export type BotSessionState =
 	| 'timed-out'
 	| 'failed'
 	| 'interrupted';
+export interface BotFailureRef {
+	readonly kind: 'execution' | 'firing' | 'condition';
+	readonly sessionId: string | null;
+	readonly firingId: string | null;
+	readonly triggerId: string | null;
+	readonly triggerName: string | null;
+	readonly at: number;
+	/** Redacted against the bot's credential when accepted; at most 1 KiB. */
+	readonly reason: string;
+}
 export type BotSessionOrigin =
 	| { readonly kind: 'chat'; readonly messageId?: string }
 	| {
@@ -97,7 +110,23 @@ export type BotSessionOrigin =
 			readonly triggerId: string;
 			readonly triggerName: string;
 			readonly fireTime: number;
+	  }
+	| {
+			readonly kind: 'failure';
+			readonly failures: readonly BotFailureRef[];
+			readonly overflow: number;
 	  };
+export type BotTriggerOrigin = Extract<
+	BotSessionOrigin,
+	{ readonly kind: 'trigger' | 'run-now' }
+>;
+export function botTriggerOrigin(
+	origin: BotSessionOrigin,
+): BotTriggerOrigin | null {
+	return origin.kind === 'trigger' || origin.kind === 'run-now'
+		? origin
+		: null;
+}
 export interface BotSessionSnapshot {
 	readonly agentId: string;
 	readonly modelId: string | null;
@@ -161,6 +190,7 @@ export interface BotSessionRecord {
 	} | null;
 	readonly firing: 'pending' | 'sent' | 'skipped' | null;
 	readonly reason: string | null;
+	readonly cause?: BotFailureCause | null;
 	readonly recoveryMayHaveLostUpdates: boolean;
 }
 export interface BotSession extends BotSessionRecord {
@@ -230,6 +260,7 @@ export interface BotTriggerFiring {
 	readonly sessionId: string | null;
 	readonly outcome: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
 	readonly reason: string | null;
+	readonly cause?: BotFailureCause | null;
 }
 export interface BotUpcomingFiring {
 	readonly triggerId: string;
@@ -248,7 +279,7 @@ export interface BotQueue {
 	readonly botId: string;
 	readonly items: readonly {
 		readonly id: string;
-		readonly kind: 'chat' | 'trigger';
+		readonly kind: 'chat' | 'trigger' | 'failure';
 		readonly sessionId: string | null;
 		readonly triggerId: string | null;
 		readonly triggerName: string | null;

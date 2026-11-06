@@ -4,6 +4,8 @@ import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	assertJsonValue,
+	type BotFailureCause,
+	type BotFailureRef,
 	type BotSession,
 	type BotSessionOrigin,
 	type BotSessionRecord,
@@ -55,6 +57,23 @@ const states = [
 	'failed',
 	'interrupted',
 ];
+const failureCauses = ['engine', 'agent', 'image', 'disabled', 'processes'];
+export function failureCause(value: unknown): BotFailureCause {
+	if (!failureCauses.includes(String(value)))
+		throw new Error('invalid failure cause');
+	return value as BotFailureCause;
+}
+export function failureRef(value: unknown): BotFailureRef {
+	const r = object(value);
+	if (!['execution', 'firing', 'condition'].includes(String(r.kind)))
+		throw new Error('invalid failure kind');
+	for (const key of ['sessionId', 'firingId', 'triggerId', 'triggerName'])
+		if (r[key] !== null) text(r[key], 1024, key);
+	if (typeof r.at !== 'number' || !Number.isFinite(r.at))
+		throw new Error('invalid failure time');
+	text(r.reason, 1024, 'failure reason', true);
+	return r as unknown as BotFailureRef;
+}
 function parseRecord(value: unknown): BotSessionRecord {
 	const d = object(value);
 	sessionId(d.id);
@@ -112,8 +131,18 @@ function parseRecord(value: unknown): BotSessionRecord {
 			text(o.kind, 64, 'permission kind');
 		}
 	}
+	if (d.cause !== undefined && d.cause !== null) failureCause(d.cause);
 	const origin = object(d.origin);
-	if (origin.kind !== 'chat') {
+	if (origin.kind === 'failure') {
+		if (
+			!Array.isArray(origin.failures) ||
+			origin.failures.length > 20 ||
+			!Number.isSafeInteger(origin.overflow) ||
+			(origin.overflow as number) < 0
+		)
+			throw new Error('invalid failure origin');
+		for (const ref of origin.failures) failureRef(ref);
+	} else if (origin.kind !== 'chat') {
 		text(origin.triggerId, 256, 'trigger id');
 		text(origin.triggerName, 1024, 'trigger name');
 		if (
@@ -123,7 +152,7 @@ function parseRecord(value: unknown): BotSessionRecord {
 			throw new Error('invalid fire time');
 	}
 	if (
-		!['chat', 'trigger', 'run-now'].includes(String(origin.kind)) ||
+		!['chat', 'trigger', 'run-now', 'failure'].includes(String(origin.kind)) ||
 		typeof snapshot.agentId !== 'string' ||
 		typeof snapshot.context !== 'string' ||
 		Buffer.byteLength(snapshot.context) > 256 * 1024 ||
@@ -362,9 +391,15 @@ export class BotSessionStore extends EventEmitter {
 		>,
 	): void {
 		const e = this.entry(id);
+		const previous = e.record.state;
 		e.record = { ...e.record, ...structuredClone(changes) };
 		e.dirty = true;
 		this.commit(id);
+		if (e.record.state !== previous)
+			this.emit('state', {
+				record: structuredClone(e.record),
+				previous,
+			});
 	}
 	commit(id: string): void {
 		const e = this.entry(id);

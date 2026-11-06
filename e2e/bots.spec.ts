@@ -559,6 +559,70 @@ test.describe('Home › Bots', () => {
 		);
 	});
 
+	test('a failed session wakes its bot with a failure investigation that links back, and the profile switch turns it off', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Failure aware'));
+		await writeFile(
+			path.join(fakeRoot(tempDir), 'mcp-state-denied.json'),
+			'true',
+		);
+		await send(tab, 'hello');
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		const rows = tab.locator('[data-terminay-bot-session-row]');
+		const investigation = rows.filter({ hasText: 'Investigate failure' });
+		await expect(investigation).toHaveCount(1, { timeout: 30_000 });
+		await tab
+			.locator('[data-terminay-bot-sessions-origin]')
+			.selectOption('failure');
+		await expect(rows).toHaveCount(1);
+		await investigation.click();
+		const failures = tab.locator('[data-terminay-bot-session-failures]');
+		await expect(failures).toContainText('Execution failed');
+		await expect(failures.locator('.bots-failure')).toHaveCount(1);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('failure-investigation.png'),
+		});
+		const link = failures.locator('[data-terminay-bot-failure-session]');
+		const failedId = await link.getAttribute('data-terminay-bot-failure-session');
+		await link.click();
+		await expect(
+			tab.locator(`[data-terminay-bot-session="${failedId}"]`),
+		).toBeVisible();
+		await expect(tab.locator('[data-terminay-bot-sessions-origin]')).toHaveValue(
+			'all',
+		);
+
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		const toggle = tab.locator('[data-terminay-bot-investigate-failures]');
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await toggle.click();
+		await tab.locator('[data-terminay-bot-profile-save]').click();
+		await expect(tab.locator('.bots-done')).toContainText('Saved');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('investigate-failures-off.png'),
+		});
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		await expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		await chat(tab);
+		await send(tab, 'again');
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		// Two failed chats and the one investigation from the first.
+		await expect(rows.filter({ has: tab.page().locator('.bots-state--failed') })).toHaveCount(3, {
+			timeout: 30_000,
+		});
+		// An investigation would start straight after the failure; give it time to appear.
+		await mainWindow.waitForTimeout(2_000);
+		await expect(investigation).toHaveCount(1);
+	});
+
 	test('Stop ends a held turn, whether the agent honours the cancel or not', async ({
 		mainWindow,
 		tempDir,

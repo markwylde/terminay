@@ -28,7 +28,15 @@ import {
 	integer,
 	isObservation,
 } from './sourceValidation.js';
-import { BotError, type BotStore, object, text } from './store.js';
+import { botFailureCause } from './failure.js';
+import { botProcessCount, classifyProcessFailure } from './processExhaustion.js';
+import {
+	BotBlockedError,
+	BotError,
+	type BotStore,
+	object,
+	text,
+} from './store.js';
 import {
 	storedTrigger,
 	triggerCondition,
@@ -275,15 +283,40 @@ export class BotTriggers {
 			)
 				this.launch(t);
 	}
+	/**
+	 * Patch health. A failed or blocked state starts a condition failure episode
+	 * once; only a successful check, reset, disable or delete ends it. `report`
+	 * is false when the caller reports the failure itself.
+	 */
 	private health(
 		t: BotTrigger,
 		patch: Partial<import('@terminay/protocol').BotSourceHealth>,
+		report = true,
 	): void {
 		if (this.find(t.id)?.generation !== t.generation) return;
+		let started: import('@terminay/protocol').BotSourceHealth | null = null;
 		this.observations.update(t, (c) => {
 			c.health = { ...c.health, ...patch, remembered: c.ids.length };
+			if (
+				(patch.state === 'failed' || patch.state === 'blocked') &&
+				!c.failureEpisode
+			) {
+				c.failureEpisode = true;
+				started = c.health;
+			}
 		});
 		this.service.invalidate(t.botId);
+		const health = started as import('@terminay/protocol').BotSourceHealth | null;
+		if (health && report)
+			void this.service.failureFollowUps.accept(t.botId, {
+				kind: 'condition',
+				sessionId: null,
+				firingId: null,
+				triggerId: t.id,
+				triggerName: t.name,
+				reason: health.error ?? 'The trigger condition check failed.',
+				cause: health.cause ?? null,
+			});
 	}
 	private launch(
 		t: BotTrigger,
@@ -308,9 +341,11 @@ export class BotTriggers {
 				state: 'checking',
 				lastAttempt: this.now(),
 				error: null,
+				cause: null,
 				nextRetry: null,
 			});
-			await runner.run(
+			await this.classified(t.botId, () =>
+				runner.run(
 				t.botId,
 				source,
 				{
@@ -341,7 +376,7 @@ export class BotTriggers {
 					await this.acceptObservation(t, value, this.now());
 					this.attempts.delete(t.id);
 				},
-			);
+			));
 		};
 		const task = work()
 			.catch((error) => {
@@ -360,6 +395,7 @@ export class BotTriggers {
 						error instanceof Error
 							? error.message.slice(0, 1024)
 							: 'Source failed',
+					cause: botFailureCause(error),
 					nextRetry: retry ? this.now() + delay : null,
 					gap: continuous
 						? 'Observation gap; intermediate events may be unavailable'
@@ -387,6 +423,27 @@ export class BotTriggers {
 			task,
 		});
 		return task;
+	}
+	/** A source that cannot start a process is classified with engine evidence. */
+	private async classified(
+		botId: string,
+		run: () => Promise<void>,
+	): Promise<void> {
+		try {
+			await run();
+		} catch (error) {
+			const message = error instanceof Error ? error.message : '';
+			const failure = await classifyProcessFailure(message, async () =>
+				botProcessCount(
+					await this.service.driverForRuntime(),
+					`terminay-bot-${botId}`,
+				),
+			).catch(() => null);
+			if (!failure) throw error;
+			throw failure.cause
+				? new BotBlockedError(failure.cause, failure.reason)
+				: new BotError('unavailable', failure.reason);
+		}
 	}
 	private async acceptObservation(
 		t: BotTrigger,
@@ -713,8 +770,22 @@ export class BotTriggers {
 							sessionId: null,
 							outcome: 'failed',
 							reason,
+							cause: botFailureCause(error),
 						});
-						this.health(trigger, { state: 'failed', error: reason });
+						this.health(
+							trigger,
+							{ state: 'failed', error: reason, cause: botFailureCause(error) },
+							false,
+						);
+						void this.service.failureFollowUps.accept(botId, {
+							kind: 'firing',
+							sessionId: null,
+							firingId: event.id,
+							triggerId: id,
+							triggerName: event.triggerName,
+							reason,
+							cause: botFailureCause(error),
+						});
 						return;
 					}
 				}
@@ -865,9 +936,14 @@ export class BotTriggers {
 			},
 			revision,
 		);
-		if (!enabled) this.cancelPending(t);
-		else
+		if (!enabled) {
+			this.cancelPending(t);
 			this.observations.update(t, (c) => {
+				c.failureEpisode = false;
+			});
+		} else
+			this.observations.update(t, (c) => {
+				c.failureEpisode = false;
 				c.resumeBaseline = t.condition.kind !== 'sse';
 				if (t.condition.kind === 'sse') delete c.cursor;
 				delete c.recovery;

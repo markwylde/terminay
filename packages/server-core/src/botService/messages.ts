@@ -58,7 +58,8 @@ export interface MessagePageOptions {
 	limit?: number;
 	search?: string;
 }
-function utf8(value: string, limit: number): string {
+/** The longest prefix of `value` within `limit` bytes, cut on a UTF-8 boundary. */
+export function utf8(value: string, limit: number): string {
 	const bytes = Buffer.from(value);
 	let end = Math.max(0, Math.min(bytes.length, Math.floor(limit)));
 	while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80)
@@ -512,6 +513,61 @@ export class BotMessageStore extends EventEmitter {
 					? this.cursor(s, { ...c, position: offset })
 					: null,
 			truncated: offset < buffer.length,
+		};
+	}
+	/**
+	 * Read immutable text from the end towards the start. The cursor holds the
+	 * end offset of the next slice; the revision is the text's byte length.
+	 */
+	sliceTextBackward(
+		botId: string,
+		kind: string,
+		filter: string,
+		contents: string,
+		metadata: unknown,
+		cursor?: string,
+		limit = PAGE_BYTES - 2048,
+	): { text: string; nextCursor: string | null; truncated: boolean } {
+		const s = this.state(botId),
+			buffer = Buffer.from(contents),
+			revision = buffer.length;
+		const c = cursor
+			? this.decode(botId, cursor, kind, filter)
+			: {
+					botId,
+					epoch: s.epoch,
+					kind,
+					filter,
+					through: s.sequence,
+					position: buffer.length,
+					revision,
+				};
+		if (c.revision !== revision || c.position > buffer.length)
+			throw new BotError('conflict', 'Output changed; reload it');
+		const end = c.position;
+		const boundary = (at: number) => {
+			while (at < end && (buffer[at]! & 0xc0) === 0x80) at++;
+			return at;
+		};
+		let start = boundary(Math.max(0, end - limit));
+		let content = buffer.subarray(start, end).toString('utf8');
+		while (
+			Buffer.byteLength(JSON.stringify({ metadata, text: content })) + 1024 >
+				PAGE_BYTES &&
+			start < end
+		) {
+			start = boundary(start + Math.max(1, Math.floor((end - start) / 2)));
+			content = buffer.subarray(start, end).toString('utf8');
+		}
+		if (start === end && end > 0)
+			throw new BotError(
+				'validation',
+				'Detail limit is too small for the next character',
+			);
+		return {
+			text: content,
+			nextCursor: start > 0 ? this.cursor(s, { ...c, position: start }) : null,
+			truncated: start > 0,
 		};
 	}
 	events(botId: string, cursor?: string, limit?: number): BotRuntimeEventPage {

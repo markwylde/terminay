@@ -261,6 +261,7 @@ async function setup(t, options = {}) {
 		closed,
 		clients,
 		failures,
+		driver,
 	};
 }
 async function finish(r, id) {
@@ -1304,4 +1305,224 @@ test('continuous restart exposes its gap and resumes an SSE cursor without dupli
 	);
 	assert.equal(second.triggers.memory(second.bot.id, trigger.id).total, 1);
 	assert.equal(second.triggers.firings(second.bot.id).length, 1);
+});
+
+const commandDraft = () =>
+	draft({
+		kind: 'command',
+		command: 'poll.sh',
+		intervalMs: 60000,
+		match: { kind: 'items', items: '', identity: '/id' },
+	});
+for (const [label, stats, error, cause] of [
+	[
+		'at the process limit',
+		{ PIDs: 1020, PidsLimit: 1024 },
+		'The bot container has run out of processes (1020 of 1024). Restart the bot container.',
+		'processes',
+	],
+	['below the process limit', { PIDs: 10, PidsLimit: 1024 }, 'The agent could not start a process (EAGAIN).', null],
+	['without engine stats', new Error('stats down'), 'The agent could not start a process (EAGAIN).', null],
+])
+	test(`a condition command that cannot spawn ${label} records the classified health error and cause`, async (t) => {
+		const sources = {
+			protect: async (_b, _t, s) => s,
+			async run() {
+				throw new Error(
+					'OCI runtime exec failed: exec failed: unable to start container process: resource temporarily unavailable',
+				);
+			},
+		};
+		const r = await setup(t, { sources });
+		r.driver.stats = stats;
+		const trigger = r.triggers.create(r.bot.id, commandDraft());
+		await r.time.advance(start + MINUTE, r.engine);
+		await flush();
+		const health = r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health;
+		assert.equal(health.state, 'failed');
+		assert.equal(health.error, error);
+		assert.equal(health.cause ?? null, cause);
+	});
+
+test('a condition that fails for an ordinary reason has no cause', async (t) => {
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		async run() {
+			throw new Error('poll.sh exited 1');
+		},
+	};
+	const r = await setup(t, { sources });
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await flush();
+	const health = r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health;
+	assert.equal(health.error, 'poll.sh exited 1');
+	assert.equal(health.cause ?? null, null);
+});
+
+test('a firing that cannot start records the structured cause on the firing and health', async (t) => {
+	const r = await setup(t);
+	const trigger = r.triggers.create(r.bot.id, draft());
+	r.service.enableBot(r.bot.id, false);
+	r.service.enableBot(r.bot.id, true);
+	r.failures.agent = true;
+	r.bots.save({ ...r.bots.get(r.bot.id), signIn: { kind: 'none' } });
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	await flush();
+	const firing = r.triggers.firings(r.bot.id).find((f) => f.triggerId === trigger.id);
+	assert.equal(firing.outcome, 'failed');
+	assert.equal(firing.cause, 'agent');
+	assert.equal(
+		r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health.cause,
+		'agent',
+	);
+});
+
+const investigations = (r) =>
+	r.sessions.list(r.bot.id).filter((s) => s.origin.kind === 'failure');
+async function settle(r) {
+	for (let i = 0; i < 5; i++) {
+		await r.service.failureFollowUps.idle(r.bot.id);
+		await flush();
+	}
+}
+function switchable() {
+	const state = { fail: true, error: 'poll.sh exited 1' };
+	return {
+		state,
+		sources: {
+			protect: async (_b, _t, s) => s,
+			async run(_bot, _source, _options, observe) {
+				if (state.fail) throw new Error(state.error);
+				await observe({ stdout: '[]', stderr: '', exitCode: 0 });
+			},
+		},
+	};
+}
+const healthOf = (r, trigger) =>
+	r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health;
+
+test('a condition failure episode wakes the bot once until a check succeeds', async (t) => {
+	const s = switchable();
+	const r = await setup(t, { sources: s.sources });
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await settle(r);
+	assert.equal(investigations(r).length, 1);
+	const [ref] = investigations(r)[0].origin.failures;
+	assert.deepEqual(
+		{ kind: ref.kind, triggerId: ref.triggerId, triggerName: ref.triggerName, reason: ref.reason },
+		{ kind: 'condition', triggerId: trigger.id, triggerName: 'Nightly', reason: 'poll.sh exited 1' },
+	);
+	await finish(r, investigations(r)[0].id);
+	// failed → checking → failed is one episode.
+	await r.time.advance(start + 2 * MINUTE, r.engine);
+	await settle(r);
+	assert.equal(healthOf(r, trigger).state, 'failed');
+	assert.equal(investigations(r).length, 1);
+	// Recovery ends the episode; the next failure starts a new one.
+	s.state.fail = false;
+	await r.time.advance(start + 3 * MINUTE, r.engine);
+	await settle(r);
+	assert.equal(healthOf(r, trigger).state, 'healthy');
+	s.state.fail = true;
+	await r.time.advance(start + 4 * MINUTE, r.engine);
+	await settle(r);
+	assert.equal(healthOf(r, trigger).state, 'failed');
+	assert.equal(investigations(r).length, 2);
+});
+
+test('a restart during a condition failure episode does not wake the bot again', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bot-triggers-episode-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const s = switchable();
+	const first = await setup(t, { root, keepRoot: true, sources: s.sources, autoComplete: true });
+	const trigger = first.triggers.create(first.bot.id, commandDraft());
+	await first.time.advance(start + MINUTE, first.engine);
+	await settle(first);
+	assert.equal(investigations(first).length, 1);
+	first.triggers.stop();
+	first.engine.stop();
+	await first.service.shutdown();
+	const second = await setup(t, { root, keepRoot: true, sources: s.sources, at: start + 2 * MINUTE, autoComplete: true });
+	await second.time.advance(start + 4 * MINUTE, second.engine);
+	await settle(second);
+	assert.equal(healthOf(second, trigger).state, 'failed');
+	assert.equal(investigations(second).length, 1);
+});
+
+test('a condition check that fails because the container is out of processes does not wake the bot', async (t) => {
+	const s = switchable();
+	s.state.error =
+		'OCI runtime exec failed: exec failed: unable to start container process: resource temporarily unavailable';
+	const r = await setup(t, { sources: s.sources });
+	r.driver.stats = { PIDs: 1020, PidsLimit: 1024 };
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await settle(r);
+	assert.equal(healthOf(r, trigger).cause, 'processes');
+	assert.equal(investigations(r).length, 0);
+});
+
+test('a firing that cannot start a session is reported exactly once', async (t) => {
+	const r = await setup(t, { autoComplete: true });
+	const trigger = r.triggers.create(r.bot.id, draft());
+	const original = r.service.send.bind(r.service);
+	let failNext = true;
+	r.service.send = async (...args) => {
+		if (failNext && args[3]?.kind === 'trigger') {
+			failNext = false;
+			throw new Error('The bot queue rejected this firing.');
+		}
+		return original(...args);
+	};
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	await settle(r);
+	assert.equal(healthOf(r, trigger).state, 'failed');
+	const listed = investigations(r).flatMap((s) => s.origin.failures);
+	assert.equal(listed.length, 1);
+	assert.equal(listed[0].kind, 'firing');
+	assert.equal(listed[0].sessionId, null);
+	assert.equal(listed[0].triggerId, trigger.id);
+	assert.match(listed[0].firingId, /^[a-z0-9]{24}$/);
+});
+
+test('a failed trigger execution wakes the bot once, naming the execution and trigger', async (t) => {
+	const r = await setup(t);
+	const trigger = r.triggers.create(r.bot.id, draft());
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	await flush();
+	const run = r.sessions.list(r.bot.id).find((s) => s.origin.kind === 'trigger');
+	r.sessions.patch(run.id, {
+		state: 'failed',
+		reason: 'script.sh: line 3: jq: not found',
+		endedAt: r.time.now,
+		open: false,
+	});
+	await settle(r);
+	const listed = investigations(r).flatMap((s) => s.origin.failures);
+	assert.equal(listed.length, 1);
+	assert.equal(listed[0].kind, 'execution');
+	assert.equal(listed[0].sessionId, run.id);
+	assert.equal(listed[0].triggerId, trigger.id);
+	assert.equal(listed[0].reason, 'script.sh: line 3: jq: not found');
+});
+
+test('a condition check that cannot reach the engine records the engine cause and does not wake the bot', async (t) => {
+	const { EngineCommandError } = await import('../dist/botService/index.js');
+	const sources = {
+		protect: async (_b, _t, s) => s,
+		async run() {
+			throw new EngineCommandError('not-running', 'bot engine unavailable');
+		},
+	};
+	const r = await setup(t, { sources });
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await settle(r);
+	const health = healthOf(r, trigger);
+	assert.equal(health.state, 'failed');
+	assert.equal(health.error, 'bot engine unavailable');
+	assert.equal(health.cause, 'engine');
+	assert.equal(investigations(r).length, 0);
 });

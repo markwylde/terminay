@@ -174,6 +174,12 @@ export async function runtime(root, options = {}) {
 			writeFileSync(join(records, sid), String(child.pid));
 			return child;
 		},
+		async run(args) {
+			calls.push(args);
+			if (args[0] !== 'stats') return '';
+			if (options.stats instanceof Error) throw options.stats;
+			return JSON.stringify(options.stats ?? {});
+		},
 		async exec(_container, args) {
 			calls.push(args);
 			if (args[0] === 'terminay-run') {
