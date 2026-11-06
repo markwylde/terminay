@@ -39,4 +39,4 @@
 - [x] 6.2 Add e2e coverage, run through `npm run test:e2e`, showing that the Profile switch defaults off, saves on, and shows the hint while MCP is disabled, and capture screenshots. Verify that the suite passes.
 - [x] 6.3 Run `openspec validate --all`, and run `/openspec-verify-change`. Verify that both are clean for this change.
 - [x] 6.4 Archive the change so its deltas sync into `openspec/specs/`, and run `openspec validate --all --archived`. Verify that the main specs contain the new requirements.
-- [ ] 6.5 Open the Gitea PR and read back every commit status on the head SHA. Verify that all of them are `success` or `skipped`.
+- [x] 6.5 Open the Gitea PR and read back every commit status on the head SHA. Verify that all of them are `success` or `skipped`.
