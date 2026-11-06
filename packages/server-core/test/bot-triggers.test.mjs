@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { SourceRunError } from '../dist/botService/sourceRunner.js';
 import {
 	AutomationRepository,
 	AutomationRunLog,
@@ -1525,4 +1526,253 @@ test('a condition check that cannot reach the engine records the engine cause an
 	assert.equal(health.error, 'bot engine unavailable');
 	assert.equal(health.cause, 'engine');
 	assert.equal(investigations(r).length, 0);
+});
+
+// ── Interrupted polled checks are retried once ──────────────────────────────
+function interrupted(stderr = '', exitCode = 1, cleaned = true) {
+	const error = new SourceRunError(
+		'interrupted',
+		'Source check was interrupted before it reported',
+		{ exitCode, stderr },
+	);
+	error.cleaned = cleaned;
+	return error;
+}
+const ended = (outcome, message, exitCode = null) =>
+	Object.assign(new SourceRunError(outcome, message, { exitCode, stderr: '' }), {
+		cleaned: true,
+	});
+// Each check takes the next planned outcome: an Error to throw, a function to
+// await, or (when the plan is empty) a successful empty observation.
+function planned(outcomes) {
+	const state = { runs: 0, active: 0, maxActive: 0, plan: [...outcomes] };
+	return {
+		state,
+		sources: {
+			protect: async (_b, _t, s) => s,
+			async run(_bot, _source, options, observe) {
+				state.runs++;
+				state.active++;
+				state.maxActive = Math.max(state.maxActive, state.active);
+				try {
+					const next = state.plan.length ? state.plan.shift() : 'ok';
+					if (typeof next === 'function') await next(options);
+					else if (next instanceof Error) throw next;
+					await observe({ stdout: '[]', stderr: '', exitCode: 0 });
+				} finally {
+					state.active--;
+				}
+			},
+		},
+	};
+}
+async function retrySetup(t, outcomes, delay = 0) {
+	const p = planned(outcomes);
+	const r = await setup(t, { sources: p.sources });
+	r.triggers.sourceRetryDelayMs = delay;
+	return { r, p };
+}
+const waitFor = async (fn) => {
+	for (let i = 0; i < 200 && !fn(); i++)
+		await new Promise((resolve) => setTimeout(resolve, 5));
+};
+
+test('an interrupted command check that recovers on retry is healthy and wakes nobody', async (t) => {
+	const { r, p } = await retrySetup(t, [interrupted('vm frozen')]);
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await waitFor(
+		() => p.state.runs === 2 && healthOf(r, trigger).state === 'healthy',
+	);
+	await settle(r);
+	assert.equal(p.state.runs, 2);
+	assert.equal(healthOf(r, trigger).state, 'healthy');
+	assert.equal(investigations(r).length, 0);
+});
+
+test('an interrupted HTTP check is retried once too', async (t) => {
+	const { r, p } = await retrySetup(t, [interrupted()]);
+	const trigger = r.triggers.create(
+		r.bot.id,
+		draft({
+			kind: 'http',
+			url: 'https://example.test',
+			intervalMs: 60000,
+			match: { kind: 'changed' },
+		}),
+	);
+	await r.time.advance(start + MINUTE, r.engine);
+	await waitFor(() => p.state.runs === 2);
+	await settle(r);
+	assert.equal(p.state.runs, 2);
+	assert.notEqual(healthOf(r, trigger).state, 'failed');
+	assert.equal(investigations(r).length, 0);
+});
+
+test('a check interrupted twice fails with the second reason and wakes the bot once', async (t) => {
+	const { r, p } = await retrySetup(t, [
+		interrupted('first'),
+		interrupted('second', 137),
+	]);
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await waitFor(() => healthOf(r, trigger).state === 'failed');
+	await settle(r);
+	assert.equal(p.state.runs, 2);
+	const health = healthOf(r, trigger);
+	assert.equal(health.state, 'failed');
+	assert.equal(
+		health.error,
+		'Source check was interrupted before it reported (exit 137): second',
+	);
+	assert.doesNotMatch(health.error, /recreate/i);
+	assert.equal(investigations(r).length, 1);
+	const [ref] = investigations(r)[0].origin.failures;
+	assert.equal(ref.triggerId, trigger.id);
+	assert.match(ref.reason, /interrupted before it reported/);
+});
+
+for (const [label, error] of [
+	['deadline', ended('deadline', 'Source check exceeded its 55 s limit')],
+	[
+		'not-executable worker',
+		ended('not-executable', 'The source worker could not be executed', 127),
+	],
+	['uncleaned interruption', interrupted('', 1, false)],
+	['ordinary failure', new Error('poll.sh exited 1')],
+])
+	test(`a ${label} is not retried`, async (t) => {
+		const { r, p } = await retrySetup(t, [error]);
+		const trigger = r.triggers.create(r.bot.id, commandDraft());
+		await r.time.advance(start + MINUTE, r.engine);
+		await waitFor(() => healthOf(r, trigger).state === 'failed');
+		await settle(r);
+		assert.equal(p.state.runs, 1);
+		assert.equal(healthOf(r, trigger).state, 'failed');
+	});
+
+test('a trigger test is never retried', async (t) => {
+	const { r, p } = await retrySetup(t, [interrupted()]);
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.triggers
+		.test(r.bot.id, trigger.condition, trigger.id)
+		.catch(() => {});
+	assert.equal(p.state.runs, 1);
+});
+
+for (const [label, act] of [
+	['the trigger is disabled', (r, id) => r.triggers.enable(r.bot.id, id, false)],
+	['the trigger is deleted', (r, id) => r.triggers.remove(r.bot.id, id)],
+	['the bot is disabled', (r) => r.service.enableBot(r.bot.id, false)],
+	[
+		'the trigger is edited',
+		(r, id) => r.triggers.update(r.bot.id, id, commandDraft()),
+	],
+])
+	test(`a pending retry is cancelled when ${label}`, async (t) => {
+		const { r, p } = await retrySetup(t, [interrupted()], 60_000);
+		const trigger = r.triggers.create(r.bot.id, commandDraft());
+		await r.time.advance(start + MINUTE, r.engine);
+		await waitFor(() => healthOf(r, trigger)?.state === 'retrying');
+		assert.equal(healthOf(r, trigger).state, 'retrying');
+		assert.ok(healthOf(r, trigger).nextRetry > r.time.now);
+		act(r, trigger.id);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		await settle(r);
+		assert.equal(p.state.runs, 1);
+		assert.equal(investigations(r).length, 0);
+	});
+
+test('a scheduled check due during the retry never overlaps it', async (t) => {
+	let release;
+	const gate = new Promise((resolve) => {
+		release = resolve;
+	});
+	const { r, p } = await retrySetup(t, [interrupted(), () => gate]);
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await waitFor(() => p.state.runs === 2);
+	await r.time.advance(start + 3 * MINUTE, r.engine);
+	await flush();
+	assert.equal(p.state.maxActive, 1);
+	release();
+	await waitFor(() => healthOf(r, trigger).state === 'healthy');
+	await settle(r);
+	assert.equal(p.state.maxActive, 1);
+});
+
+test('stderr in a failed check reason is redacted with the bot secrets before it is stored', async (t) => {
+	const { r } = await retrySetup(t, [
+		interrupted('token s3cret leaked'),
+		interrupted('again s3cret'),
+	]);
+	r.service.redactMessage = async (_bot, v) =>
+		v.split('s3cret').join('[redacted]');
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await waitFor(() => healthOf(r, trigger).state === 'failed');
+	await settle(r);
+	assert.equal(
+		healthOf(r, trigger).error,
+		'Source check was interrupted before it reported (exit 1): again [redacted]',
+	);
+	assert.match(investigations(r)[0].origin.failures[0].reason, /\[redacted\]/);
+	assert.doesNotMatch(JSON.stringify(investigations(r)[0].origin), /s3cret/);
+});
+
+test('stderr is omitted when redaction is unavailable', async (t) => {
+	const { r } = await retrySetup(t, [
+		interrupted('secret'),
+		interrupted('secret'),
+	]);
+	const redact = r.service.redactMessage.bind(r.service);
+	r.service.redactMessage = async (bot, v) => {
+		if (v.includes('secret')) throw new Error('no lease');
+		return redact(bot, v);
+	};
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await waitFor(() => healthOf(r, trigger).state === 'failed');
+	assert.equal(
+		healthOf(r, trigger).error,
+		'Source check was interrupted before it reported (exit 1)',
+	);
+});
+
+test('an interruption with process-limit evidence keeps the processes cause and is not retried', async (t) => {
+	const { r, p } = await retrySetup(t, [
+		interrupted('bash: fork: Resource temporarily unavailable'),
+	]);
+	r.driver.stats = { PIDs: 1020, PidsLimit: 1024 };
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await waitFor(() => healthOf(r, trigger).state === 'failed');
+	await settle(r);
+	assert.equal(p.state.runs, 1);
+	assert.equal(healthOf(r, trigger).cause, 'processes');
+	assert.equal(investigations(r).length, 0);
+});
+
+test('during an open failure episode, a recovered interruption ends the episode without a new wake', async (t) => {
+	const { r, p } = await retrySetup(t, [
+		new Error('poll.sh exited 1'),
+		interrupted(),
+	]);
+	const trigger = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await settle(r);
+	assert.equal(investigations(r).length, 1);
+	await finish(r, investigations(r)[0].id);
+	await r.time.advance(start + 2 * MINUTE, r.engine);
+	await waitFor(
+		() => p.state.runs === 3 && healthOf(r, trigger).state === 'healthy',
+	);
+	await settle(r);
+	assert.equal(healthOf(r, trigger).state, 'healthy');
+	assert.equal(investigations(r).length, 1);
+	// The episode ended, so a later failure starts a new one.
+	p.state.plan.push(new Error('poll.sh exited 1'));
+	await r.time.advance(start + 3 * MINUTE, r.engine);
+	await settle(r);
+	assert.equal(investigations(r).length, 2);
 });
