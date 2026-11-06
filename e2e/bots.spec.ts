@@ -702,6 +702,120 @@ test.describe('Home › Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('a trigger opens its own sessions, and the filter clears from the chip, the tab and a session request', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Wren'));
+		await send(tab, 'hello');
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'secret',
+			{ timeout: 30_000 },
+		);
+		const alpha = await newTrigger(tab, 'Alpha check', 'check alpha');
+		const beta = await newTrigger(tab, 'Beta check', 'check beta');
+		const alphaId = await alpha.getAttribute('data-terminay-bot-trigger');
+		const betaId = await beta.getAttribute('data-terminay-bot-trigger');
+		await alpha.locator('[data-terminay-bot-trigger-run]').click();
+		await beta.locator('[data-terminay-bot-trigger-run]').click();
+
+		const rows = tab.locator('[data-terminay-bot-session-row]');
+		const chip = tab.locator('[data-terminay-bot-sessions-trigger]');
+		const outcome = tab.locator('[data-terminay-bot-sessions-outcome]');
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await expect(
+			rows.and(tab.locator('[data-terminay-bot-session-state="completed"]')),
+		).toHaveCount(3, { timeout: 30_000 });
+
+		// The row action lists only that trigger's sessions, newest selected.
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await alpha
+			.locator(`[data-terminay-bot-trigger-sessions="${alphaId}"]`)
+			.click();
+		await expect(chip).toHaveAttribute(
+			'data-terminay-bot-sessions-trigger',
+			alphaId ?? '',
+		);
+		await expect(chip).toContainText('Alpha check');
+		await expect(rows).toHaveCount(1);
+		await expect(rows).toContainText('Alpha check');
+		await expect(tab.locator('.bots-srow--on')).toContainText('Alpha check');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-sessions-filtered.png'),
+		});
+
+		// Removing the chip keeps the other filters.
+		await outcome.selectOption('completed');
+		await tab.locator('[data-terminay-bot-sessions-trigger-clear]').click();
+		await expect(chip).toHaveCount(0);
+		await expect(outcome).toHaveValue('completed');
+		await expect(rows).toHaveCount(3);
+
+		// Choosing the Sessions tab clears only the trigger filter.
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await alpha
+			.locator(`[data-terminay-bot-trigger-sessions="${alphaId}"]`)
+			.click();
+		await expect(chip).toHaveCount(1);
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await expect(chip).toHaveCount(0);
+		await expect(rows).toHaveCount(3);
+
+		// A saved trigger's sheet offers Sessions; a new trigger's does not.
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await tab.locator('[data-terminay-bot-trigger-new]').click();
+		const editor = mainWindow.locator('[data-terminay-bot-trigger-editor]');
+		await expect(editor).toBeVisible();
+		await expect(
+			editor.locator('[data-terminay-bot-trigger-editor-sessions]'),
+		).toHaveCount(0);
+		await editor.getByRole('button', { name: 'Cancel' }).click();
+		await beta.locator('.bots-trigrow__main').click();
+		await expect(editor).toBeVisible();
+		await editor.evaluate((node) =>
+			Promise.all(
+				(node.closest('.bots-trigsheet') ?? node)
+					.getAnimations({ subtree: true })
+					.map((animation) => animation.finished),
+			),
+		);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-editor-sessions-action.png'),
+		});
+		await editor
+			.locator(`[data-terminay-bot-trigger-editor-sessions="${betaId}"]`)
+			.click();
+		await expect(chip).toHaveAttribute(
+			'data-terminay-bot-sessions-trigger',
+			betaId ?? '',
+		);
+		await expect(rows).toHaveCount(1);
+		await expect(rows).toContainText('Beta check');
+
+		// A trigger that never ran keeps its filter and says nothing matches.
+		const gamma = await newTrigger(tab, 'Gamma check', 'check gamma');
+		await gamma.locator('[data-terminay-bot-trigger-sessions]').click();
+		await expect(chip).toContainText('Gamma check');
+		await expect(rows).toHaveCount(0);
+		await expect(
+			tab.locator('[data-terminay-bot-panel="sessions"]'),
+		).toContainText('No sessions match.');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-sessions-empty.png'),
+		});
+
+		// Opening another trigger's session from the rail clears the filter.
+		await chat(tab);
+		await tab.locator('.bots-sess').filter({ hasText: 'Alpha check' }).click();
+		await expect(
+			tab.locator('[data-terminay-bot-panel="sessions"]'),
+		).toBeVisible();
+		await expect(chip).toHaveCount(0);
+		await expect(tab.locator('.bots-srow--on')).toContainText('Alpha check');
+	});
+
 	test('a new message completes while an older execution is held', async ({
 		mainWindow,
 		tempDir,
