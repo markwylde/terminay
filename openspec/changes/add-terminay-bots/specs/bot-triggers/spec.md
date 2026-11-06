@@ -112,7 +112,7 @@ The Triggers tab SHALL list a bot's triggers. For each, it SHALL show the kind, 
 
 Each trigger SHALL offer edit, enable or disable, delete, and **Run now**. Run now SHALL queue a session whose origin is Run now, whether or not the trigger is enabled.
 
-The context rail of the bot tab SHALL show the next three upcoming firings.
+The context rail of the bot tab SHALL show the next three distinct triggers to fire, each once at its next firing, in time order. A trigger with further firings in the upcoming window SHALL carry a repeat mark.
 
 The Triggers page SHALL use the available panel width, retaining the panel's standard padding. Its toolbar, trigger list and empty state SHALL not be constrained by a fixed maximum content width.
 
@@ -130,6 +130,11 @@ The Triggers page SHALL use the available panel width, retaining the panel's sta
 
 - **WHEN** a bot has an hourly trigger and a daily trigger
 - **THEN** the Triggers tab shows their firings for the next seven days interleaved in time order
+
+#### Scenario: Repeating trigger in the rail
+
+- **WHEN** a bot has a trigger firing every minute and a daily trigger
+- **THEN** the context rail lists each trigger once at its next firing, and the every-minute trigger shows a repeat mark
 
 ### Requirement: Automations keep their behaviour on the shared scheduler
 

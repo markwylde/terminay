@@ -425,6 +425,25 @@ export function nextFirings(
 	return next;
 }
 
+/** One upcoming entry per trigger: its next firing, and whether it fires again
+ * within the fetched window. In time order. */
+export function distinctUpcoming(
+	upcoming: readonly BotUpcomingFiring[],
+): readonly Readonly<BotUpcomingFiring & { repeats: boolean }>[] {
+	const byTrigger = new Map<string, BotUpcomingFiring & { repeats: boolean }>();
+	for (const firing of upcoming) {
+		const seen = byTrigger.get(firing.triggerId);
+		if (seen === undefined)
+			byTrigger.set(firing.triggerId, { ...firing, repeats: false });
+		else
+			byTrigger.set(firing.triggerId, {
+				...(firing.at < seen.at ? firing : seen),
+				repeats: true,
+			});
+	}
+	return [...byTrigger.values()].sort((a, b) => a.at - b.at);
+}
+
 /** Upcoming firings grouped by local day, in time order. */
 export function groupByDay(
 	upcoming: readonly BotUpcomingFiring[],
