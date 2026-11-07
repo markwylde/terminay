@@ -50,3 +50,25 @@ test('a later listing replaces an earlier one, an empty listing included', () =>
 	memory.remember('p1', '/repo', empty);
 	assert.equal(memory.recall('p1', '/repo'), empty);
 });
+
+test('mounted folder readers observe newer facts before selecting an older workspace', () => {
+	const memory = createGitListingMemory();
+	memory.remember('p1', '/repo', listing('alpha-old'));
+	let firstFolder = memory.recall('p1', '/repo');
+	let secondFolder = memory.recall('p1', '/repo');
+	const unsubscribeFirst = memory.subscribe(() => {
+		firstFolder = memory.recall('p1', '/repo');
+	});
+	const unsubscribeSecond = memory.subscribe(() => {
+		secondFolder = memory.recall('p1', '/repo');
+	});
+	const updated = listing('alpha-new');
+	memory.remember('p1', '/repo', updated);
+	assert.equal(firstFolder, updated);
+	assert.equal(secondFolder, updated);
+	unsubscribeFirst();
+	unsubscribeSecond();
+	memory.remember('p1', '/repo', listing('later'));
+	assert.equal(firstFolder, updated);
+	assert.equal(secondFolder, updated);
+});
