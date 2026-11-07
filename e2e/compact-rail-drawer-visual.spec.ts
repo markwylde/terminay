@@ -112,6 +112,22 @@ for (const scheme of ['dark', 'light'] as const) {
 		).not.toHaveCount(0);
 		await settle(drawer);
 		await shot(mainWindow, testInfo, `${scheme}-02-project-tree`);
+		// The pointer is still over the tile just pressed, as a finger leaves
+		// :hover behind on a phone: the app-wide button hover must not fill it.
+		const fillUnderPointer = async (locator: Locator) => {
+			await locator.hover();
+			return locator.evaluate((node) => getComputedStyle(node).backgroundColor);
+		};
+		expect(
+			await fillUnderPointer(
+				drawer.locator('.compact-drawer__rail-item--selected'),
+			),
+		).toBe('rgba(0, 0, 0, 0)');
+		expect(
+			await fillUnderPointer(
+				drawer.locator('[data-compact-switcher-launchers="true"]'),
+			),
+		).toBe('rgba(0, 0, 0, 0)');
 
 		// The launcher dropup.
 		await drawer.locator('[data-compact-switcher-launchers="true"]').click();
@@ -130,6 +146,15 @@ for (const scheme of ['dark', 'light'] as const) {
 		await shot(mainWindow, testInfo, `${scheme}-04-edit-mode`);
 		await edit.click();
 		await expect(edit).toHaveText('Edit');
+
+		// A terminal row's menu, from its ⋯.
+		await drawer.locator('[data-compact-switcher-row-menu]').first().click();
+		const rowMenu = drawer.getByRole('menu');
+		await expect(rowMenu.getByRole('menuitem', { name: 'Open' })).toBeVisible();
+		await settle(drawer);
+		await shot(mainWindow, testInfo, `${scheme}-08-row-menu`);
+		await mainWindow.keyboard.press('Escape');
+		await expect(rowMenu).toHaveCount(0);
 
 		// The project in front, with its Tabs and Agents row side by side.
 		await drawer.locator('[data-compact-switcher-project]').last().click();

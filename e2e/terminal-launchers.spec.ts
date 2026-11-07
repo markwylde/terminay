@@ -110,7 +110,9 @@ test('at phone width the drawer dropup starts an installed agent, and the split 
 
 	await openDrawer();
 	// Nothing chosen yet on this device: the split control starts a shell.
-	await expect(split).toHaveText('Terminal');
+	await expect(split.locator('.compact-drawer__split-label')).toHaveText(
+		'Terminal',
+	);
 	await drawer.locator('[data-compact-switcher-launchers="true"]').click();
 	const dropup = drawer.getByRole('menu', { name: 'New terminal' });
 	await expect(dropup.getByRole('menuitem')).toHaveText([
@@ -127,7 +129,9 @@ test('at phone width the drawer dropup starts an installed agent, and the split 
 	// The choice is remembered: the split control now repeats it, and the
 	// dropup marks it as last used.
 	await openDrawer();
-	await expect(split).toHaveText('Claude Code');
+	await expect(split.locator('.compact-drawer__split-label')).toHaveText(
+		'Claude Code',
+	);
 	await expect(split).toHaveAccessibleName(
 		/^New Claude Code terminal in General of /,
 	);
@@ -144,7 +148,10 @@ test('at phone width the drawer dropup starts an installed agent, and the split 
 		timeout: 15_000,
 	});
 	await openDrawer();
-	await expect(split).toHaveText('Claude Code', { timeout: 30_000 });
+	await expect(split.locator('.compact-drawer__split-label')).toHaveText(
+		'Claude Code',
+		{ timeout: 30_000 },
+	);
 	await nativeWindow.evaluate((window) => {
 		window.setBounds({ x: 40, y: 40, width: 1280, height: 800 });
 	});

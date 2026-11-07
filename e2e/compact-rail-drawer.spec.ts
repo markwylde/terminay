@@ -4,6 +4,7 @@ import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { waitUntilBusy } from './support/busy-terminals';
 import {
+	activeFolderWorkspace,
 	createPlainFolder,
 	deleteDialog,
 	folderRow,
@@ -70,10 +71,8 @@ const folderLabels = (drawer: Locator) =>
 
 const railTitles = (drawer: Locator) =>
 	drawer
-		.locator('[data-compact-switcher-project]')
-		.evaluateAll((items) =>
-			items.map((item) => item.getAttribute('aria-label')),
-		);
+		.locator('[data-compact-switcher-project] .compact-drawer__rail-label')
+		.allInnerTexts();
 
 /** A repository with one commit on `main` and a worktree per name. */
 async function repository(
@@ -163,7 +162,10 @@ test("a linked folder's ⋯ menu leads with new terminals, carries its context m
 	await resize(mainWindow, electronApp, PHONE);
 	const drawer = await openDrawer(mainWindow);
 
-	const more = drawer.getByRole('button', { name: 'More for alpha' });
+	const more = drawer.getByRole('button', {
+		name: 'More for alpha',
+		exact: true,
+	});
 	await more.click();
 	const menu = drawer.getByRole('menu', { name: 'alpha actions' });
 	await expect(menu).toBeVisible();
@@ -440,4 +442,126 @@ test('with a file in front the title block names the file and carries no dial', 
 	await expect(breadcrumb).toHaveAccessibleName(
 		/^Switch terminal — notes\.txt, General in .+$/,
 	);
+});
+
+test('a folder header toggles its folder, and Show folder in its ⋯ menu shows it', async ({
+	createWorkspace,
+	electronApp,
+	mainWindow,
+}) => {
+	const root = await repository(createWorkspace, 'drawer-folder-toggle', [
+		'alpha',
+	]);
+	await setProjectRoot(mainWindow, root);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	await resize(mainWindow, electronApp, PHONE);
+	const drawer = await openDrawer(mainWindow);
+
+	// Pressing the name collapses the folder in place; the drawer stays.
+	const general = folderSection(drawer, 'General');
+	const header = general.locator('[data-compact-switcher-folder-toggle]');
+	const rows = general.locator('[data-compact-switcher-terminal]');
+	await expect(header).toHaveAttribute('aria-expanded', 'true');
+	await expect(rows).toHaveCount(1);
+	await general.locator('.compact-drawer__folder-label').click();
+	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await expect(rows).toHaveCount(0);
+	await expect(drawer).toBeVisible();
+	await general.locator('.compact-drawer__folder-label').click();
+	await expect(header).toHaveAttribute('aria-expanded', 'true');
+	await expect(rows).toHaveCount(1);
+
+	// Every folder name starts on one line, glyph or no worktree.
+	const lefts = await drawer
+		.locator('.compact-drawer__folder-label')
+		.evaluateAll((labels) =>
+			labels.map((label) => Math.round(label.getBoundingClientRect().left)),
+		);
+	expect(new Set(lefts).size).toBe(1);
+	// A row's title sits under its folder's name.
+	const titleLeft = await rows
+		.first()
+		.locator('.compact-drawer__row-title')
+		.evaluate((title) => Math.round(title.getBoundingClientRect().left));
+	expect(Math.abs(titleLeft - lefts[0])).toBeLessThanOrEqual(1);
+
+	// The empty worktree is shown from its menu.
+	await drawer
+		.getByRole('button', { name: 'More for alpha', exact: true })
+		.click();
+	const menu = drawer.getByRole('menu', { name: 'alpha actions' });
+	await menu.getByRole('menuitem', { name: 'Show folder' }).click();
+	await expect(drawerOf(mainWindow)).toHaveCount(0);
+	await expect(activeFolderWorkspace(mainWindow)).toHaveAttribute(
+		'data-terminay-folder-kind',
+		'linked',
+	);
+});
+
+test("a row's ⋯ opens its menu without leaving the terminal on screen", async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+}) => {
+	await appHarness.sendAppCommand('new-terminal');
+	await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
+	const onScreen = await activeTerminalSessionId(mainWindow);
+	await resize(mainWindow, electronApp, PHONE);
+	const drawer = await openDrawer(mainWindow);
+
+	const more = drawer.locator('[data-compact-switcher-row-menu]').last();
+	const box = await more.boundingBox();
+	if (!box) throw new Error('Expected a row ⋯ control');
+	expect(box.height).toBeGreaterThanOrEqual(44);
+	await more.click();
+	const menu = drawer.getByRole('menu');
+	await expect(menu.getByRole('menuitem', { name: 'Rename' })).toBeVisible();
+	expect(await activeTerminalSessionId(mainWindow)).toBe(onScreen);
+	await mainWindow.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+	await expect(more).toBeFocused();
+});
+
+test('a press beside the drawer closes the topmost layer first, and the header closes the drawer', async ({
+	electronApp,
+	mainWindow,
+}) => {
+	await resize(mainWindow, electronApp, PHONE);
+	const pressBeside = async () => {
+		const scrim = mainWindow.locator('.compact-drawer-scrim');
+		const box = await scrim.boundingBox();
+		if (!box) throw new Error('Expected the scrim');
+		await mainWindow.mouse.click(
+			box.x + box.width - 16,
+			box.y + box.height / 2,
+		);
+	};
+	let drawer = await openDrawer(mainWindow);
+
+	// A menu goes first.
+	await drawer.locator('[data-compact-switcher-row-menu]').first().click();
+	await expect(drawer.getByRole('menu')).toBeVisible();
+	await pressBeside();
+	await expect(drawer.getByRole('menu')).toHaveCount(0);
+	await expect(drawer).toBeVisible();
+
+	// Then an expanded filter.
+	await drawer
+		.getByRole('button', { name: 'Search terminals and projects' })
+		.click();
+	const field = drawer.getByRole('searchbox');
+	await expect(field).toBeVisible();
+	await pressBeside();
+	await expect(field).toHaveCount(0);
+	await expect(drawer).toBeVisible();
+
+	// Then the drawer.
+	await pressBeside();
+	await expect(drawerOf(mainWindow)).toHaveCount(0);
+
+	// The header's close control dismisses it whatever it presents.
+	drawer = await openDrawer(mainWindow);
+	await drawer.locator('[data-compact-switcher-home="true"]').click();
+	await drawer.getByRole('button', { name: 'Close switcher' }).click();
+	await expect(drawerOf(mainWindow)).toHaveCount(0);
 });

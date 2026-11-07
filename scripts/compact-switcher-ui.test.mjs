@@ -461,8 +461,17 @@ test('the drawer opens on the project in front, its tree in folder order', () =>
 		order,
 		[...order].sort((left, right) => left - right),
 	);
-	assert.match(markup, /aria-label="Folder worktree-mobile-rail in Paged"/);
+	// The whole header line is the folder's disclosure.
+	assert.match(
+		markup,
+		/data-compact-switcher-folder-toggle="local:folder:wt"[^>]*aria-label="worktree-mobile-rail" aria-expanded="true"/,
+	);
 	assert.match(markup, /compact-drawer__folder-glyph/);
+	// Every folder carries a glyph, so every name starts on one line.
+	const heads = markup.match(/data-compact-switcher-folder-toggle=/g) ?? [];
+	const icons = markup.match(/compact-drawer__folder-icon/g) ?? [];
+	assert.ok(heads.length >= 2);
+	assert.equal(icons.length, heads.length);
 });
 
 test('opening on Home presents the sections and what needs you', () => {
@@ -508,23 +517,46 @@ test('a folder header holds its count, a new-terminal control, and a ⋯ menu', 
 	);
 	assert.match(markup, /data-compact-switcher-folder-menu="local:folder:wt"/);
 	assert.match(markup, /aria-label="More for worktree-mobile-rail"/);
-	// An empty folder offers one New terminal entry.
+	// An empty folder offers one New terminal entry, which stands in for its
+	// header's + and carries its name; it shows no count of nothing.
 	assert.match(
 		markup,
-		/data-compact-switcher-empty-folder="local:folder:empty"/,
+		/aria-label="New terminal in scratch of Paged"[^>]*data-compact-switcher-empty-folder="local:folder:empty"/,
 	);
+	assert.doesNotMatch(
+		markup,
+		/data-compact-switcher-folder-add="local:folder:empty"/,
+	);
+	const empty = markup.slice(
+		markup.indexOf('data-compact-switcher-folder-toggle="local:folder:empty"'),
+		markup.indexOf('data-compact-switcher-empty-folder="local:folder:empty"'),
+	);
+	assert.doesNotMatch(empty, /compact-drawer__folder-count/);
 });
 
-test('every dial sits in the trailing column, and folders carry none', () => {
+test('every row ends in ⋯, with a dial column only for terminals', () => {
 	const markup = switcher({});
 	const rows = markup.match(/class="compact-drawer__row[ "]/g) ?? [];
-	const slots = markup.match(/data-compact-workflow-slot="true"/g) ?? [];
-	assert.equal(slots.length, rows.length);
-	// The folder header's trailing column is the same 30px slot, holding ⋯.
+	const terminals = markup.match(/data-compact-switcher-terminal="/g) ?? [];
+	const dials = markup.match(/data-compact-workflow-slot="true"/g) ?? [];
+	const menus = markup.match(/data-compact-switcher-row-menu="/g) ?? [];
+	assert.equal(dials.length, terminals.length);
+	assert.equal(menus.length, rows.length);
+	assert.match(markup, /aria-label="More for claude"/);
+	// The folder header's trailing column is the rows' ⋯ column.
 	assert.match(
 		markup,
 		/compact-drawer__wslot"><button[^>]*compact-drawer__folder-more/,
 	);
+	assert.match(
+		markup,
+		/compact-drawer__wslot"><button[^>]*compact-drawer__row-more/,
+	);
+});
+
+test('a workflow-less terminal gives the dial column back to its title', async () => {
+	const css = await readFile('src/workspace/CompactSwitcher.css', 'utf8');
+	assert.match(css, /\.compact-drawer__dial:empty \{\s*display: none;/);
 });
 
 test('a row carries its preview line, and a row without one carries none', () => {
@@ -565,6 +597,11 @@ test('the split control repeats the remembered launcher and names where it creat
 	const shell = switcher({});
 	assert.match(shell, /data-compact-launcher="shell"/);
 	assert.match(shell, /compact-drawer__split-label">Terminal</);
+	// The folder it creates in is on the control, not only in its name.
+	assert.match(
+		shell,
+		/compact-drawer__split-target"[^>]*>in (?:<!-- -->)?General</,
+	);
 	assert.match(shell, /aria-label="New Terminal terminal in General of Paged"/);
 	assert.match(shell, /data-compact-switcher-launchers="true"/);
 	assert.match(
@@ -629,19 +666,29 @@ test("another server's menus offer only what needs no switch", async () => {
 		launchers,
 		/const ids = \[COMPACT_SHELL_LAUNCHER, \.\.\.\(own \? launcherIds : \[\]\)\];/,
 	);
-	assert.match(launchers, /Switch to \$\{serverLabelOf\(project\.serverId\)\} for its launchers\./);
+	assert.match(
+		launchers,
+		/Switch to \$\{serverLabelOf\(project\.serverId\)\} for its launchers\./,
+	);
 	const create = source.slice(
 		source.indexOf('const create = ('),
 		source.indexOf('const launcherItems'),
 	);
-	assert.match(create, /project\.serverId === currentServer\.id\s*\?\s*launcherId\s*:\s*COMPACT_SHELL_LAUNCHER/);
+	assert.match(
+		create,
+		/project\.serverId === currentServer\.id\s*\?\s*launcherId\s*:\s*COMPACT_SHELL_LAUNCHER/,
+	);
 });
 
 test("another server's project draws no grips or close controls in its rail", () => {
 	const markup = switcher({
 		groups: [
 			...groups,
-			{ projects: [remotePaged], serverId: 'remote', serverLabel: 'paged-prod' },
+			{
+				projects: [remotePaged],
+				serverId: 'remote',
+				serverLabel: 'paged-prod',
+			},
 		],
 	});
 	assert.doesNotMatch(
@@ -688,7 +735,56 @@ test('no tab bar without agents content, or for a background project', () => {
 test('a rail project is the long-press target for editing it', () => {
 	const markup = switcher({});
 	assert.match(markup, /title="Long-press to edit project"/);
-	assert.match(markup, /aria-label="Paged"/);
+	// The tile's name carries what its badge shows.
+	assert.match(markup, /aria-label="Paged, 1 working, 1 idle"/);
+	assert.match(markup, /compact-drawer__rail-label" aria-hidden="true">Paged</);
+	assert.match(markup, /compact-drawer__rail-label" aria-hidden="true">Home</);
+});
+
+test('a swipe on a rail tile scrolls the rail outside edit mode', async () => {
+	const css = await readFile('src/workspace/CompactSwitcher.css', 'utf8');
+	const item = css.match(
+		/\.compact-drawer__rail-item \.compact-drawer__rail-tile \{([\s\S]*?)\n\}/,
+	)?.[1];
+	assert.ok(item);
+	assert.doesNotMatch(item, /touch-action: none/);
+	assert.match(
+		css,
+		/\.compact-drawer__rail-item--editable \{\s*touch-action: none;/,
+	);
+});
+
+test('every tree and header control is a 44px target', async () => {
+	const css = await readFile('src/workspace/CompactSwitcher.css', 'utf8');
+	for (const selector of [
+		'.compact-drawer__icon',
+		'.compact-drawer__grip',
+		'.compact-drawer__folder-name',
+		'.compact-drawer__empty-folder',
+	]) {
+		const escaped = selector.replace(/[.]/g, '\\.');
+		const blocks = [
+			...css.matchAll(new RegExp(`${escaped}[,\\s][^{]*\\{([^}]*)\\}`, 'g')),
+		].map((match) => match[1]);
+		const height = blocks
+			.map((block) => Number(block.match(/(?:min-)?height: (\d+)px;/)?.[1]))
+			.find((value) => Number.isFinite(value));
+		assert.ok(height >= 44, `${selector} is ${height}px`);
+	}
+});
+
+test('the header closes the drawer, and Show folder is in the folder menu', async () => {
+	const markup = switcher({});
+	assert.match(markup, /aria-label="Close switcher"/);
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	const folderLayer = source.slice(
+		source.indexOf("layer?.kind === 'folder'"),
+		source.indexOf("layer?.kind === 'server'"),
+	);
+	assert.match(
+		folderLayer,
+		/launcherItems\(presented, folder[\s\S]*key: 'show-folder'[\s\S]*props\.onActivateFolder\(presented, folder\)[\s\S]*entries\.forEach/,
+	);
 });
 
 test('rows open their menu by long press, secondary click, or the keyboard', async () => {
@@ -711,8 +807,11 @@ test('the dismiss key closes the topmost layer first', async () => {
 	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
 	assert.match(
 		source,
-		/if \(layerRef\.current !== null\) closeLayerRef\.current\(\);\s*else if \(searchOpenRef\.current\) closeSearchRef\.current\(\);\s*else onDismiss\(\);/,
+		/if \(layerRef\.current !== null\) closeLayer\(\);\s*else if \(searchOpenRef\.current\) closeSearch\(\);\s*else onDismiss\(\);/,
 	);
+	// A press beside the drawer takes the same order as the key.
+	assert.match(source, /event\.preventDefault\(\);\s*dismissTopLayer\(\);/);
+	assert.match(source, /dismissTopLayerRef\.current\(\);/);
 	// A drag in progress owns the key.
 	assert.match(source, /gripDragState\.active/);
 });
@@ -846,4 +945,43 @@ test('the Home toggle returns to the project Home keeps as its command target', 
 		/projectsRef\.current\.some\(\(project\) => project\.id === activeProjectId\)/,
 	);
 	assert.match(handler, /activateProject\(activeProjectId\)/);
+});
+
+test('rail tiles carry a visible label and an activity summary in their name', () => {
+	const markup = switcher({});
+	assert.match(
+		markup,
+		/data-compact-switcher-project="local:p1"(?:(?!<\/button>)[\s\S])*compact-drawer__rail-label[^>]*>Paged</,
+	);
+	assert.match(
+		markup,
+		/data-compact-switcher-home(?:(?!<\/button>)[\s\S])*compact-drawer__rail-label[^>]*>Home</,
+	);
+	// The badge is hidden, so the name has to say what it counts.
+	const name = markup.match(
+		/aria-label="([^"]*)"[^>]*data-compact-switcher-project="local:p1"/,
+	)?.[1];
+	assert.ok(name?.startsWith('Paged, '), name);
+	assert.match(name, /working/);
+});
+
+test('an empty folder offers one New terminal entry and no count or + control', () => {
+	const markup = switcher({ selectedProjectKey: 'local:p1' });
+	const group = markup.match(
+		/data-compact-switcher-folder-group="local:folder:empty"[\s\S]*?(?=data-compact-switcher-folder-group=|<\/section>|$)/,
+	)?.[0];
+	assert.ok(group, 'the empty folder is listed');
+	assert.match(group, /compact-drawer__empty-folder/);
+	assert.doesNotMatch(group, /compact-drawer__folder-add/);
+	assert.doesNotMatch(group, /compact-drawer__folder-count/);
+	// A folder with terminals keeps its + control and count.
+	assert.match(
+		markup,
+		/data-compact-switcher-folder-group="local:folder:general"(?:(?!data-compact-switcher-folder-group=)[\s\S])*compact-drawer__folder-count[^>]*>1<(?:(?!data-compact-switcher-folder-group=)[\s\S])*compact-drawer__folder-add/,
+	);
+});
+
+test('the split create control names the folder it creates in', () => {
+	const markup = switcher({ selectedProjectKey: 'local:p1' });
+	assert.match(markup, /compact-drawer__split-target[^>]*>in General</);
 });
