@@ -858,7 +858,7 @@ test.describe('project tabs', () => {
 			switcher.locator('[data-compact-switcher-project]'),
 		).toHaveCount(12);
 		await expect(
-			switcher.getByRole('button', { name: 'New project' }),
+			switcher.getByRole('button', { name: 'New project' }).first(),
 		).toBeVisible();
 
 		// The connection glyph opens the same surface rather than a menu of its
@@ -1207,6 +1207,10 @@ test.describe('project tabs', () => {
 			name: 'Switch terminal',
 		});
 		await expect(switcher).toBeVisible();
+		// A press measured mid-entrance lands where the item used to be.
+		await switcher.evaluate((element) =>
+			Promise.all(element.getAnimations().map((animation) => animation.finished)),
+		);
 		await longPress(
 			switcher.locator('[data-compact-switcher-project]').first(),
 			mainWindow.getByRole('heading', { name: 'Edit Project Tab' }),

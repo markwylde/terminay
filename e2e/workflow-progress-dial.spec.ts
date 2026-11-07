@@ -180,7 +180,9 @@ test('a workflow shows as a dial on its tab and rows, named in words, and hides 
 	await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
 	const switcher = mainWindow.getByRole('dialog', { name: 'Switch terminal' });
 	await expect(switcher).toBeVisible();
-	const switcherDial = switcher.locator(`[data-compact-switcher-terminal$=":${encodeURIComponent(panelIdA ?? '')}"] .workflow-dial`);
+	const switcherDial = switcher.locator('.compact-drawer__row', { has: mainWindow.locator(`[data-compact-switcher-terminal$=":${encodeURIComponent(panelIdA ?? '')}"]`) }).locator('.workflow-dial');
 	await expect(switcherDial).toHaveAttribute('data-workflow-dial', 'done', { timeout: READY_TIMEOUT_MS });
+	// Captured once the drawer has finished sliding in.
+	await switcher.evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
 	await shot(mainWindow, testInfo, '06-compact-switcher');
 });

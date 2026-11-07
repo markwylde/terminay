@@ -4423,17 +4423,67 @@ body.project-tabbar-reordering .project-tabbar {
   box-sizing: border-box;
   flex: 1 1 auto;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  justify-content: center;
   min-width: 0;
-  height: 30px;
+  height: 34px;
   margin: 0 2px;
   padding: 0 8px;
   border-radius: 8px;
   background: var(--project-chrome);
   color: var(--tab-text-selected);
   font-size: 13px;
+  line-height: 1.2;
   cursor: pointer;
+}
+
+/* The title block's first line is what keystrokes land in: the active panel. */
+.compact-title__primary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.compact-title__secondary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: rgba(220, 226, 240, 0.72);
+}
+
+.compact-title__secondary .workflow-dial {
+  flex: none;
+  margin-left: 2px;
+}
+
+.compact-title__folder {
+  flex: 0 1 auto;
+  min-width: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-title__where {
+  color: rgba(220, 226, 240, 0.72);
+}
+
+.compact-home-toggle {
+  position: relative;
+}
+
+.compact-home-toggle__dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ee6258;
 }
 
 .compact-breadcrumb:hover {
@@ -4446,16 +4496,16 @@ body.project-tabbar-reordering .project-tabbar {
 
 .compact-breadcrumb__swatch {
   flex: 0 0 auto;
-  width: 9px;
-  height: 9px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--project-color, var(--accent, #4db5ff));
 }
 
-/* The project name yields first: the terminal is what keystrokes land in, so
-   it is the half a user must be able to read. */
+/* The project name yields before the folder: the folder says which worktree
+   the keystrokes land in, the project only which repository. */
 .compact-breadcrumb__project {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4466,23 +4516,6 @@ body.project-tabbar-reordering .project-tabbar {
 .compact-breadcrumb__separator {
   flex: 0 0 auto;
   color: rgba(220, 226, 240, 0.32);
-}
-
-.compact-breadcrumb__terminal {
-  flex: 0 1 auto;
-  min-width: 3.5em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 700;
-}
-
-/* The chevron is the affordance for the whole control, so it sits hard against
-   the right edge rather than trailing the label like another breadcrumb crumb. */
-.compact-breadcrumb__chevron {
-  flex: 0 0 auto;
-  margin-left: auto;
-  opacity: 0.6;
 }
 
 .compact-connection {
@@ -4625,560 +4658,6 @@ body.project-tabbar-reordering .project-tabbar {
   margin-left: -19px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.22);
-}
-
-/* The filter is an affordance, not a prompt: a 30px glyph until it is asked
-   for, then it grows across the row. Nothing about it takes focus on open. */
-/* The grab handle and the filter share one band: a collapsed filter sits on
-   the trailing edge like a toolbar control instead of stranding an icon on a
-   row of its own. */
-.compact-switcher__tools {
-  position: relative;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  height: 30px;
-  margin: 2px 10px 0;
-}
-
-.compact-switcher__tools--searching {
-  margin-bottom: 6px;
-}
-
-.compact-switcher__tools--searching .compact-switcher__grab {
-  display: none;
-}
-
-.compact-switcher__search-open {
-  all: unset;
-  box-sizing: border-box;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  color: rgba(220, 226, 240, 0.5);
-  cursor: pointer;
-}
-
-.compact-switcher__home {
-  all: unset;
-  box-sizing: border-box;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 10px 0 8px;
-  margin-right: auto;
-  border-radius: 8px;
-  color: rgba(220, 226, 240, 0.7);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.compact-switcher__tools--searching .compact-switcher__home {
-  margin-right: 6px;
-  padding: 0 8px;
-}
-
-.compact-switcher__home:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-}
-
-.compact-switcher__home--active {
-  background: rgba(255, 255, 255, 0.09);
-  color: var(--tab-text-selected, #fff);
-}
-
-.compact-switcher__home:focus-visible {
-  outline: 2px solid var(--accent, #4db5ff);
-  outline-offset: -2px;
-}
-
-.compact-switcher__search-open:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-}
-
-.compact-switcher__search {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  min-width: 0;
-  padding: 0 4px 0 11px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(220, 226, 240, 0.45);
-}
-
-/* iOS zooms the whole page when a control whose COMPUTED font-size is under
-   16px takes focus, and it has ignored `user-scalable=no` since iOS 10 — there
-   is no viewport declaration that turns this off. The only lever is the
-   computed size, so the field is set at 16px and scaled back to the sheet's
-   13.5px: iOS reads 16 and leaves the page alone, and the rendered type is
-   identical to everything around it.
-
-   The wrapper owns the layout box. The input is absolutely positioned inside
-   it at 1/0.84375 of its size, then scaled by that factor from the top-left,
-   so it paints exactly inside the box it was given. Change one of these three
-   numbers and you must change the others. */
-.compact-switcher__field {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 20px;
-}
-
-.compact-switcher__field input {
-  all: unset;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 118.5185%; /* 100 / 0.84375 */
-  height: 118.5185%;
-  color: #dce2f0;
-  font-size: 16px; /* what iOS reads */
-  line-height: 20px;
-  transform: scale(0.84375); /* 13.5 / 16 — what the reader sees */
-  transform-origin: left top;
-}
-
-.compact-switcher__field input::placeholder {
-  color: rgba(220, 226, 240, 0.4);
-}
-
-.compact-switcher__search-close {
-  all: unset;
-  box-sizing: border-box;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  color: rgba(220, 226, 240, 0.5);
-  cursor: pointer;
-}
-
-.compact-switcher__search-close:hover {
-  background: rgba(255, 255, 255, 0.09);
-  color: #fff;
-}
-
-.compact-switcher__search-open:focus-visible,
-.compact-switcher__search-close:focus-visible {
-  outline: 2px solid var(--accent, #4db5ff);
-  outline-offset: -2px;
-}
-
-.compact-switcher__body {
-  overflow-y: auto;
-  padding: 0 8px;
-}
-
-/* The left column's two tabs, as a segmented row across the sheet. The band
-   colour belongs to a project's chrome, not to a sheet that spans projects. */
-.compact-switcher__tabs {
-  height: 36px;
-  margin: 0 10px 8px;
-  padding: 3px;
-  gap: 3px;
-  border-bottom: none;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.compact-switcher__tabs .sidebar-group-tab {
-  flex: 1 1 0;
-  width: auto;
-  gap: 7px;
-  border-radius: 7px;
-  font-size: 13px;
-}
-
-/* The agents take the room the list had, so the sheet does not jump in height
-   between its two tabs. */
-.compact-switcher__agents {
-  flex: 1 1 auto;
-  min-height: 160px;
-  padding: 0 4px 8px;
-}
-
-.compact-switcher__empty {
-  margin: 10px;
-  color: rgba(220, 226, 240, 0.45);
-  font-size: 13px;
-}
-
-/* A folder is one ruled line inside its project's card: a label, a hairline
-   to the trailing edge, and its own new-terminal control. An empty folder is
-   that line and nothing more. */
-.compact-switcher__folder-line {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 20px;
-  padding: 0 2px 0 3px;
-}
-
-.compact-switcher__folder {
-  all: unset;
-  box-sizing: border-box;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  height: 100%;
-  padding: 0 4px 0 9px;
-  border-radius: 6px;
-  color: rgba(220, 226, 240, 0.6);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
-.compact-switcher__folder:focus-visible {
-  outline: 1px solid rgba(87, 183, 255, 0.7);
-  outline-offset: -1px;
-}
-
-.compact-switcher__folder-name {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.compact-switcher__folder-rule {
-  flex: 1 1 12px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-/* The line is 20px so a run of folders stays thin; the control on it is not.
-   It overhangs the line by 4px above and below and sits over its neighbours,
-   so the thumb gets a 28px target without the list paying for one. */
-.compact-switcher__folder-line .compact-switcher__add {
-  position: relative;
-  z-index: 1;
-  margin: -4px 0;
-}
-
-.compact-switcher__connection-name {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 4px 8px 6px;
-  background: #14171e;
-  color: rgba(220, 226, 240, 0.42);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.compact-switcher__connection-rule {
-  flex: 1 1 auto;
-  height: 1px;
-  margin-left: 2px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.compact-switcher__connection-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #4fd08a;
-}
-
-/* A project is a card. Its border and its header take the project's colour,
-   which is what says "everything in here belongs to this project" — nothing
-   inside is indented to say it again. The colour is mixed toward the sheet's
-   ink first so the edge of a very dark project is still an edge. */
-.compact-switcher__card {
-  --compact-switcher-edge: color-mix(
-    in srgb,
-    var(--compact-switcher-project, #8a93a6) 72%,
-    #dce2f0
-  );
-  overflow: hidden;
-  padding-bottom: 3px;
-  border: 1px solid color-mix(in srgb, var(--compact-switcher-edge) 34%, transparent);
-  border-radius: 9px;
-}
-
-.compact-switcher__card + .compact-switcher__card {
-  margin-top: 6px;
-}
-
-.compact-switcher__project {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 30px;
-  padding: 0 2px 0 4px;
-  background: color-mix(in srgb, var(--compact-switcher-edge) 13%, transparent);
-  color: #dce2f0;
-  font-size: 13.5px;
-  font-weight: 700;
-}
-
-/* The heading is the long-press target, so editing a project is the same
-   gesture on this surface as it is on a project switcher row. */
-.compact-switcher__project-button {
-  all: unset;
-  box-sizing: border-box;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 30px;
-  padding: 0 6px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.compact-switcher__project-button:focus-visible {
-  outline: 2px solid var(--accent, #4db5ff);
-  outline-offset: -2px;
-}
-
-.compact-switcher__project-swatch {
-  flex: none;
-  width: 9px;
-  height: 9px;
-  border-radius: 3px;
-  background: var(--compact-switcher-project, #8a93a6);
-}
-
-/* The name gives way before the summary does: a clipped name is still
-   recognisable, a clipped count is not a count. */
-.compact-switcher__project-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.compact-switcher__summary {
-  flex: none;
-  color: rgba(220, 226, 240, 0.6);
-  font-size: 11px;
-  font-weight: 400;
-  white-space: pre;
-}
-
-/* The leading group takes the colour its rows' indicators use for that state;
-   these are the values in AgentStatusIndicator.css. Idle stays neutral. */
-.compact-switcher__summary-group--attention {
-  color: #ee6258;
-}
-
-.compact-switcher__summary-group--working {
-  color: #e8b931;
-}
-
-.compact-switcher__summary-group--done {
-  color: #45c874;
-}
-
-/* Quiet until wanted: a close on every row must not out-shout the names. The
-   glyph is small and dim, the target is not. */
-.compact-switcher__add,
-.compact-switcher__close {
-  all: unset;
-  box-sizing: border-box;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  color: rgba(220, 226, 240, 0.38);
-  cursor: pointer;
-}
-
-.compact-switcher__add {
-  color: rgba(220, 226, 240, 0.6);
-}
-
-.compact-switcher__add:hover,
-.compact-switcher__close:hover {
-  background: rgba(255, 255, 255, 0.09);
-  color: #fff;
-}
-
-.compact-switcher__row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 2px 0 3px;
-}
-
-/* A thumb-sized target: the switcher exists because 30px tabs are not. The
-   floor is what keeps a row without a preview tappable; two tight lines of
-   title and preview fit inside it. */
-.compact-switcher__terminal {
-  all: unset;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 36px;
-  padding: 2px 9px;
-  border-radius: 7px;
-  cursor: pointer;
-}
-
-.compact-switcher__terminal:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.compact-switcher__terminal[aria-current='true'] {
-  background: var(--terminal-tab-active, #4b3d96);
-}
-
-.compact-switcher__terminal[aria-current='true']
-  .compact-switcher__terminal-preview {
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.compact-switcher__terminal:focus-visible,
-.compact-switcher__add:focus-visible,
-.compact-switcher__close:focus-visible,
-.compact-switcher__create button:focus-visible {
-  outline: 2px solid var(--accent, #4db5ff);
-  outline-offset: -2px;
-}
-
-.compact-switcher__terminal-state {
-  flex: none;
-  display: inline-flex;
-  width: 9px;
-  justify-content: center;
-}
-
-.compact-switcher__terminal-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.compact-switcher__terminal-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #dce2f0;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 17px;
-}
-
-.compact-switcher__terminal-preview {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: rgba(220, 226, 240, 0.4);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10.5px;
-  line-height: 14px;
-}
-
-/* One wide control that names where it creates, and the two rarer creates as
-   glyphs beside it. */
-.compact-switcher__create {
-  flex: none;
-  display: flex;
-  gap: 6px;
-  margin-top: 2px;
-  padding: 7px 8px 2px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.compact-switcher__create-main {
-  all: unset;
-  box-sizing: border-box;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  height: 36px;
-  padding: 0 11px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #dce2f0;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.compact-switcher__create-main--terminal {
-  background: color-mix(
-    in srgb,
-    var(--compact-switcher-project, #7c5cff) 32%,
-    rgba(255, 255, 255, 0.04)
-  );
-}
-
-.compact-switcher__create-main svg {
-  flex: none;
-}
-
-.compact-switcher__create-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: pre;
-}
-
-.compact-switcher__create-where {
-  color: rgba(220, 226, 240, 0.66);
-  font-weight: 400;
-}
-
-.compact-switcher__create-icon {
-  all: unset;
-  box-sizing: border-box;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 36px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(220, 226, 240, 0.7);
-  cursor: pointer;
-}
-
-.compact-switcher__create-main:hover,
-.compact-switcher__create-icon:hover {
-  filter: brightness(1.25);
 }
 
 /* WebKit refuses a programmatic clipboard read without a live user activation,
@@ -5538,46 +5017,4 @@ body.project-tabbar-reordering .project-tabbar {
 .server-upgrade-notice__dismiss:focus-visible {
 	background: color-mix(in srgb, currentColor 10%, transparent);
 	opacity: 1;
-}
-
-.compact-switcher__servers {
-	display: grid;
-	gap: 2px;
-	padding: 8px 12px 4px;
-	border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.compact-switcher__servers-label {
-	padding: 4px 4px 6px;
-	font-size: 11px;
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	opacity: 0.6;
-	text-transform: uppercase;
-}
-
-.compact-switcher__server {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	min-height: 44px;
-	padding: 0 8px;
-	border: 0;
-	border-radius: 8px;
-	background: transparent;
-	color: inherit;
-	font: inherit;
-	text-align: left;
-	cursor: pointer;
-}
-
-.compact-switcher__server[aria-checked='true'] {
-	background: color-mix(in srgb, currentColor 10%, transparent);
-	font-weight: 600;
-}
-
-.compact-switcher__server-meta {
-	font-size: 12px;
-	opacity: 0.6;
 }

@@ -83,7 +83,10 @@ test('the flag and the reader registry actually reach the workspace', async () =
 	// Declaring the props and never passing them left the panel tab strip
 	// visible at phone width and the preview registry empty in the real app.
 	const app = await read('src/App.tsx');
-	assert.match(app, /<ProjectWorkspace[\s\S]*?isCompactChrome=\{isCompactChrome\}/);
+	assert.match(
+		app,
+		/<ProjectWorkspace[\s\S]*?isCompactChrome=\{isCompactChrome\}/,
+	);
 	assert.match(
 		app,
 		/<ProjectWorkspace[\s\S]*?sharedTerminalContextReaders=\{sharedTerminalContextReadersRef\}/,
@@ -96,20 +99,20 @@ test('the compact row renders only below the breakpoint', async () => {
 	assert.match(app, /\{isCompactChrome && isCompactSwitcherOpen \? \(/);
 });
 
-test('the breadcrumb truncates the project before the terminal', async () => {
+test('the title block truncates the project before the folder', async () => {
 	const css = await read('src/App.css');
 	const project = css.match(
 		/\.compact-breadcrumb__project \{([\s\S]*?)\n\}/,
 	)?.[1];
-	const terminal = css.match(
-		/\.compact-breadcrumb__terminal \{([\s\S]*?)\n\}/,
-	)?.[1];
-	assert.ok(project && terminal);
-	// The project may shrink to nothing; the terminal keeps a floor, so the
-	// name of what you are typing into survives.
+	const folder = css.match(/\.compact-title__folder \{([\s\S]*?)\n\}/)?.[1];
+	const primary = css.match(/\.compact-title__primary \{([\s\S]*?)\n\}/)?.[1];
+	assert.ok(project && folder && primary);
+	// The project may shrink to nothing and yields first; the folder keeps a
+	// floor, so the worktree the keystrokes land in survives.
 	assert.match(project, /min-width: 0;/);
-	assert.match(terminal, /min-width: 3\.5em;/);
-	for (const rule of [project, terminal]) {
+	assert.match(project, /flex: 0 1000 auto;/);
+	assert.match(folder, /min-width: 2\.5em;/);
+	for (const rule of [project, folder, primary]) {
 		assert.match(rule, /text-overflow: ellipsis;/);
 	}
 	// Icons give up width first.
@@ -120,9 +123,9 @@ test('the breadcrumb truncates the project before the terminal', async () => {
 });
 
 test('the filter is sized so iOS has no reason to zoom', async () => {
-	const css = await read('src/App.css');
+	const css = await read('src/workspace/CompactSwitcher.css');
 	const field = css.match(
-		/\.compact-switcher__field input \{([\s\S]*?)\n\}/,
+		/\.compact-drawer__field input \{([\s\S]*?)\n\}/,
 	)?.[1];
 	assert.ok(field, 'the filter has a field rule');
 
@@ -147,13 +150,28 @@ test('the filter is sized so iOS has no reason to zoom', async () => {
 
 	// The wrapper owns the layout box, and the input fills it at the inverse
 	// of the scale so it paints exactly inside it.
-	const wrapper = css.match(
-		/\.compact-switcher__field \{([\s\S]*?)\n\}/,
-	)?.[1];
+	const wrapper = css.match(/\.compact-drawer__field \{([\s\S]*?)\n\}/)?.[1];
 	assert.ok(wrapper);
 	assert.match(wrapper, /position: relative;/);
 	const width = Number(field.match(/width: (\d+(?:\.\d+)?)%/)?.[1]);
 	assert.ok(Math.abs(width - 100 / Number(scale)) < 0.01, `width ${width}%`);
+});
+
+test('the Tabs and Agents tabs share the drawer width as a segmented row', async () => {
+	// The shared sidebar tab is a fixed icon-width square; labelled in the
+	// drawer, each must take half the row or the labels overlap.
+	const css = await read('src/workspace/CompactSwitcher.css');
+	const row = css.match(
+		/\.compact-drawer \.compact-drawer__tabs \{([\s\S]*?)\n\}/,
+	)?.[1];
+	assert.ok(row, 'the drawer styles its tab row');
+	assert.match(row, /background: /);
+	const tab = css.match(
+		/\.compact-drawer \.compact-drawer__tabs \.sidebar-group-tab \{([\s\S]*?)\n\}/,
+	)?.[1];
+	assert.ok(tab, 'the drawer styles each tab');
+	assert.match(tab, /flex: 1 1 0;/);
+	assert.match(tab, /width: auto;/);
 });
 
 test('no document tries to forbid zoom instead', async () => {
@@ -168,15 +186,14 @@ test('no document tries to forbid zoom instead', async () => {
 	assert.doesNotMatch(viewport, /maximum-scale/);
 });
 
-test('switcher rows stay tappable without padding out to nothing', async () => {
-	const css = await read('src/App.css');
-	const row = css.match(/\.compact-switcher__terminal \{([\s\S]*?)\n\}/)?.[1];
+test('drawer rows stay a full touch target without padding out to nothing', async () => {
+	const css = await read('src/workspace/CompactSwitcher.css');
+	const row = css.match(/\.compact-drawer__row-main \{([\s\S]*?)\n\}/)?.[1];
 	assert.ok(row);
-	// The floor keeps a row tappable; a row carrying a preview grows past it on
-	// its own. Holding every row at the two-line height turned a terminal with
-	// no preview into a tall empty box.
+	// The floor is a 48px touch target; a row carrying a step or preview line
+	// grows past it on its own rather than every row being padded to two lines.
 	const floor = Number(row.match(/min-height: (\d+)px;/)?.[1]);
-	assert.ok(floor >= 36 && floor <= 40, `min-height ${floor}px`);
+	assert.ok(floor >= 44 && floor <= 48, `min-height ${floor}px`);
 	const padding = Number(row.match(/padding: (\d+)px/)?.[1]);
 	assert.ok(padding <= 6, `vertical padding ${padding}px`);
 });
@@ -189,16 +206,17 @@ test('the switcher overlays the workspace rather than taking height from it', as
 	assert.match(scrim, /inset: 0;/);
 });
 
-test('the compact row carries the Command Bar before the breadcrumb, and Home lives in the switcher', async () => {
+test('the compact row carries the Command Bar before the title, then the Home toggle, and Home leads the drawer rail', async () => {
 	const row = await read('src/workspace/CompactChromeRow.tsx');
 	const order = [
 		...row.matchAll(
-			/data-terminay-home-control(?==)|data-compact-command-bar(?==)|data-compact-breadcrumb(?==)|data-compact-pixel-slot(?==)|data-compact-connection(?==)/g,
+			/data-terminay-home-control(?==)|data-compact-command-bar(?==)|data-compact-breadcrumb(?==)|data-compact-home-toggle(?==)|data-compact-pixel-slot(?==)|data-compact-connection(?==)/g,
 		),
 	].map((match) => match[0]);
 	assert.deepEqual(order, [
 		'data-compact-command-bar',
 		'data-compact-breadcrumb',
+		'data-compact-home-toggle',
 		'data-compact-pixel-slot',
 		'data-compact-connection',
 	]);

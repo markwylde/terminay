@@ -275,7 +275,7 @@ test('the project dot leads the title on tabs and switcher rows', async () => {
 	// A compact switcher header says it in words instead: a second dot beside
 	// its colour swatch read as a pair.
 	assert.doesNotMatch(compact, /ProjectTabActivityDot/);
-	assert.match(compact, /<CompactSwitcherSummary project=\{project\} \/>/);
+	assert.match(compact, /<ProjectSummary project=\{presented\} \/>/);
 });
 
 test('dismissal is the acknowledgement tab selection reports, without selecting', async () => {
