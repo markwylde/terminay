@@ -50,6 +50,7 @@ export interface SettingsControlAdapter {
 	readonly deleteShellProfile: Handler<ShellProfileIdParams>;
 	readonly reorderShellProfiles: Handler<ReorderShellProfilesParams>;
 	readonly setDefaultShellProfile: Handler<ShellProfileIdParams>;
+	readonly getConnectionMetrics: Handler<GetConnectionMetricsParams>;
 }
 
 /** The tools a `SettingsControlAdapter` binds; without one they are unavailable. */
@@ -61,6 +62,7 @@ export const SETTINGS_CONTROL_OPERATIONS = Object.freeze([
 	'delete_shell_profile',
 	'reorder_shell_profiles',
 	'set_default_shell_profile',
+	'get_connection_metrics',
 ] as const);
 
 /** Settings one `update_settings` may change. */
@@ -83,6 +85,12 @@ export function parseGetSettings(): Parsed<GetSettingsParams> {
 }
 
 export function parseListShellProfiles(): Parsed<ListShellProfilesParams> {
+	return {};
+}
+
+export type GetConnectionMetricsParams = Readonly<Record<string, never>>;
+
+export function parseGetConnectionMetrics(): Parsed<GetConnectionMetricsParams> {
 	return {};
 }
 

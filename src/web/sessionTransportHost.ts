@@ -34,6 +34,9 @@ export type SessionTransportHost = Readonly<{
 	managerUrl?: string;
 	managerAction?: string;
 	leaveManager?: () => void;
+	/** Step durations of the connect that produced the current transport:
+	 * metadata only, re-validated by the workspace (`connection.metrics`). */
+	connectTimings?: () => unknown;
 	prepareWorkspace(): Promise<
 		Readonly<{
 			expectedServerId: string;
@@ -222,6 +225,12 @@ export function getSessionTransportHost(): SessionTransportHost | undefined {
 	) {
 		fail('leaveManager');
 	}
+	if (
+		value.connectTimings !== undefined &&
+		typeof value.connectTimings !== 'function'
+	) {
+		fail('connectTimings');
+	}
 	// Like the attached-connection surface, a partial notifications surface is
 	// a broken contract, not a degraded one.
 	if (
@@ -274,6 +283,12 @@ function isHostedBrowserSessionAuthority(
 	if (
 		value.leaveManager !== undefined &&
 		typeof value.leaveManager !== 'function'
+	) {
+		return false;
+	}
+	if (
+		value.connectTimings !== undefined &&
+		typeof value.connectTimings !== 'function'
 	) {
 		return false;
 	}

@@ -3852,6 +3852,7 @@ function createDesktopMcpSettingsAdapter(): SettingsControlAdapter {
 		deleteShellProfile: (p, c, s) => bound().deleteShellProfile(p, c, s),
 		reorderShellProfiles: (p, c, s) => bound().reorderShellProfiles(p, c, s),
 		setDefaultShellProfile: (p, c, s) => bound().setDefaultShellProfile(p, c, s),
+		getConnectionMetrics: (p, c, s) => bound().getConnectionMetrics(p, c, s),
 	};
 }
 
@@ -4276,6 +4277,8 @@ function desktopMcpToolAvailability(context: ControlRequestContext): readonly {
 			'set_default_shell_profile',
 		] as const)
 			unavailable.add(tool);
+	if (composition?.connectionMetrics === undefined)
+		unavailable.add('get_connection_metrics');
 	if (composition?.macroOperations === undefined)
 		for (const tool of ['list_macros', 'run_macro', 'cancel_macro'] as const)
 			unavailable.add(tool);
@@ -4767,6 +4770,8 @@ async function describeMcpOperation(
 		}
 		case 'list_shell_profiles':
 			return { summary: 'list the shell profiles', details: [] };
+		case 'get_connection_metrics':
+			return { summary: 'read the connection timings', details: [] };
 		case 'save_shell_profile': {
 			const profile =
 				typeof params.profile === 'object' && params.profile !== null
