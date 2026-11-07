@@ -51,6 +51,6 @@
 ## 8. Verification
 
 - [x] 8.1 Run `openspec validate --all` and compare the result with the baseline taken before this change, in which only other changes fail (`add-terminay-bots` among them). Verified by `compact-rail-drawer-switcher` passing and no new failures appearing.
-- [ ] 8.2 Run `npm run lint`, `tsc`, the touched unit tests, and `npm run test:e2e`. Verified by every run passing.
+- [x] 8.2 Run `npm run lint`, `tsc`, the touched unit tests, and `npm run test:e2e`. Verified by every run passing.
 - [x] 8.3 Archive the change so its deltas fold into `openspec/specs/`, in the same branch and PR. Verified by `openspec validate --all --archived` showing no new failures, and by the main specs holding the new requirements.
-- [ ] 8.4 After the PR is opened, read back every Gitea commit status on the head SHA. Verified by every status being `success` or `skipped`.
+- [x] 8.4 After the PR is opened, read back every Gitea commit status on the head SHA. Verified by every status being `success` or `skipped`.
