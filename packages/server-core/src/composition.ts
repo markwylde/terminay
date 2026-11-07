@@ -2561,6 +2561,10 @@ function bindTerminalActivity(
 		ensureActivitySession(activity, identity);
 		activity.ingestSignal(identity, { kind: 'userInput' });
 	});
+	terminal.onResize((identity) => {
+		ensureActivitySession(activity, identity);
+		activity.ingestSignal(identity, { kind: 'resize' });
+	});
 	terminal.onEvent((event) => {
 		const identity = {
 			serverId: event.serverId,

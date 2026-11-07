@@ -755,6 +755,23 @@ test("a resize to the session's current size does not reach the PTY", async () =
   );
 });
 
+test("resize observers hear each changed size before the PTY does, and never a same-size request", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
+  const session = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
+  const write = { ...session.identity, clientId: "client-a", scope: "write" };
+  const heard = [];
+  service.onResize((identity, dimensions) => {
+    heard.push({ sessionId: identity.sessionId, ...dimensions, ptyResizes: pty.processes[0].resizes.length });
+  });
+
+  await service.resize(session.identity, { cols: 80, rows: 24 }, write);
+  await service.resize(session.identity, { cols: 100, rows: 30 }, write);
+  await service.resize(session.identity, { cols: 100, rows: 30 }, write);
+  assert.deepEqual(heard, [{ sessionId: "session-a", cols: 100, rows: 30, ptyResizes: 0 }]);
+  assert.deepEqual(pty.processes[0].resizes, [{ cols: 100, rows: 30 }]);
+});
+
 test("two authorized clients compete on one PTY while an explicit display cursor replays retained output", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, maxReplayBytes: 64 });

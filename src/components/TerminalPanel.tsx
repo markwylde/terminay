@@ -231,6 +231,13 @@ export interface TerminalPanelClientContextValue {
 export const TerminalPanelClientContext =
 	createContext<TerminalPanelClientContextValue | null>(null);
 
+/**
+ * Whether the workspace holding this panel is the one on screen. A background
+ * workspace stays mounted and laid out at full size, so a panel cannot tell
+ * from its own box. Hosts that do not say are on screen.
+ */
+export const TerminalWorkspaceVisibleContext = createContext(true);
+
 export type TerminalPanelClientResolution = {
 	readonly panelClient?: TerminayTerminalPanelClient;
 	readonly identity?: Pick<TerminalClientIdentity, 'serverId' | 'projectId'>;
@@ -514,6 +521,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(
 		() => {},
 	);
+	// A terminal off screen neither fits nor resizes its PTY: the shell would
+	// redraw for a size nobody is looking at. What it owed is done on reveal.
+	const isWorkspaceVisible = useContext(TerminalWorkspaceVisibleContext);
+	const workspaceVisibleRef = useRef(isWorkspaceVisible);
+	workspaceVisibleRef.current = isWorkspaceVisible;
+	const deferFitRef = useRef<(force: boolean) => void>(() => {});
+	const resumeDeferredFitRef = useRef<() => void>(() => {});
 	const terminalPresentationActionRef = useRef<() => Promise<void>>(() =>
 		Promise.resolve(),
 	);
@@ -710,6 +724,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	// terminal, which decides whether this client runs the terminal's views.
 	const appWindowServerId = terminalClientContext?.serverId;
 	const isPresentationController = terminalPresentation?.role === 'controller';
+	useEffect(() => {
+		if (isWorkspaceVisible) resumeDeferredFitRef.current();
+	}, [isWorkspaceVisible]);
 	useEffect(() => {
 		const element = containerRef.current;
 		if (element === null || appWindowServerId === undefined) return;
@@ -1587,9 +1604,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		let resizeFrame: number | null = null;
 		let lastFitSize = EMPTY_TERMINAL_ROOT_SIZE;
 		let lastSentSize = { cols: 0, rows: 0 };
+		// The fit owed by a terminal that was off screen, and whether it was a
+		// forced one (ownership, takeover, hydration, a settings refresh).
+		let deferredFit: { force: boolean } | null = null;
 
 		const fitAndResizeNow = (force = false) => {
 			resizeFrame = null;
+
+			if (!workspaceVisibleRef.current) {
+				deferredFit = { force: force || (deferredFit?.force ?? false) };
+				return;
+			}
 
 			const nextRootSize = getTerminalRootSize(root);
 			// A panel can mount before Dockview has assigned its active-content
@@ -1666,6 +1691,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				pendingResizeForce = false;
 				fitAndResizeNow(shouldForce);
 			});
+		};
+
+		deferFitRef.current = (force) => {
+			deferredFit = { force: force || (deferredFit?.force ?? false) };
+		};
+		resumeDeferredFitRef.current = () => {
+			if (deferredFit === null) return;
+			const { force } = deferredFit;
+			deferredFit = null;
+			fitAndResize(force);
 		};
 
 		fitAndResize(true);
@@ -2837,6 +2872,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		announceTerminalFocus();
 
 		return () => {
+			deferFitRef.current = () => {};
+			resumeDeferredFitRef.current = () => {};
 			searchResultsDisposer.dispose();
 			resizeObserver.disconnect();
 			container.removeEventListener(
@@ -3045,6 +3082,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		}
 
 		const refreshFrame = window.requestAnimationFrame(() => {
+			if (terminalRef.current === terminal && !workspaceVisibleRef.current) {
+				deferFitRef.current(true);
+				return;
+			}
 			if (
 				terminalRef.current !== terminal ||
 				root.clientWidth <= 0 ||
