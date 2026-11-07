@@ -75,6 +75,7 @@ const expectedTools = [
 	'delete_shell_profile',
 	'reorder_shell_profiles',
 	'set_default_shell_profile',
+	'get_connection_metrics',
 	'list_macros',
 	'run_macro',
 	'cancel_macro',

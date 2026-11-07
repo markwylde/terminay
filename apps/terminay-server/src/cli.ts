@@ -99,6 +99,7 @@ import {
 	VaultProviderCredentialResolver,
 	WorktreeInsightService,
 	withdrawnAgentExtensionSwitches,
+	CONNECTION_METRICS_FILE,
 } from '@terminay/server-core';
 import * as nodePty from 'node-pty';
 import {
@@ -1051,6 +1052,9 @@ async function createServerComposition(
 		: undefined;
 	composition = createServerCoreComposition({
 		...(bots ? { bots } : {}),
+		connectionMetrics: {
+			file: resolve(options.dataRoot, CONNECTION_METRICS_FILE),
+		},
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
 		capabilities: [

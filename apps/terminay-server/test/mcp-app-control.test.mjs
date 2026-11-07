@@ -112,7 +112,7 @@ const SPEC_GROUPS = {
 		'rename_workspace_window',
 		'close_workspace_window',
 	],
-	settingsRead: ['get_settings', 'list_shell_profiles'],
+	settingsRead: ['get_settings', 'list_shell_profiles', 'get_connection_metrics'],
 	settingsChange: [
 		'update_settings',
 		'save_shell_profile',
@@ -150,6 +150,7 @@ const SPEC_WORKSPACE_ONLY = [
 	'delete_shell_profile',
 	'reorder_shell_profiles',
 	'set_default_shell_profile',
+	'get_connection_metrics',
 	'move_terminal_to_project',
 	'focus_home',
 ];

@@ -1,4 +1,8 @@
-import type { JsonValue } from '@terminay/protocol';
+import {
+	CONNECTION_METRICS_OPERATIONS,
+	type ConnectionMetricsSummary,
+	type JsonValue,
+} from '@terminay/protocol';
 import {
 	DEFAULT_SERVER_SETTINGS,
 	type McpApprovalDetail,
@@ -123,6 +127,22 @@ export function createSettingsControlAdapter(
 				),
 				revision: after.revision,
 			};
+		},
+		getConnectionMetrics: async (_params, _context, signal) => {
+			let summary: ConnectionMetricsSummary;
+			try {
+				summary = (await query(
+					CONNECTION_METRICS_OPERATIONS.summary,
+					{},
+					signal,
+				)) as unknown as ConnectionMetricsSummary;
+			} catch {
+				throw new ControlEndpointError(
+					'unsupported_op',
+					'This server does not keep connection timings.',
+				);
+			}
+			return describeConnectionMetrics(summary);
 		},
 		listShellProfiles: async (_params, context, signal) => {
 			const catalogue = record(
@@ -441,4 +461,33 @@ function profileError(error: unknown): ControlEndpointError {
 			'No shell profile you can change has that id. list_shell_profiles lists them.',
 		);
 	return serverControlError(error);
+}
+
+/** The timing summary as an agent reads it: durations in milliseconds, and a
+ * note while recording is off. */
+export function describeConnectionMetrics(
+	summary: ConnectionMetricsSummary,
+): JsonValue {
+	return {
+		recording: summary.enabled,
+		...(summary.enabled
+			? {}
+			: {
+					note: 'Recording is off. Turn on Settings > Remote Access > Record connection timings to collect samples.',
+				}),
+		samples: summary.count,
+		...(summary.since === undefined
+			? {}
+			: { since: new Date(summary.since).toISOString() }),
+		...(summary.until === undefined
+			? {}
+			: { until: new Date(summary.until).toISOString() }),
+		by_kind: summary.byKind,
+		overall: summary.overall,
+		by_trigger: summary.byTrigger,
+		recent: summary.recent.map((sample) => ({
+			...sample,
+			at: new Date(sample.at).toISOString(),
+		})),
+	} as unknown as JsonValue;
 }

@@ -346,11 +346,29 @@ export const SESSION_HEARTBEAT_MISS_LIMIT = 2;
 /** Upper bound on how late a probe deadline may fire before the lateness is
  * read as this document having been suspended. */
 export const SESSION_HEARTBEAT_MAX_SUSPEND_TOLERANCE_MS = 5_000;
+/**
+ * How long the probe sent on returning to the foreground may take.
+ *
+ * A LAN or loopback round trip is milliseconds; this leaves room for a phone
+ * waking its radio and main thread. A false positive costs one reconnect.
+ */
+export const SESSION_RESUME_PROBE_DEADLINE_MS = 1_500;
 
 export type SessionHeartbeatSnapshot = Readonly<{
 	sent: number;
 	missed: number;
 	lastRoundTripMs: number | null;
+}>;
+
+export type SessionProbeOptions = Readonly<{
+	/** Response deadline for this probe instead of the interval. */
+	deadlineMs?: number;
+	/** One miss retires the generation, whatever the miss limit. */
+	decisive?: boolean;
+	/** Told how this probe ended, unless a newer probe superseded it. */
+	onSettled?: (
+		outcome: Readonly<{ answered: boolean; roundTripMs?: number }>,
+	) => void;
 }>;
 
 export function logSessionLane(
@@ -382,7 +400,7 @@ export function createSessionHeartbeat(
 ): Readonly<{
 	start(): void;
 	stop(): void;
-	probeNow(): void;
+	probeNow(probe?: SessionProbeOptions): void;
 	snapshot(): SessionHeartbeatSnapshot;
 }> {
 	const intervalMs = options.intervalMs ?? SESSION_HEARTBEAT_INTERVAL_MS;
@@ -403,36 +421,63 @@ export function createSessionHeartbeat(
 	let sent = 0;
 	let missed = 0;
 	let lastRoundTripMs: number | null = null;
+	// Each probe takes the next number; only the newest one's outcome counts.
+	// A probe superseded by `probeNow` neither misses nor schedules the next.
+	let probeSequence = 0;
+	let inFlight: AbortController | undefined;
 
 	const snapshot = (): SessionHeartbeatSnapshot =>
 		Object.freeze({ sent, missed, lastRoundTripMs });
 
-	const beat = async (): Promise<void> => {
+	const beat = async (probe: SessionProbeOptions = {}): Promise<void> => {
 		if (stopped || lost) return;
+		probeSequence += 1;
+		const sequence = probeSequence;
 		sent += 1;
 		const startedAt = now();
+		const deadlineMs =
+			probe.deadlineMs !== undefined && probe.deadlineMs > 0
+				? probe.deadlineMs
+				: intervalMs;
 		// The interval doubles as the response deadline: a probe that has not
 		// answered by the time the next one is due has already missed.
 		const controller = new AbortController();
+		inFlight = controller;
 		// A deadline that fires late came due while this document was frozen or
 		// the machine asleep. The answer had no chance to be read in that time,
 		// so the probe says nothing about the transport.
 		let suspended = false;
+		const tolerance =
+			deadlineMs === intervalMs
+				? suspendToleranceMs
+				: Math.min(suspendToleranceMs, deadlineMs / 2);
 		const deadline = setTimer(() => {
-			suspended = now() - startedAt - intervalMs > suspendToleranceMs;
+			suspended = now() - startedAt - deadlineMs > tolerance;
 			controller.abort();
-		}, intervalMs);
+		}, deadlineMs);
+		let answered = false;
 		try {
 			await options.ping(controller.signal);
-			missed = 0;
-			lastRoundTripMs = now() - startedAt;
+			answered = true;
 		} catch {
-			if (!suspended) missed += 1;
+			// Settled below.
 		} finally {
 			clearTimer(deadline);
 		}
-		if (stopped || lost) return;
+		if (stopped || lost || sequence !== probeSequence) return;
+		inFlight = undefined;
+		if (answered) {
+			missed = 0;
+			lastRoundTripMs = now() - startedAt;
+		} else if (!suspended) {
+			missed = probe.decisive === true ? Math.max(missed + 1, missLimit) : missed + 1;
+		}
 		options.onSample?.(snapshot());
+		probe.onSettled?.(
+			answered
+				? { answered, roundTripMs: lastRoundTripMs ?? 0 }
+				: { answered },
+		);
 		if (missed >= missLimit) {
 			lost = true;
 			options.onLost(snapshot());
@@ -443,13 +488,19 @@ export function createSessionHeartbeat(
 			void beat();
 			return;
 		}
-		timer = setTimer(() => void beat(), intervalMs);
+		timer = setTimer(() => {
+			timer = undefined;
+			void beat();
+		}, intervalMs);
 	};
 
 	return {
 		start() {
 			if (stopped || timer !== undefined) return;
-			timer = setTimer(() => void beat(), intervalMs);
+			timer = setTimer(() => {
+				timer = undefined;
+				void beat();
+			}, intervalMs);
 		},
 		/**
 		 * Ask right now instead of waiting out the interval.
@@ -457,19 +508,27 @@ export function createSessionHeartbeat(
 		 * A frozen document runs nothing, so on thaw the next probe is still
 		 * mid-interval while the transport may already be dead. Waiting for that
 		 * interval, and then for the miss limit, is most of why returning to the
-		 * app feels broken. An answered probe changes nothing.
+		 * app feels broken. The resume path passes a short deadline and makes the
+		 * probe decisive. Any probe still in flight is superseded: its deadline
+		 * may have been frozen, so it can neither miss nor be answered. An
+		 * answered probe changes nothing.
 		 */
-		probeNow() {
+		probeNow(probe: SessionProbeOptions = {}) {
 			if (stopped || lost) return;
 			if (timer !== undefined) clearTimer(timer);
 			timer = undefined;
-			void beat();
+			const superseded = inFlight;
+			inFlight = undefined;
+			void beat(probe);
+			superseded?.abort();
 		},
 		stop() {
 			if (stopped) return;
 			stopped = true;
 			if (timer !== undefined) clearTimer(timer);
 			timer = undefined;
+			inFlight?.abort();
+			inFlight = undefined;
 		},
 		snapshot,
 	};

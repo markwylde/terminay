@@ -89,6 +89,8 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		disconnectPolicy: 'cancel',
 	},
 	remoteAccess: {
+		// Off: no connection timing sample is kept (connection.metrics.v1).
+		connectionMetrics: false,
 		exposeOnStartup: false,
 		webRtcHostedDomain: 'terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',

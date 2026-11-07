@@ -56,6 +56,7 @@ import {
 	createServerCoreComposition,
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
+import { CONNECTION_METRICS_FILE } from '../packages/server-core/src/connectionMetrics/index';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
 import type { ExtensionHostDiagnosticListener } from '../packages/server-core/src/extensions/diagnostics';
 import {
@@ -1100,6 +1101,10 @@ export class ServerTerminalAuthority {
 				: undefined;
 		this.composition = createServerCoreComposition({
 			...(bots ? { bots } : {}),
+			connectionMetrics:
+				options.dataRoot === undefined
+					? {}
+					: { file: resolve(options.dataRoot, CONNECTION_METRICS_FILE) },
 			serverId: options.serverId,
 			serverVersion: 'desktop',
 			// Restart recovery is server policy and lives in server-core. Desktop

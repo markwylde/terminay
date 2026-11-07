@@ -158,6 +158,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				isDocumentHidden: () =>
 					typeof document !== 'undefined' &&
 					document.visibilityState === 'hidden',
+				metricsHost:
+					getSessionTransportHost() === undefined ? 'desktop' : 'browser',
 				open: async ({
 					profileId,
 					role,
@@ -242,14 +244,20 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	useEffect(() => {
 		if (typeof document === 'undefined') return;
 		const shown = () => {
-			if (document.visibilityState !== 'visible') return;
+			if (document.visibilityState !== 'visible') {
+				registry.suspend();
+				return;
+			}
 			registry.resume();
 		};
+		const hidden = () => registry.suspend();
 		document.addEventListener('visibilitychange', shown);
 		window.addEventListener('pageshow', shown);
+		window.addEventListener('pagehide', hidden);
 		return () => {
 			document.removeEventListener('visibilitychange', shown);
 			window.removeEventListener('pageshow', shown);
+			window.removeEventListener('pagehide', hidden);
 		};
 	}, [registry]);
 
@@ -467,6 +475,9 @@ async function openPrimaryConnection(
 			transport,
 			label: sessionHost.hostName?.trim() || 'Remote',
 			origin,
+			...(sessionHost.connectTimings === undefined
+				? {}
+				: { connectTimings: sessionHost.connectTimings }),
 		});
 	}
 	const desktop = await acquireDesktopServerBootstrap(
