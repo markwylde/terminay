@@ -9,7 +9,14 @@ import {
 	createRefreshSchedule,
 	type RefreshSchedule,
 } from '@terminay/protocol';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from 'react';
 import { writeClipboardText } from '../host/nativeActions';
 import {
 	getPathRelativeToRoot,
@@ -363,10 +370,28 @@ export function useFileExplorerController({
 	const [gitStatuses, setGitStatuses] = useState<
 		Record<string, FileExplorerGitStatus>
 	>(() => ({ ...(recalledListing?.statuses ?? {}) }));
-	const [worktreePanelStatus, setWorktreePanelStatus] =
+	const [localWorktreePanelStatus, setWorktreePanelStatus] =
 		useState<WorktreePanelStatus | null>(
 			() => recalledListing?.worktrees ?? EMPTY_WORKTREE_PANEL_STATUS,
 		);
+	// Worktree facts describe the whole project. Keep already mounted folder
+	// workspaces on the same listing, including while they are hidden.
+	const sharedListing = useSyncExternalStore(
+		useCallback(
+			(listener: () => void) =>
+				listingMemory?.subscribe(listener) ?? (() => {}),
+			[listingMemory],
+		),
+		useCallback(
+			() =>
+				listingRoot === undefined
+					? undefined
+					: listingMemory?.recall(project.id, listingRoot),
+			[listingMemory, listingRoot, project.id],
+		),
+	);
+	const worktreePanelStatus =
+		sharedListing?.worktrees ?? localWorktreePanelStatus;
 	const [deletingWorktreePaths, setDeletingWorktreePaths] = useState<
 		Set<string>
 	>(() => new Set());
