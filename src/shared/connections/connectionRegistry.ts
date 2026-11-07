@@ -22,7 +22,13 @@ import {
 } from '@terminay/client-core';
 import {
 	CLIENT_SERVER_COMPATIBILITY,
+	CONNECTION_METRICS_CAPABILITY,
+	CONNECTION_METRICS_OPERATIONS,
+	type ConnectionMetricHost,
+	type ConnectionMetricSample,
 	FEATURE_CAPABILITIES,
+	type HostConnectTimings,
+	normalizeHostConnectTimings,
 	type ByteTransport,
 	type ConnectionCompatibility,
 	type ServerCompatibilityRequirements,
@@ -39,7 +45,10 @@ import {
 	createSessionHeartbeat,
 	logSessionLane,
 	RecoveryRetrySchedule,
+	SESSION_RESUME_PROBE_DEADLINE_MS,
+	type SessionProbeOptions,
 } from '../../web/sessionConnectAttempt.ts';
+import { ConnectionTimingTracker } from './connectionTimings.ts';
 
 /** The feature clients and stores one connection projects for the UI. */
 export type WorkspaceConnectionContext = Omit<
@@ -120,6 +129,9 @@ export type ConnectionOpenResult = Readonly<{
 	label: string;
 	origin?: string;
 	hostContext?: TerminayHostContext;
+	/** The host's own step durations for the connect that produced this
+	 * transport, where the host reports them. Re-validated before use. */
+	connectTimings?: () => unknown;
 }>;
 
 export type ConnectionRegistryOptions = Readonly<{
@@ -143,6 +155,10 @@ export type ConnectionRegistryOptions = Readonly<{
 	createSchedule?: () => RecoveryRetrySchedule;
 	isDocumentHidden?: () => boolean;
 	heartbeatIntervalMs?: number;
+	/** Which kind of host this window is, for connection timing samples. */
+	metricsHost?: ConnectionMetricHost;
+	/** Overridable so a unit test can drive the timing marks. */
+	now?: () => number;
 }>;
 
 type Listener = (snapshot: ConnectionsSnapshot) => void;
@@ -159,7 +175,10 @@ class ConnectionEntry {
 	hostContext: TerminayHostContext | undefined;
 	client: TerminayClient | undefined;
 	context: WorkspaceConnectionContext | undefined;
-	private heartbeat: { stop(): void; probeNow(): void } | undefined;
+	private heartbeat:
+		| { stop(): void; probeNow(probe?: SessionProbeOptions): void }
+		| undefined;
+	private readonly timings: ConnectionTimingTracker;
 	private readonly loop: ReturnType<typeof createRecoveryLoop>;
 	private disposed = false;
 	private view: WorkspaceConnection | undefined;
@@ -180,11 +199,16 @@ class ConnectionEntry {
 		this.options = options;
 		this.changed = changed;
 		this.label = profileId;
+		this.timings = new ConnectionTimingTracker(
+			options.metricsHost ?? 'browser',
+			options.now,
+		);
 		this.loop = createRecoveryLoop({
 			run: (attempt, runOptions) =>
 				this.runAttempt(attempt.generation, runOptions.replaceDesktopEndpoint === true),
 			recovering: () => this.context !== undefined,
 			onAttemptStart: ({ recovering }) => {
+				this.timings.attemptStarted();
 				if (recovering) {
 					this.phase = 'reconnecting';
 				} else {
@@ -194,6 +218,7 @@ class ConnectionEntry {
 				this.changed();
 			},
 			onAttemptFailed: ({ message, retrying }) => {
+				this.timings.attemptFailed(new Error(message));
 				this.clearContext();
 				this.error = message;
 				this.phase = retrying ? 'reconnecting' : 'unreachable';
@@ -212,10 +237,38 @@ class ConnectionEntry {
 		this.loop.start({ replaceDesktopEndpoint: replaceEndpoint });
 	}
 
+	/** The document was hidden: the next resume reports how long for. */
+	suspend(): void {
+		if (this.disposed) return;
+		this.timings.hidden();
+	}
+
+	/**
+	 * The document is shown again. Its transport may have died while it was
+	 * hidden with nothing reporting it, so one short probe decides: a single
+	 * miss retires the generation at once.
+	 */
 	resume(): void {
 		if (this.disposed) return;
+		this.timings.shown();
 		this.loop.resume();
-		this.heartbeat?.probeNow();
+		const client = this.client;
+		const hello = this.hello;
+		this.heartbeat?.probeNow({
+			deadlineMs: SESSION_RESUME_PROBE_DEADLINE_MS,
+			decisive: true,
+			onSettled: ({ answered, roundTripMs }) => {
+				if (!answered) {
+					this.timings.lost('resume-probe');
+					return;
+				}
+				this.report(
+					client,
+					hello,
+					this.timings.resumeAnswered(roundTripMs ?? 0),
+				);
+			},
+		});
 	}
 
 	snapshot(): WorkspaceConnection {
@@ -225,7 +278,10 @@ class ConnectionEntry {
 			label: this.label,
 			phase: this.phase,
 			agentStatusStore: this.agentStatusStore,
-			retry: () => this.start(true),
+			retry: () => {
+				this.timings.lost('manual');
+				this.start(true);
+			},
 			...(this.serverId === undefined ? {} : { serverId: this.serverId }),
 			...(this.origin === undefined ? {} : { origin: this.origin }),
 			...(this.error === undefined ? {} : { error: this.error }),
@@ -281,6 +337,7 @@ class ConnectionEntry {
 			await opened.transport.close().catch(() => undefined);
 			return;
 		}
+		this.timings.transportOpened(readHostTimings(opened));
 		this.label = opened.label;
 		this.origin = opened.origin;
 		this.hostContext = opened.hostContext;
@@ -317,6 +374,7 @@ class ConnectionEntry {
 				if (this.client === client) this.client = undefined;
 				return;
 			}
+			this.timings.helloReceived();
 			this.compatibility = compatibility;
 			this.serverId = hello?.serverId;
 			this.hello = hello;
@@ -371,6 +429,7 @@ class ConnectionEntry {
 				ping: (signal) =>
 					client.query('connection.ping', { sentAt: Date.now() }, { signal }),
 				onLost: (snapshot) => {
+					this.timings.lost('heartbeat');
 					logSessionLane('connection-heartbeat-lost', snapshot);
 					this.error = 'Connection lost. Reconnecting…';
 					this.changed();
@@ -386,6 +445,7 @@ class ConnectionEntry {
 			this.phase = 'ready';
 			this.error = undefined;
 			this.changed();
+			this.report(client, hello, this.timings.ready());
 		} catch (cause) {
 			await client.close().catch(() => undefined);
 			if (this.client === client) this.client = undefined;
@@ -411,7 +471,32 @@ class ConnectionEntry {
 	private recoverFromClose(generation: number): void {
 		if (this.disposed) return;
 		if (!this.loop.gate.shouldRecoverFromClose({ generation })) return;
+		this.timings.lost('transport-closed');
 		this.start(true);
+	}
+
+	/** Send one timing sample to a server that keeps them. The server decides
+	 * whether recording is on; a failure here never touches the connection. */
+	private report(
+		client: TerminayClient | undefined,
+		hello: ServerHello | undefined,
+		sample: ConnectionMetricSample | undefined,
+	): void {
+		if (client === undefined || sample === undefined) return;
+		if (!hello?.capabilities.includes(CONNECTION_METRICS_CAPABILITY)) return;
+		void client
+			.command(CONNECTION_METRICS_OPERATIONS.record, { sample })
+			.catch(() => undefined);
+	}
+}
+
+function readHostTimings(
+	opened: ConnectionOpenResult,
+): HostConnectTimings | undefined {
+	try {
+		return normalizeHostConnectTimings(opened.connectTimings?.());
+	} catch {
+		return undefined;
 	}
 }
 
@@ -545,6 +630,11 @@ export class ConnectionRegistry {
 	 * rather than waiting out each one's interval. */
 	resume(): void {
 		for (const entry of this.entries.values()) entry.resume();
+	}
+
+	/** The document was hidden. */
+	suspend(): void {
+		for (const entry of this.entries.values()) entry.suspend();
 	}
 
 	async dispose(): Promise<void> {

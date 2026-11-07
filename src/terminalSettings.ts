@@ -506,6 +506,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	},
 	remoteAccess: {
 		exposeOnStartup: false,
+		connectionMetrics: false,
 		webRtcHostedDomain: 'terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},
@@ -1265,6 +1266,33 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'text',
 				placeholder: 'stun:stun.l.google.com:19302',
 				keywords: ['webrtc', 'ice', 'stun', 'turn', 'nat', 'relay'],
+			}),
+		],
+	},
+	{
+		id: 'remote-access-metrics',
+		categoryId: 'remote',
+		title: 'Connection timings',
+		description:
+			'Measure how quickly devices connect and reconnect to this server. Samples hold durations only and stay on this server.',
+		fields: [
+			makeField({
+				key: 'remoteAccess.connectionMetrics',
+				label: 'Record connection timings',
+				description:
+					'Keep a timing sample each time a device connects, reconnects, or returns to the app. The newest 2,000 are kept.',
+				sectionId: 'remote-access-metrics',
+				categoryId: 'remote',
+				input: 'boolean',
+				keywords: [
+					'metrics',
+					'timings',
+					'latency',
+					'reconnect',
+					'diagnostics',
+					'stats',
+					'pwa',
+				],
 			}),
 		],
 	},
@@ -3113,6 +3141,10 @@ export function normalizeTerminalSettings(
 				typeof remoteAccessInput.exposeOnStartup === 'boolean'
 					? remoteAccessInput.exposeOnStartup
 					: defaultTerminalSettings.remoteAccess.exposeOnStartup,
+			connectionMetrics:
+				typeof remoteAccessInput.connectionMetrics === 'boolean'
+					? remoteAccessInput.connectionMetrics
+					: defaultTerminalSettings.remoteAccess.connectionMetrics,
 			webRtcHostedDomain:
 				typeof remoteAccessInput.webRtcHostedDomain === 'string' &&
 				remoteAccessInput.webRtcHostedDomain.trim().length > 0

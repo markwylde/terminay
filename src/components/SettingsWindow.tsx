@@ -51,6 +51,7 @@ import {
 } from '../shared/SharedSettingsRouteBody';
 import { useMacroEditor } from './macros/useMacroEditor';
 import { MacrosCategory } from './settings/MacrosCategory';
+import { ConnectionMetricsSettings } from './settings/ConnectionMetricsSettings';
 import { WorkflowsCategory } from './settings/WorkflowsCategory';
 import { useWorkflowEditor } from './workflows/useWorkflowEditor';
 import { useWorkflowSettingsClient } from './workflows/useWorkflowSettingsClient';
@@ -2450,6 +2451,13 @@ export function SettingsWindow({
 						</div>
 					</div>
 				))}
+				{section.id === 'remote-access-metrics' &&
+				applicationClient !== undefined ? (
+					<ConnectionMetricsSettings
+						client={applicationClient}
+						enabled={draft.remoteAccess.connectionMetrics}
+					/>
+				) : null}
 				{section.id === 'terminay-mcp' &&
 				connectedServersClient !== undefined ? (
 					<ConnectedMcpServersSettings client={connectedServersClient} />

@@ -61,6 +61,7 @@ import {
 	isSettingsParamFailure,
 	parseGetSettings,
 	parseListShellProfiles,
+	parseGetConnectionMetrics,
 	parseReorderShellProfiles,
 	parseSaveShellProfile,
 	parseShellProfileId,
@@ -392,6 +393,7 @@ export interface ServerControlHandlers {
 	readonly deleteShellProfile?: OperationHandler;
 	readonly reorderShellProfiles?: OperationHandler;
 	readonly setDefaultShellProfile?: OperationHandler;
+	readonly getConnectionMetrics?: OperationHandler;
 	readonly listMacros?: OperationHandler;
 	readonly runMacro?: OperationHandler;
 	readonly cancelMacro?: OperationHandler;
@@ -492,6 +494,7 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	get_settings: 'settingsRead',
 	update_settings: 'settingsChange',
 	list_shell_profiles: 'settingsRead',
+	get_connection_metrics: 'settingsRead',
 	save_shell_profile: 'settingsChange',
 	delete_shell_profile: 'settingsChange',
 	reorder_shell_profiles: 'settingsChange',
@@ -807,6 +810,7 @@ const DEFAULT_SCOPES: Readonly<
 	get_settings: 'read',
 	update_settings: 'write',
 	list_shell_profiles: 'read',
+	get_connection_metrics: 'read',
 	save_shell_profile: 'write',
 	delete_shell_profile: 'write',
 	reorder_shell_profiles: 'write',
@@ -891,6 +895,7 @@ const HANDLER_BY_OPERATION: Readonly<
 	get_settings: 'getSettings',
 	update_settings: 'updateSettings',
 	list_shell_profiles: 'listShellProfiles',
+	get_connection_metrics: 'getConnectionMetrics',
 	save_shell_profile: 'saveShellProfile',
 	delete_shell_profile: 'deleteShellProfile',
 	reorder_shell_profiles: 'reorderShellProfiles',
@@ -1093,6 +1098,7 @@ export const WORKSPACE_REACH_OPERATIONS: ReadonlySet<ControlOperation> =
 		'delete_shell_profile',
 		'reorder_shell_profiles',
 		'set_default_shell_profile',
+		'get_connection_metrics',
 		'move_terminal_to_project',
 		'focus_home',
 	]);
@@ -1783,6 +1789,7 @@ export function createTerminalControlAdapter(
 					deleteShellProfile: settingsHandler(parseShellProfileId, (a, p, c, s) => a.deleteShellProfile(p, c, s)),
 					reorderShellProfiles: settingsHandler(parseReorderShellProfiles, (a, p, c, s) => a.reorderShellProfiles(p, c, s)),
 					setDefaultShellProfile: settingsHandler(parseShellProfileId, (a, p, c, s) => a.setDefaultShellProfile(p, c, s)),
+					getConnectionMetrics: settingsHandler(parseGetConnectionMetrics, (a, p, c, s) => a.getConnectionMetrics(p, c, s)),
 				};
 	const macros = options.macros;
 	const macroHandler =

@@ -875,6 +875,15 @@ function registerSettingsTools(
 		async (_params, extra) => call('list_shell_profiles', {}, extra.signal),
 	);
 	server.registerTool(
+		'get_connection_metrics',
+		{
+			description: `Read how quickly devices connect and reconnect to this server: the sample count, the time range, and count, mean, p50, p95 and max of each step in milliseconds (hidden time, detection, signaling, ICE, lanes, device and application authentication, transport, hello, workspace sync, total), overall and per trigger (initial, resume-probe, heartbeat, transport-closed, manual), with the most recent samples. Samples are kept only while Settings > Remote Access > Record connection timings is on; MCP cannot turn it on. Read-only. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('get_connection_metrics', {}, extra.signal),
+	);
+	server.registerTool(
 		'save_shell_profile',
 		{
 			description: `Create a shell profile, or with profile.id change one you or the user made, validated as Settings > Shell validates it. Fields you leave out of a change keep their values, including arguments and environment you cannot see; environment replaces the whole overlay when given (a value, or null to unset a variable). Never put a secret in a profile. ${WORKSPACE_REACH_NOTE} ${APPROVAL_NOTE}`,

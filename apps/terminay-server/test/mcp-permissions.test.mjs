@@ -122,7 +122,7 @@ test("every operation but capability discovery has exactly one fixed permission 
     "update_automation",
   ])
   assert.deepEqual(byGroup.notifications.sort(), ["dismiss_notification", "list_notifications", "send_notification"])
-  assert.deepEqual(byGroup.settingsRead.sort(), ["get_settings", "list_shell_profiles"])
+  assert.deepEqual(byGroup.settingsRead.sort(), ["get_connection_metrics", "get_settings", "list_shell_profiles"])
   assert.deepEqual(byGroup.settingsChange.sort(), [
     "delete_shell_profile", "reorder_shell_profiles", "save_shell_profile",
     "set_default_shell_profile", "update_settings",

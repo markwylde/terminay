@@ -1,5 +1,10 @@
 import { nodeTerminalLaunchPathAuthority } from './terminalService/launchResolver.js';
 import {
+	ConnectionMetricsService,
+	connectionMetricsEnabledFrom,
+} from './connectionMetrics/index.js';
+import {
+	CONNECTION_METRICS_CAPABILITY,
 	FEATURE_CAPABILITIES,
 	LANGUAGE_CAPABILITY,
 	type JsonValue,
@@ -410,6 +415,10 @@ export interface ServerCoreCompositionOptions
 	/** Optional durable server settings authority. No settings capability is
 	 * registered when a host has not supplied a concrete repository. */
 	readonly settings?: ServerSettingsRepository;
+	/** Keep connection timing samples (`connection.metrics.v1`) while the
+	 * Record connection timings setting is on. `file` is where they live;
+	 * absent, they are kept in memory only. */
+	readonly connectionMetrics?: { readonly file?: string };
 	/** Compose the MCP permission approval service (ADR-0031). Only a host
 	 * that serves the MCP control socket asks for it; its policy is read from
 	 * `settings` when present. */
@@ -589,6 +598,8 @@ export interface ServerCoreComposition {
 	readonly agentChat?: AgentChatService;
 	/** Pixel, composed with agent chats. */
 	readonly pixel?: PixelService;
+	/** Connection timing samples, when composed. */
+	readonly connectionMetrics?: ConnectionMetricsService;
 	/** Server-owned app windows, when composed. */
 	readonly appWindows?: AppWindowService;
 	/**
@@ -1159,6 +1170,21 @@ export function createServerCoreComposition(
 							enabled: state.enabled,
 							provider: state.provider,
 						});
+					},
+				});
+	const connectionMetrics =
+		options.connectionMetrics === undefined
+			? undefined
+			: new ConnectionMetricsService({
+					...(options.connectionMetrics.file === undefined
+						? {}
+						: { file: options.connectionMetrics.file }),
+					enabled: () => {
+						try {
+							return connectionMetricsEnabledFrom(options.settings?.settings);
+						} catch {
+							return false;
+						}
 					},
 				});
 	const removePixelSettingsObserver =
@@ -1954,7 +1980,10 @@ export function createServerCoreComposition(
 								notificationOperations?.operations ?? {},
 								mergeOperationRegistries(
 									pushOperations?.operations ?? {},
-									serverUpgradeOperations.operations,
+									mergeOperationRegistries(
+										serverUpgradeOperations.operations,
+										connectionMetrics?.operations() ?? {},
+									),
 								),
 							),
 						),
@@ -2406,6 +2435,7 @@ export function createServerCoreComposition(
 		...(mcpApprovals === undefined ? {} : { mcpApprovals }),
 		...(agentChat === undefined ? {} : { agentChat }),
 		...(pixel === undefined ? {} : { pixel }),
+		...(connectionMetrics === undefined ? {} : { connectionMetrics }),
 		...(appWindows === undefined ? {} : { appWindows }),
 		...(workspaceView === undefined ? {} : { workspaceView }),
 		...(connectedServers === undefined ? {} : { connectedServers }),
@@ -2669,6 +2699,9 @@ function uniqueCapabilities(
 			// Every server says whether it has an upgrade to offer; one with no
 			// upgrader says it has none.
 			FEATURE_CAPABILITIES.serverUpgrade,
+			...(options.connectionMetrics === undefined
+				? []
+				: [CONNECTION_METRICS_CAPABILITY]),
 			...(options.workspace === undefined
 				? []
 				: [
