@@ -1,14 +1,16 @@
 /**
  * Home's Workflows section: every workflow on a terminal the dashboard lists,
  * as columns that scroll sideways, with filters, grouping, sort and density.
+ * At 600px or less it is compact: columns stack and scroll with the section,
+ * and most options fold behind View options.
  *
  * Read-only (ADR-0097): it never changes a step and never types into a
  * terminal. Its one action opens a workflow's terminal through the
  * dashboard's own activation. Every piece of workflow text is a text node.
  */
 
-import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
-import { type ReactElement, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, SlidersHorizontal } from 'lucide-react';
+import { type ReactElement, type RefObject, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { TerminalTitleStoreContext } from '../../shared/useWorkspaceProjection';
 import { WorkflowStepMarker } from './workflowIcons';
 import { WORKFLOW_DIAL_TICK_MS, WorkflowDial } from './WorkflowTabBadge';
@@ -72,6 +74,26 @@ const NOTES_OPTIONS: readonly [WorkflowsHomeNotes, string][] = [
 	['current', 'Current only'],
 ];
 
+/** The width at or below which the section is compact (phones, narrow Home tabs). */
+export const WORKFLOWS_HOME_COMPACT_WIDTH = 600;
+
+/** Whether the element is at most the compact width, followed as it resizes. */
+function useCompact(ref: RefObject<HTMLElement | null>): boolean {
+	const [compact, setCompact] = useState(false);
+	useEffect(() => {
+		const element = ref.current;
+		if (element === null || typeof ResizeObserver === 'undefined') return;
+		// The border box, so the scrollbar compact mode adds cannot keep it compact.
+		const measure = () =>
+			setCompact(element.getBoundingClientRect().width <= WORKFLOWS_HOME_COMPACT_WIDTH);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(element, { box: 'border-box' });
+		return () => observer.disconnect();
+	}, [ref]);
+	return compact;
+}
+
 /** One clock for the whole section, ticking only while a step is active. */
 function useSectionNow(rows: readonly WorkflowsHomeRow[], fixed: number | undefined): number {
 	const ticking =
@@ -134,6 +156,8 @@ export function WorkflowsHome(props: WorkflowsHomeProps): ReactElement {
 	const update = (patch: Partial<WorkflowsHomeView>) =>
 		setView((previous) => ({ ...previous, ...patch }));
 
+	const root = useRef<HTMLDivElement | null>(null);
+	const compact = useCompact(root);
 	const rows = useLiveTitles(props.rows);
 	const model = useMemo(() => applyWorkflowsHomeView(rows, view), [rows, view]);
 	const now = useSectionNow(model.shown, props.now);
@@ -205,10 +229,12 @@ export function WorkflowsHome(props: WorkflowsHomeProps): ReactElement {
 
 	return (
 		<div
+			ref={root}
 			className={`home-section workflows-home workflows-home--notes-${view.notes}${
 				view.narrow ? ' workflows-home--narrow' : ''
-			}`}
+			}${compact ? ' workflows-home--compact' : ''}`}
 			data-terminay-home-workflows
+			data-workflows-home-compact={compact ? 'true' : 'false'}
 		>
 			<header className="home-section__header">
 				<h2 className="home-section__heading">Workflows</h2>
@@ -222,6 +248,7 @@ export function WorkflowsHome(props: WorkflowsHomeProps): ReactElement {
 			<WorkflowsToolbar
 				view={view}
 				model={model}
+				compact={compact}
 				onChange={update}
 				onReset={() => setView(DEFAULT_WORKFLOWS_HOME_VIEW)}
 			/>
@@ -259,10 +286,75 @@ function Segmented<T extends string>(props: {
 function WorkflowsToolbar(props: {
 	readonly view: WorkflowsHomeView;
 	readonly model: ReturnType<typeof applyWorkflowsHomeView>;
+	readonly compact: boolean;
 	readonly onChange: (patch: Partial<WorkflowsHomeView>) => void;
 	readonly onReset: () => void;
 }) {
-	const { view, model, onChange } = props;
+	const { view, model, compact, onChange } = props;
+	const [optionsOpen, setOptionsOpen] = useState(false);
+	const changed = !isDefaultWorkflowsHomeView(view);
+	const options = (
+		<>
+			<ProjectPicker view={view} model={model} onChange={onChange} />
+			<Segmented
+				label="Group"
+				options={GROUP_OPTIONS}
+				value={view.group}
+				onChange={(group) => onChange({ group })}
+			/>
+			{view.group === 'none' || compact ? null : (
+				<Segmented
+					label="Layout"
+					options={LAYOUT_OPTIONS}
+					value={view.layout}
+					onChange={(layout) => onChange({ layout })}
+				/>
+			)}
+			<label className="workflows-home__field">
+				<span className="workflows-home__label">Sort</span>
+				<select
+					className="workflows-home__select"
+					value={view.sort}
+					onChange={(event) => onChange({ sort: event.target.value as WorkflowsHomeSort })}
+				>
+					{SORT_OPTIONS.map(([value, text]) => (
+						<option key={value} value={value}>
+							{text}
+						</option>
+					))}
+				</select>
+			</label>
+			<Segmented
+				label="Notes"
+				options={NOTES_OPTIONS}
+				value={view.notes}
+				onChange={(notes) => onChange({ notes })}
+			/>
+			<label className="workflows-home__toggle">
+				<input
+					type="checkbox"
+					checked={view.showFinished}
+					onChange={(event) => onChange({ showFinished: event.target.checked })}
+				/>
+				Show finished
+			</label>
+			{compact ? null : (
+				<label className="workflows-home__toggle">
+					<input
+						type="checkbox"
+						checked={view.narrow}
+						onChange={(event) => onChange({ narrow: event.target.checked })}
+					/>
+					Narrow columns
+				</label>
+			)}
+			{changed ? (
+				<button type="button" className="workflows-home__link" onClick={props.onReset}>
+					Reset view
+				</button>
+			) : null}
+		</>
+	);
 	return (
 		<div className="workflows-home__toolbar">
 			<input
@@ -300,61 +392,42 @@ function WorkflowsToolbar(props: {
 					);
 				})}
 			</fieldset>
-			<ProjectPicker view={view} model={model} onChange={onChange} />
-			<Segmented
-				label="Group"
-				options={GROUP_OPTIONS}
-				value={view.group}
-				onChange={(group) => onChange({ group })}
-			/>
-			{view.group === 'none' ? null : (
-				<Segmented
-					label="Layout"
-					options={LAYOUT_OPTIONS}
-					value={view.layout}
-					onChange={(layout) => onChange({ layout })}
-				/>
-			)}
-			<label className="workflows-home__field">
-				<span className="workflows-home__label">Sort</span>
-				<select
-					className="workflows-home__select"
-					value={view.sort}
-					onChange={(event) => onChange({ sort: event.target.value as WorkflowsHomeSort })}
+			{compact ? (
+				<button
+					type="button"
+					className="workflows-home__options-toggle"
+					aria-expanded={optionsOpen}
+					aria-controls="workflows-home-options"
+					aria-label={changed ? 'View options, changed' : 'View options'}
+					data-workflows-home-options-toggle
+					onClick={() => setOptionsOpen((open) => !open)}
 				>
-					{SORT_OPTIONS.map(([value, text]) => (
-						<option key={value} value={value}>
-							{text}
-						</option>
-					))}
-				</select>
-			</label>
-			<Segmented
-				label="Notes"
-				options={NOTES_OPTIONS}
-				value={view.notes}
-				onChange={(notes) => onChange({ notes })}
-			/>
-			<label className="workflows-home__toggle">
-				<input
-					type="checkbox"
-					checked={view.showFinished}
-					onChange={(event) => onChange({ showFinished: event.target.checked })}
-				/>
-				Show finished
-			</label>
-			<label className="workflows-home__toggle">
-				<input
-					type="checkbox"
-					checked={view.narrow}
-					onChange={(event) => onChange({ narrow: event.target.checked })}
-				/>
-				Narrow columns
-			</label>
-			{isDefaultWorkflowsHomeView(view) ? null : (
-				<button type="button" className="workflows-home__link" onClick={props.onReset}>
-					Reset view
+					<SlidersHorizontal size={14} aria-hidden="true" />
+					View options
+					{changed ? (
+						<span className="workflows-home__changed" aria-hidden="true">
+							· changed
+						</span>
+					) : null}
+					<ChevronDown
+						size={14}
+						aria-hidden="true"
+						className={`workflows-home__options-chevron${optionsOpen ? ' is-open' : ''}`}
+					/>
 				</button>
+			) : null}
+			{compact ? (
+				optionsOpen ? (
+					<div
+						className="workflows-home__options"
+						id="workflows-home-options"
+						data-workflows-home-options
+					>
+						{options}
+					</div>
+				) : null
+			) : (
+				options
 			)}
 		</div>
 	);
