@@ -68,6 +68,10 @@ import {
 import { PixelCompanion } from './pixel/Pixel';
 import { usePixelServer } from './pixel/usePixelServer';
 import type { TerminalLauncherView } from './types/terminalLaunchers';
+import type {
+	FolderMenuActionId,
+	FolderMenuEntry,
+} from './workspace/folderMenuModel';
 import { useServerTerminalLaunchers } from './workspace/useServerTerminalLaunchers';
 import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
 import {
@@ -260,17 +264,25 @@ import {
 	type TerminalNoteSync,
 } from './workspace/terminalNoteSync';
 import { ApplicationMenuButton } from './workspace/ApplicationMenuButton';
-import { CompactChromeRow } from './workspace/CompactChromeRow';
-import { CompactSwitcher } from './workspace/CompactSwitcher';
+import {
+	CompactChromeRow,
+	type CompactTitle,
+} from './workspace/CompactChromeRow';
+import {
+	type CompactHomeSectionItem,
+	CompactSwitcher,
+} from './workspace/CompactSwitcher';
 import { serverRows } from './workspace/ConnectionsControl';
 import type {
+	CompactSwitcherFolderGroup,
 	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
 } from './workspace/compactSwitcherModel';
 import {
 	buildCompactSwitcherGroups,
-	filterCompactSwitcherGroups,
+	compactNeedsYou,
 } from './workspace/compactSwitcherModel';
+import type { HomeFrontTab } from './workspace/HomeWorkspace';
 import { ProjectTabList } from './workspace/ProjectTabList';
 import {
 	createProjectAcrossReconnects,
@@ -474,7 +486,7 @@ import {
 	HomeWorkspace,
 	type HomeWorkspaceHandle,
 } from './workspace/HomeWorkspace';
-import type { HomeSection } from './workspace/homeSection.ts';
+import { HOME_SECTIONS, type HomeSection } from './workspace/homeSection.ts';
 import {
 	type CommandBarItem,
 	CommandBarDialog,
@@ -493,11 +505,17 @@ import {
 } from './workspace/homeSearchModel';
 import { buildHomeOverview } from './workspace/homeOverviewModel';
 import {
+	COMPACT_SHELL_LAUNCHER,
+	recallCompactLauncher,
 	recallHomeSidebarVisible,
 	recallSelectedFolder,
+	rememberCompactLauncher,
 	rememberHomeSidebarVisible,
 	rememberSelectedFolder,
 } from './workspace/localViewState';
+
+/** A project on another server has no collapse this device knows of. */
+const NO_COLLAPSED_FOLDERS: ReadonlySet<string> = new Set();
 import {
 	useWorkspaceViewController,
 	type WorkspaceViewWindow,
@@ -752,6 +770,17 @@ type ProjectWorkspaceHandle = {
 	/** Open a file tab for a path inside this folder's root; its tab id, or
 	 * undefined when the path is outside the root. */
 	openFileTab: (path: string) => Promise<string | undefined>;
+	/** A folder of this project's context menu: its entries and how to run
+	 * one, as the Folders tree offers them. */
+	folderMenu: (folderId: string) =>
+		| Readonly<{
+				entries: readonly FolderMenuEntry[];
+				run: (
+					action: FolderMenuActionId,
+					anchor: { x: number; y: number },
+				) => void;
+		  }>
+		| undefined;
 };
 
 type ProjectWorkspaceProps = {
@@ -4749,9 +4778,15 @@ const ProjectWorkspace = memo(forwardRef<
 			},
 			[folderRootPath, openFile],
 		);
+		// Assigned once the folder menu controller below has run.
+		const describeFolderMenuRef = useRef<
+			ProjectWorkspaceHandle['folderMenu'] | null
+		>(null);
 		useImperativeHandle(
 			ref,
 			() => ({
+				folderMenu: (folderId: string) =>
+					describeFolderMenuRef.current?.(folderId),
 				acceptMovedTerminal,
 				acceptServerTerminal,
 				reconcileServerPanels,
@@ -5414,6 +5449,7 @@ const ProjectWorkspace = memo(forwardRef<
 		// folder was right-clicked, which need not be the one on screen.
 		const {
 			cancelFolderNameDialog,
+			describeFolderMenu,
 			folderMenuElement,
 			folderNameDialog,
 			openFolderMenu,
@@ -5455,6 +5491,7 @@ const ProjectWorkspace = memo(forwardRef<
 			},
 			onError: setErrorText,
 		});
+		describeFolderMenuRef.current = describeFolderMenu;
 		const folderNameModal = useDraggableModal(folderNameDialog !== null);
 		// The order is the server's. The tree shows what it asked for until the
 		// server answers, and goes back to the server's order if it refuses.
@@ -7361,7 +7398,10 @@ function App({
 		serverId: string;
 	} | null>(null);
 	const [isCompactSwitcherOpen, setIsCompactSwitcherOpen] = useState(false);
-	const [compactSwitcherQuery, setCompactSwitcherQuery] = useState('');
+	// What Home has in front, for the compact title block and the drawer.
+	const [homeFrontTab, setHomeFrontTab] = useState<HomeFrontTab>();
+	// Bumped when the switcher remembers a launcher, so the next open reads it.
+	const [compactLauncherVersion, setCompactLauncherVersion] = useState(0);
 	// The switcher's Agents tab is filled by the workspace in front, which is
 	// what holds the project's agents; the shell only gives it somewhere to draw.
 	const [compactAgentsHost, setCompactAgentsHost] =
@@ -7382,7 +7422,6 @@ function App({
 					: compactConnectionRef.current;
 			setIsRemoteMenuOpen(false);
 			setIsActivityMenuOpen(false);
-			setCompactSwitcherQuery('');
 			setIsCompactSwitcherOpen(true);
 		},
 		[setIsRemoteMenuOpen],
@@ -9187,6 +9226,8 @@ function App({
 										id: folder.id,
 										name: folderNameFromStatus(folder, worktreeStatus),
 										...(folder.kind === 'general' ? { isGeneral: true } : {}),
+										...(folder.kind === 'linked' ? { isLinked: true } : {}),
+										panelIds: folder.panelIds,
 									},
 								];
 					}),
@@ -9199,7 +9240,13 @@ function App({
 			Object.fromEntries(
 				JSON.parse(compactSwitcherFolderKey) as [
 					string,
-					{ id: string; name: string; isGeneral?: boolean }[],
+					{
+						id: string;
+						name: string;
+						isGeneral?: boolean;
+						isLinked?: boolean;
+						panelIds?: string[];
+					}[],
 				][],
 			),
 		[compactSwitcherFolderKey],
@@ -9221,18 +9268,10 @@ function App({
 			}),
 		[compactSwitcherFolders, dashboardSources],
 	);
-	const compactSwitcherFilteredGroups = useMemo(
-		() =>
-			filterCompactSwitcherGroups(compactSwitcherGroups, compactSwitcherQuery),
-		[compactSwitcherGroups, compactSwitcherQuery],
+	const compactNeedsYouCount = useMemo(
+		() => compactNeedsYou(compactSwitcherGroups).length,
+		[compactSwitcherGroups],
 	);
-	const activeCompactTerminal = useMemo(() => {
-		if (isHomeSelected || activeProjectId === undefined) return undefined;
-		const entries = inventoryByProject[activeProjectId] ?? [];
-		return entries.find(
-			(entry) => entry.kind === 'terminal' && entry.isActivePanel === true,
-		);
-	}, [activeProjectId, inventoryByProject, isHomeSelected]);
 	const activeCompactPanel = useMemo(() => {
 		if (isHomeSelected || activeProjectId === undefined) return undefined;
 		const entries = inventoryByProject[activeProjectId] ?? [];
@@ -9423,6 +9462,183 @@ function App({
 			createTerminalInProject(pending.projectId);
 		});
 	}, [activateProject, createTerminalInProject, currentServerId, projects]);
+	/**
+	 * A create from the compact drawer: in the folder it names, with the
+	 * launcher it names. Another server's project is reached by going there,
+	 * and only its default shell is this window's to start (design 3a).
+	 */
+	const createCompactTerminal = useCallback(
+		(
+			group: CompactSwitcherProjectGroup,
+			folder: CompactSwitcherFolderGroup | undefined,
+			launcherId: string,
+		) => {
+			if (group.serverId !== currentServerId || folder === undefined) {
+				createCompactSwitcherTerminal(group);
+				return;
+			}
+			rememberCompactLauncher(group.serverId, launcherId);
+			setCompactLauncherVersion((version) => version + 1);
+			if (launcherId === COMPACT_SHELL_LAUNCHER)
+				newTerminalInFolder(group.projectId, folder.folderId);
+			else launchTerminalInFolder(group.projectId, folder.folderId, launcherId);
+		},
+		[
+			createCompactSwitcherTerminal,
+			currentServerId,
+			launchTerminalInFolder,
+			newTerminalInFolder,
+		],
+	);
+	/**
+	 * A folder context-menu entry chosen in the drawer runs in that folder's
+	 * own workspace, brought to the front first so whatever it asks — a delete
+	 * confirmation, a rename — is shown over the folder it is about.
+	 */
+	const runCompactFolderAction = useCallback(
+		(
+			group: CompactSwitcherProjectGroup,
+			folder: CompactSwitcherFolderGroup,
+			action: FolderMenuActionId,
+		) => {
+			if (group.serverId !== currentServerId) return;
+			const anchor = {
+				x: Math.round(window.innerWidth / 2),
+				y: Math.round(window.innerHeight / 3),
+			};
+			runInFolderWorkspace(group.projectId, folder.folderId, (workspace) =>
+				workspace.folderMenu(folder.folderId)?.run(action, anchor),
+			);
+		},
+		[currentServerId, runInFolderWorkspace],
+	);
+	const reportCompactError = useCallback(
+		(projectId: string, message: string) =>
+			commandWorkspace(projectId)?.reportError(message),
+		[commandWorkspace],
+	);
+	/** The order is the server's; the drawer shows it once committed. */
+	const reorderCompactFolders = useCallback(
+		(group: CompactSwitcherProjectGroup, folderIds: readonly string[]) => {
+			const store = terminalClientContext?.workspaceSnapshotStore;
+			if (store === undefined || group.serverId !== currentServerId) return;
+			void store
+				.reorderFolders({
+					projectId: group.projectId,
+					folderIds: [...folderIds],
+				})
+				.catch((error: unknown) =>
+					reportCompactError(
+						group.projectId,
+						`Unable to reorder the folders: ${error instanceof Error ? error.message : String(error)}`,
+					),
+				);
+		},
+		[
+			currentServerId,
+			reportCompactError,
+			terminalClientContext?.workspaceSnapshotStore,
+		],
+	);
+	/**
+	 * A folder's panels in a new order, committed as a dropped tab commits it.
+	 * The server orders only the panels it holds, so a panel only this device
+	 * knows is left out and any the drawer did not list keep their place last.
+	 */
+	const reorderCompactPanels = useCallback(
+		(
+			group: CompactSwitcherProjectGroup,
+			folder: CompactSwitcherFolderGroup,
+			panelIds: readonly string[],
+		) => {
+			const store = terminalClientContext?.workspaceSnapshotStore;
+			const canonical = store?.snapshot?.folders[folder.folderId]?.panelIds;
+			if (
+				store === undefined ||
+				canonical === undefined ||
+				group.serverId !== currentServerId
+			)
+				return;
+			const listed = panelIds.filter((panelId) => canonical.includes(panelId));
+			const order = [
+				...listed,
+				...canonical.filter((panelId) => !listed.includes(panelId)),
+			];
+			if (order.every((panelId, index) => panelId === canonical[index])) return;
+			void store
+				.reorderPanels({
+					projectId: group.projectId,
+					folderId: folder.folderId,
+					panelIds: order,
+				})
+				.catch((error: unknown) =>
+					reportCompactError(
+						group.projectId,
+						error instanceof Error
+							? error.message
+							: 'Unable to reorder these tabs on the server.',
+					),
+				);
+		},
+		[
+			currentServerId,
+			reportCompactError,
+			terminalClientContext?.workspaceSnapshotStore,
+		],
+	);
+	/**
+	 * The compact Home control: Home, or back to the project that was in front
+	 * before it, which Home keeps as its command target. A project that has
+	 * gone since leaves Home selected.
+	 */
+	const toggleCompactHome = useCallback(() => {
+		if (!isHomeSelected) {
+			selectHome();
+			return;
+		}
+		if (
+			activeProjectId !== undefined &&
+			projectsRef.current.some((project) => project.id === activeProjectId)
+		)
+			activateProject(activeProjectId);
+	}, [
+		activateProject,
+		activeProjectId,
+		isHomeSelected,
+		projectsRef,
+		selectHome,
+	]);
+	const compactRememberedLauncher = useMemo(() => {
+		// Read again whenever this device remembers a new choice.
+		void compactLauncherVersion;
+		return recallCompactLauncher(
+			currentServerId,
+			terminalLaunchers.map((launcher) => launcher.id),
+		);
+	}, [compactLauncherVersion, currentServerId, terminalLaunchers]);
+	const compactHomeSections = useMemo<readonly CompactHomeSectionItem[]>(() => {
+		const tabCount = compactSwitcherGroups.reduce(
+			(total, connection) =>
+				total +
+				connection.projects.reduce(
+					(count, project) => count + project.panels.length,
+					0,
+				),
+			0,
+		);
+		const summaries: Record<HomeSection, string> = {
+			home: 'Overview of every project',
+			tabs: `${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'} open`,
+			bots: 'Bots and their sessions',
+			automations: 'Scheduled and triggered runs',
+			workflows: 'Checklists agents work through',
+			recordings: 'Saved terminal recordings',
+		};
+		return HOME_SECTIONS.map((section) => ({
+			section,
+			summary: summaries[section],
+		}));
+	}, [compactSwitcherGroups]);
 	const activateDashboardAgent = useCallback(
 		(serverId: string, projectId: string, agent: DashboardAgent) => {
 			// External agents run outside Terminay: nothing to activate.
@@ -10127,6 +10343,34 @@ function App({
 					compactSwitcherFrontFolder,
 					commandWorkspace(activeProject.id)?.worktreeStatus(),
 				);
+	const compactTitleFor = (
+		displayedActiveProject: { title: string; color: string } | null | undefined,
+	): CompactTitle =>
+		isHomeSelected
+			? { kind: 'home', tabTitle: homeFrontTab?.title ?? 'Home' }
+			: displayedActiveProject == null
+				? { kind: 'none' }
+				: {
+						kind: 'project',
+						projectTitle: displayedActiveProject.title,
+						color: displayedActiveProject.color,
+						...(compactSwitcherFrontFolderName === undefined
+							? {}
+							: { folderName: compactSwitcherFrontFolderName }),
+						...(activeCompactPanel === undefined
+							? {}
+							: {
+									panel: {
+										title: activeCompactPanel.title,
+										panelId: activeCompactPanel.panelId,
+										isTerminal: activeCompactPanel.kind === 'terminal',
+										serverId: currentServerId,
+										...(activeCompactPanel.sessionId === undefined
+											? {}
+											: { sessionId: activeCompactPanel.sessionId }),
+									},
+								}),
+					};
 	const displayedActiveProjectId =
 		isPendingProjectFailure && failedProjectCreation !== null
 			? failedProjectCreation.tab.id
@@ -10135,6 +10379,23 @@ function App({
 		() => [...composeProjectTabs(projectTabSources, rememberedTabOrder)],
 		[projectTabSources, rememberedTabOrder],
 	);
+	/** The drawer's rail follows the project tab order, reorders included. */
+	const orderedCompactSwitcherGroups = useMemo(() => {
+		const rank = new Map(
+			displayedProjects.map((tab, index) => [tab.handle, index]),
+		);
+		return compactSwitcherGroups.map((connection) => ({
+			...connection,
+			projects: connection.projects
+				.map((project, index) => ({ project, index }))
+				.sort(
+					(left, right) =>
+						(rank.get(left.project.key) ?? rank.size + left.index) -
+						(rank.get(right.project.key) ?? rank.size + right.index),
+				)
+				.map(({ project }) => project),
+		}));
+	}, [compactSwitcherGroups, displayedProjects]);
 	const displayedActiveHandle = compositionTabKey(
 		currentServerId,
 		displayedActiveProjectId,
@@ -10157,6 +10418,9 @@ function App({
 		displayedProjects.find(
 			(project) => project.handle === displayedActiveHandle,
 		) ?? activeProject;
+	// The compact title block names what is on screen and nothing else: the
+	// active panel of whatever kind, or the project when it has none in front.
+	const compactTitle = compactTitleFor(displayedActiveProject);
 	/** Going to a tab on another server is what binds the workspace to it. */
 	/** A strip control always hands back a `(serverId, projectId)` handle. A
 	 * caller that still speaks a bare project id means one on this server,
@@ -10512,21 +10776,11 @@ function App({
 						onOpenSwitcher={openCompactSwitcher}
 						onToggleExplorer={toggleActiveProjectExplorer}
 						{...(isPixelShown ? { pixelSlotRef: setCompactPixelSlot } : {})}
-						projectTitle={
-							isHomeSelected
-								? 'Home'
-								: (displayedActiveProject?.title ?? 'No project')
-						}
+						title={compactTitle}
 						updateAction={appUpdateAction}
-						{...(displayedActiveProject?.color === undefined
-							? {}
-							: { projectColor: displayedActiveProject.color })}
-						{...(activeCompactTerminal === undefined
-							? {}
-							: {
-									terminalTitle: activeCompactTerminal.title,
-									terminalPanelId: activeCompactTerminal.panelId,
-								})}
+						isHomeSelected={isHomeSelected}
+						homeAttention={compactNeedsYouCount > 0}
+						onToggleHome={toggleCompactHome}
 					/>
 				) : (
 					<>
@@ -10782,12 +11036,45 @@ function App({
 			) : null}
 			{isCompactChrome && isCompactSwitcherOpen ? (
 				<CompactSwitcher
-					groups={compactSwitcherFilteredGroups}
+					groups={orderedCompactSwitcherGroups}
 					isHomeSelected={isHomeSelected}
-					onShowHome={() => {
-						closeCompactSwitcher();
-						selectHome();
+					currentServer={{
+						id: currentServerId,
+						label: currentServerLabel,
+						isReachable: currentServerReachable,
 					}}
+					{...(isHomeSelected || activeProjectId === undefined
+						? {}
+						: {
+								frontProjectKey: compositionTabKey(
+									currentServerId,
+									activeProjectId,
+								),
+							})}
+					{...(homeFrontTab?.section === undefined
+						? {}
+						: { homeFrontSection: homeFrontTab.section })}
+					homeSections={compactHomeSections}
+					launchers={terminalLaunchers}
+					rememberedLauncherId={compactRememberedLauncher}
+					collapsedFolderIdsFor={(group) =>
+						group.serverId === currentServerId
+							? collapsedFolderSetFor(group.projectId)
+							: NO_COLLAPSED_FOLDERS
+					}
+					selectedFolderIdFor={(group) =>
+						group.serverId === currentServerId
+							? rememberedFolderId(group.projectId)
+							: undefined
+					}
+					folderMenuFor={(group, folder) =>
+						group.serverId === currentServerId
+							? (
+									workspaceRefs.current.get(group.projectId, folder.folderId) ??
+									commandWorkspace(group.projectId)
+								)?.folderMenu(folder.folderId)?.entries
+							: undefined
+					}
 					{...(settings.agentIntegration.enabled &&
 					!isHomeSelected &&
 					activeProject !== null
@@ -10863,24 +11150,24 @@ function App({
 							compositionTabKey(group.serverId, group.projectId),
 						);
 					}}
-					onEditPanel={(row) => {
+					onRenamePanel={(row) => {
 						closeCompactSwitcher();
 						editCompactSwitcherPanel(row);
 					}}
+					onMovePanelToFolder={(row, folderId) =>
+						moveTerminalToFolder(row.projectId, row.panelId, folderId)
+					}
 					onNewProject={() => {
 						closeCompactSwitcher();
 						void createProjectOnServer(currentServerId);
 					}}
-					onNewTerminal={(group) => {
+					onCreateTerminal={(group, folder, launcherId) => {
 						closeCompactSwitcher();
-						void createCompactSwitcherTerminal(group);
+						createCompactTerminal(group, folder, launcherId);
 					}}
-					onNewTerminalInFolder={(group, folder) => {
+					onFolderMenuAction={(group, folder, action) => {
 						closeCompactSwitcher();
-						// The project's new-terminal command creates in the folder this
-						// device has selected, so selecting first is what places it.
-						selectFolder(group.projectId, folder.folderId);
-						void createCompactSwitcherTerminal(group);
+						runCompactFolderAction(group, folder, action);
 					}}
 					onActivateFolder={(group, folder) => {
 						closeCompactSwitcher();
@@ -10890,27 +11177,50 @@ function App({
 						selectFolder(group.projectId, folder.folderId);
 						activateProject(group.projectId);
 					}}
-					{...(isHomeSelected || activeProjectId === undefined
-						? {}
-						: {
-								onNewTerminalHere: () => {
-									closeCompactSwitcher();
-									createTerminalInProject(activeProjectId);
-								},
-								...(activeProject === null
-									? {}
-									: {
-											front: {
-												color: activeProject.color,
-												projectTitle: activeProject.title,
-												...(compactSwitcherFrontFolderName === undefined
-													? {}
-													: { folderName: compactSwitcherFrontFolderName }),
-											},
-										}),
-							})}
-					onQueryChange={setCompactSwitcherQuery}
-					query={compactSwitcherQuery}
+					onOpenHomeSection={(section) => {
+						closeCompactSwitcher();
+						openHomeSection(section);
+					}}
+					onReorderFolders={reorderCompactFolders}
+					onReorderPanels={reorderCompactPanels}
+					onReorderProjects={(projectIds) => {
+						// The current server's tabs take the new order in the places
+						// they already hold; every other tab stays where it is.
+						const own = new Map(
+							displayedProjects
+								.filter((tab) => tab.serverId === currentServerId)
+								.map((tab) => [tab.id, tab]),
+						);
+						const ordered = projectIds.flatMap((projectId) => {
+							const tab = own.get(projectId);
+							return tab === undefined ? [] : [tab];
+						});
+						let next = 0;
+						onReorderComposed(
+							displayedProjects.map((tab) =>
+								tab.serverId === currentServerId
+									? (ordered[next++] ?? tab)
+									: tab,
+							),
+						);
+						// The one project that moved is committed to the server, as a
+						// dropped tab is; the reorder above has already updated the
+						// order it is committed against.
+						const before = [...own.keys()];
+						const after = ordered.map((tab) => tab.id);
+						const first = after.findIndex((id, index) => id !== before[index]);
+						if (first < 0) return;
+						let last = after.length - 1;
+						while (last > first && after[last] === before[last]) last -= 1;
+						const moved =
+							after[first] === before[last] ? after[first] : after[last];
+						const movedTab = own.get(moved);
+						if (movedTab !== undefined) persistMovedComposedTab(movedTab.handle);
+					}}
+					onToggleFolderCollapsed={(group, folder) => {
+						if (group.serverId === currentServerId)
+							toggleFolderCollapsed(group.projectId, folder.folderId);
+					}}
 					{...(activeCompactPanel === undefined
 						? {}
 						: {
@@ -11005,6 +11315,7 @@ function App({
 						onDismissSidebar={() => setHomeSidebarVisibility(false)}
 						onOpenCommandBar={() => setIsViewCommandBarOpen(true)}
 						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
+						onActiveTabChange={setHomeFrontTab}
 						onSidebarWidthCommit={setHomeSidebarWidth}
 						renderSection={renderHomeSection}
 						sectionBadges={workflowBadges}

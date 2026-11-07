@@ -258,6 +258,59 @@ export function recallDashboardViewMode(): DashboardViewMode {
 }
 
 /**
+ * Which launcher the compact switcher's split new-terminal control repeats.
+ *
+ * A device hint keyed by server, since each server lists its own launchers:
+ * `shell` for the default shell or a launcher id. A launcher the server no
+ * longer lists, or a value this device cannot read, is the default shell.
+ */
+const COMPACT_LAUNCHER_STORAGE_KEY = 'terminay.view.compact-launcher.v1';
+
+export const COMPACT_SHELL_LAUNCHER = 'shell';
+
+function readCompactLaunchers(): Record<string, string> {
+	try {
+		const raw = globalThis.localStorage?.getItem(COMPACT_LAUNCHER_STORAGE_KEY);
+		if (raw == null) return {};
+		const parsed: unknown = JSON.parse(raw);
+		if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+			return {};
+		return Object.fromEntries(
+			Object.entries(parsed).filter(
+				(entry): entry is [string, string] => typeof entry[1] === 'string',
+			),
+		);
+	} catch {
+		return {};
+	}
+}
+
+export function rememberCompactLauncher(
+	serverId: string,
+	launcherId: string,
+): void {
+	try {
+		globalThis.localStorage?.setItem(
+			COMPACT_LAUNCHER_STORAGE_KEY,
+			JSON.stringify({ ...readCompactLaunchers(), [serverId]: launcherId }),
+		);
+	} catch {
+		/* A device that cannot remember repeats the default shell. */
+	}
+}
+
+/** The remembered launcher, resolved against what the server lists now. */
+export function recallCompactLauncher(
+	serverId: string,
+	availableLauncherIds: readonly string[],
+): string {
+	const stored = readCompactLaunchers()[serverId];
+	return stored !== undefined && availableLauncherIds.includes(stored)
+		? stored
+		: COMPACT_SHELL_LAUNCHER;
+}
+
+/**
  * Whether this device bands the Board by project.
  *
  * The same kind of hint as the view mode it refines, and kept beside it for the

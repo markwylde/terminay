@@ -409,6 +409,9 @@ export type HomeWorkspaceHandle = Readonly<{
 	activeSection: () => HomeSection | undefined;
 }>;
 
+/** What Home has in front, as a compact title names it. */
+export type HomeFrontTab = Readonly<{ section?: HomeSection; title: string }>;
+
 export type HomeWorkspaceProps = Readonly<{
 	automations: AutomationsData;
 	/** The Command Bar's shortcut, for the empty state to mention. */
@@ -421,6 +424,8 @@ export type HomeWorkspaceProps = Readonly<{
 	onDismissSidebar: () => void;
 	onOpenCommandBar: () => void;
 	onSectionChosenInDrawer?: () => void;
+	/** The tab in front changed: its section, when it is one, and its title. */
+	onActiveTabChange?: (tab: HomeFrontTab | undefined) => void;
 	onSidebarWidthCommit: (width: number) => void;
 	/** The Home overview, the Tabs dashboard, and the Workflows section,
 	 * which the window composes. */
@@ -459,6 +464,7 @@ export const HomeWorkspace = forwardRef<
 		onDismissSidebar,
 		onOpenCommandBar,
 		onSectionChosenInDrawer,
+		onActiveTabChange,
 		onSidebarWidthCommit,
 		renderBot,
 		renderBots,
@@ -729,6 +735,24 @@ export const HomeWorkspace = forwardRef<
 		},
 		[openDescriptor],
 	);
+
+	const onActiveTabChangeRef = useRef(onActiveTabChange);
+	onActiveTabChangeRef.current = onActiveTabChange;
+	useEffect(() => {
+		const panel =
+			activeId === undefined ? undefined : apiRef.current?.getPanel(activeId);
+		if (activeId === undefined || panel === undefined) {
+			onActiveTabChangeRef.current?.(undefined);
+			return;
+		}
+		const descriptor = parseHomeTabId(activeId);
+		const section =
+			descriptor === undefined ? undefined : homeTabSection(descriptor);
+		onActiveTabChangeRef.current?.({
+			...(section === undefined ? {} : { section }),
+			title: panel.title ?? (section === undefined ? 'Home' : HOME_SECTION_LABELS[section]),
+		});
+	}, [activeId]);
 
 	useEffect(() => {
 		const markDetaching = () => {

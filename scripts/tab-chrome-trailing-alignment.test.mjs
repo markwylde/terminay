@@ -12,17 +12,13 @@ const rule = (css, selector) => {
 	return css.slice(start, end);
 };
 
-test('the compact breadcrumb chevron sits on the trailing edge', async () => {
+test('the compact title block yields its project before its folder', async () => {
 	const css = await read('src/App.css');
-	const chevron = rule(css, '.compact-breadcrumb__chevron');
-	// An auto leading margin collects the pill's free space before the chevron,
-	// so it stays on the trailing edge as titles change length.
-	assert.match(chevron, /margin-left: auto;/);
-	assert.match(chevron, /flex: 0 0 auto;/);
-
-	// The label segments still take the space and truncate the project first.
-	assert.match(rule(css, '.compact-breadcrumb__project'), /flex: 0 1 auto;/);
-	assert.match(rule(css, '.compact-breadcrumb__terminal'), /flex: 0 1 auto;/);
+	// No chevron competes for the trailing edge; the folder line gives up its
+	// project first, so the worktree the keystrokes land in stays readable.
+	assert.equal(css.indexOf('\n.compact-breadcrumb__chevron {'), -1);
+	assert.match(rule(css, '.compact-breadcrumb__project'), /flex: 0 1000 auto;/);
+	assert.match(rule(css, '.compact-title__folder'), /flex: 0 1 auto;/);
 });
 
 test('a panel tab closes at the same inset its title opens at', async () => {

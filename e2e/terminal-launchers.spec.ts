@@ -80,3 +80,73 @@ test("a folder's New terminal row starts an installed agent bare, offers only in
 		.toContain('launcher-shell-42');
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(before + 1);
 });
+
+test('at phone width the drawer dropup starts an installed agent, and the split control remembers it across a reload', async ({
+	createWorkspace,
+	electronApp,
+	mainWindow,
+}) => {
+	test.setTimeout(90_000);
+	const workspace = await createWorkspace({ name: 'drawer-launchers' });
+	await setProjectRoot(mainWindow, workspace.rootDir);
+	// The built-in agents extension can start after the window does.
+	await expect(
+		folderGroup(mainWindow, 'General')
+			.locator('.folders-tree__new-terminal-row')
+			.getByRole('button', { name: 'Claude Code', exact: true }),
+	).toHaveCount(1, { timeout: 30_000 });
+	const before = await folderTerminals(mainWindow, 'General').count();
+
+	const nativeWindow = await electronApp.browserWindow(mainWindow);
+	await nativeWindow.evaluate((window) => {
+		window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
+	});
+	const drawer = mainWindow.getByRole('dialog', { name: 'Switch terminal' });
+	const openDrawer = async () => {
+		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+		await expect(drawer).toBeVisible();
+	};
+	const split = drawer.locator('[data-compact-switcher-new-terminal]');
+
+	await openDrawer();
+	// Nothing chosen yet on this device: the split control starts a shell.
+	await expect(split).toHaveText('Terminal');
+	await drawer.locator('[data-compact-switcher-launchers="true"]').click();
+	const dropup = drawer.getByRole('menu', { name: 'New terminal' });
+	await expect(dropup.getByRole('menuitem')).toHaveText([
+		/Terminal/,
+		/Claude Code/,
+	]);
+	await dropup.getByRole('menuitem', { name: /Claude Code/ }).click();
+	await expect(drawer).toHaveCount(0);
+	const panel = activeTerminalPanel(mainWindow);
+	await expect
+		.poll(() => panel.locator('.xterm-rows').innerText(), { timeout: 20_000 })
+		.toContain('"subtype":"init"');
+
+	// The choice is remembered: the split control now repeats it, and the
+	// dropup marks it as last used.
+	await openDrawer();
+	await expect(split).toHaveText('Claude Code');
+	await expect(split).toHaveAccessibleName(
+		/^New Claude Code terminal in General of /,
+	);
+	await drawer.locator('[data-compact-switcher-launchers="true"]').click();
+	await expect(
+		dropup.getByRole('menuitem', { name: /Claude Code/ }),
+	).toContainText('Last used');
+	await mainWindow.keyboard.press('Escape');
+	await mainWindow.keyboard.press('Escape');
+	await expect(drawer).toHaveCount(0);
+
+	await mainWindow.reload();
+	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible({
+		timeout: 15_000,
+	});
+	await openDrawer();
+	await expect(split).toHaveText('Claude Code', { timeout: 30_000 });
+	await nativeWindow.evaluate((window) => {
+		window.setBounds({ x: 40, y: 40, width: 1280, height: 800 });
+	});
+	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(before + 1);
+});

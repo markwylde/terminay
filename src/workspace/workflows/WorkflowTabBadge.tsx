@@ -78,6 +78,57 @@ function useDialNow(ticking: boolean): number {
 	return now;
 }
 
+/**
+ * The words a narrow row shows under a terminal's title for its workflow: the
+ * step being worked on, the step waiting on the user, or what comes next.
+ * Undefined when there is no workflow to speak of.
+ */
+export function workflowStepLine(
+	view: ReturnType<typeof useTerminalWorkflow>['view'],
+): string | undefined {
+	if (view === undefined || view.state !== 'attached') return undefined;
+	const { steps } = view.workflow;
+	const total = steps.length;
+	if (total === 0) return undefined;
+	const position = (index: number) => `${index + 1}/${total}`;
+	const waiting = steps.findIndex((step) => step.status === 'needs_input');
+	if (waiting >= 0)
+		return `Needs input · ${position(waiting)} ${steps[waiting]?.title ?? ''}`.trim();
+	const running = steps.findIndex((step) => step.status === 'running');
+	if (running >= 0)
+		return `${position(running)} ${steps[running]?.title ?? ''}`.trim();
+	const failed = steps.findIndex((step) => step.status === 'failed');
+	if (failed >= 0)
+		return `Failed · ${position(failed)} ${steps[failed]?.title ?? ''}`.trim();
+	const next = steps.findIndex((step) => step.status !== 'done');
+	if (next < 0) return `All ${total} ${total === 1 ? 'step' : 'steps'} done`;
+	return `Next · ${position(next)} ${steps[next]?.title ?? ''}`.trim();
+}
+
+/**
+ * A terminal's workflow step as a row's second line, or `fallback` when the
+ * terminal has no workflow.
+ */
+export function TerminalWorkflowStep(props: {
+	readonly className?: string;
+	readonly fallback?: string;
+	readonly serverId: string | undefined;
+	readonly sessionId: string | undefined;
+}): ReactElement | null {
+	const { view } = useTerminalWorkflow(props.serverId, props.sessionId);
+	const step = workflowStepLine(view);
+	const text = step ?? props.fallback;
+	if (text === undefined) return null;
+	return (
+		<span
+			className={props.className}
+			{...(step === undefined ? {} : { 'data-workflow-step': 'true' })}
+		>
+			{text}
+		</span>
+	);
+}
+
 /** The dial for one terminal, or nothing without a workflow or once seen. */
 export function TerminalWorkflowBadge(props: {
 	readonly serverId: string | undefined;

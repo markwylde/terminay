@@ -1450,15 +1450,17 @@ test('at phone width there is no Folders column and the switcher lists the folde
 	await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
 	const switcher = mainWindow.getByRole('dialog', { name: 'Switch terminal' });
 	await expect(switcher).toBeVisible();
-	const groups = switcher.locator('.compact-switcher__folder-group');
-	await expect(groups.locator('.compact-switcher__folder-name')).toHaveText([
+	const groups = switcher.locator('[data-compact-switcher-folder-group]');
+	await expect(groups.locator('.compact-drawer__folder-label')).toHaveText([
 		'General',
 		'alpha',
 	]);
+	// A worktree folder carries the branch glyph; General does not.
+	await expect(groups.locator('.compact-drawer__folder-glyph')).toHaveCount(1);
 	const groupOf = (folder: string) =>
 		groups.filter({
 			has: mainWindow.locator(
-				`.compact-switcher__folder-name:text-is(${JSON.stringify(folder)})`,
+				`.compact-drawer__folder-label:text-is(${JSON.stringify(folder)})`,
 			),
 		});
 	// Each folder lists its own terminal, and only its own.
@@ -1510,36 +1512,49 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
 		await expect(switcher).toBeVisible();
 	};
-	// The second project made below opens on the same repository and so has
-	// an alpha of its own; every folder here is the first project's.
-	const card = switcher.locator('.compact-switcher__card').filter({
-		has: mainWindow.locator(
-			`.compact-switcher__terminal[data-project-id="${firstProject}"]`,
-		),
-	});
+	// The drawer presents one project at a time: the first project's is chosen
+	// on the rail, since the second opens on the same repository and so has an
+	// alpha of its own.
+	const presentFirstProject = () =>
+		switcher
+			.locator(`.compact-drawer__rail-item[data-project-id="${firstProject}"]`)
+			.click();
 	const groupOf = (folder: string) =>
-		card.locator('.compact-switcher__folder-group').filter({
+		switcher.locator('[data-compact-switcher-folder-group]').filter({
 			has: mainWindow.locator(
-				`.compact-switcher__folder-name:text-is(${JSON.stringify(folder)})`,
+				`.compact-drawer__folder-label:text-is(${JSON.stringify(folder)})`,
 			),
 		});
 	const create = switcher.locator('[data-compact-switcher-new-terminal]');
+	// A folder's own + opens the launcher dropup aimed at that folder.
+	const createInAlpha = async () => {
+		await groupOf('alpha')
+			.getByRole('button', { name: /^New terminal in alpha of / })
+			.click();
+		const dropup = switcher.getByRole('menu', { name: 'New terminal' });
+		await expect(switcher.getByRole('radio', { name: 'alpha' })).toHaveAttribute(
+			'aria-checked',
+			'true',
+		);
+		await dropup.getByRole('menuitem', { name: /Terminal/ }).first().click();
+	};
 
 	await phone();
 	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
 	await openSwitcher();
-	// General is in front, and the create bar says so.
-	await expect(create).toHaveText(/ › General$/);
-	// alpha is empty: its label line and nothing beneath it.
+	// General is in front, and the create control says so.
+	await expect(create).toHaveAccessibleName(/ in General of /);
+	// alpha is empty: its label line and one New terminal entry beneath it.
 	await expect(
 		groupOf('alpha').locator('[data-compact-switcher-terminal]'),
 	).toHaveCount(0);
+	await expect(
+		groupOf('alpha').locator('[data-compact-switcher-empty-folder]'),
+	).toHaveCount(1);
 	await expect(switcher.getByText('No panels')).toHaveCount(0);
 
 	// The control on alpha's label creates in alpha, not in the folder in front.
-	await groupOf('alpha')
-		.getByRole('button', { name: /^New terminal in alpha of / })
-		.click();
+	await createInAlpha();
 	await expect(switcher).toHaveCount(0);
 	await expect(activeFolderWorkspace(mainWindow)).toHaveAttribute(
 		'data-terminay-folder-kind',
@@ -1557,8 +1572,8 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 	await expect(
 		groupOf('General').locator('[data-compact-switcher-terminal]'),
 	).toHaveCount(1);
-	// The bar follows the folder that is now in front.
-	await expect(create).toHaveText(/ › alpha$/);
+	// The create control follows the folder that is now in front.
+	await expect(create).toHaveAccessibleName(/ in alpha of /);
 	await mainWindow.keyboard.press('Escape');
 	await expect(switcher).toHaveCount(0);
 
@@ -1572,9 +1587,8 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 	await phone();
 	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
 	await openSwitcher();
-	await groupOf('alpha')
-		.getByRole('button', { name: /^New terminal in alpha of / })
-		.click();
+	await presentFirstProject();
+	await createInAlpha();
 	await expect(switcher).toHaveCount(0);
 	await expect
 		.poll(() =>
@@ -2919,15 +2933,23 @@ test('a folder collapses to its title line from its toggle or the keyboard, show
 		'true',
 	);
 
-	// Right opens it and Left closes it, as in any tree.
-	await folderRow(mainWindow, 'General').focus();
-	await mainWindow.keyboard.press('ArrowRight');
-	await expect(header).toHaveAttribute('aria-expanded', 'true');
+	// Right opens it and Left closes it, as in any tree. The reloaded terminal
+	// can take focus back as it reattaches, so each key is pressed with the
+	// header focused; pressing either again changes nothing.
+	const pressOnHeader = async (key: string, expanded: 'true' | 'false') => {
+		await expect(async () => {
+			await header.focus();
+			await mainWindow.keyboard.press(key);
+			await expect(header).toHaveAttribute('aria-expanded', expanded, {
+				timeout: 1_000,
+			});
+		}).toPass({ timeout: 10_000 });
+	};
+	await pressOnHeader('ArrowRight', 'true');
 	await expect(rows).toHaveCount(1);
 	await expect(newTerminal).toBeVisible();
 	await expect(attention).toHaveCount(0);
-	await mainWindow.keyboard.press('ArrowLeft');
-	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await pressOnHeader('ArrowLeft', 'false');
 	await header.getByRole('button', { name: 'Expand General' }).click();
 	await expect(rows).toHaveCount(1);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);

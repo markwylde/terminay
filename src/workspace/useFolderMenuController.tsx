@@ -311,10 +311,14 @@ export function useFolderMenuController(options: Options) {
 		});
 	}, []);
 
-	let folderMenuElement: ReactNode = null;
-	const folder =
-		menu === null ? undefined : options.snapshot?.folders[menu.folderId];
-	if (menu !== null && folder !== undefined) {
+	/**
+	 * A folder's menu: what it lists and how each entry is run. The Folders
+	 * tree's context menu and the compact switcher's ⋯ menu are both this, so
+	 * the two can never offer different things for one folder.
+	 */
+	const describeFolderMenu = (folderId: string) => {
+		const folder = options.snapshot?.folders[folderId];
+		if (folder === undefined) return undefined;
 		const { project, worktreeStatus } = options;
 		const gitProject = isGitProject(worktreeStatus);
 		// A plain folder stands for no worktree, so it is offered no Git action.
@@ -323,9 +327,23 @@ export function useFolderMenuController(options: Options) {
 				? undefined
 				: worktreeOfFolder(folder, project.rootFolder, worktreeStatus);
 		const directory = folderDirectory(folder, project.rootFolder, worktreeStatus);
-		const anchor = { x: menu.x, y: menu.y };
-		const folderId = menu.folderId;
-		const run = (action: FolderMenuActionId) => {
+		const entries = folderMenuEntries({
+			kind: folder.kind,
+			isGitProject: gitProject,
+			worktree,
+			isPulling:
+				worktree !== undefined &&
+				options.pullingWorktreePaths.has(worktree.path),
+			isDeleting:
+				worktree !== undefined &&
+				options.deletingWorktreePaths.has(worktree.path),
+			// The server reveals a folder by id, in or out of a repository.
+			canReveal: worktreeStatus?.folderRevealAvailable === true,
+		});
+		const run = (
+			action: FolderMenuActionId,
+			anchor: { x: number; y: number },
+		) => {
 			switch (action) {
 				case 'commit-and-push':
 					if (worktree !== undefined) options.onCommitAndPush(worktree, anchor);
@@ -362,24 +380,20 @@ export function useFolderMenuController(options: Options) {
 					return;
 			}
 		};
+		return { entries, run };
+	};
+
+	let folderMenuElement: ReactNode = null;
+	const shownMenu =
+		menu === null ? undefined : describeFolderMenu(menu.folderId);
+	if (menu !== null && shownMenu !== undefined) {
+		const anchor = { x: menu.x, y: menu.y };
 		folderMenuElement = (
 			<FolderMenu
 				x={menu.x}
 				y={menu.y}
-				entries={folderMenuEntries({
-					kind: folder.kind,
-					isGitProject: gitProject,
-					worktree,
-					isPulling:
-						worktree !== undefined &&
-						options.pullingWorktreePaths.has(worktree.path),
-					isDeleting:
-						worktree !== undefined &&
-						options.deletingWorktreePaths.has(worktree.path),
-					// The server reveals a folder by id, in or out of a repository.
-					canReveal: worktreeStatus?.folderRevealAvailable === true,
-				})}
-				onAction={run}
+				entries={shownMenu.entries}
+				onAction={(action) => shownMenu.run(action, anchor)}
 				onClose={closeFolderMenu}
 			/>
 		);
@@ -387,6 +401,7 @@ export function useFolderMenuController(options: Options) {
 
 	return {
 		cancelFolderNameDialog,
+		describeFolderMenu,
 		folderMenuElement: (
 			<>
 				{folderMenuElement}
