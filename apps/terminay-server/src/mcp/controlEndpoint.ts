@@ -95,6 +95,7 @@ export const CONTROL_OPERATIONS = [
 	'get_settings',
 	'update_settings',
 	'list_shell_profiles',
+	'get_connection_metrics',
 	'save_shell_profile',
 	'delete_shell_profile',
 	'reorder_shell_profiles',

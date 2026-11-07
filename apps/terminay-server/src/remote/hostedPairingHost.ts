@@ -122,6 +122,7 @@ type WeriftPeer = {
 	readonly connectionState?: string;
 	readonly iceConnectionState?: string;
 	readonly iceGatheringState?: string;
+	readonly signalingState?: string;
 	getStats?: () => Promise<
 		ReadonlyMap<string, Readonly<Record<string, unknown>>>
 	>;
@@ -1324,8 +1325,29 @@ async function startPeer(
 		serverId: context.options.serverId,
 		sessionOrigin: context.options.handoff.sessionOrigin,
 	});
-	await peer.setLocalDescription(offer);
-	socket.send(JSON.stringify(signalMessage(scope, 'offer', signalingOffer)));
+	// Applying the offer gathers candidates, and the runtime does not return
+	// until every local address has had up to five seconds to get a STUN
+	// answer. An address that cannot reach STUN (loopback, a VPN, a container
+	// bridge, or a host with no internet) would put those five seconds on every
+	// connect and reconnect, because the browser's answer is applied only once
+	// this peer is handed back. Candidates trickle on their own messages, so the
+	// peer is handed back as soon as the offer is in place and gathering
+	// finishes behind it. The offer is sent before the first await, so it
+	// always precedes the first candidate.
+	const offerInPlace = new Promise<void>((resolve) => {
+		native.addEventListener('signalingstatechange', () => {
+			if (native.signalingState === 'have-local-offer') resolve();
+		});
+	});
+	const applied = peer.setLocalDescription(offer);
+	try {
+		socket.send(JSON.stringify(signalMessage(scope, 'offer', signalingOffer)));
+	} catch (error) {
+		applied.catch(() => undefined);
+		throw error;
+	}
+	await Promise.race([applied, offerInPlace]);
+	applied.catch(() => lifecycle.fail('WebRTC offer could not be applied.'));
 	if (
 		context.options.advertiseAddress !== undefined ||
 		context.options.icePortRange !== undefined

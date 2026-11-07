@@ -152,6 +152,7 @@ export * from './workflowService/index.js';
 export * from './automationService/index.js';
 export * from './agentChat/index.js';
 export * from './pixel/index.js';
+export * from './connectionMetrics/index.js';
 export * from './mcpApprovals/index.js';
 export * from './mcpPrincipal.js';
 export * from './appWindows/index.js';

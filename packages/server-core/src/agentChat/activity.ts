@@ -163,6 +163,8 @@ export function describeChatMcpCall(
 		}
 		case 'list_shell_profiles':
 			return 'Looking at the shell profiles';
+		case 'get_connection_metrics':
+			return 'Looking at the connection timings';
 		case 'save_shell_profile':
 			return 'Saving a shell profile';
 		case 'delete_shell_profile':

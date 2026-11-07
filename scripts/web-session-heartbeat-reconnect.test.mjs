@@ -4,6 +4,7 @@ import test from 'node:test';
 import { FEATURE_CAPABILITIES } from '@terminay/protocol';
 import {
 	createSessionHeartbeat,
+	SESSION_RESUME_PROBE_DEADLINE_MS,
 	SessionConnectGate,
 } from '../src/web/sessionConnectAttempt.ts';
 
@@ -250,5 +251,103 @@ test('a transport that died during a freeze is retired by the probes that follow
 	await clock.advance(100);
 	assert.equal(lost.length, 1, 'the miss limit of on-time probes retires it');
 	assert.equal(lost[0].missed, 2);
+	heartbeat.stop();
+});
+
+/**
+ * The reported failure: back in the PWA after a minute away, nothing happens
+ * for ten seconds or more. The phone killed the transport while the app was
+ * suspended, but the peer still says `connected` and every lane is `open`, so
+ * the only thing that can notice is a probe. With the steady-state deadline
+ * and miss limit, that took two full intervals after the user came back.
+ */
+test('a transport that died while hidden is retired by one fast resume probe', async () => {
+	const clock = createClock();
+	const lost = [];
+	// Production cadence: these are the numbers the user lives with.
+	const heartbeat = createSessionHeartbeat({
+		ping: unanswered,
+		onLost: (snapshot) => lost.push({ at: clock.now, ...snapshot }),
+		now: () => clock.now,
+		setTimeout: (callback, delayMs) => clock.setTimeout(callback, delayMs),
+		clearTimeout: (handle) => clock.clearTimeout(handle),
+	});
+	heartbeat.start();
+	await clock.advance(4_000);
+	const resumedAt = clock.now;
+	heartbeat.probeNow({
+		deadlineMs: SESSION_RESUME_PROBE_DEADLINE_MS,
+		decisive: true,
+	});
+	await clock.advance(SESSION_RESUME_PROBE_DEADLINE_MS);
+
+	assert.equal(lost.length, 1, 'one missed resume probe retires the generation');
+	assert.equal(
+		lost[0].at - resumedAt <= 1_500,
+		true,
+		`loss was declared ${lost[0].at - resumedAt}ms after resume`,
+	);
+	heartbeat.stop();
+});
+
+test('a resume probe that is answered keeps the generation and the cadence', async () => {
+	const clock = createClock();
+	const lost = [];
+	const samples = [];
+	let pings = 0;
+	const heartbeat = createSessionHeartbeat({
+		ping: async () => {
+			pings += 1;
+		},
+		onLost: (snapshot) => lost.push(snapshot),
+		onSample: (snapshot) => samples.push(snapshot),
+		now: () => clock.now,
+		setTimeout: (callback, delayMs) => clock.setTimeout(callback, delayMs),
+		clearTimeout: (handle) => clock.clearTimeout(handle),
+	});
+	heartbeat.start();
+	await clock.advance(3_000);
+	heartbeat.probeNow({
+		deadlineMs: SESSION_RESUME_PROBE_DEADLINE_MS,
+		decisive: true,
+	});
+	await clock.advance(1);
+	assert.equal(pings, 1);
+	assert.equal(samples.at(-1).missed, 0);
+	// The next steady-state beat is one interval after the resume probe.
+	await clock.advance(10_000);
+	assert.equal(pings, 2);
+	assert.deepEqual(lost, []);
+	heartbeat.stop();
+});
+
+test('a resume probe supersedes a probe still waiting out its frozen deadline', async () => {
+	const clock = createClock();
+	const lost = [];
+	let probes = 0;
+	const heartbeat = createSessionHeartbeat({
+		// The first probe was sent just before the freeze and is never answered;
+		// the transport is otherwise healthy.
+		ping: (signal) => {
+			probes += 1;
+			return probes === 1 ? unanswered(signal) : Promise.resolve();
+		},
+		onLost: (snapshot) => lost.push(snapshot),
+		now: () => clock.now,
+		setTimeout: (callback, delayMs) => clock.setTimeout(callback, delayMs),
+		clearTimeout: (handle) => clock.clearTimeout(handle),
+	});
+	heartbeat.start();
+	await clock.advance(10_000);
+	assert.equal(probes, 1);
+	heartbeat.probeNow({
+		deadlineMs: SESSION_RESUME_PROBE_DEADLINE_MS,
+		decisive: true,
+	});
+	await clock.advance(1);
+	// The stale probe's deadline later fires: it must count for nothing.
+	await clock.advance(10_000);
+	assert.deepEqual(lost, [], 'a superseded probe neither misses nor retires');
+	assert.equal(heartbeat.snapshot().missed, 0);
 	heartbeat.stop();
 });

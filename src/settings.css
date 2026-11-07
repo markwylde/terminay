@@ -2662,3 +2662,34 @@
     flex-basis: 88px;
   }
 }
+
+.connection-metrics__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--settings-text);
+}
+
+.connection-metrics__table th,
+.connection-metrics__table td {
+  padding: var(--settings-space-1) var(--settings-space-2);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.connection-metrics__table th:first-child {
+  text-align: left;
+}
+
+.connection-metrics__table thead th {
+  color: var(--settings-text-muted);
+  font-weight: 500;
+}
+
+@media (max-width: 520px) {
+  .connection-metrics__table {
+    display: block;
+    overflow-x: auto;
+  }
+}
