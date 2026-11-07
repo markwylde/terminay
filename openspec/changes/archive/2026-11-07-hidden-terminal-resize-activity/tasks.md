@@ -11,4 +11,4 @@
 
 - [x] 3.1 Rewrite `e2e/compact-switcher-idle-activity.spec.ts` to cover the background-resize repro and the switcher open/close. Verified by running it with `npm run test:e2e` and seeing it pass.
 - [x] 3.2 Run unit tests, lint, typecheck, and `openspec validate hidden-terminal-resize-activity`. Verified by the server-core suite (2209 pass, 0 fail), root `tsc --noEmit`, `biome lint .` with no errors, and the change validating. `openspec validate --all` fails only on other in-progress changes.
-- [ ] 3.3 Open a pull request on Gitea and read back every CI status. Verified when every status is `success` or `skipped`.
+- [x] 3.3 Open a pull request on Gitea and read back every CI status. Verified when every status is `success` or `skipped`.
