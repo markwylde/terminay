@@ -658,7 +658,12 @@ test.describe('compact chrome', () => {
 		const drawer = await openDrawer(mainWindow);
 		// The control names its launcher and says where the terminal will land.
 		const create = drawer.locator('[data-compact-switcher-new-terminal]');
-		await expect(create).toHaveText('Terminal');
+		await expect(create.locator('.compact-drawer__split-label')).toHaveText(
+			'Terminal',
+		);
+		await expect(create.locator('.compact-drawer__split-target')).toHaveText(
+			'in General',
+		);
 		await expect(create).toHaveAccessibleName(
 			/^New Terminal terminal in General of .+/,
 		);

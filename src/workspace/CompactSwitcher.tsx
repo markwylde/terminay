@@ -19,7 +19,9 @@
 import {
 	ChevronDown,
 	ChevronRight,
+	ChevronUp,
 	Ellipsis,
+	Folder,
 	FolderPlus,
 	GitBranch,
 	GripVertical,
@@ -39,14 +41,14 @@ import type {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './CompactSwitcher.css';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
-import { LauncherIcon } from '../components/folders/launcherIcons';
 import { FOLDERS_COLUMN_TABS } from '../components/folders/foldersColumnTabs';
+import { LauncherIcon } from '../components/folders/launcherIcons';
 import { SidebarGroupTabs } from '../components/sidebar/SidebarGroupTabs';
 import { useLongPress } from '../hooks/useLongPress';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
-import type { TerminalLauncherView } from '../types/terminalLaunchers';
 import type { FoldersColumnTabId } from '../types/settings';
-import { CompactSheetMenu, type CompactSheetItem } from './CompactSheetMenu';
+import type { TerminalLauncherView } from '../types/terminalLaunchers';
+import { type CompactSheetItem, CompactSheetMenu } from './CompactSheetMenu';
 import type {
 	CompactSwitcherConnectionGroup,
 	CompactSwitcherFolderGroup,
@@ -64,10 +66,10 @@ import {
 	orderCompactRailConnections,
 } from './compactSwitcherModel.ts';
 import type { FolderMenuActionId, FolderMenuEntry } from './folderMenuModel';
+import { moveItem } from './gripReorderModel.ts';
 import { HOME_SECTION_LABELS, type HomeSection } from './homeSection';
 import { COMPACT_SHELL_LAUNCHER } from './localViewState';
 import { gripDragState, useGripReorder } from './useGripReorder';
-import { moveItem } from './gripReorderModel.ts';
 import {
 	TerminalWorkflowBadge,
 	TerminalWorkflowStep,
@@ -261,6 +263,7 @@ function RailProject({
 	const longPress = useLongPress(onEdit, { disabled: isEditing });
 	const badge = compactRailBadge(project.summary);
 	const editable = isEditing && isMovable;
+	const status = formatCompactSwitcherSummary(project.summary).accessible;
 	return (
 		<div
 			className="compact-drawer__rail-slot"
@@ -269,9 +272,11 @@ function RailProject({
 		>
 			<button
 				type="button"
-				className={`compact-drawer__rail-item${isSelected ? ' compact-drawer__rail-item--selected' : ''}`}
+				className={`compact-drawer__rail-item${isSelected ? ' compact-drawer__rail-item--selected' : ''}${editable ? ' compact-drawer__rail-item--editable' : ''}`}
 				style={{ '--compact-project': project.color } as CSSProperties}
-				aria-label={project.title}
+				aria-label={
+					status.length === 0 ? project.title : `${project.title}, ${status}`
+				}
 				aria-pressed={isSelected}
 				title={editable ? undefined : 'Long-press to edit project'}
 				data-compact-switcher-project={project.key}
@@ -286,19 +291,24 @@ function RailProject({
 				onKeyDown={editable ? gripProps?.onKeyDown : undefined}
 				onClick={longPress.bindClick(onSelect)}
 			>
-				<span className="compact-drawer__rail-glyph" aria-hidden="true">
-					{project.emoji.length > 0
-						? project.emoji
-						: compactProjectInitials(project.title)}
+				<span className="compact-drawer__rail-tile" aria-hidden="true">
+					<span className="compact-drawer__rail-glyph" aria-hidden="true">
+						{project.emoji.length > 0
+							? project.emoji
+							: compactProjectInitials(project.title)}
+					</span>
+					{badge === undefined ? null : <Badge {...badge} />}
+					{editable ? (
+						<GripVertical
+							className="compact-drawer__rail-grip"
+							size={10}
+							aria-hidden="true"
+						/>
+					) : null}
 				</span>
-				{badge === undefined ? null : <Badge {...badge} />}
-				{editable ? (
-					<GripVertical
-						className="compact-drawer__rail-grip"
-						size={10}
-						aria-hidden="true"
-					/>
-				) : null}
+				<span className="compact-drawer__rail-label" aria-hidden="true">
+					{project.title}
+				</span>
 			</button>
 			{editable ? (
 				<button
@@ -308,7 +318,7 @@ function RailProject({
 					aria-label={`Close ${project.title}`}
 					data-compact-switcher-close-project={project.key}
 				>
-					<X size={10} aria-hidden="true" />
+					<X size={12} aria-hidden="true" />
 				</button>
 			) : null}
 		</div>
@@ -417,6 +427,8 @@ function PanelRow({
 			data-grip-item="true"
 			style={style}
 		>
+			{/* The lead column sits under the folder's chevron, so status and
+			    title line up under the folder's glyph and name. */}
 			{isEditing && gripProps !== undefined ? (
 				<button
 					type="button"
@@ -427,7 +439,9 @@ function PanelRow({
 				>
 					<GripVertical size={14} aria-hidden="true" />
 				</button>
-			) : null}
+			) : (
+				<span className="compact-drawer__lead" aria-hidden="true" />
+			)}
 			<button
 				type="button"
 				className="compact-drawer__row-main"
@@ -470,9 +484,22 @@ function PanelRow({
 					) : null}
 				</span>
 			</button>
-			{/* One trailing column, as wide as a folder's ⋯, so every dial in the
-			    tree lines up whatever the row's title. */}
-			<span className="compact-drawer__wslot" data-compact-workflow-slot="true">
+			{/* The dial has its own column just before ⋯, so every dial in the
+			    tree lines up; it collapses when the terminal has no workflow and
+			    the title takes the room. */}
+			{!isEditing && panel.panelKind === 'terminal' ? (
+				<span
+					className="compact-drawer__dial"
+					data-compact-workflow-slot="true"
+				>
+					<TerminalWorkflowBadge
+						serverId={panel.serverId}
+						sessionId={panel.sessionId}
+					/>
+				</span>
+			) : null}
+			{/* The trailing column, shared with each folder header's ⋯. */}
+			<span className="compact-drawer__wslot">
 				{isEditing ? (
 					<button
 						type="button"
@@ -480,14 +507,20 @@ function PanelRow({
 						onClick={onClose}
 						aria-label={`Close ${panel.title}`}
 					>
-						<X size={13} aria-hidden="true" />
+						<X size={15} aria-hidden="true" />
 					</button>
-				) : panel.panelKind === 'terminal' ? (
-					<TerminalWorkflowBadge
-						serverId={panel.serverId}
-						sessionId={panel.sessionId}
-					/>
-				) : null}
+				) : (
+					<button
+						type="button"
+						className="compact-drawer__row-more"
+						onClick={onMenu}
+						aria-label={`More for ${panel.title}`}
+						aria-haspopup="menu"
+						data-compact-switcher-row-menu={panel.key}
+					>
+						<Ellipsis size={16} aria-hidden="true" />
+					</button>
+				)}
 			</span>
 		</div>
 	);
@@ -500,7 +533,6 @@ function FolderSection({
 	gripProps,
 	isEditing,
 	isOwnServer,
-	onActivateFolder,
 	onActivatePanel,
 	onAnnounce,
 	onClosePanel,
@@ -519,7 +551,6 @@ function FolderSection({
 	gripProps?: ReturnType<ReturnType<typeof useGripReorder>['gripProps']>;
 	isEditing: boolean;
 	isOwnServer: boolean;
-	onActivateFolder: () => void;
 	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
 	onAnnounce: (message: string) => void;
 	onClosePanel: (row: CompactSwitcherPanelRow) => void;
@@ -556,7 +587,9 @@ function FolderSection({
 			style={style}
 			data-compact-switcher-folder-group={folder.key}
 		>
-			<div className="compact-drawer__folder-head">
+			<div
+				className={`compact-drawer__folder-head${isEditing ? ' compact-drawer__folder-head--editing' : ''}`}
+			>
 				{isEditing && gripProps !== undefined ? (
 					<button
 						type="button"
@@ -567,45 +600,47 @@ function FolderSection({
 					>
 						<GripVertical size={14} aria-hidden="true" />
 					</button>
-				) : (
-					<button
-						type="button"
-						className="compact-drawer__chevron"
-						onClick={onToggleCollapsed}
-						aria-expanded={!collapsed}
-						aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${folder.name}`}
-					>
-						{collapsed ? (
-							<ChevronRight size={14} aria-hidden="true" />
-						) : (
-							<ChevronDown size={14} aria-hidden="true" />
-						)}
-					</button>
-				)}
+				) : null}
+				{/* The whole line is the disclosure: on a phone a tree header is
+				    pressed to open or close, and the line is a far larger target
+				    than a chevron. Showing the folder is in its ⋯ menu. */}
 				<button
 					type="button"
 					className="compact-drawer__folder-name"
-					data-compact-switcher-folder={folder.key}
+					data-compact-switcher-folder-toggle={folder.key}
 					onClick={() => {
-						if (!isEditing) onActivateFolder();
+						if (!isEditing) onToggleCollapsed();
 					}}
 					onContextMenu={menuGesture.onContextMenu}
 					onKeyDown={menuGesture.onKeyDown}
-					aria-label={`Folder ${folder.name} in ${projectTitle}`}
+					aria-label={folder.name}
+					{...(isEditing ? {} : { 'aria-expanded': !collapsed })}
 				>
-					{folder.isLinked ? (
-						<GitBranch
-							className="compact-drawer__folder-glyph"
-							size={13}
-							aria-hidden="true"
-						/>
-					) : null}
-					<span className="compact-drawer__folder-label">{shownName}</span>
-					<span className="compact-drawer__folder-count" aria-hidden="true">
-						{folder.panels.length}
+					{isEditing ? null : (
+						<span className="compact-drawer__chevron" aria-hidden="true">
+							{collapsed ? (
+								<ChevronRight size={15} />
+							) : (
+								<ChevronDown size={15} />
+							)}
+						</span>
+					)}
+					<span className="compact-drawer__folder-icon" aria-hidden="true">
+						{folder.isLinked ? (
+							<GitBranch className="compact-drawer__folder-glyph" size={14} />
+						) : (
+							<Folder size={14} />
+						)}
 					</span>
+					<span className="compact-drawer__folder-label">{shownName}</span>
+					{panels.length === 0 ? null : (
+						<span className="compact-drawer__folder-count" aria-hidden="true">
+							{panels.length}
+						</span>
+					)}
 				</button>
-				{isEditing ? null : (
+				{/* An empty folder's own entry below is its new-terminal control. */}
+				{isEditing || panels.length === 0 ? null : (
 					<button
 						type="button"
 						className="compact-drawer__folder-add"
@@ -614,7 +649,7 @@ function FolderSection({
 						aria-label={`New terminal in ${folder.name} of ${projectTitle}`}
 						aria-haspopup="menu"
 					>
-						<Plus size={14} aria-hidden="true" />
+						<Plus size={16} aria-hidden="true" />
 					</button>
 				)}
 				<span className="compact-drawer__wslot">
@@ -627,7 +662,7 @@ function FolderSection({
 								aria-label={`${folder.isLinked ? 'Delete worktree' : 'Delete folder'} ${folder.name}`}
 								data-compact-switcher-remove-folder={folder.key}
 							>
-								<X size={13} aria-hidden="true" />
+								<X size={15} aria-hidden="true" />
 							</button>
 						)
 					) : (
@@ -639,7 +674,7 @@ function FolderSection({
 							aria-haspopup="menu"
 							data-compact-switcher-folder-menu={folder.key}
 						>
-							<Ellipsis size={14} aria-hidden="true" />
+							<Ellipsis size={16} aria-hidden="true" />
 						</button>
 					)}
 				</span>
@@ -650,9 +685,14 @@ function FolderSection({
 						type="button"
 						className="compact-drawer__empty-folder"
 						onClick={onNewTerminal}
+						aria-label={`New terminal in ${folder.name} of ${projectTitle}`}
+						aria-haspopup="menu"
 						data-compact-switcher-empty-folder={folder.key}
 					>
-						<Plus size={13} aria-hidden="true" />
+						<span className="compact-drawer__lead" aria-hidden="true" />
+						<span className="compact-drawer__empty-icon" aria-hidden="true">
+							<Plus size={14} />
+						</span>
 						New terminal
 					</button>
 				)
@@ -689,7 +729,6 @@ function FolderTree({
 	collapsedFolderIds,
 	isEditing,
 	isOwnServer,
-	onActivateFolder,
 	onActivatePanel,
 	onAnnounce,
 	onClosePanel,
@@ -706,7 +745,6 @@ function FolderTree({
 	collapsedFolderIds: ReadonlySet<string>;
 	isEditing: boolean;
 	isOwnServer: boolean;
-	onActivateFolder: (folder: CompactSwitcherFolderGroup) => void;
 	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
 	onAnnounce: (message: string) => void;
 	onClosePanel: (row: CompactSwitcherPanelRow) => void;
@@ -766,7 +804,6 @@ function FolderTree({
 						: {})}
 					isEditing={isEditing}
 					isOwnServer={isOwnServer}
-					onActivateFolder={() => onActivateFolder(folder)}
 					onActivatePanel={onActivatePanel}
 					onAnnounce={onAnnounce}
 					onClosePanel={onClosePanel}
@@ -961,17 +998,19 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 	layerRef.current = layer;
 	const searchOpenRef = useRef(isSearchOpen);
 	searchOpenRef.current = isSearchOpen;
-	const closeLayerRef = useRef(closeLayer);
-	closeLayerRef.current = closeLayer;
-	const closeSearchRef = useRef(closeSearch);
-	closeSearchRef.current = closeSearch;
+	// A press beside the drawer follows the same order as the dismiss key.
+	const dismissTopLayer = () => {
+		if (layerRef.current !== null) closeLayer();
+		else if (searchOpenRef.current) closeSearch();
+		else onDismiss();
+	};
+	const dismissTopLayerRef = useRef(dismissTopLayer);
+	dismissTopLayerRef.current = dismissTopLayer;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== 'Escape' || gripDragState.active) return;
 			event.stopPropagation();
-			if (layerRef.current !== null) closeLayerRef.current();
-			else if (searchOpenRef.current) closeSearchRef.current();
-			else onDismiss();
+			dismissTopLayerRef.current();
 		};
 		window.addEventListener('keydown', onKeyDown, { capture: true });
 		return () =>
@@ -1140,6 +1179,16 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 		const items: CompactSheetItem[] = launcherItems(presented, folder, {
 			marksLast: false,
 		});
+		items.push({
+			kind: 'action',
+			key: 'show-folder',
+			label: 'Show folder',
+			icon: <Folder size={14} />,
+			onSelect: () => {
+				setLayer(null);
+				props.onActivateFolder(presented, folder);
+			},
+		});
 		if (entries.length > 0) items.push({ kind: 'separator', key: 'context' });
 		entries.forEach((entry, index) => {
 			if (entry.separator === true) {
@@ -1260,7 +1309,9 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 										{folder.isLinked ? (
 											<GitBranch size={12} aria-hidden="true" />
 										) : null}
-										{displayFolderName(folder.name)}
+										<span className="compact-drawer__chip-label">
+											{displayFolderName(folder.name)}
+										</span>
 									</button>
 								))}
 							</div>
@@ -1314,7 +1365,7 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 						onClick={closeSearch}
 						aria-label="Close search"
 					>
-						<X size={14} aria-hidden="true" />
+						<X size={16} aria-hidden="true" />
 					</button>
 				</div>
 			) : (
@@ -1346,7 +1397,7 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 							aria-expanded={false}
 							title="Search"
 						>
-							<Search size={15} aria-hidden="true" />
+							<Search size={17} aria-hidden="true" />
 						</button>
 					)}
 					{presented !== undefined && isOwnServer && shownTab === 'tabs' ? (
@@ -1360,6 +1411,16 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 							{isEditing ? 'Done' : 'Edit'}
 						</button>
 					) : null}
+					<button
+						type="button"
+						className="compact-drawer__icon"
+						onClick={onDismiss}
+						aria-label="Close switcher"
+						title="Close"
+						data-compact-switcher-close="true"
+					>
+						<X size={18} aria-hidden="true" />
+					</button>
 				</>
 			)}
 		</div>
@@ -1457,7 +1518,6 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 				collapsedFolderIds={props.collapsedFolderIdsFor(presented)}
 				isEditing={isEditing}
 				isOwnServer={isOwnServer}
-				onActivateFolder={(folder) => props.onActivateFolder(presented, folder)}
 				onActivatePanel={activatePanel}
 				onAnnounce={announce}
 				onClosePanel={props.onClosePanel}
@@ -1527,8 +1587,18 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 								}`}
 							>
 								<LauncherIcon icon={launcherIcon(mainLauncher)} />
-								<span className="compact-drawer__split-label">
-									{launcherName(mainLauncher)}
+								<span className="compact-drawer__split-text">
+									<span className="compact-drawer__split-label">
+										{launcherName(mainLauncher)}
+									</span>
+									{target === undefined ? null : (
+										<span
+											className="compact-drawer__split-target"
+											aria-hidden="true"
+										>
+											in {displayFolderName(target.name)}
+										</span>
+									)}
 								</span>
 							</button>
 							<button
@@ -1549,7 +1619,7 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 								aria-haspopup="menu"
 								aria-expanded={layer?.kind === 'dropup'}
 							>
-								<ChevronDown size={14} aria-hidden="true" />
+								<ChevronUp size={16} aria-hidden="true" />
 							</button>
 						</div>
 						<button
@@ -1575,7 +1645,7 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 				// The default mousedown action would move focus to the body right
 				// after it is handed back to the control that opened the switcher.
 				event.preventDefault();
-				onDismiss();
+				dismissTopLayer();
 			}}
 		>
 			<div
@@ -1595,7 +1665,7 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 						title={currentServer.label}
 						data-compact-switcher-server="true"
 					>
-						<Server size={15} aria-hidden="true" />
+						<Server size={17} aria-hidden="true" />
 						<span
 							className={`compact-drawer__server-dot${currentServer.isReachable ? '' : ' compact-drawer__server-dot--unreachable'}`}
 							aria-hidden="true"
@@ -1614,10 +1684,15 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 						data-terminay-home-control="true"
 						data-compact-switcher-home="true"
 					>
-						<House size={17} aria-hidden="true" />
-						{homeBadge === 0 ? null : (
-							<Badge count={homeBadge} tone="attention" />
-						)}
+						<span className="compact-drawer__rail-tile" aria-hidden="true">
+							<House size={18} />
+							{homeBadge === 0 ? null : (
+								<Badge count={homeBadge} tone="attention" />
+							)}
+						</span>
+						<span className="compact-drawer__rail-label" aria-hidden="true">
+							Home
+						</span>
 					</button>
 					<span className="compact-drawer__rail-divider" aria-hidden="true" />
 					<div className="compact-drawer__rail-scroll">
@@ -1644,7 +1719,9 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 						aria-label="New project"
 						title="New project"
 					>
-						<Plus size={16} aria-hidden="true" />
+						<span className="compact-drawer__rail-tile" aria-hidden="true">
+							<Plus size={18} />
+						</span>
 					</button>
 				</nav>
 				<div className="compact-drawer__panel">

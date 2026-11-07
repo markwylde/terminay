@@ -3,7 +3,13 @@
 
    The entrance is an animation on the drawer alone. Everything that changes
    inside it — the rail selection, edit mode, menus, the dropup — is state in a
-   drawer that stays mounted, so none of it replays the slide. */
+   drawer that stays mounted, so none of it replays the slide.
+
+   The tree is one grid. A folder header is [chevron][glyph][name][+][⋯]; a
+   panel row is [lead][status][title][dial?][⋯]. The lead sits under the
+   chevron, status under the glyph, the title under the name, and the row's ⋯
+   under the folder's. The widths below are that grid: change one and the
+   column it names drifts out of line. */
 
 .compact-drawer-scrim {
 	--compact-attention: #ee6258;
@@ -12,7 +18,14 @@
 	--compact-surface: #14171e;
 	--compact-rail: #0f1217;
 	--compact-line: rgba(255, 255, 255, 0.08);
-	--compact-muted: rgba(220, 226, 240, 0.58);
+	--compact-muted: rgba(220, 226, 240, 0.66);
+	--compact-faint: rgba(220, 226, 240, 0.5);
+	--compact-press: rgba(255, 255, 255, 0.08);
+	--compact-inset: 6px;
+	--compact-lead: 28px;
+	--compact-glyph: 22px;
+	--compact-gap: 6px;
+	--compact-trail: 36px;
 
 	position: absolute;
 	inset: 0;
@@ -20,9 +33,10 @@
 	/* The chrome row stays visible above the drawer; the drawer starts below
 	   the top safe area. */
 	padding-top: env(safe-area-inset-top, 0px);
-	background: rgba(5, 7, 10, 0.55);
+	background: rgba(5, 7, 10, 0.68);
 	font-family: "Open Sans", "Segoe UI", Roboto, sans-serif;
 	color: #e7ecf5;
+	-webkit-tap-highlight-color: transparent;
 }
 
 .compact-drawer {
@@ -31,8 +45,9 @@
 	bottom: 0;
 	left: 0;
 	display: flex;
-	width: 86%;
-	max-width: 420px;
+	/* A 52px strip of workspace stays beside the drawer: enough to press, and
+	   no more taken from the titles. */
+	width: min(420px, calc(100% - 52px));
 	border-right: 1px solid rgba(255, 255, 255, 0.1);
 	background: var(--compact-surface);
 	box-shadow: 16px 0 40px rgba(0, 0, 0, 0.5);
@@ -57,7 +72,7 @@
 	align-items: center;
 	gap: 6px;
 	min-height: 0;
-	padding: 10px 0 calc(10px + env(safe-area-inset-bottom, 0px));
+	padding: 8px 0 max(10px, env(safe-area-inset-bottom, 0px));
 	border-right: 1px solid var(--compact-line);
 	background: var(--compact-rail);
 }
@@ -69,27 +84,29 @@
 	all: unset;
 	box-sizing: border-box;
 	position: relative;
-	display: inline-flex;
+	display: flex;
+	flex-direction: column;
 	align-items: center;
-	justify-content: center;
-	width: 44px;
-	height: 44px;
-	border-radius: 14px;
+	gap: 4px;
+	width: 60px;
 	cursor: pointer;
 	touch-action: manipulation;
 }
 
 .compact-drawer__server {
-	height: 34px;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 12px;
 	color: var(--compact-muted);
 }
 
 .compact-drawer__server-dot {
 	position: absolute;
-	right: 9px;
-	bottom: 7px;
-	width: 7px;
-	height: 7px;
+	right: 10px;
+	bottom: 10px;
+	width: 8px;
+	height: 8px;
 	border-radius: 50%;
 	background: var(--compact-done);
 	box-shadow: 0 0 0 2px var(--compact-rail);
@@ -99,17 +116,59 @@
 	background: var(--compact-attention);
 }
 
-/* Home is not a project: a neutral tile with a house, never a colour. */
-.compact-drawer__rail-home {
-	background: rgba(255, 255, 255, 0.06);
+.compact-drawer__rail-tile {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	box-sizing: border-box;
+	border-radius: 14px;
+	transition:
+		transform 120ms ease,
+		box-shadow 120ms ease;
+}
+
+.compact-drawer__rail-label {
+	max-width: 58px;
+	overflow: hidden;
+	color: var(--compact-faint);
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.compact-drawer__rail-item--selected .compact-drawer__rail-label {
+	color: #fff;
+}
+
+.compact-drawer__rail-item--selected .compact-drawer__rail-tile {
+	box-shadow:
+		0 0 0 2px var(--compact-rail),
+		0 0 0 4px rgba(255, 255, 255, 0.85);
+}
+
+/* Home is not a project: a neutral house, filled only while it is selected,
+   so it never reads as selected beside the project that is. */
+.compact-drawer__rail-home .compact-drawer__rail-tile {
+	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: #dfe6f2;
+}
+
+.compact-drawer__rail-home.compact-drawer__rail-item--selected
+	.compact-drawer__rail-tile {
+	border-color: transparent;
+	background: rgba(255, 255, 255, 0.14);
 }
 
 .compact-drawer__rail-divider {
 	flex: none;
 	width: 28px;
 	height: 1px;
-	margin: 2px 0;
+	margin: 0 0 2px;
 	background: rgba(255, 255, 255, 0.12);
 }
 
@@ -121,7 +180,7 @@
 	gap: 10px;
 	width: 100%;
 	min-height: 0;
-	/* The selected ring, badges, and edit-mode close button sit up to 6px
+	/* The selected ring, badges, and edit-mode close button sit up to 7px
 	   outside each tile; the scroller would otherwise clip them at its edges. */
 	padding-block: 8px;
 	box-sizing: border-box;
@@ -135,7 +194,7 @@
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	width: 100%;
 }
 
@@ -156,18 +215,22 @@
 	transition: transform 160ms ease;
 }
 
-.compact-drawer__rail-item {
+.compact-drawer__rail-item .compact-drawer__rail-tile {
 	background: color-mix(in srgb, var(--compact-project, #4db5ff) 78%, #000);
 	color: #fff;
 	font-size: 15px;
 	font-weight: 700;
+}
+
+/* A swipe that starts on a tile scrolls the rail; only a tile that is being
+   reordered keeps the pointer for itself. */
+.compact-drawer__rail-item--editable {
 	touch-action: none;
 }
 
-.compact-drawer__rail-item--selected {
-	box-shadow:
-		0 0 0 2px var(--compact-rail),
-		0 0 0 4px rgba(255, 255, 255, 0.85);
+/* In edit mode the close control owns the tile's corner. */
+.compact-drawer__rail-item--editable .compact-drawer__badge {
+	display: none;
 }
 
 .compact-drawer__rail-glyph {
@@ -185,29 +248,39 @@
 .compact-drawer__rail-close {
 	all: unset;
 	position: absolute;
-	top: -6px;
-	right: -6px;
+	top: -7px;
+	right: -1px;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 20px;
-	height: 20px;
+	width: 24px;
+	height: 24px;
 	border-radius: 50%;
-	background: #2a2f3a;
+	background: #3a404d;
 	box-shadow: 0 0 0 2px var(--compact-rail);
 	color: #fff;
 	cursor: pointer;
 }
 
-.compact-drawer__rail-add {
-	border: 1px dashed rgba(255, 255, 255, 0.24);
+/* The disc stays small; the press it answers to does not. */
+.compact-drawer__rail-close::after {
+	content: "";
+	position: absolute;
+	inset: -10px;
+}
+
+.compact-drawer__rail-add .compact-drawer__rail-tile {
+	border: 1px dashed rgba(255, 255, 255, 0.28);
 	color: var(--compact-muted);
 }
 
 .compact-drawer__badge {
 	position: absolute;
-	top: -4px;
-	right: -4px;
+	/* Clear of the selection ring: the badge's own rail-coloured edge cuts the
+	   ring instead of crowding it. */
+	top: -7px;
+	right: -7px;
+	z-index: 1;
 	min-width: 18px;
 	height: 18px;
 	padding: 0 4px;
@@ -245,9 +318,9 @@
 	flex: none;
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	min-height: 52px;
-	padding: 6px 8px 6px 14px;
+	gap: 2px;
+	min-height: 56px;
+	padding: 6px 4px 6px 14px;
 	border-bottom: 1px solid var(--compact-line);
 }
 
@@ -256,6 +329,7 @@
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
+	margin-right: 4px;
 }
 
 .compact-drawer__name {
@@ -280,8 +354,10 @@
 
 .compact-drawer__summary {
 	margin-top: 2px;
+	overflow: hidden;
 	color: var(--compact-muted);
 	font-size: 12px;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
@@ -305,22 +381,23 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	min-width: 36px;
-	height: 36px;
-	border-radius: 10px;
-	color: var(--compact-muted);
+	min-width: 44px;
+	height: 44px;
+	border-radius: 12px;
+	color: rgba(220, 226, 240, 0.8);
 	cursor: pointer;
+	touch-action: manipulation;
 }
 
 .compact-drawer__edit {
 	padding: 0 10px;
-	font-size: 13px;
+	color: #8fd0ff;
+	font-size: 14px;
 	font-weight: 600;
 }
 
 .compact-drawer__edit--on {
 	background: rgba(77, 181, 255, 0.16);
-	color: #8fd0ff;
 }
 
 .compact-drawer__search {
@@ -329,11 +406,16 @@
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
-	height: 36px;
-	padding: 0 4px 0 10px;
-	border-radius: 10px;
-	background: rgba(255, 255, 255, 0.06);
+	height: 40px;
+	padding: 0 0 0 12px;
+	border-radius: 12px;
+	background: rgba(255, 255, 255, 0.07);
 	color: var(--compact-muted);
+}
+
+.compact-drawer__search .compact-drawer__icon {
+	min-width: 40px;
+	height: 40px;
 }
 
 /* iOS zooms the whole page when a control whose COMPUTED font-size is under
@@ -371,7 +453,7 @@
 .compact-drawer .compact-drawer__tabs {
 	flex: none;
 	height: 36px;
-	margin: 6px 10px 0;
+	margin: 8px 10px 2px;
 	padding: 3px;
 	gap: 3px;
 	border-bottom: none;
@@ -407,17 +489,33 @@
 	transition: transform 160ms ease;
 }
 
+.compact-drawer__folder + .compact-drawer__folder {
+	margin-top: 4px;
+}
+
 .compact-drawer__folder-head {
 	display: flex;
 	align-items: center;
-	min-height: 40px;
-	padding: 0 6px 0 4px;
+	min-height: 44px;
+	margin: 0 var(--compact-inset);
 }
 
 .compact-drawer__chevron,
 .compact-drawer__grip,
+.compact-drawer__lead {
+	flex: 0 0 var(--compact-lead);
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--compact-lead);
+	color: var(--compact-faint);
+}
+
+.compact-drawer__grip,
 .compact-drawer__folder-add,
 .compact-drawer__folder-more,
+.compact-drawer__row-more,
 .compact-drawer__row-close {
 	all: unset;
 	box-sizing: border-box;
@@ -425,16 +523,24 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 30px;
-	height: 36px;
-	border-radius: 8px;
+	height: 44px;
+	border-radius: 10px;
 	color: var(--compact-muted);
 	cursor: pointer;
+	touch-action: manipulation;
 }
 
 .compact-drawer__grip {
+	width: var(--compact-lead);
 	cursor: grab;
 	touch-action: none;
+}
+
+.compact-drawer__folder-add,
+.compact-drawer__folder-more,
+.compact-drawer__row-more,
+.compact-drawer__row-close {
+	width: var(--compact-trail);
 }
 
 .compact-drawer__folder-name {
@@ -443,18 +549,36 @@
 	flex: 1 1 auto;
 	display: flex;
 	align-items: center;
-	gap: 6px;
 	min-width: 0;
-	height: 36px;
-	padding: 0 4px;
-	color: rgba(220, 226, 240, 0.82);
-	font-size: 12.5px;
+	height: 44px;
+	border-radius: 10px;
+	color: rgba(220, 226, 240, 0.88);
+	font-size: 13px;
 	font-weight: 700;
 	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.compact-drawer__folder-head--editing .compact-drawer__folder-name {
+	cursor: default;
+}
+
+.compact-drawer__folder-icon,
+.compact-drawer__row-state,
+.compact-drawer__empty-icon {
+	flex: 0 0 var(--compact-glyph);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--compact-glyph);
+	margin-right: var(--compact-gap);
+}
+
+.compact-drawer__folder-icon {
+	color: var(--compact-faint);
 }
 
 .compact-drawer__folder-glyph {
-	flex: none;
 	color: #9bb6ff;
 }
 
@@ -468,6 +592,7 @@
 .compact-drawer__folder-count {
 	flex: none;
 	min-width: 18px;
+	margin-left: 7px;
 	padding: 0 5px;
 	box-sizing: border-box;
 	border-radius: 9px;
@@ -479,34 +604,37 @@
 	text-align: center;
 }
 
+/* An empty folder's one entry: a quiet row on the tree's grid, not a box. */
 .compact-drawer__empty-folder {
 	all: unset;
 	box-sizing: border-box;
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	width: calc(100% - 40px);
+	width: calc(100% - 2 * var(--compact-inset));
 	min-height: 44px;
-	margin: 0 6px 4px 34px;
-	padding: 0 10px;
-	border: 1px dashed rgba(255, 255, 255, 0.16);
+	margin: 0 var(--compact-inset);
 	border-radius: 10px;
 	color: var(--compact-muted);
-	font-size: 13px;
+	font-size: 13.5px;
 	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.compact-drawer__empty-folder .compact-drawer__empty-icon {
+	color: var(--compact-faint);
 }
 
 .compact-drawer__rows {
 	display: flex;
 	flex-direction: column;
+	gap: 2px;
 }
 
 .compact-drawer__row {
 	display: flex;
 	align-items: center;
 	min-height: 48px;
-	margin: 0 6px;
-	padding-left: 24px;
+	margin: 0 var(--compact-inset);
 	border-radius: 10px;
 	transition: transform 160ms ease;
 }
@@ -521,20 +649,13 @@
 	flex: 1 1 auto;
 	display: flex;
 	align-items: center;
-	gap: 10px;
 	min-width: 0;
 	min-height: 48px;
-	padding: 4px 4px 4px 6px;
+	padding: 4px 0;
 	cursor: pointer;
+	touch-action: manipulation;
 	-webkit-touch-callout: none;
 	user-select: none;
-}
-
-.compact-drawer__row-state {
-	flex: none;
-	display: inline-flex;
-	width: 12px;
-	justify-content: center;
 }
 
 .compact-drawer__row-text {
@@ -565,25 +686,42 @@
 
 .compact-drawer__row-sub[data-workflow-step] {
 	font-family: inherit;
-	color: rgba(220, 226, 240, 0.72);
+	color: rgba(220, 226, 240, 0.76);
 }
 
 .compact-drawer__row--current .compact-drawer__row-sub {
-	color: rgba(255, 255, 255, 0.66);
+	color: rgba(255, 255, 255, 0.7);
 }
 
-/* One trailing column, exactly as wide as a folder's ⋯ control, so every dial
-   in the tree sits on the same vertical line. */
-.compact-drawer__wslot {
-	flex: 0 0 30px;
+/* The dial's own column, just before ⋯: every dial in the tree lines up, and
+   a terminal without a workflow gives the room back to its title. */
+.compact-drawer__dial {
+	flex: 0 0 28px;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 30px;
+	width: 28px;
 }
 
-.compact-drawer__folder-head .compact-drawer__wslot {
-	margin-left: 0;
+.compact-drawer__dial:empty {
+	display: none;
+}
+
+/* The trailing column, the same width on every folder header and row. */
+.compact-drawer__wslot {
+	flex: 0 0 var(--compact-trail);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--compact-trail);
+}
+
+.compact-drawer__row-more {
+	color: var(--compact-faint);
+}
+
+.compact-drawer__row--current .compact-drawer__row-more {
+	color: rgba(255, 255, 255, 0.78);
 }
 
 /* ---- filter results ---- */
@@ -614,9 +752,12 @@
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	min-height: 36px;
-	padding: 0 16px 0 34px;
-	color: rgba(220, 226, 240, 0.72);
+	width: calc(100% - 2 * var(--compact-inset));
+	min-height: 44px;
+	margin: 0 var(--compact-inset);
+	padding-left: var(--compact-lead);
+	border-radius: 10px;
+	color: rgba(220, 226, 240, 0.76);
 	font-size: 12.5px;
 	font-weight: 600;
 	cursor: pointer;
@@ -641,6 +782,7 @@
 	padding: 6px 12px;
 	border-radius: 10px;
 	cursor: pointer;
+	touch-action: manipulation;
 }
 
 .compact-drawer__section--current {
@@ -675,8 +817,11 @@
 	font-size: 11.5px;
 }
 
-.compact-drawer__needs-item .compact-drawer__row {
-	padding-left: 4px;
+/* Out of the tree a row has no folder to sit under. */
+.compact-drawer__body > .compact-drawer__rows .compact-drawer__lead,
+.compact-drawer__needs-item .compact-drawer__lead {
+	flex-basis: 4px;
+	width: 4px;
 }
 
 /* ---- create bar ---- */
@@ -685,7 +830,8 @@
 	flex: none;
 	display: flex;
 	gap: 8px;
-	padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+	/* The home indicator's inset is the floor, not an addition to it. */
+	padding: 8px 10px max(8px, env(safe-area-inset-bottom, 0px));
 	border-top: 1px solid var(--compact-line);
 	background: var(--compact-surface);
 }
@@ -708,30 +854,59 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	gap: 8px;
-	min-height: 44px;
+	gap: 10px;
+	min-height: 48px;
 	color: #fff;
 	font-size: 14px;
 	font-weight: 600;
 	cursor: pointer;
+	touch-action: manipulation;
 }
 
 .compact-drawer__split-main {
 	flex: 1 1 auto;
+	justify-content: flex-start;
 	min-width: 0;
-	padding: 0 12px;
+	padding: 0 12px 0 14px;
 }
 
-.compact-drawer__split-label {
+.compact-drawer__split-main > svg,
+.compact-drawer__split-main > img {
+	flex: none;
+}
+
+.compact-drawer__split-text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	line-height: 1.2;
+}
+
+.compact-drawer__split-label,
+.compact-drawer__split-target {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
+.compact-drawer__split-target {
+	color: rgba(255, 255, 255, 0.76);
+	font-size: 11.5px;
+	font-weight: 500;
+}
+
 .compact-drawer__split-more {
-	flex: 0 0 40px;
+	flex: 0 0 44px;
 	border-left: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.compact-drawer__split-more svg {
+	transition: transform 140ms ease;
+}
+
+.compact-drawer__split-more[aria-expanded="true"] svg {
+	transform: rotate(180deg);
 }
 
 .compact-drawer__create-wide {
@@ -741,7 +916,7 @@
 }
 
 .compact-drawer__create-icon {
-	flex: 0 0 44px;
+	flex: 0 0 48px;
 	border-radius: 12px;
 	background: rgba(255, 255, 255, 0.07);
 	color: #dfe6f2;
@@ -762,7 +937,7 @@
 .compact-drawer__sheet {
 	max-height: 80%;
 	overflow-y: auto;
-	padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px));
+	padding: 8px 6px max(8px, env(safe-area-inset-bottom, 0px));
 	border-top: 1px solid rgba(255, 255, 255, 0.12);
 	border-radius: 16px 16px 0 0;
 	background: #1b1f28;
@@ -792,11 +967,12 @@
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	min-height: 46px;
+	min-height: 48px;
 	padding: 0 12px;
 	border-radius: 10px;
-	font-size: 14px;
+	font-size: 14.5px;
 	cursor: pointer;
+	touch-action: manipulation;
 }
 
 .compact-drawer__sheet-item:disabled {
@@ -861,10 +1037,9 @@
 
 .compact-drawer__chips {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 6px;
 	padding: 4px 12px 2px;
-	overflow-x: auto;
-	scrollbar-width: none;
 }
 
 .compact-drawer__chip {
@@ -874,13 +1049,27 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	min-height: 32px;
-	padding: 0 11px;
+	max-width: 100%;
+	min-height: 36px;
+	padding: 0 12px;
+	overflow: hidden;
 	border: 1px solid rgba(255, 255, 255, 0.14);
-	border-radius: 16px;
+	border-radius: 18px;
+	white-space: nowrap;
 	color: rgba(220, 226, 240, 0.82);
-	font-size: 12.5px;
+	font-size: 13px;
 	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.compact-drawer__chip > svg {
+	flex: none;
+}
+
+.compact-drawer__chip-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .compact-drawer__chip[aria-checked="true"] {
@@ -898,6 +1087,113 @@
 	white-space: nowrap;
 }
 
+/* ---- hover ----
+   The app-wide `button:hover` fill outranks a single class, and a phone keeps
+   :hover on whatever was tapped last. Each control keeps its own fill under
+   the pointer; the hover and press rules below add the only feedback. */
+
+.compact-drawer
+	:is(
+		.compact-drawer__rail-home,
+		.compact-drawer__rail-item,
+		.compact-drawer__rail-add,
+		.compact-drawer__edit,
+		.compact-drawer__row-main,
+		.compact-drawer__split-main,
+		.compact-drawer__split-more
+	):hover {
+	background: transparent;
+}
+
+.compact-drawer .compact-drawer__edit--on:hover {
+	background: rgba(77, 181, 255, 0.16);
+}
+
+.compact-drawer .compact-drawer__create-icon:hover {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.compact-drawer .compact-drawer__create-wide:hover {
+	background: #2b6fd6;
+}
+
+/* ---- press feedback ----
+   Every control answers a press, so a tap on glass is never in doubt. */
+
+.compact-drawer
+	:is(
+		.compact-drawer__server,
+		.compact-drawer__icon,
+		.compact-drawer__edit:not(.compact-drawer__edit--on),
+		.compact-drawer__folder-name,
+		.compact-drawer__folder-add,
+		.compact-drawer__folder-more,
+		.compact-drawer__row-more,
+		.compact-drawer__row-close,
+		.compact-drawer__grip,
+		.compact-drawer__empty-folder,
+		.compact-drawer__result-folder,
+		.compact-drawer__section:not(.compact-drawer__section--current),
+		.compact-drawer__sheet-item:not(:disabled),
+		.compact-drawer__chip
+	):active {
+	background: var(--compact-press);
+}
+
+.compact-drawer__folder-head--editing .compact-drawer__folder-name:active {
+	background: none;
+}
+
+.compact-drawer__row:not(.compact-drawer__row--current):has(
+	> .compact-drawer__row-main:active
+) {
+	background: var(--compact-press);
+}
+
+.compact-drawer
+	:is(
+		.compact-drawer__split-main,
+		.compact-drawer__split-more,
+		.compact-drawer__create-wide,
+		.compact-drawer__create-icon
+	):active {
+	filter: brightness(1.15);
+}
+
+.compact-drawer
+	:is(
+		.compact-drawer__rail-item,
+		.compact-drawer__rail-home,
+		.compact-drawer__rail-add
+	):active
+	.compact-drawer__rail-tile {
+	transform: scale(0.94);
+}
+
+@media (hover: hover) {
+	.compact-drawer
+		:is(
+			.compact-drawer__server,
+			.compact-drawer__icon,
+			.compact-drawer__folder-add,
+			.compact-drawer__folder-more,
+			.compact-drawer__row-more,
+			.compact-drawer__row-close,
+			.compact-drawer__empty-folder,
+			.compact-drawer__result-folder,
+			.compact-drawer__section:not(.compact-drawer__section--current),
+			.compact-drawer__chip:not([aria-checked="true"])
+		):hover {
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.compact-drawer__folder-head:not(.compact-drawer__folder-head--editing)
+		.compact-drawer__folder-name:hover,
+	.compact-drawer__row:not(.compact-drawer__row--current):hover {
+		background: rgba(255, 255, 255, 0.04);
+	}
+}
+
 .compact-drawer :focus-visible {
 	outline: 2px solid var(--accent, #4db5ff);
 	outline-offset: -2px;
@@ -909,8 +1205,10 @@
 	}
 
 	.compact-drawer__rail-slot,
+	.compact-drawer__rail-tile,
 	.compact-drawer__folder,
-	.compact-drawer__row {
+	.compact-drawer__row,
+	.compact-drawer__split-more svg {
 		transition: none;
 	}
 }
