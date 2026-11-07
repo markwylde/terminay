@@ -90,6 +90,9 @@ function fakeHandler() {
 			handle(connection, message, reply) {
 				seen.push({ connection, message });
 				if (message.id === undefined) return;
+				// Like the host's MCP server, refuse an initialize without its params.
+				if (message.method === 'initialize' && (typeof message.params?.protocolVersion !== 'string' || typeof message.params?.clientInfo !== 'object'))
+					return reply({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'Invalid initialize params' } });
 				reply({
 					jsonrpc: '2.0',
 					id: message.id,
@@ -121,8 +124,8 @@ function client(t, environment, args = ['--terminay-mcp'], command = ['python3',
 	const iterator = lines[Symbol.asyncIterator]();
 	return {
 		child,
-		async request(id, method) {
-			child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params: {} })}\n`);
+		async request(id, method, params = {}) {
+			child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
 			const response = await iterator.next();
 			return JSON.parse(response.value);
 		},
@@ -277,7 +280,7 @@ function hostToolShell(directory, target = `python3 '${adapter}'`) {
 
 async function listTools(t, environment, args, command) {
 	const c = client(t, environment, args, command);
-	await c.request(1, 'initialize');
+	await c.request(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '1' } });
 	const listed = await c.request(2, 'tools/list');
 	c.close();
 	return (listed.result?.tools ?? []).map((tool) => tool.name);
