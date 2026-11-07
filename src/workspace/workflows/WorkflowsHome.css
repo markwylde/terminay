@@ -482,6 +482,204 @@
 	color: var(--workflows-home-muted);
 }
 
+/* --- Compact: phones and narrow Home tabs (600px or less) -------------
+   The section is the one scroll area: header, toolbar and every column scroll
+   together vertically. Columns and groups stack at full width, and nothing
+   inside scrolls on its own. Targets are at least 36px tall. */
+
+.workflows-home__options-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	box-sizing: border-box;
+	min-height: 36px;
+	padding: 0 12px;
+	border: 1px solid var(--workflows-home-line-strong);
+	border-radius: 8px;
+	color: inherit;
+	background: rgb(255 255 255 / 0.04);
+	font: inherit;
+	cursor: pointer;
+}
+
+.workflows-home__changed {
+	color: #d29922;
+}
+
+.workflows-home__options-chevron {
+	transition: transform 120ms ease;
+}
+
+.workflows-home__options-chevron.is-open {
+	transform: rotate(180deg);
+}
+
+.workflows-home__options {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 12px;
+	width: 100%;
+	padding: 12px;
+	box-sizing: border-box;
+	border: 1px solid var(--workflows-home-line);
+	border-radius: 10px;
+	background: rgb(255 255 255 / 0.025);
+}
+
+.workflows-home--compact {
+	overflow-x: hidden;
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.workflows-home--compact .home-section__header {
+	padding: 14px 16px 10px;
+}
+
+.workflows-home--compact .workflows-home__toolbar {
+	gap: 10px;
+	padding: 10px 16px 12px;
+	font-size: 14px;
+}
+
+.workflows-home--compact .workflows-home__search {
+	flex: 1 1 100%;
+	width: 100%;
+	/* 16px stops iOS from zooming in on focus. */
+	font-size: 16px;
+}
+
+.workflows-home--compact .workflows-home__search,
+.workflows-home--compact .workflows-home__select,
+.workflows-home--compact .workflows-home__picker-button,
+.workflows-home--compact .workflows-home__chip,
+.workflows-home--compact .workflows-home__segmented button,
+.workflows-home--compact .workflows-home__toggle,
+.workflows-home--compact .workflows-home__link,
+.workflows-home--compact .workflows-home__menu-item {
+	min-height: 36px;
+}
+
+.workflows-home--compact .workflows-home__search,
+.workflows-home--compact .workflows-home__select,
+.workflows-home--compact .workflows-home__picker-button {
+	height: 36px;
+	border-radius: 8px;
+}
+
+.workflows-home--compact .workflows-home__chips {
+	flex: 1 1 100%;
+	flex-wrap: nowrap;
+	gap: 6px;
+}
+
+.workflows-home--compact .workflows-home__chip {
+	flex: 1 1 0;
+	justify-content: center;
+	min-width: 0;
+	padding: 0 8px;
+	white-space: nowrap;
+}
+
+.workflows-home--compact .workflows-home__options .workflows-home__field {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
+}
+
+.workflows-home--compact .workflows-home__options .workflows-home__label {
+	float: none;
+}
+
+.workflows-home--compact .workflows-home__segmented {
+	display: flex;
+	border-radius: 8px;
+}
+
+.workflows-home--compact .workflows-home__segmented button {
+	flex: 1 1 0;
+}
+
+.workflows-home--compact .workflows-home__picker-button {
+	width: 100%;
+	justify-content: space-between;
+}
+
+.workflows-home--compact .workflows-home__menu {
+	position: static;
+	min-width: 0;
+	margin-top: 6px;
+	box-shadow: none;
+}
+
+.workflows-home--compact .workflows-home__options .workflows-home__link {
+	align-self: flex-start;
+	display: inline-flex;
+	align-items: center;
+}
+
+.workflows-home--compact .workflows-home__body {
+	flex: 0 0 auto;
+	min-height: auto;
+}
+
+.workflows-home--compact .workflows-home__scroller,
+.workflows-home--compact .workflows-home__rows,
+.workflows-home--compact .workflows-home__group-columns,
+.workflows-home--compact .workflows-home__row-scroller {
+	flex-direction: column;
+	height: auto;
+	overflow: visible;
+	scroll-snap-type: none;
+}
+
+.workflows-home--compact .workflows-home__scroller,
+.workflows-home--compact .workflows-home__rows {
+	gap: 12px;
+	padding: 12px 16px 24px;
+}
+
+.workflows-home--compact .workflows-home__group {
+	align-self: stretch;
+	padding: 8px;
+}
+
+.workflows-home--compact .workflows-home__group-head {
+	flex-wrap: wrap;
+}
+
+.workflows-home--compact .workflows-home__group-title {
+	flex: 1 1 auto;
+}
+
+.workflows-home--compact .workflows-home__column,
+.workflows-home--compact .workflows-home__row-scroller .workflows-home__column {
+	width: auto;
+	height: auto;
+	overflow: visible;
+}
+
+.workflows-home--compact .workflows-home__steps {
+	overflow: visible;
+}
+
+.workflows-home--compact .workflows-home__column-head {
+	padding: 12px 10px 12px 14px;
+}
+
+.workflows-home--compact .workflows-home__icon-button {
+	width: 36px;
+	height: 36px;
+	border-radius: 8px;
+}
+
+.workflows-home--compact .workflows-home__state {
+	height: auto;
+	min-height: 240px;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.workflows-home__scroller,
 	.workflows-home__row-scroller {
