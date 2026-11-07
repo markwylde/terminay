@@ -2933,15 +2933,23 @@ test('a folder collapses to its title line from its toggle or the keyboard, show
 		'true',
 	);
 
-	// Right opens it and Left closes it, as in any tree.
-	await folderRow(mainWindow, 'General').focus();
-	await mainWindow.keyboard.press('ArrowRight');
-	await expect(header).toHaveAttribute('aria-expanded', 'true');
+	// Right opens it and Left closes it, as in any tree. The reloaded terminal
+	// can take focus back as it reattaches, so each key is pressed with the
+	// header focused; pressing either again changes nothing.
+	const pressOnHeader = async (key: string, expanded: 'true' | 'false') => {
+		await expect(async () => {
+			await header.focus();
+			await mainWindow.keyboard.press(key);
+			await expect(header).toHaveAttribute('aria-expanded', expanded, {
+				timeout: 1_000,
+			});
+		}).toPass({ timeout: 10_000 });
+	};
+	await pressOnHeader('ArrowRight', 'true');
 	await expect(rows).toHaveCount(1);
 	await expect(newTerminal).toBeVisible();
 	await expect(attention).toHaveCount(0);
-	await mainWindow.keyboard.press('ArrowLeft');
-	await expect(header).toHaveAttribute('aria-expanded', 'false');
+	await pressOnHeader('ArrowLeft', 'false');
 	await header.getByRole('button', { name: 'Expand General' }).click();
 	await expect(rows).toHaveCount(1);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
