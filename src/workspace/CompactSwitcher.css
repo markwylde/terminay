@@ -121,6 +121,10 @@
 	gap: 10px;
 	width: 100%;
 	min-height: 0;
+	/* The selected ring, badges, and edit-mode close button sit up to 6px
+	   outside each tile; the scroller would otherwise clip them at its edges. */
+	padding-block: 8px;
+	box-sizing: border-box;
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: none;
