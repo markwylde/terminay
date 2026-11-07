@@ -44,6 +44,10 @@ export type CompactSwitcherPanelRow = Readonly<{
 /** One folder of a project and the panels it holds. */
 export type CompactSwitcherFolderGroup = Readonly<{
 	folderId: string;
+	/** True for the project's General folder, which can never be removed. */
+	isGeneral: boolean;
+	/** True for a folder that stands for a linked worktree. */
+	isLinked: boolean;
 	key: string;
 	name: string;
 	panels: readonly CompactSwitcherPanelRow[];
@@ -96,6 +100,10 @@ export type CompactSwitcherFolderSource = Readonly<{
 	name: string;
 	/** True for the project's General folder, wherever it is in the order. */
 	isGeneral?: boolean;
+	/** True for a folder that stands for a linked worktree. */
+	isLinked?: boolean;
+	/** The server's canonical order of the folder's panels. */
+	panelIds?: readonly string[];
 }>;
 
 export type CompactSwitcherInput = Readonly<{
@@ -262,6 +270,27 @@ export function buildCompactSwitcherGroups(
  * General rather than dropped: a row that cannot be reached is worse than one
  * under the wrong heading.
  */
+/**
+ * A folder's rows in the order the server holds, so a committed reorder is
+ * what the drawer shows. A panel the server does not list (one only this
+ * device knows) keeps its place after those it does.
+ */
+function inCanonicalOrder(
+	panels: readonly CompactSwitcherPanelRow[],
+	order: readonly string[] | undefined,
+): CompactSwitcherPanelRow[] {
+	if (order === undefined || order.length === 0) return [...panels];
+	const rank = new Map(order.map((panelId, index) => [panelId, index]));
+	return panels
+		.map((panel, index) => ({ panel, index }))
+		.sort(
+			(left, right) =>
+				(rank.get(left.panel.panelId) ?? order.length + left.index) -
+				(rank.get(right.panel.panelId) ?? order.length + right.index),
+		)
+		.map(({ panel }) => panel);
+}
+
 function groupPanelsByFolder(
 	serverId: string,
 	folders: readonly CompactSwitcherFolderSource[],
@@ -278,10 +307,15 @@ function groupPanelsByFolder(
 		folders.map((folder) =>
 			Object.freeze({
 				folderId: folder.id,
+				isGeneral: folder.isGeneral === true,
+				isLinked: folder.isLinked === true,
 				key: compositionTabKey(serverId, `folder:${folder.id}`),
 				name: folder.name,
 				panels: Object.freeze(
-					panels.filter((panel) => folderOf(panel) === folder.id),
+					inCanonicalOrder(
+						panels.filter((panel) => folderOf(panel) === folder.id),
+						folder.panelIds,
+					),
 				),
 			}),
 		),
@@ -349,4 +383,98 @@ export function compactSwitcherIsEmpty(
 	groups: readonly CompactSwitcherConnectionGroup[],
 ): boolean {
 	return groups.every((connection) => connection.projects.length === 0);
+}
+
+/**
+ * A rail item's badge: what needs the user, else what is working, else nothing.
+ *
+ * Counted from the same summary the panel header shows, so a badge can never
+ * disagree with the rows it stands for.
+ */
+export type CompactRailBadge = Readonly<{
+	count: number;
+	tone: 'attention' | 'working';
+}>;
+
+export function compactRailBadge(
+	summary: CompactSwitcherStatusSummary,
+): CompactRailBadge | undefined {
+	if (summary.attention > 0)
+		return Object.freeze({ count: summary.attention, tone: 'attention' });
+	if (summary.working > 0)
+		return Object.freeze({ count: summary.working, tone: 'working' });
+	return undefined;
+}
+
+/**
+ * The rail's groups: the window's own server first, then the others in the
+ * order they were given. Within a group the composition order is kept.
+ */
+export function orderCompactRailConnections(
+	groups: readonly CompactSwitcherConnectionGroup[],
+	currentServerId: string,
+): readonly CompactSwitcherConnectionGroup[] {
+	const own = groups.filter((group) => group.serverId === currentServerId);
+	const others = groups.filter((group) => group.serverId !== currentServerId);
+	return Object.freeze([...own, ...others]);
+}
+
+/** A terminal that needs the user, with where it lives. */
+export type CompactNeedsYouRow = Readonly<{
+	folderName?: string;
+	panel: CompactSwitcherPanelRow;
+	project: CompactSwitcherProjectGroup;
+}>;
+
+/** Every terminal waiting on or blocked for the user, across every project. */
+export function compactNeedsYou(
+	groups: readonly CompactSwitcherConnectionGroup[],
+): readonly CompactNeedsYouRow[] {
+	const rows: CompactNeedsYouRow[] = [];
+	for (const connection of groups)
+		for (const project of connection.projects) {
+			const folderNames = new Map<string, string>();
+			for (const folder of project.folders)
+				for (const panel of folder.panels)
+					folderNames.set(panel.key, folder.name);
+			for (const panel of project.panels) {
+				if (panel.panelKind !== 'terminal') continue;
+				if (panel.state !== 'waiting' && panel.state !== 'blocked') continue;
+				const folderName = folderNames.get(panel.key);
+				rows.push(
+					Object.freeze({
+						...(folderName === undefined ? {} : { folderName }),
+						panel,
+						project,
+					}),
+				);
+			}
+		}
+	return Object.freeze(rows);
+}
+
+const WORKTREE_PREFIX = 'worktree-';
+
+/**
+ * A folder's name as a narrow surface shows it. Worktrees agents make are named
+ * `worktree-<topic>`; beside the worktree glyph the prefix says nothing.
+ */
+export function displayFolderName(name: string): string {
+	return name.startsWith(WORKTREE_PREFIX) &&
+		name.length > WORKTREE_PREFIX.length
+		? name.slice(WORKTREE_PREFIX.length)
+		: name;
+}
+
+/** Up to two letters standing for a project on the rail. */
+export function compactProjectInitials(title: string): string {
+	const words = title
+		.trim()
+		.split(/[\s._-]+/)
+		.filter((word) => word.length > 0);
+	const [first, second] = words;
+	if (first === undefined) return '?';
+	if (second === undefined)
+		return `${first.charAt(0).toLocaleUpperCase()}${first.slice(1, 2)}`;
+	return `${first.charAt(0)}${second.charAt(0)}`.toLocaleUpperCase();
 }

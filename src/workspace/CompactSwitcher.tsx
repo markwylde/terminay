@@ -1,24 +1,52 @@
 /**
- * The one surface that answers "which panel".
+ * The one surface that answers "which panel", at phone width.
  *
- * Projects, panels, and connections stopped being three menus here: they are
- * three levels of one list. A row names its panel and, when this window
- * holds that terminal's buffer, the last line it printed — which is how a user
- * recognises the terminal they meant rather than the name they half-remember.
+ * A drawer from the leading edge: a rail of places (Home, then every project
+ * of every attached connection) and a panel presenting the one selected. A
+ * project is a tree of its folders and the panels each holds; Home is its
+ * sections and the terminals waiting on the user. Choosing a rail item only
+ * changes what the panel presents; choosing a panel, a folder, or a create
+ * action changes what is on screen.
  *
- * It overlays the workspace instead of taking height from it, so opening the
- * switcher never resizes a terminal and dismissing it never costs a relayout.
+ * The drawer is mounted once per open and its entrance is a CSS animation on
+ * this shell alone. Rail selection, edit mode, the filter, menus, and the
+ * launcher dropup are state inside it, so none of them replays the entrance.
+ *
+ * It overlays the workspace instead of taking width from it, so opening it
+ * never resizes a terminal and dismissing it never costs a relayout.
  */
 
-import { TerminalWorkflowBadge } from './workflows/WorkflowTabBadge';
-import { FolderPlus, House, Plus, Search, Server, X } from 'lucide-react';
-import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
-import type { CSSProperties, ReactNode } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import {
+	ChevronDown,
+	ChevronRight,
+	Ellipsis,
+	FolderPlus,
+	GitBranch,
+	GripVertical,
+	House,
+	Pencil,
+	Plus,
+	Search,
+	Server,
+	X,
+} from 'lucide-react';
+import type {
+	CSSProperties,
+	KeyboardEvent as ReactKeyboardEvent,
+	MouseEvent as ReactMouseEvent,
+	ReactNode,
+} from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import './CompactSwitcher.css';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
+import { LauncherIcon } from '../components/folders/launcherIcons';
 import { FOLDERS_COLUMN_TABS } from '../components/folders/foldersColumnTabs';
 import { SidebarGroupTabs } from '../components/sidebar/SidebarGroupTabs';
 import { useLongPress } from '../hooks/useLongPress';
+import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
+import type { TerminalLauncherView } from '../types/terminalLaunchers';
+import type { FoldersColumnTabId } from '../types/settings';
+import { CompactSheetMenu, type CompactSheetItem } from './CompactSheetMenu';
 import type {
 	CompactSwitcherConnectionGroup,
 	CompactSwitcherFolderGroup,
@@ -26,69 +54,24 @@ import type {
 	CompactSwitcherProjectGroup,
 } from './compactSwitcherModel.ts';
 import {
+	compactNeedsYou,
+	compactProjectInitials,
+	compactRailBadge,
 	compactSwitcherIsEmpty,
+	displayFolderName,
+	filterCompactSwitcherGroups,
 	formatCompactSwitcherSummary,
+	orderCompactRailConnections,
 } from './compactSwitcherModel.ts';
-import type { FoldersColumnTabId } from '../types/settings';
-
-export type CompactSwitcherProps = Readonly<{
-	/** The agents of the project in front. When present the sheet offers the
-	 * left column's two tabs, Tabs and Agents, and shows this under Agents. */
-	agents?: ReactNode;
-	/** The row for the panel in front, so the list says where you already are. */
-	activePanelKey?: string;
-	/** Where the create bar's terminal will land: the project in front and the
-	 * folder this device has selected in it. Passed in, not read from `groups`,
-	 * because a filter can narrow the project in front out of the list. */
-	front?: CompactSwitcherFront;
-	groups: readonly CompactSwitcherConnectionGroup[];
-	isHomeSelected: boolean;
-	/** Choosing a folder heading shows that folder, with or without panels.
-	 * At this width it is the only way to an empty one. */
-	onActivateFolder?: (
-		group: CompactSwitcherProjectGroup,
-		folder: CompactSwitcherFolderGroup,
-	) => void;
-	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
-	onAddConnection: () => void;
-	onClosePanel: (row: CompactSwitcherPanelRow) => void;
-	onCloseProject: (group: CompactSwitcherProjectGroup) => void;
-	onDismiss: () => void;
-	/** Long-pressing a project heading edits it, the gesture the project
-	 * switcher rows already carry. */
-	onEditProject: (group: CompactSwitcherProjectGroup) => void;
-	/** Long-pressing a panel row edits it, the gesture its hidden tab held. */
-	onEditPanel: (row: CompactSwitcherPanelRow) => void;
-	onNewProject: () => void;
-	/** Creates in a project whose folders this window does not list. */
-	onNewTerminal: (group: CompactSwitcherProjectGroup) => void;
-	/** Creates in the folder whose label carried the control. */
-	onNewTerminalInFolder: (
-		group: CompactSwitcherProjectGroup,
-		folder: CompactSwitcherFolderGroup,
-	) => void;
-	/** Creates in the project in front; absent when no project is active. */
-	onNewTerminalHere?: () => void;
-	onQueryChange: (query: string) => void;
-	/** The compact row has no Home control; this is where a phone goes Home. */
-	onShowHome: () => void;
-	query: string;
-	/** The servers this window could show, Local first, where the host can
-	 * switch between them. At this width the header's connection menu is not
-	 * drawn, so switching lives here. */
-	servers?: readonly CompactSwitcherServer[];
-	onSwitchServer?: (profileId: string) => void;
-	/** A row for each attached server that has an upgrade to show. The header's
-	 * connection menu is not drawn at this width, so they are listed here. */
-	serverUpgrades?: ReactNode;
-}>;
-
-export type CompactSwitcherFront = Readonly<{
-	color: string;
-	/** Absent when this window does not know the project's folders. */
-	folderName?: string;
-	projectTitle: string;
-}>;
+import type { FolderMenuActionId, FolderMenuEntry } from './folderMenuModel';
+import { HOME_SECTION_LABELS, type HomeSection } from './homeSection';
+import { COMPACT_SHELL_LAUNCHER } from './localViewState';
+import { gripDragState, useGripReorder } from './useGripReorder';
+import { moveItem } from './gripReorderModel.ts';
+import {
+	TerminalWorkflowBadge,
+	TerminalWorkflowStep,
+} from './workflows/WorkflowTabBadge';
 
 export type CompactSwitcherServer = Readonly<{
 	profileId: string;
@@ -97,100 +80,142 @@ export type CompactSwitcherServer = Readonly<{
 	isSwitching: boolean;
 }>;
 
-/**
- * The panel row carries the gesture the hidden tab used to carry.
- *
- * Long-pressing a panel tab opened its editor; at this width no tab strip is
- * drawn, so the row that replaced it takes the press. The project heading above
- * already edits on a long press, which makes this the consistent reading rather
- * than a second idiom — except that a short press here still activates, because
- * activating is what a panel row is for. Close sits beside the row so it is
- * not a nested button.
- */
-function CompactSwitcherPanel({
-	isActive,
-	onActivate,
-	onClose,
-	onEdit,
-	panel,
-}: Readonly<{
-	isActive: boolean;
-	onActivate: () => void;
-	onClose: () => void;
-	onEdit: () => void;
-	panel: CompactSwitcherPanelRow;
-}>) {
-	const longPress = useLongPress(onEdit);
+export type CompactHomeSectionItem = Readonly<{
+	section: HomeSection;
+	/** One line of what the window already knows about the section. */
+	summary: string;
+}>;
+
+export type CompactSwitcherProps = Readonly<{
+	/** The row for the panel on screen, so the tree says where you are. */
+	activePanelKey?: string;
+	/** The agents of the project in front, shown under its Agents tab. */
+	agents?: ReactNode;
+	/** The folders of a project this device draws collapsed. */
+	collapsedFolderIdsFor: (
+		project: CompactSwitcherProjectGroup,
+	) => ReadonlySet<string>;
+	currentServer: Readonly<{ id: string; label: string; isReachable: boolean }>;
+	/** A folder's context-menu entries, for a project on the current server. */
+	folderMenuFor?: (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+	) => readonly FolderMenuEntry[] | undefined;
+	/** The project in front, absent while Home is selected. */
+	frontProjectKey?: string;
+	groups: readonly CompactSwitcherConnectionGroup[];
+	/** The section of the Home tab in front, while Home is the view. */
+	homeFrontSection?: HomeSection;
+	homeSections: readonly CompactHomeSectionItem[];
+	isHomeSelected: boolean;
+	/** The launchers the current server lists, in its order. */
+	launchers: readonly TerminalLauncherView[];
+	/** `shell` or a launcher id: what the split control repeats. */
+	rememberedLauncherId: string;
+	/** The folder this device has selected in a project, when it knows. */
+	selectedFolderIdFor: (
+		project: CompactSwitcherProjectGroup,
+	) => string | undefined;
+	/** The servers this window could show, where the host can switch. */
+	servers?: readonly CompactSwitcherServer[];
+	/** A row for each attached server that has an upgrade to show. */
+	serverUpgrades?: ReactNode;
+	onActivateFolder: (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+	) => void;
+	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
+	onAddConnection: () => void;
+	onClosePanel: (row: CompactSwitcherPanelRow) => void;
+	onCloseProject: (project: CompactSwitcherProjectGroup) => void;
+	/** Create a terminal; `launcherId` is `shell` or a launcher's id. */
+	onCreateTerminal: (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup | undefined,
+		launcherId: string,
+	) => void;
+	onDismiss: () => void;
+	onEditProject: (project: CompactSwitcherProjectGroup) => void;
+	onFolderMenuAction: (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+		action: FolderMenuActionId,
+	) => void;
+	onMovePanelToFolder: (row: CompactSwitcherPanelRow, folderId: string) => void;
+	onNewProject: () => void;
+	onOpenHomeSection: (section: HomeSection) => void;
+	onRenamePanel: (row: CompactSwitcherPanelRow) => void;
+	onReorderFolders: (
+		project: CompactSwitcherProjectGroup,
+		folderIds: readonly string[],
+	) => void;
+	onReorderPanels: (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+		panelIds: readonly string[],
+	) => void;
+	/** The current server's projects, by project id, in their new order. */
+	onReorderProjects: (projectIds: readonly string[]) => void;
+	onSwitchServer?: (profileId: string) => void;
+	onToggleFolderCollapsed: (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+	) => void;
+}>;
+
+const HOME = 'home';
+
+type Layer =
+	| Readonly<{ kind: 'row'; row: CompactSwitcherPanelRow }>
+	| Readonly<{ kind: 'folder'; folder: CompactSwitcherFolderGroup }>
+	| Readonly<{ kind: 'server' }>
+	| Readonly<{ kind: 'dropup'; folderId?: string }>;
+
+const isContextMenuKey = (event: ReactKeyboardEvent) =>
+	event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey);
+
+/** Opens a row's menu by a long press, a secondary click, or the keyboard. */
+function useMenuGesture(open: () => void, disabled: boolean) {
+	const longPress = useLongPress(open, { disabled });
+	return {
+		longPress,
+		onContextMenu: (event: ReactMouseEvent<HTMLElement>) => {
+			longPress.onContextMenu(event);
+			if (event.defaultPrevented || disabled) return;
+			// A secondary click opens the same menu a long press does.
+			event.preventDefault();
+			open();
+		},
+		onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+			if (disabled || !isContextMenuKey(event)) return;
+			event.preventDefault();
+			open();
+		},
+	};
+}
+
+function Badge({
+	count,
+	tone,
+}: Readonly<{ count: number; tone: 'attention' | 'working' }>) {
 	return (
-		<div className="compact-switcher__row">
-			<button
-				type="button"
-				className="compact-switcher__terminal"
-				onPointerDown={longPress.onPointerDown}
-				onPointerMove={longPress.onPointerMove}
-				onPointerUp={longPress.onPointerUp}
-				onPointerCancel={longPress.onPointerCancel}
-				onContextMenu={longPress.onContextMenu}
-				onClick={longPress.bindClick(onActivate)}
-				aria-current={isActive}
-				data-compact-switcher-panel={panel.key}
-				data-compact-switcher-terminal={
-					panel.panelKind === 'terminal' ? panel.key : undefined
-				}
-				data-project-id={panel.projectId}
-			>
-				<span
-					className="compact-switcher__terminal-state"
-					aria-hidden={panel.state === 'idle'}
-				>
-					<AgentStatusIndicator state={panel.state} size="small" showIdle />
-				</span>
-				<span className="compact-switcher__terminal-text">
-					<span className="compact-switcher__terminal-title">
-						<LiveTerminalTitle panelId={panel.panelId} fallback={panel.title} />
-					</span>
-					{panel.preview === undefined ? null : (
-						<span className="compact-switcher__terminal-preview">
-							{panel.preview}
-						</span>
-					)}
-				</span>
-				{panel.panelKind === 'terminal' ? (
-					<TerminalWorkflowBadge
-						serverId={panel.serverId}
-						sessionId={panel.sessionId}
-					/>
-				) : null}
-			</button>
-			<button
-				type="button"
-				className="compact-switcher__close"
-				onClick={onClose}
-				aria-label={`Close ${panel.title}`}
-				title={`Close ${panel.title}`}
-			>
-				<X size={13} aria-hidden="true" />
-			</button>
-		</div>
+		<span
+			className={`compact-drawer__badge compact-drawer__badge--${tone}`}
+			aria-hidden="true"
+		>
+			{count > 99 ? '99+' : count}
+		</span>
 	);
 }
 
-/**
- * A project's terminals in words.
- *
- * It stands where an activity dot would: a second dot beside the colour swatch
- * read as a pair, and a count in words says more than a colour. Only the
- * leading group takes its state's colour, so the eye lands on what is most
- * urgent.
- */
-function CompactSwitcherSummary({
+function ProjectSummary({
 	project,
 }: Readonly<{ project: CompactSwitcherProjectGroup }>) {
 	const summary = formatCompactSwitcherSummary(project.summary);
 	if (summary.groups.length === 0) return null;
 	return (
 		<span
-			className="compact-switcher__summary"
+			className="compact-drawer__summary"
 			role="img"
 			aria-label={summary.accessible}
 			data-compact-switcher-summary={project.key}
@@ -198,10 +223,8 @@ function CompactSwitcherSummary({
 			{summary.groups.map((entry, index) => (
 				<span
 					key={entry.group}
-					className={`compact-switcher__summary-group${
-						index === 0
-							? ` compact-switcher__summary-group--${entry.group}`
-							: ''
+					className={`compact-drawer__summary-group${
+						index === 0 ? ` compact-drawer__summary-group--${entry.group}` : ''
 					}`}
 				>
 					{index === 0 ? '' : ' · '}
@@ -212,435 +235,1458 @@ function CompactSwitcherSummary({
 	);
 }
 
-function CompactSwitcherProjectHeading({
+/* ---------------------------------------------------------------- rail */
+
+function RailProject({
+	gripProps,
+	isEditing,
+	isMovable,
+	isSelected,
+	onClose,
 	onEdit,
+	onSelect,
 	project,
+	style,
 }: Readonly<{
+	gripProps?: ReturnType<ReturnType<typeof useGripReorder>['gripProps']>;
+	isEditing: boolean;
+	isMovable: boolean;
+	isSelected: boolean;
+	onClose: () => void;
 	onEdit: () => void;
+	onSelect: () => void;
 	project: CompactSwitcherProjectGroup;
+	style?: CSSProperties;
 }>) {
-	const longPress = useLongPress(onEdit);
+	const longPress = useLongPress(onEdit, { disabled: isEditing });
+	const badge = compactRailBadge(project.summary);
+	const editable = isEditing && isMovable;
 	return (
-		<button
-			type="button"
-			className="compact-switcher__project-button"
-			data-compact-switcher-project={project.key}
-			onPointerDown={longPress.onPointerDown}
-			onPointerMove={longPress.onPointerMove}
-			onPointerUp={longPress.onPointerUp}
-			onPointerCancel={longPress.onPointerCancel}
-			onContextMenu={longPress.onContextMenu}
-			onClick={longPress.bindClick(() => {})}
-			title="Long-press to edit project"
+		<div
+			className="compact-drawer__rail-slot"
+			data-grip-item="true"
+			style={style}
 		>
-			<span className="compact-switcher__project-swatch" aria-hidden="true" />
-			<span className="compact-switcher__project-name">{project.title}</span>
-			<CompactSwitcherSummary project={project} />
-		</button>
+			<button
+				type="button"
+				className={`compact-drawer__rail-item${isSelected ? ' compact-drawer__rail-item--selected' : ''}`}
+				style={{ '--compact-project': project.color } as CSSProperties}
+				aria-label={project.title}
+				aria-pressed={isSelected}
+				title={editable ? undefined : 'Long-press to edit project'}
+				data-compact-switcher-project={project.key}
+				data-project-id={project.projectId}
+				onPointerDown={
+					editable ? gripProps?.onPointerDown : longPress.onPointerDown
+				}
+				onPointerMove={editable ? undefined : longPress.onPointerMove}
+				onPointerUp={editable ? undefined : longPress.onPointerUp}
+				onPointerCancel={editable ? undefined : longPress.onPointerCancel}
+				onContextMenu={editable ? undefined : longPress.onContextMenu}
+				onKeyDown={editable ? gripProps?.onKeyDown : undefined}
+				onClick={longPress.bindClick(onSelect)}
+			>
+				<span className="compact-drawer__rail-glyph" aria-hidden="true">
+					{project.emoji.length > 0
+						? project.emoji
+						: compactProjectInitials(project.title)}
+				</span>
+				{badge === undefined ? null : <Badge {...badge} />}
+				{editable ? (
+					<GripVertical
+						className="compact-drawer__rail-grip"
+						size={10}
+						aria-hidden="true"
+					/>
+				) : null}
+			</button>
+			{editable ? (
+				<button
+					type="button"
+					className="compact-drawer__rail-close"
+					onClick={onClose}
+					aria-label={`Close ${project.title}`}
+					data-compact-switcher-close-project={project.key}
+				>
+					<X size={10} aria-hidden="true" />
+				</button>
+			) : null}
+		</div>
 	);
 }
 
-export function CompactSwitcher({
+function RailGroup({
+	connection,
+	isEditing,
+	isMovable,
+	onAnnounce,
+	onCloseProject,
+	onEditProject,
+	onReorder,
+	onSelect,
+	selected,
+	showHeading,
+}: Readonly<{
+	connection: CompactSwitcherConnectionGroup;
+	isEditing: boolean;
+	isMovable: boolean;
+	onAnnounce: (message: string) => void;
+	onCloseProject: (project: CompactSwitcherProjectGroup) => void;
+	onEditProject: (project: CompactSwitcherProjectGroup) => void;
+	onReorder: (projectIds: readonly string[]) => void;
+	onSelect: (key: string) => void;
+	selected: string;
+	showHeading: boolean;
+}>) {
+	const listRef = useRef<HTMLDivElement>(null);
+	const projects = connection.projects;
+	const reorder = useGripReorder({
+		listRef,
+		onCommit: (from, to) =>
+			onReorder(
+				moveItem(
+					projects.map((project) => project.projectId),
+					from,
+					to,
+				),
+			),
+		onAnnounce,
+		describe: (index) => projects[index]?.title ?? 'Project',
+	});
+	return (
+		<div className="compact-drawer__rail-group">
+			{showHeading ? (
+				<span
+					className="compact-drawer__rail-heading"
+					title={connection.serverLabel}
+				>
+					{connection.serverLabel}
+				</span>
+			) : null}
+			<div ref={listRef} className="compact-drawer__rail-list">
+				{projects.map((project, index) => (
+					<RailProject
+						key={project.key}
+						gripProps={reorder.gripProps(index, projects.length)}
+						isEditing={isEditing}
+						isMovable={isMovable}
+						isSelected={selected === project.key}
+						onClose={() => onCloseProject(project)}
+						onEdit={() => onEditProject(project)}
+						onSelect={() => {
+							if (reorder.consumeDragClick()) return;
+							onSelect(project.key);
+						}}
+						project={project}
+						{...(reorder.itemStyle(index) === undefined
+							? {}
+							: { style: reorder.itemStyle(index) })}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
+/* ---------------------------------------------------------------- tree */
+
+function PanelRow({
+	gripProps,
+	isActive,
+	isEditing,
+	onActivate,
+	onClose,
+	onMenu,
+	panel,
+	style,
+}: Readonly<{
+	gripProps?: ReturnType<ReturnType<typeof useGripReorder>['gripProps']>;
+	isActive: boolean;
+	isEditing: boolean;
+	onActivate: () => void;
+	onClose: () => void;
+	onMenu: () => void;
+	panel: CompactSwitcherPanelRow;
+	style?: CSSProperties;
+}>) {
+	const gesture = useMenuGesture(onMenu, isEditing);
+	const { longPress } = gesture;
+	return (
+		<div
+			className={`compact-drawer__row${isActive ? ' compact-drawer__row--current' : ''}`}
+			data-grip-item="true"
+			style={style}
+		>
+			{isEditing && gripProps !== undefined ? (
+				<button
+					type="button"
+					className="compact-drawer__grip"
+					aria-label={`Reorder ${panel.title}`}
+					data-compact-switcher-grip={panel.key}
+					{...gripProps}
+				>
+					<GripVertical size={14} aria-hidden="true" />
+				</button>
+			) : null}
+			<button
+				type="button"
+				className="compact-drawer__row-main"
+				onPointerDown={longPress.onPointerDown}
+				onPointerMove={longPress.onPointerMove}
+				onPointerUp={longPress.onPointerUp}
+				onPointerCancel={longPress.onPointerCancel}
+				onContextMenu={gesture.onContextMenu}
+				onKeyDown={gesture.onKeyDown}
+				onClick={longPress.bindClick(() => {
+					if (!isEditing) onActivate();
+				})}
+				aria-current={isActive ? 'true' : undefined}
+				aria-haspopup="menu"
+				data-compact-switcher-panel={panel.key}
+				data-compact-switcher-terminal={
+					panel.panelKind === 'terminal' ? panel.key : undefined
+				}
+				data-project-id={panel.projectId}
+			>
+				<span
+					className="compact-drawer__row-state"
+					aria-hidden={panel.state === 'idle'}
+				>
+					<AgentStatusIndicator state={panel.state} size="small" showIdle />
+				</span>
+				<span className="compact-drawer__row-text">
+					<span className="compact-drawer__row-title">
+						<LiveTerminalTitle panelId={panel.panelId} fallback={panel.title} />
+					</span>
+					{panel.panelKind === 'terminal' ? (
+						<TerminalWorkflowStep
+							className="compact-drawer__row-sub"
+							serverId={panel.serverId}
+							sessionId={panel.sessionId}
+							{...(panel.preview === undefined
+								? {}
+								: { fallback: panel.preview })}
+						/>
+					) : null}
+				</span>
+			</button>
+			{/* One trailing column, as wide as a folder's ⋯, so every dial in the
+			    tree lines up whatever the row's title. */}
+			<span className="compact-drawer__wslot" data-compact-workflow-slot="true">
+				{isEditing ? (
+					<button
+						type="button"
+						className="compact-drawer__row-close"
+						onClick={onClose}
+						aria-label={`Close ${panel.title}`}
+					>
+						<X size={13} aria-hidden="true" />
+					</button>
+				) : panel.panelKind === 'terminal' ? (
+					<TerminalWorkflowBadge
+						serverId={panel.serverId}
+						sessionId={panel.sessionId}
+					/>
+				) : null}
+			</span>
+		</div>
+	);
+}
+
+function FolderSection({
 	activePanelKey,
-	agents,
-	front,
-	groups,
-	isHomeSelected,
+	collapsed,
+	folder,
+	gripProps,
+	isEditing,
+	isOwnServer,
 	onActivateFolder,
 	onActivatePanel,
-	onAddConnection,
+	onAnnounce,
 	onClosePanel,
-	onCloseProject,
-	onDismiss,
-	onEditProject,
-	onEditPanel,
-	onNewProject,
+	onFolderMenu,
 	onNewTerminal,
-	onNewTerminalHere,
-	onNewTerminalInFolder,
-	onQueryChange,
-	onShowHome,
-	onSwitchServer,
+	onPanelMenu,
+	onRemove,
+	onReorderPanels,
+	onToggleCollapsed,
+	projectTitle,
+	style,
+}: Readonly<{
+	activePanelKey?: string;
+	collapsed: boolean;
+	folder: CompactSwitcherFolderGroup;
+	gripProps?: ReturnType<ReturnType<typeof useGripReorder>['gripProps']>;
+	isEditing: boolean;
+	isOwnServer: boolean;
+	onActivateFolder: () => void;
+	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
+	onAnnounce: (message: string) => void;
+	onClosePanel: (row: CompactSwitcherPanelRow) => void;
+	onFolderMenu: () => void;
+	onNewTerminal: () => void;
+	onPanelMenu: (row: CompactSwitcherPanelRow) => void;
+	onRemove: () => void;
+	onReorderPanels: (panelIds: readonly string[]) => void;
+	onToggleCollapsed: () => void;
+	projectTitle: string;
+	style?: CSSProperties;
+}>) {
+	const listRef = useRef<HTMLDivElement>(null);
+	const panels = folder.panels;
+	const reorder = useGripReorder({
+		listRef,
+		onCommit: (from, to) =>
+			onReorderPanels(
+				moveItem(
+					panels.map((panel) => panel.panelId),
+					from,
+					to,
+				),
+			),
+		onAnnounce,
+		describe: (index) => panels[index]?.title ?? 'Tab',
+	});
+	const shownName = displayFolderName(folder.name);
+	const menuGesture = useMenuGesture(onFolderMenu, isEditing || !isOwnServer);
+	return (
+		<section
+			className="compact-drawer__folder"
+			data-grip-item="true"
+			style={style}
+			data-compact-switcher-folder-group={folder.key}
+		>
+			<div className="compact-drawer__folder-head">
+				{isEditing && gripProps !== undefined ? (
+					<button
+						type="button"
+						className="compact-drawer__grip"
+						aria-label={`Reorder ${folder.name}`}
+						data-compact-switcher-grip={folder.key}
+						{...gripProps}
+					>
+						<GripVertical size={14} aria-hidden="true" />
+					</button>
+				) : (
+					<button
+						type="button"
+						className="compact-drawer__chevron"
+						onClick={onToggleCollapsed}
+						aria-expanded={!collapsed}
+						aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${folder.name}`}
+					>
+						{collapsed ? (
+							<ChevronRight size={14} aria-hidden="true" />
+						) : (
+							<ChevronDown size={14} aria-hidden="true" />
+						)}
+					</button>
+				)}
+				<button
+					type="button"
+					className="compact-drawer__folder-name"
+					data-compact-switcher-folder={folder.key}
+					onClick={() => {
+						if (!isEditing) onActivateFolder();
+					}}
+					onContextMenu={menuGesture.onContextMenu}
+					onKeyDown={menuGesture.onKeyDown}
+					aria-label={`Folder ${folder.name} in ${projectTitle}`}
+				>
+					{folder.isLinked ? (
+						<GitBranch
+							className="compact-drawer__folder-glyph"
+							size={13}
+							aria-hidden="true"
+						/>
+					) : null}
+					<span className="compact-drawer__folder-label">{shownName}</span>
+					<span className="compact-drawer__folder-count" aria-hidden="true">
+						{folder.panels.length}
+					</span>
+				</button>
+				{isEditing ? null : (
+					<button
+						type="button"
+						className="compact-drawer__folder-add"
+						data-compact-switcher-folder-add={folder.key}
+						onClick={onNewTerminal}
+						aria-label={`New terminal in ${folder.name} of ${projectTitle}`}
+						aria-haspopup="menu"
+					>
+						<Plus size={14} aria-hidden="true" />
+					</button>
+				)}
+				<span className="compact-drawer__wslot">
+					{isEditing ? (
+						folder.isGeneral ? null : (
+							<button
+								type="button"
+								className="compact-drawer__row-close"
+								onClick={onRemove}
+								aria-label={`${folder.isLinked ? 'Delete worktree' : 'Delete folder'} ${folder.name}`}
+								data-compact-switcher-remove-folder={folder.key}
+							>
+								<X size={13} aria-hidden="true" />
+							</button>
+						)
+					) : (
+						<button
+							type="button"
+							className="compact-drawer__folder-more"
+							onClick={onFolderMenu}
+							aria-label={`More for ${folder.name}`}
+							aria-haspopup="menu"
+							data-compact-switcher-folder-menu={folder.key}
+						>
+							<Ellipsis size={14} aria-hidden="true" />
+						</button>
+					)}
+				</span>
+			</div>
+			{collapsed ? null : panels.length === 0 ? (
+				isEditing ? null : (
+					<button
+						type="button"
+						className="compact-drawer__empty-folder"
+						onClick={onNewTerminal}
+						data-compact-switcher-empty-folder={folder.key}
+					>
+						<Plus size={13} aria-hidden="true" />
+						New terminal
+					</button>
+				)
+			) : (
+				<div ref={listRef} className="compact-drawer__rows">
+					{panels.map((panel, index) => (
+						<PanelRow
+							key={panel.key}
+							{...(isOwnServer
+								? { gripProps: reorder.gripProps(index, panels.length) }
+								: {})}
+							isActive={panel.key === activePanelKey}
+							isEditing={isEditing}
+							onActivate={() => {
+								if (reorder.consumeDragClick()) return;
+								onActivatePanel(panel);
+							}}
+							onClose={() => onClosePanel(panel)}
+							onMenu={() => onPanelMenu(panel)}
+							panel={panel}
+							{...(reorder.itemStyle(index) === undefined
+								? {}
+								: { style: reorder.itemStyle(index) })}
+						/>
+					))}
+				</div>
+			)}
+		</section>
+	);
+}
+
+function FolderTree({
+	activePanelKey,
+	collapsedFolderIds,
+	isEditing,
+	isOwnServer,
+	onActivateFolder,
+	onActivatePanel,
+	onAnnounce,
+	onClosePanel,
+	onFolderMenu,
+	onNewTerminal,
+	onPanelMenu,
+	onRemoveFolder,
+	onReorderFolders,
+	onReorderPanels,
+	onToggleCollapsed,
+	project,
+}: Readonly<{
+	activePanelKey?: string;
+	collapsedFolderIds: ReadonlySet<string>;
+	isEditing: boolean;
+	isOwnServer: boolean;
+	onActivateFolder: (folder: CompactSwitcherFolderGroup) => void;
+	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
+	onAnnounce: (message: string) => void;
+	onClosePanel: (row: CompactSwitcherPanelRow) => void;
+	onFolderMenu: (folder: CompactSwitcherFolderGroup) => void;
+	onNewTerminal: (folder: CompactSwitcherFolderGroup) => void;
+	onPanelMenu: (row: CompactSwitcherPanelRow) => void;
+	onRemoveFolder: (folder: CompactSwitcherFolderGroup) => void;
+	onReorderFolders: (folderIds: readonly string[]) => void;
+	onReorderPanels: (
+		folder: CompactSwitcherFolderGroup,
+		panelIds: readonly string[],
+	) => void;
+	onToggleCollapsed: (folder: CompactSwitcherFolderGroup) => void;
+	project: CompactSwitcherProjectGroup;
+}>) {
+	const listRef = useRef<HTMLDivElement>(null);
+	const folders = project.folders;
+	const reorder = useGripReorder({
+		listRef,
+		onCommit: (from, to) =>
+			onReorderFolders(
+				moveItem(
+					folders.map((folder) => folder.folderId),
+					from,
+					to,
+				),
+			),
+		onAnnounce,
+		describe: (index) => folders[index]?.name ?? 'Folder',
+	});
+	if (folders.length === 0)
+		return (
+			<div className="compact-drawer__rows">
+				{project.panels.map((panel) => (
+					<PanelRow
+						key={panel.key}
+						isActive={panel.key === activePanelKey}
+						isEditing={false}
+						onActivate={() => onActivatePanel(panel)}
+						onClose={() => onClosePanel(panel)}
+						onMenu={() => onPanelMenu(panel)}
+						panel={panel}
+					/>
+				))}
+			</div>
+		);
+	return (
+		<div ref={listRef} className="compact-drawer__folders">
+			{folders.map((folder, index) => (
+				<FolderSection
+					key={folder.key}
+					{...(activePanelKey === undefined ? {} : { activePanelKey })}
+					collapsed={!isEditing && collapsedFolderIds.has(folder.folderId)}
+					folder={folder}
+					{...(isOwnServer
+						? { gripProps: reorder.gripProps(index, folders.length) }
+						: {})}
+					isEditing={isEditing}
+					isOwnServer={isOwnServer}
+					onActivateFolder={() => onActivateFolder(folder)}
+					onActivatePanel={onActivatePanel}
+					onAnnounce={onAnnounce}
+					onClosePanel={onClosePanel}
+					onFolderMenu={() => onFolderMenu(folder)}
+					onNewTerminal={() => onNewTerminal(folder)}
+					onPanelMenu={onPanelMenu}
+					onRemove={() => onRemoveFolder(folder)}
+					onReorderPanels={(panelIds) => onReorderPanels(folder, panelIds)}
+					onToggleCollapsed={() => onToggleCollapsed(folder)}
+					projectTitle={project.title}
+					{...(reorder.itemStyle(index) === undefined
+						? {}
+						: { style: reorder.itemStyle(index) })}
+				/>
+			))}
+		</div>
+	);
+}
+
+/** A filter's results: matching folders and panels, each naming its project. */
+function FilterResults({
+	activePanelKey,
+	groups,
+	namesConnections,
+	onActivateFolder,
+	onActivatePanel,
+	onPanelMenu,
 	query,
-	serverUpgrades,
-	servers = [],
-}: CompactSwitcherProps) {
-	const searchRef = useRef<HTMLInputElement>(null);
-	// The sheet is for switching, so every open starts on Tabs: it is mounted
-	// afresh each time, and nothing remembers the last choice.
-	const [selectedTab, setSelectedTab] = useState<FoldersColumnTabId>('tabs');
-	const shownTab: FoldersColumnTabId =
-		agents === undefined ? 'tabs' : selectedTab;
-	// The switcher opens to be read, not typed into: nearly every use is a tap
-	// on a project or a panel. Nothing takes focus until a user asks for the
-	// filter, so opening the sheet never raises a keyboard.
+}: Readonly<{
+	activePanelKey?: string;
+	groups: readonly CompactSwitcherConnectionGroup[];
+	namesConnections: boolean;
+	onActivateFolder: (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup,
+	) => void;
+	onActivatePanel: (row: CompactSwitcherPanelRow) => void;
+	onPanelMenu: (row: CompactSwitcherPanelRow) => void;
+	query: string;
+}>) {
+	if (compactSwitcherIsEmpty(groups))
+		return (
+			<p className="compact-drawer__empty" role="status">
+				Nothing matches “{query.trim()}”.
+			</p>
+		);
+	const row = (panel: CompactSwitcherPanelRow) => (
+		<PanelRow
+			key={panel.key}
+			isActive={panel.key === activePanelKey}
+			isEditing={false}
+			onActivate={() => onActivatePanel(panel)}
+			onClose={() => {}}
+			onMenu={() => onPanelMenu(panel)}
+			panel={panel}
+		/>
+	);
+	return (
+		<div className="compact-drawer__results">
+			{groups.flatMap((connection) =>
+				connection.projects.map((project) => (
+					<section
+						key={project.key}
+						className="compact-drawer__result-project"
+						style={{ '--compact-project': project.color } as CSSProperties}
+					>
+						<h3 className="compact-drawer__result-heading">
+							<span className="compact-drawer__swatch" aria-hidden="true" />
+							{project.title}
+							{namesConnections ? (
+								<span className="compact-drawer__result-connection">
+									{connection.serverLabel}
+								</span>
+							) : null}
+						</h3>
+						{project.folders.length === 0
+							? project.panels.map(row)
+							: project.folders.map((folder) => (
+									<div key={folder.key}>
+										<button
+											type="button"
+											className="compact-drawer__result-folder"
+											data-compact-switcher-folder={folder.key}
+											onClick={() => onActivateFolder(project, folder)}
+											aria-label={`Folder ${folder.name} in ${project.title}`}
+										>
+											{folder.isLinked ? (
+												<GitBranch size={13} aria-hidden="true" />
+											) : null}
+											{displayFolderName(folder.name)}
+										</button>
+										{folder.panels.map(row)}
+									</div>
+								))}
+					</section>
+				)),
+			)}
+		</div>
+	);
+}
+
+/* ---------------------------------------------------------------- shell */
+
+export function CompactSwitcher(props: CompactSwitcherProps) {
+	const {
+		activePanelKey,
+		agents,
+		currentServer,
+		frontProjectKey,
+		groups,
+		isHomeSelected,
+		launchers,
+		onDismiss,
+	} = props;
+	const railGroups = useMemo(
+		() => orderCompactRailConnections(groups, currentServer.id),
+		[currentServer.id, groups],
+	);
+	const projectsByKey = useMemo(() => {
+		const map = new Map<string, CompactSwitcherProjectGroup>();
+		for (const connection of groups)
+			for (const project of connection.projects) map.set(project.key, project);
+		return map;
+	}, [groups]);
+	const needsYou = useMemo(() => compactNeedsYou(groups), [groups]);
+	const serverLabelOf = useMemo(() => {
+		const map = new Map(
+			groups.map((group) => [group.serverId, group.serverLabel]),
+		);
+		return (serverId: string) => map.get(serverId) ?? serverId;
+	}, [groups]);
+
+	// Opening presents where the user is: Home while Home is the view, the
+	// project in front otherwise. Nothing is remembered across opens.
+	const [selected, setSelected] = useState<string>(() =>
+		isHomeSelected || frontProjectKey === undefined ? HOME : frontProjectKey,
+	);
+	const [isEditing, setIsEditing] = useState(false);
+	const [tab, setTab] = useState<FoldersColumnTabId>('tabs');
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
+	const [query, setQuery] = useState('');
+	const [layer, setLayer] = useState<Layer | null>(null);
+	const [announcement, setAnnouncement] = useState('');
+	const openerRef = useRef<HTMLElement | null>(null);
+	const searchRef = useRef<HTMLInputElement>(null);
+	const bodyRef = useRef<HTMLDivElement>(null);
+
+	const presented = selected === HOME ? undefined : projectsByKey.get(selected);
+	// The project presented went away — closed here or elsewhere: fall back to
+	// where the user is, and leave edit mode, which was about that project.
+	useEffect(() => {
+		if (selected === HOME || presented !== undefined) return;
+		setIsEditing(false);
+		setSelected(
+			frontProjectKey !== undefined && projectsByKey.has(frontProjectKey)
+				? frontProjectKey
+				: HOME,
+		);
+	}, [frontProjectKey, presented, projectsByKey, selected]);
+
+	const isOwnServer = presented?.serverId === currentServer.id;
+	const showsTabs =
+		presented !== undefined &&
+		presented.key === frontProjectKey &&
+		agents !== undefined;
+	const shownTab: FoldersColumnTabId = showsTabs ? tab : 'tabs';
+
+	const openLayer = (next: Layer) => {
+		const active = document.activeElement;
+		openerRef.current = active instanceof HTMLElement ? active : null;
+		setLayer(next);
+	};
+	const closeLayer = () => {
+		setLayer(null);
+		const opener = openerRef.current;
+		openerRef.current = null;
+		// Focus goes back to what opened the layer once it has gone.
+		if (opener !== null) window.requestAnimationFrame(() => opener.focus());
+	};
+	const closeSearch = () => {
+		setIsSearchOpen(false);
+		setQuery('');
+	};
+
 	useEffect(() => {
 		if (isSearchOpen) searchRef.current?.focus();
 	}, [isSearchOpen]);
-	const closeSearch = () => {
-		setIsSearchOpen(false);
-		onQueryChange('');
-	};
+
+	// The dismiss key closes the topmost layer only: a menu or the dropup, then
+	// an expanded filter, and only then the drawer.
+	const layerRef = useRef(layer);
+	layerRef.current = layer;
+	const searchOpenRef = useRef(isSearchOpen);
+	searchOpenRef.current = isSearchOpen;
+	const closeLayerRef = useRef(closeLayer);
+	closeLayerRef.current = closeLayer;
+	const closeSearchRef = useRef(closeSearch);
+	closeSearchRef.current = closeSearch;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key !== 'Escape') return;
+			if (event.key !== 'Escape' || gripDragState.active) return;
 			event.stopPropagation();
-			onDismiss();
+			if (layerRef.current !== null) closeLayerRef.current();
+			else if (searchOpenRef.current) closeSearchRef.current();
+			else onDismiss();
 		};
 		window.addEventListener('keydown', onKeyDown, { capture: true });
 		return () =>
 			window.removeEventListener('keydown', onKeyDown, { capture: true });
 	}, [onDismiss]);
-	const isEmpty = groups.length === 0 || compactSwitcherIsEmpty(groups);
+
+	const selectRailItem = (key: string) => {
+		setIsEditing(false);
+		setLayer(null);
+		setTab('tabs');
+		if (isSearchOpen) closeSearch();
+		setSelected(key);
+		bodyRef.current?.scrollTo?.({ top: 0 });
+	};
+
+	const launcherIds = launchers.map((launcher) => launcher.id);
+	const lastLauncher =
+		props.rememberedLauncherId !== COMPACT_SHELL_LAUNCHER &&
+		launcherIds.includes(props.rememberedLauncherId)
+			? props.rememberedLauncherId
+			: COMPACT_SHELL_LAUNCHER;
+	const launcherName = (id: string) =>
+		id === COMPACT_SHELL_LAUNCHER
+			? 'Terminal'
+			: (launchers.find((launcher) => launcher.id === id)?.displayName ??
+				'Terminal');
+	const launcherIcon = (id: string) =>
+		id === COMPACT_SHELL_LAUNCHER
+			? 'terminal'
+			: (launchers.find((launcher) => launcher.id === id)?.icon ?? 'terminal');
+
+	const targetFolderOf = (project: CompactSwitcherProjectGroup) => {
+		const selectedId = props.selectedFolderIdFor(project);
+		return (
+			project.folders.find((folder) => folder.folderId === selectedId) ??
+			project.folders.find((folder) => folder.isGeneral) ??
+			project.folders[0]
+		);
+	};
+
+	const create = (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup | undefined,
+		launcherId: string,
+	) => {
+		// Another server's launchers are not this window's to start.
+		const id =
+			project.serverId === currentServer.id
+				? launcherId
+				: COMPACT_SHELL_LAUNCHER;
+		props.onCreateTerminal(project, folder, id);
+	};
+
+	const launcherItems = (
+		project: CompactSwitcherProjectGroup,
+		folder: CompactSwitcherFolderGroup | undefined,
+		options: Readonly<{ marksLast: boolean }>,
+	): CompactSheetItem[] => {
+		const own = project.serverId === currentServer.id;
+		const ids = [COMPACT_SHELL_LAUNCHER, ...(own ? launcherIds : [])];
+		const items: CompactSheetItem[] = ids.map((id) => ({
+			kind: 'action',
+			key: `launch:${id}`,
+			label: options.marksLast ? launcherName(id) : `New ${launcherName(id)}`,
+			icon: <LauncherIcon icon={launcherIcon(id)} />,
+			...(options.marksLast && own && id === lastLauncher
+				? { hint: 'Last used' }
+				: {}),
+			onSelect: () => create(project, folder, id),
+		}));
+		if (!own)
+			items.push({
+				kind: 'note',
+				key: 'launch:elsewhere',
+				text: `Switch to ${serverLabelOf(project.serverId)} for its launchers.`,
+			});
+		return items;
+	};
+
+	const announce = (message: string) => setAnnouncement(message);
+
+	/* ------------------------------------------------------------ layers */
+
+	let layerElement: ReactNode = null;
+	if (layer?.kind === 'row') {
+		const row = layer.row;
+		const project = [...projectsByKey.values()].find(
+			(candidate) =>
+				candidate.serverId === row.serverId &&
+				candidate.projectId === row.projectId,
+		);
+		const own = row.serverId === currentServer.id;
+		const isTerminal = row.panelKind === 'terminal';
+		const otherFolders =
+			project?.folders.filter((folder) => folder.folderId !== row.folderId) ??
+			[];
+		const items: CompactSheetItem[] = [
+			{
+				kind: 'action',
+				key: 'open',
+				label: 'Open',
+				onSelect: () => {
+					setLayer(null);
+					props.onActivatePanel(row);
+				},
+			},
+		];
+		if (own) {
+			if (isTerminal)
+				items.push({
+					kind: 'action',
+					key: 'rename',
+					label: 'Rename',
+					icon: <Pencil size={14} />,
+					onSelect: () => {
+						setLayer(null);
+						props.onRenamePanel(row);
+					},
+				});
+			if (isTerminal && otherFolders.length > 0) {
+				items.push({ kind: 'separator', key: 'move-separator' });
+				items.push({
+					kind: 'note',
+					key: 'move-heading',
+					text: 'Move to folder…',
+				});
+				for (const folder of otherFolders)
+					items.push({
+						kind: 'action',
+						key: `move:${folder.folderId}`,
+						label: displayFolderName(folder.name),
+						icon: folder.isLinked ? <GitBranch size={14} /> : undefined,
+						onSelect: () => {
+							closeLayer();
+							props.onMovePanelToFolder(row, folder.folderId);
+						},
+					});
+			}
+			items.push({ kind: 'separator', key: 'close-separator' });
+			items.push({
+				kind: 'action',
+				key: 'close',
+				label: 'Close',
+				danger: true,
+				icon: <X size={14} />,
+				onSelect: () => {
+					closeLayer();
+					props.onClosePanel(row);
+				},
+			});
+		}
+		layerElement = (
+			<CompactSheetMenu
+				label={`${row.title} actions`}
+				header={<div className="compact-drawer__sheet-title">{row.title}</div>}
+				items={items}
+				onClose={closeLayer}
+			/>
+		);
+	} else if (layer?.kind === 'folder' && presented !== undefined) {
+		const folder = layer.folder;
+		const entries =
+			isOwnServer && props.folderMenuFor !== undefined
+				? (props.folderMenuFor(presented, folder) ?? [])
+				: [];
+		const items: CompactSheetItem[] = launcherItems(presented, folder, {
+			marksLast: false,
+		});
+		if (entries.length > 0) items.push({ kind: 'separator', key: 'context' });
+		entries.forEach((entry, index) => {
+			if (entry.separator === true) {
+				items.push({ kind: 'separator', key: `separator:${index}` });
+				return;
+			}
+			items.push({
+				kind: 'action',
+				key: entry.id,
+				label: entry.label,
+				disabled: entry.disabled,
+				...(entry.danger === true ? { danger: true } : {}),
+				onSelect: () => {
+					setLayer(null);
+					props.onFolderMenuAction(presented, folder, entry.id);
+				},
+			});
+		});
+		layerElement = (
+			<CompactSheetMenu
+				label={`${folder.name} actions`}
+				header={
+					<div className="compact-drawer__sheet-title">
+						{folder.isLinked ? (
+							<GitBranch size={13} aria-hidden="true" />
+						) : null}
+						{displayFolderName(folder.name)}
+					</div>
+				}
+				items={items}
+				onClose={closeLayer}
+			/>
+		);
+	} else if (layer?.kind === 'server') {
+		const servers = props.servers ?? [];
+		const items: CompactSheetItem[] = [];
+		if (servers.length > 1 && props.onSwitchServer !== undefined) {
+			items.push({ kind: 'note', key: 'servers', text: 'Servers' });
+			for (const server of servers)
+				items.push({
+					kind: 'action',
+					key: `server:${server.profileId}`,
+					label: server.label,
+					checked: server.isCurrent,
+					...(server.isSwitching ? { hint: 'Connecting…' } : {}),
+					icon: <Server size={14} />,
+					onSelect: () => {
+						if (!server.isCurrent) props.onSwitchServer?.(server.profileId);
+					},
+				});
+		}
+		if (props.serverUpgrades)
+			items.push({
+				kind: 'custom',
+				key: 'upgrades',
+				node: (
+					<div className="compact-drawer__sheet-upgrades">
+						<p className="compact-drawer__sheet-note">Server updates</p>
+						{props.serverUpgrades}
+					</div>
+				),
+			});
+		items.push({ kind: 'separator', key: 'add-separator' });
+		items.push({
+			kind: 'action',
+			key: 'add-connection',
+			label: 'Add connection',
+			icon: <Plus size={14} />,
+			onSelect: () => {
+				setLayer(null);
+				props.onAddConnection();
+			},
+		});
+		layerElement = (
+			<CompactSheetMenu
+				label="Servers"
+				header={
+					<div className="compact-drawer__sheet-title">
+						<Server size={13} aria-hidden="true" />
+						{currentServer.label}
+					</div>
+				}
+				items={items}
+				onClose={closeLayer}
+			/>
+		);
+	} else if (layer?.kind === 'dropup' && presented !== undefined) {
+		const target =
+			presented.folders.find((folder) => folder.folderId === layer.folderId) ??
+			targetFolderOf(presented);
+		layerElement = (
+			<CompactSheetMenu
+				className="compact-drawer__dropup"
+				label="New terminal"
+				header={
+					presented.folders.length === 0 ? null : (
+						<div className="compact-drawer__dropup-target">
+							<span className="compact-drawer__sheet-note">Open in</span>
+							<div
+								className="compact-drawer__chips"
+								role="radiogroup"
+								aria-label="Folder"
+							>
+								{presented.folders.map((folder) => (
+									// biome-ignore lint/a11y/useSemanticElements: a chip row; a native radio cannot carry the worktree glyph.
+									<button
+										key={folder.key}
+										type="button"
+										role="radio"
+										aria-checked={folder.key === target?.key}
+										aria-label={folder.name}
+										className="compact-drawer__chip"
+										data-compact-dropup-folder={folder.key}
+										onClick={() =>
+											setLayer({ kind: 'dropup', folderId: folder.folderId })
+										}
+									>
+										{folder.isLinked ? (
+											<GitBranch size={12} aria-hidden="true" />
+										) : null}
+										{displayFolderName(folder.name)}
+									</button>
+								))}
+							</div>
+						</div>
+					)
+				}
+				items={launcherItems(presented, target, { marksLast: true })}
+				onClose={closeLayer}
+			/>
+		);
+	}
+
+	/* ------------------------------------------------------------ panel */
+
+	const homeBadge = needsYou.length;
+	const multipleConnections = railGroups.length > 1;
+	const filtered = useMemo(
+		() => filterCompactSwitcherGroups(groups, query),
+		[groups, query],
+	);
+	const isFiltering = query.trim().length > 0;
+
+	const activatePanel = (row: CompactSwitcherPanelRow) =>
+		props.onActivatePanel(row);
+
+	const header = (
+		<div
+			className={`compact-drawer__head${isSearchOpen ? ' compact-drawer__head--searching' : ''}`}
+		>
+			{isSearchOpen ? (
+				<div className="compact-drawer__search">
+					<Search size={14} aria-hidden="true" />
+					{/* The input is set at the 16px iOS demands and scaled back, so
+					    focusing it cannot zoom the page. */}
+					<span className="compact-drawer__field">
+						<input
+							ref={searchRef}
+							id="compact-switcher-filter"
+							type="search"
+							value={query}
+							onChange={(event) => setQuery(event.target.value)}
+							placeholder="Search terminals, folders, projects"
+							aria-label="Search terminals and projects"
+							autoComplete="off"
+							spellCheck={false}
+						/>
+					</span>
+					<button
+						type="button"
+						className="compact-drawer__icon"
+						onClick={closeSearch}
+						aria-label="Close search"
+					>
+						<X size={14} aria-hidden="true" />
+					</button>
+				</div>
+			) : (
+				<>
+					<div className="compact-drawer__title">
+						{presented === undefined ? (
+							<span className="compact-drawer__name">Home</span>
+						) : (
+							<>
+								<span
+									className="compact-drawer__name"
+									style={
+										{ '--compact-project': presented.color } as CSSProperties
+									}
+								>
+									<span className="compact-drawer__swatch" aria-hidden="true" />
+									{presented.title}
+								</span>
+								<ProjectSummary project={presented} />
+							</>
+						)}
+					</div>
+					{shownTab !== 'tabs' || isEditing ? null : (
+						<button
+							type="button"
+							className="compact-drawer__icon"
+							onClick={() => setIsSearchOpen(true)}
+							aria-label="Search terminals and projects"
+							aria-expanded={false}
+							title="Search"
+						>
+							<Search size={15} aria-hidden="true" />
+						</button>
+					)}
+					{presented !== undefined && isOwnServer && shownTab === 'tabs' ? (
+						<button
+							type="button"
+							className={`compact-drawer__edit${isEditing ? ' compact-drawer__edit--on' : ''}`}
+							onClick={() => setIsEditing((current) => !current)}
+							aria-pressed={isEditing}
+							data-compact-switcher-edit="true"
+						>
+							{isEditing ? 'Done' : 'Edit'}
+						</button>
+					) : null}
+				</>
+			)}
+		</div>
+	);
+
+	let body: ReactNode;
+	if (isFiltering) {
+		body = (
+			<FilterResults
+				{...(activePanelKey === undefined ? {} : { activePanelKey })}
+				groups={filtered}
+				namesConnections={multipleConnections}
+				onActivateFolder={props.onActivateFolder}
+				onActivatePanel={activatePanel}
+				onPanelMenu={(row) => openLayer({ kind: 'row', row })}
+				query={query}
+			/>
+		);
+	} else if (presented === undefined) {
+		body = (
+			<div className="compact-drawer__home" data-compact-home-panel="true">
+				<ul className="compact-drawer__sections">
+					{props.homeSections.map((item) => {
+						const current =
+							isHomeSelected && props.homeFrontSection === item.section;
+						return (
+							<li key={item.section}>
+								<button
+									type="button"
+									className={`compact-drawer__section${current ? ' compact-drawer__section--current' : ''}`}
+									aria-current={current ? 'page' : undefined}
+									data-compact-home-section={item.section}
+									onClick={() => props.onOpenHomeSection(item.section)}
+								>
+									<span className="compact-drawer__section-name">
+										{HOME_SECTION_LABELS[item.section]}
+									</span>
+									<span className="compact-drawer__section-summary">
+										{item.summary}
+									</span>
+								</button>
+							</li>
+						);
+					})}
+				</ul>
+				{needsYou.length === 0 ? null : (
+					<section
+						className="compact-drawer__needs"
+						aria-label="Needs you"
+						data-compact-needs-you="true"
+					>
+						<h3 className="compact-drawer__needs-heading">Needs you</h3>
+						<div className="compact-drawer__rows">
+							{needsYou.map((entry) => (
+								<div
+									key={entry.panel.key}
+									className="compact-drawer__needs-item"
+									style={
+										{
+											'--compact-project': entry.project.color,
+										} as CSSProperties
+									}
+								>
+									<span className="compact-drawer__needs-where">
+										<span
+											className="compact-drawer__swatch"
+											aria-hidden="true"
+										/>
+										{entry.project.title}
+										{entry.folderName === undefined
+											? ''
+											: ` › ${displayFolderName(entry.folderName)}`}
+									</span>
+									<PanelRow
+										isActive={entry.panel.key === activePanelKey}
+										isEditing={false}
+										onActivate={() => activatePanel(entry.panel)}
+										onClose={() => {}}
+										onMenu={() => openLayer({ kind: 'row', row: entry.panel })}
+										panel={entry.panel}
+									/>
+								</div>
+							))}
+						</div>
+					</section>
+				)}
+			</div>
+		);
+	} else if (shownTab === 'agents') {
+		body = agents;
+	} else {
+		body = (
+			<FolderTree
+				{...(activePanelKey === undefined ? {} : { activePanelKey })}
+				collapsedFolderIds={props.collapsedFolderIdsFor(presented)}
+				isEditing={isEditing}
+				isOwnServer={isOwnServer}
+				onActivateFolder={(folder) => props.onActivateFolder(presented, folder)}
+				onActivatePanel={activatePanel}
+				onAnnounce={announce}
+				onClosePanel={props.onClosePanel}
+				onFolderMenu={(folder) => openLayer({ kind: 'folder', folder })}
+				onNewTerminal={(folder) =>
+					openLayer({ kind: 'dropup', folderId: folder.folderId })
+				}
+				onPanelMenu={(row) => openLayer({ kind: 'row', row })}
+				onRemoveFolder={(folder) => {
+					const entry = props
+						.folderMenuFor?.(presented, folder)
+						?.find(
+							(candidate) =>
+								candidate.separator !== true &&
+								(candidate.id === 'delete-worktree' ||
+									candidate.id === 'delete-folder'),
+						);
+					if (entry === undefined || entry.separator === true || entry.disabled)
+						return;
+					props.onFolderMenuAction(presented, folder, entry.id);
+				}}
+				onReorderFolders={(folderIds) =>
+					props.onReorderFolders(presented, folderIds)
+				}
+				onReorderPanels={(folder, panelIds) =>
+					props.onReorderPanels(presented, folder, panelIds)
+				}
+				onToggleCollapsed={(folder) =>
+					props.onToggleFolderCollapsed(presented, folder)
+				}
+				project={presented}
+			/>
+		);
+	}
+
+	const target =
+		presented === undefined ? undefined : targetFolderOf(presented);
+	const mainLauncher =
+		presented !== undefined && isOwnServer
+			? lastLauncher
+			: COMPACT_SHELL_LAUNCHER;
+	const createBar =
+		isEditing || shownTab === 'agents' ? null : (
+			<div className="compact-drawer__create">
+				{presented === undefined ? (
+					<button
+						type="button"
+						className="compact-drawer__create-wide"
+						onClick={props.onNewProject}
+					>
+						<FolderPlus size={15} aria-hidden="true" />
+						New project
+					</button>
+				) : (
+					<>
+						<div className="compact-drawer__split">
+							<button
+								type="button"
+								className="compact-drawer__split-main"
+								data-compact-switcher-new-terminal="true"
+								data-compact-launcher={mainLauncher}
+								onClick={() => create(presented, target, mainLauncher)}
+								aria-label={`New ${launcherName(mainLauncher)} terminal in ${
+									target === undefined
+										? presented.title
+										: `${target.name} of ${presented.title}`
+								}`}
+							>
+								<LauncherIcon icon={launcherIcon(mainLauncher)} />
+								<span className="compact-drawer__split-label">
+									{launcherName(mainLauncher)}
+								</span>
+							</button>
+							<button
+								type="button"
+								className="compact-drawer__split-more"
+								data-compact-switcher-launchers="true"
+								onClick={() =>
+									layer?.kind === 'dropup'
+										? closeLayer()
+										: openLayer({
+												kind: 'dropup',
+												...(target === undefined
+													? {}
+													: { folderId: target.folderId }),
+											})
+								}
+								aria-label="Choose what to open"
+								aria-haspopup="menu"
+								aria-expanded={layer?.kind === 'dropup'}
+							>
+								<ChevronDown size={14} aria-hidden="true" />
+							</button>
+						</div>
+						<button
+							type="button"
+							className="compact-drawer__create-icon"
+							onClick={props.onNewProject}
+							aria-label="New project"
+							title="New project"
+						>
+							<FolderPlus size={16} aria-hidden="true" />
+						</button>
+					</>
+				)}
+			</div>
+		);
+
 	return (
 		<div
-			className="compact-switcher-scrim"
+			className="compact-drawer-scrim"
 			data-compact-switcher="true"
 			onPointerDown={(event) => {
 				if (event.target !== event.currentTarget) return;
-				// The default mousedown action would move focus to the scrim's
-				// nearest focusable ancestor — the body — right after we hand it
-				// back to the control that opened the switcher.
+				// The default mousedown action would move focus to the body right
+				// after it is handed back to the control that opened the switcher.
 				event.preventDefault();
 				onDismiss();
 			}}
 		>
 			<div
-				className="compact-switcher"
+				className="compact-drawer"
 				role="dialog"
 				aria-modal="true"
 				aria-label="Switch terminal"
+				data-compact-drawer="true"
 			>
-				<div
-					className={`compact-switcher__tools${isSearchOpen ? ' compact-switcher__tools--searching' : ''}`}
-				>
-					<span className="compact-switcher__grab" aria-hidden="true" />
-					{/* Home is a destination like any project, and the toolbar is
-					    drawn whatever the filter, so it is never filtered away. */}
+				<nav className="compact-drawer__rail" aria-label="Places">
 					<button
 						type="button"
-						className={`compact-switcher__home${isHomeSelected ? ' compact-switcher__home--active' : ''}`}
-						onClick={onShowHome}
-						aria-label="Home"
-						aria-current={isHomeSelected ? 'page' : undefined}
-						title="Home"
-						data-terminay-home-control="true"
+						className="compact-drawer__server"
+						onClick={() => openLayer({ kind: 'server' })}
+						aria-label={`Server ${currentServer.label}${currentServer.isReachable ? '' : ', unreachable'}`}
+						aria-haspopup="menu"
+						title={currentServer.label}
+						data-compact-switcher-server="true"
 					>
-						<House size={15} aria-hidden="true" />
-						{isSearchOpen ? null : <span>Home</span>}
+						<Server size={15} aria-hidden="true" />
+						<span
+							className={`compact-drawer__server-dot${currentServer.isReachable ? '' : ' compact-drawer__server-dot--unreachable'}`}
+							aria-hidden="true"
+						/>
 					</button>
-					{isSearchOpen ? (
-						<div className="compact-switcher__search">
-							<Search size={15} aria-hidden="true" />
-							{/* The field owns the layout box; the input inside it is set at
-							    the 16px iOS demands and scaled back to the sheet's type
-							    size, so focusing it cannot zoom the page. */}
-							<span className="compact-switcher__field">
-								<input
-									ref={searchRef}
-									id="compact-switcher-filter"
-									type="search"
-									value={query}
-									onChange={(event) => onQueryChange(event.target.value)}
-									placeholder="Search terminals and projects"
-									aria-label="Search terminals and projects"
-									autoComplete="off"
-									spellCheck={false}
-								/>
-							</span>
-							<button
-								type="button"
-								className="compact-switcher__search-close"
-								onClick={closeSearch}
-								aria-label="Close search"
-							>
-								<X size={15} aria-hidden="true" />
-							</button>
-						</div>
-					) : shownTab !== 'tabs' ? null : (
-						<button
-							type="button"
-							className="compact-switcher__search-open"
-							onClick={() => setIsSearchOpen(true)}
-							aria-label="Search terminals and projects"
-							aria-expanded={false}
-							title="Search terminals and projects"
-						>
-							<Search size={15} aria-hidden="true" />
-						</button>
-					)}
-				</div>
-				{agents === undefined ? null : (
-					<SidebarGroupTabs
-						className="compact-switcher__tabs"
-						activeTab={shownTab}
-						tabs={FOLDERS_COLUMN_TABS}
-						idPrefix="compact-switcher"
-						label="Switcher"
-						showLabels
-						onSelect={(tabId) => {
-							// The filter belongs to Tabs; leaving takes it away.
-							if (tabId !== 'tabs' && isSearchOpen) closeSearch();
-							setSelectedTab(tabId);
-						}}
-					/>
-				)}
-				{shownTab === 'agents' ? (
-					<div
-						className="compact-switcher__body compact-switcher__agents"
-						id="compact-switcher-panel"
-						role="tabpanel"
-						aria-labelledby="compact-switcher-tab-agents"
+					<button
+						type="button"
+						className={`compact-drawer__rail-home${selected === HOME ? ' compact-drawer__rail-item--selected' : ''}`}
+						onClick={() => selectRailItem(HOME)}
+						aria-label={
+							homeBadge === 0
+								? 'Home'
+								: `Home, ${homeBadge} ${homeBadge === 1 ? 'needs' : 'need'} you`
+						}
+						aria-pressed={selected === HOME}
+						data-terminay-home-control="true"
+						data-compact-switcher-home="true"
 					>
-						{agents}
-					</div>
-				) : (
-				<>
-				<div
-					className="compact-switcher__body"
-					{...(agents === undefined
-						? {}
-						: {
-								id: 'compact-switcher-panel',
-								role: 'tabpanel',
-								'aria-labelledby': 'compact-switcher-tab-tabs',
-							})}
-				>
-					{isEmpty ? (
-						<p className="compact-switcher__empty" role="status">
-							Nothing matches “{query.trim()}”.
-						</p>
-					) : (
-						groups.map((connection) => (
-							<section
-								className="compact-switcher__connection"
+						<House size={17} aria-hidden="true" />
+						{homeBadge === 0 ? null : (
+							<Badge count={homeBadge} tone="attention" />
+						)}
+					</button>
+					<span className="compact-drawer__rail-divider" aria-hidden="true" />
+					<div className="compact-drawer__rail-scroll">
+						{railGroups.map((connection) => (
+							<RailGroup
 								key={connection.serverId}
-							>
-								<h2 className="compact-switcher__connection-name">
-									<span
-										className="compact-switcher__connection-dot"
-										aria-hidden="true"
-									/>
-									{connection.serverLabel}
-									<span
-										className="compact-switcher__connection-rule"
-										aria-hidden="true"
-									/>
-								</h2>
-								{connection.projects.map((project) => {
-									const rows = (panels: readonly CompactSwitcherPanelRow[]) =>
-										panels.map((panel) => (
-											<CompactSwitcherPanel
-												key={panel.key}
-												isActive={panel.key === activePanelKey}
-												onActivate={() => onActivatePanel(panel)}
-												onClose={() => onClosePanel(panel)}
-												onEdit={() => onEditPanel(panel)}
-												panel={panel}
-											/>
-										));
-									return (
-										// The card is what says "these belong to this project":
-										// its border and header take the project's colour, and
-										// nothing inside it is indented.
-										<div
-											className="compact-switcher__card"
-											key={project.key}
-											data-compact-switcher-card={project.key}
-											style={
-												{
-													'--compact-switcher-project': project.color,
-												} as CSSProperties
-											}
-										>
-											<div className="compact-switcher__project">
-												<CompactSwitcherProjectHeading
-													onEdit={() => onEditProject(project)}
-													project={project}
-												/>
-												<button
-													type="button"
-													className="compact-switcher__close"
-													onClick={() => onCloseProject(project)}
-													aria-label={`Close ${project.title}`}
-													title={`Close ${project.title}`}
-												>
-													<X size={13} aria-hidden="true" />
-												</button>
-												{/* A folder's own control says where a terminal lands.
-												    Only a project whose folders are not listed needs
-												    one on its header. */}
-												{project.folders.length === 0 ? (
-													<button
-														type="button"
-														className="compact-switcher__add"
-														onClick={() => onNewTerminal(project)}
-														aria-label={`New terminal in ${project.title}`}
-														title={`New terminal in ${project.title}`}
-													>
-														<Plus size={13} aria-hidden="true" />
-													</button>
-												) : null}
-											</div>
-											{project.folders.length === 0
-												? rows(project.panels)
-												: project.folders.map((folder) => (
-														<div
-															className="compact-switcher__folder-group"
-															key={folder.key}
-														>
-															<div className="compact-switcher__folder-line">
-																<button
-																	type="button"
-																	className="compact-switcher__folder"
-																	data-compact-switcher-folder={folder.key}
-																	onClick={() =>
-																		onActivateFolder?.(project, folder)
-																	}
-																	aria-label={`Folder ${folder.name} in ${project.title}`}
-																>
-																	<span className="compact-switcher__folder-name">
-																		{folder.name}
-																	</span>
-																	<span
-																		className="compact-switcher__folder-rule"
-																		aria-hidden="true"
-																	/>
-																</button>
-																<button
-																	type="button"
-																	className="compact-switcher__add"
-																	data-compact-switcher-folder-add={folder.key}
-																	onClick={() =>
-																		onNewTerminalInFolder(project, folder)
-																	}
-																	aria-label={`New terminal in ${folder.name} of ${project.title}`}
-																	title={`New terminal in ${folder.name}`}
-																>
-																	<Plus size={13} aria-hidden="true" />
-																</button>
-															</div>
-															{rows(folder.panels)}
-														</div>
-													))}
-										</div>
-									);
-								})}
-							</section>
-						))
-					)}
-				</div>
-				{serverUpgrades ? (
-					<div className="compact-switcher__servers compact-switcher__upgrades">
-						<div className="compact-switcher__servers-label">
-							Server updates
-						</div>
-						{serverUpgrades}
-					</div>
-				) : null}
-				{servers.length > 1 && onSwitchServer !== undefined ? (
-					<div
-						className="compact-switcher__servers"
-						role="radiogroup"
-						aria-label="Servers"
-					>
-						<div className="compact-switcher__servers-label">Servers</div>
-						{servers.map((server) => (
-							// biome-ignore lint/a11y/useSemanticElements: a row of a touch list; a native radio cannot carry the trailing status.
-							<button
-								key={server.profileId}
-								type="button"
-								role="radio"
-								aria-checked={server.isCurrent}
-								aria-label={server.label}
-								className="compact-switcher__server"
-								onClick={() => {
-									if (!server.isCurrent) onSwitchServer(server.profileId);
-								}}
-							>
-								<span>{server.label}</span>
-								{server.isSwitching ? (
-									<span className="compact-switcher__server-meta">
-										Connecting…
-									</span>
-								) : null}
-							</button>
+								connection={connection}
+								isEditing={isEditing}
+								isMovable={connection.serverId === currentServer.id}
+								onAnnounce={announce}
+								onCloseProject={props.onCloseProject}
+								onEditProject={props.onEditProject}
+								onReorder={props.onReorderProjects}
+								onSelect={selectRailItem}
+								selected={selected}
+								showHeading={multipleConnections}
+							/>
 						))}
 					</div>
-				) : null}
-				{/* One wide control that says where it creates, because "new
-				    terminal" is what this bar is nearly always pressed for. */}
-				<div className="compact-switcher__create">
-					{onNewTerminalHere === undefined ? (
-						<button
-							type="button"
-							className="compact-switcher__create-main"
-							onClick={onNewProject}
-						>
-							<Plus size={14} aria-hidden="true" />
-							<span className="compact-switcher__create-label">
-								New project
-							</span>
-						</button>
-					) : (
-						<>
-							<button
-								type="button"
-								className="compact-switcher__create-main compact-switcher__create-main--terminal"
-								data-compact-switcher-new-terminal="true"
-								onClick={onNewTerminalHere}
-								aria-label={
-									front === undefined
-										? 'New terminal'
-										: front.folderName === undefined
-											? `New terminal in ${front.projectTitle}`
-											: `New terminal in ${front.folderName} of ${front.projectTitle}`
-								}
-								style={
-									front === undefined
-										? undefined
-										: ({
-												'--compact-switcher-project': front.color,
-											} as CSSProperties)
-								}
-							>
-								<Plus size={14} aria-hidden="true" />
-								<span className="compact-switcher__create-label">
-									{front === undefined ? 'New terminal' : 'Terminal'}
-									{front === undefined ? null : (
-										<span className="compact-switcher__create-where">
-											{` in ${front.projectTitle}`}
-											{front.folderName === undefined
-												? ''
-												: ` › ${front.folderName}`}
-										</span>
-									)}
-								</span>
-							</button>
-							<button
-								type="button"
-								className="compact-switcher__create-icon"
-								onClick={onNewProject}
-								aria-label="New project"
-								title="New project"
-							>
-								<FolderPlus size={16} aria-hidden="true" />
-							</button>
-						</>
-					)}
 					<button
 						type="button"
-						className="compact-switcher__create-icon"
-						onClick={onAddConnection}
-						aria-label="Add connection"
-						title="Add connection"
+						className="compact-drawer__rail-add"
+						onClick={props.onNewProject}
+						aria-label="New project"
+						title="New project"
 					>
-						<Server size={16} aria-hidden="true" />
+						<Plus size={16} aria-hidden="true" />
 					</button>
+				</nav>
+				<div className="compact-drawer__panel">
+					{header}
+					{showsTabs ? (
+						<SidebarGroupTabs
+							className="compact-drawer__tabs"
+							activeTab={shownTab}
+							tabs={FOLDERS_COLUMN_TABS}
+							idPrefix="compact-switcher"
+							label="Switcher"
+							showLabels
+							onSelect={(tabId) => {
+								// The filter and edit mode belong to Tabs.
+								if (tabId !== 'tabs') {
+									if (isSearchOpen) closeSearch();
+									setIsEditing(false);
+								}
+								setTab(tabId);
+							}}
+						/>
+					) : null}
+					<div
+						ref={bodyRef}
+						className={`compact-drawer__body${shownTab === 'agents' ? ' compact-drawer__agents' : ''}`}
+						{...(showsTabs
+							? {
+									id: 'compact-switcher-panel',
+									role: 'tabpanel',
+									'aria-labelledby': `compact-switcher-tab-${shownTab}`,
+								}
+							: {})}
+						data-compact-editing={isEditing ? 'true' : undefined}
+					>
+						{body}
+					</div>
+					{createBar}
+					{layerElement}
 				</div>
-				</>
-				)}
+				<span className="compact-drawer__live" aria-live="polite">
+					{announcement}
+				</span>
 			</div>
 		</div>
 	);

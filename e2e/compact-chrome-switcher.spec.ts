@@ -16,18 +16,39 @@ async function resize(
 	}, bounds);
 }
 
-/** The compact row has no Home control; Home is reached through the switcher. */
-async function goHome(page: Page) {
-	await page.locator('[data-compact-breadcrumb="true"]').click();
-	await switcherOf(page).getByRole('button', { name: 'Home', exact: true }).click();
-	await expect(switcherOf(page)).toHaveCount(0);
-}
-
 const switcherOf = (page: Page) =>
 	page.getByRole('dialog', { name: 'Switch terminal' });
 
+const homeToggleOf = (page: Page) =>
+	page.locator('[data-compact-home-toggle="true"]');
+
+/** Home is one press away on the compact row. */
+async function goHome(page: Page) {
+	await homeToggleOf(page).click();
+	await expect(page.locator('.app-shell')).toHaveAttribute(
+		'data-terminay-selected-view',
+		'home',
+	);
+}
+
+async function openDrawer(page: Page) {
+	await page.locator('[data-compact-breadcrumb="true"]').click();
+	const drawer = switcherOf(page);
+	await expect(drawer).toBeVisible();
+	// A press measured mid-entrance lands where the row used to be.
+	await drawer.evaluate((element) =>
+		Promise.all(element.getAnimations().map((animation) => animation.finished)),
+	);
+	return drawer;
+}
+
 const activeProjectId = (page: Page) =>
 	page.locator('.app-shell').getAttribute('data-terminay-active-project-id');
+
+const railProject = (page: Page, projectId: string | null) =>
+	switcherOf(page).locator(
+		`.compact-drawer__rail-item[data-project-id="${projectId}"]`,
+	);
 
 async function settledHeight(
 	locator: import('@playwright/test').Locator,
@@ -49,6 +70,11 @@ const activeSessionId = (page: Page) =>
 	page
 		.locator('.project-workspace--active .terminal-panel:visible')
 		.getAttribute('data-terminay-terminal-session-id');
+
+const rowTitles = (drawer: import('@playwright/test').Locator) =>
+	drawer
+		.locator('[data-compact-switcher-terminal] .compact-drawer__row-title')
+		.allInnerTexts();
 
 test.describe('compact chrome', () => {
 	test('collapses to one row and hides the panel tab strip', async ({
@@ -124,43 +150,100 @@ test.describe('compact chrome', () => {
 		await expect(
 			mainWindow.locator('[data-compact-breadcrumb="true"]'),
 		).toBeVisible();
+		await expect(homeToggleOf(mainWindow)).toBeVisible();
 		await expect(
 			mainWindow.locator('[data-compact-connection="true"]'),
 		).toBeVisible();
 	});
 
-	test('Home lives in the switcher, not on the row', async ({
+	test('the title block names the terminal over its project and folder', async ({
 		electronApp,
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		const row = mainWindow.locator('[data-compact-chrome="true"]');
-		await expect(row).toBeVisible();
+		const breadcrumb = mainWindow.locator('[data-compact-breadcrumb="true"]');
 		await expect(
-			row.getByRole('button', { name: 'Home', exact: true }),
-		).toHaveCount(0);
+			breadcrumb.locator('[data-compact-breadcrumb-segment="terminal"]'),
+		).not.toBeEmpty();
+		await expect(
+			breadcrumb.locator('[data-compact-breadcrumb-segment="project"]'),
+		).not.toBeEmpty();
+		await expect(breadcrumb.locator('.compact-title__folder')).toHaveText(
+			'General',
+		);
+		await expect(breadcrumb).toHaveAccessibleName(
+			/^Switch terminal — .+, General in .+$/,
+		);
+	});
 
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const home = switcherOf(mainWindow).getByRole('button', {
-			name: 'Home',
-			exact: true,
-		});
-		await expect(home).not.toHaveAttribute('aria-current', 'page');
-		await home.click();
-		await expect(switcherOf(mainWindow)).toHaveCount(0);
+	test('the Home toggle goes Home and back to the same project', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const project = await activeProjectId(mainWindow);
+		const toggle = homeToggleOf(mainWindow);
+		await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+		await toggle.click();
 		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
 			'data-terminay-selected-view',
 			'home',
 		);
+		await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+		await expect(toggle).toHaveAccessibleName('Back to project');
+		// The title block names the Home tab over Home.
+		await expect(mainWindow.locator('.compact-title__where')).toHaveText(
+			'Home',
+		);
 
-		// It is still there while a filter narrows the list.
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		await switcherOf(mainWindow)
-			.getByRole('button', { name: 'Search terminals and projects' })
-			.click();
-		await mainWindow.keyboard.type('no such terminal');
+		await toggle.click();
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'project',
+		);
+		await expect.poll(() => activeProjectId(mainWindow)).toBe(project);
+	});
+
+	test('Home leads the drawer rail and lists its sections', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const drawer = await openDrawer(mainWindow);
+		const home = drawer.locator('[data-compact-switcher-home="true"]');
+		await expect(home).toHaveAttribute('aria-pressed', 'false');
+		// The drawer opens on the project in front.
 		await expect(
-			switcherOf(mainWindow).getByRole('button', { name: 'Home', exact: true }),
+			drawer.locator('[data-compact-switcher-terminal]'),
+		).not.toHaveCount(0);
+
+		// Selecting Home in the rail presents Home without leaving the project.
+		await home.click();
+		await expect(home).toHaveAttribute('aria-pressed', 'true');
+		await expect(
+			drawer.locator('[data-compact-home-panel="true"]'),
+		).toBeVisible();
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'project',
+		);
+		const sections = drawer.locator('[data-compact-home-section]');
+		await expect(sections).toHaveCount(6);
+		await drawer.locator('[data-compact-home-section="workflows"]').click();
+		await expect(drawer).toHaveCount(0);
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-selected-view',
+			'home',
+		);
+		await expect(mainWindow.locator('.compact-title__primary')).toHaveText(
+			'Workflows',
+		);
+
+		// Opened on Home, the drawer presents Home with that section current.
+		const again = await openDrawer(mainWindow);
+		await expect(
+			again.locator('[data-compact-home-section="workflows"]'),
 		).toHaveAttribute('aria-current', 'page');
 	});
 
@@ -196,10 +279,6 @@ test.describe('compact chrome', () => {
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
 		await goHome(mainWindow);
-		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
-			'data-terminay-selected-view',
-			'home',
-		);
 		const control = mainWindow.locator('[data-compact-command-bar="true"]');
 		await expect(control).toBeEnabled();
 		await control.click();
@@ -217,16 +296,13 @@ test.describe('compact chrome', () => {
 		await expect(commandBar).toHaveCount(0);
 	});
 
-	test('long-pressing a switcher terminal row opens that terminal editor', async ({
+	test('long-pressing a terminal row opens its menu, and Rename opens the editor', async ({
 		electronApp,
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-
-		const terminalRow = switcher
+		const drawer = await openDrawer(mainWindow);
+		const terminalRow = drawer
 			.locator('[data-compact-switcher-terminal]')
 			.first();
 		await expect(terminalRow).toBeVisible();
@@ -234,10 +310,24 @@ test.describe('compact chrome', () => {
 		await expect(
 			mainWindow.locator('.dv-tabs-and-actions-container:visible'),
 		).toHaveCount(0);
-		await longPress(
-			terminalRow,
+		const menu = drawer.getByRole('menu');
+		await longPress(terminalRow, menu);
+		await expect(menu.getByRole('menuitem')).toHaveText([
+			'Open',
+			'Rename',
+			'Close',
+		]);
+
+		// Escape closes the menu alone; the drawer stays.
+		await mainWindow.keyboard.press('Escape');
+		await expect(menu).toHaveCount(0);
+		await expect(drawer).toBeVisible();
+
+		await longPress(terminalRow, menu);
+		await menu.getByRole('menuitem', { name: 'Rename' }).click();
+		await expect(
 			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
-		);
+		).toBeVisible();
 		await cancelEditWindow(mainWindow);
 	});
 
@@ -246,19 +336,17 @@ test.describe('compact chrome', () => {
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		await switcher.locator('[data-compact-switcher-terminal]').first().click();
+		const drawer = await openDrawer(mainWindow);
+		await drawer.locator('[data-compact-switcher-terminal]').first().click();
 
-		// Activation, not editing: the press is short.
-		await expect(switcher).toHaveCount(0);
+		// Activation, not a menu: the press is short.
+		await expect(drawer).toHaveCount(0);
 		await expect(
 			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
 		).toHaveCount(0);
 	});
 
-	test('the switcher overlays the terminal rather than resizing it', async ({
+	test('the drawer overlays the terminal rather than resizing it', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -270,24 +358,25 @@ test.describe('compact chrome', () => {
 		const beforeHeight = await settledHeight(terminal);
 		const before = await terminal.boundingBox();
 
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-
+		const drawer = await openDrawer(mainWindow);
 		const during = await terminal.boundingBox();
 		if (!before || !during) throw new Error('Expected terminal geometry');
 		expect(Math.round(during.height)).toBe(beforeHeight);
 		expect(Math.round(during.width)).toBe(Math.round(before.width));
 
-		// Every create action the collapsed chrome absorbed is here.
+		// Every create action the collapsed chrome absorbed is reachable here.
 		await expect(
-			switcher.getByRole('button', { name: /^New terminal in / }),
-		).not.toHaveCount(0);
-		await expect(
-			switcher.getByRole('button', { name: 'New project' }),
+			drawer.locator('[data-compact-switcher-new-terminal]'),
 		).toBeVisible();
 		await expect(
-			switcher.getByRole('button', { name: 'Add connection' }),
+			drawer.getByRole('button', { name: /^New terminal in / }),
+		).not.toHaveCount(0);
+		await expect(
+			drawer.getByRole('button', { name: 'New project' }),
+		).not.toHaveCount(0);
+		await drawer.locator('[data-compact-switcher-server="true"]').click();
+		await expect(
+			drawer.getByRole('menuitem', { name: 'Add connection' }),
 		).toBeVisible();
 	});
 
@@ -298,22 +387,26 @@ test.describe('compact chrome', () => {
 		await resize(mainWindow, electronApp, PHONE);
 		const breadcrumb = mainWindow.locator('[data-compact-breadcrumb="true"]');
 		const connection = mainWindow.locator('[data-compact-connection="true"]');
-		const switcher = switcherOf(mainWindow);
+		const drawer = switcherOf(mainWindow);
 
 		await breadcrumb.click();
-		await expect(switcher).toBeVisible();
+		await expect(drawer).toBeVisible();
 		await mainWindow.keyboard.press('Escape');
-		await expect(switcher).toHaveCount(0);
+		await expect(drawer).toHaveCount(0);
 		await expect(breadcrumb).toBeFocused();
 
 		// The connection glyph opens the same surface, and focus returns there.
 		await connection.click();
-		await expect(switcher).toBeVisible();
-		const scrim = mainWindow.locator('.compact-switcher-scrim');
+		await expect(drawer).toBeVisible();
+		const scrim = mainWindow.locator('.compact-drawer-scrim');
 		const box = await scrim.boundingBox();
-		if (!box) throw new Error('Expected the switcher scrim');
-		await mainWindow.mouse.click(box.x + box.width / 2, box.y + 12);
-		await expect(switcher).toHaveCount(0);
+		if (!box) throw new Error('Expected the drawer scrim');
+		// The drawer slides in from the leading edge; the trailing strip is scrim.
+		await mainWindow.mouse.click(
+			box.x + box.width - 12,
+			box.y + box.height / 2,
+		);
+		await expect(drawer).toHaveCount(0);
 		await expect(connection).toBeFocused();
 	});
 
@@ -334,29 +427,36 @@ test.describe('compact chrome', () => {
 		expect(secondProject).not.toBe(firstProject);
 
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
+		const drawer = await openDrawer(mainWindow);
 
-		// Both projects are listed under their connection heading.
-		await expect(
-			switcher.locator('[data-compact-switcher-project]'),
-		).toHaveCount(2);
-		await expect(
-			switcher.locator('.compact-switcher__connection-name'),
-		).toHaveCount(1);
+		// Both projects sit on the rail; one connection draws no group heading.
+		await expect(drawer.locator('[data-compact-switcher-project]')).toHaveCount(
+			2,
+		);
+		await expect(drawer.locator('.compact-drawer__rail-heading')).toHaveCount(
+			0,
+		);
+		// The drawer opened on the project in front.
+		await expect(railProject(mainWindow, secondProject)).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
 
-		// The terminal of the project that is not in front.
-		const backgroundRow = switcher
-			.locator(`.compact-switcher__terminal[data-project-id="${firstProject}"]`)
+		// Selecting a rail project presents it without activating it.
+		await railProject(mainWindow, firstProject).click();
+		await expect.poll(() => activeProjectId(mainWindow)).toBe(secondProject);
+		const backgroundRow = drawer
+			.locator(
+				`[data-compact-switcher-terminal][data-project-id="${firstProject}"]`,
+			)
 			.first();
 		await expect(backgroundRow).toBeVisible();
 		await backgroundRow.click();
 
-		await expect(switcher).toHaveCount(0);
+		await expect(drawer).toHaveCount(0);
 		await expect.poll(() => activeProjectId(mainWindow)).toBe(firstProject);
 		await expect.poll(() => activeSessionId(mainWindow)).toBe(firstSession);
-		// The breadcrumb followed.
+		// The title block followed.
 		await expect(
 			mainWindow.locator('[data-compact-breadcrumb-segment="terminal"]'),
 		).toBeVisible();
@@ -380,12 +480,8 @@ test.describe('compact chrome', () => {
 		).toContainText('switcher-preview-marker');
 
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		const preview = switcher
-			.locator('.compact-switcher__terminal-preview')
-			.first();
+		const drawer = await openDrawer(mainWindow);
+		const preview = drawer.locator('.compact-drawer__row-sub').first();
 		await expect(preview).toBeVisible();
 		await expect(preview).not.toBeEmpty();
 	});
@@ -395,58 +491,53 @@ test.describe('compact chrome', () => {
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
+		const drawer = await openDrawer(mainWindow);
 
-		const rows = switcher.locator('.compact-switcher__terminal');
+		const rows = drawer.locator('[data-compact-switcher-terminal]');
 		const firstTitle = (
-			await rows
-				.first()
-				.locator('.compact-switcher__terminal-title')
-				.textContent()
+			await rows.first().locator('.compact-drawer__row-title').textContent()
 		)?.trim();
 		if (!firstTitle) throw new Error('Expected a terminal row');
 
-		// The filter is collapsed until it is asked for, and nothing in the sheet
-		// holds focus before then.
-		await expect(switcher.locator('input')).toHaveCount(0);
-		await expect(
-			mainWindow.locator('.compact-switcher input:focus'),
-		).toHaveCount(0);
-		await switcher
-			.locator('.compact-switcher__search-open')
+		// The filter is collapsed until it is asked for, and nothing in the
+		// drawer holds focus in it before then.
+		await expect(drawer.locator('input')).toHaveCount(0);
+		await drawer
+			.getByRole('button', { name: 'Search terminals and projects' })
 			.click();
-		const filter = switcher.getByLabel('Search terminals and projects');
+		const filter = drawer.getByLabel('Search terminals and projects');
 		await expect(filter).toBeFocused();
 		await filter.fill(firstTitle);
 		await expect(rows).not.toHaveCount(0);
 
 		await filter.fill('no-terminal-has-this-name');
 		await expect(rows).toHaveCount(0);
-		await expect(switcher.getByText(/^Nothing matches/)).toBeVisible();
-		// Create actions survive an empty result.
+		await expect(drawer.getByText(/^Nothing matches/)).toBeVisible();
+		// The rail and its Home survive an empty result.
 		await expect(
-			switcher.getByRole('button', { name: 'New project' }),
+			drawer.locator('[data-compact-switcher-home="true"]'),
 		).toBeVisible();
 
-		// Collapsing clears the filter and restores every group.
-		await switcher.getByLabel('Close search').click();
-		await expect(switcher.locator('input')).toHaveCount(0);
+		// Escape collapses the filter first, and the drawer stays.
+		await mainWindow.keyboard.press('Escape');
+		await expect(drawer.locator('input')).toHaveCount(0);
+		await expect(drawer).toBeVisible();
 		await expect(rows).not.toHaveCount(0);
 	});
 
-	test('the workspace document forbids the scale change iOS makes on focus', async ({
+	test('the filter is sized so iOS has no reason to zoom', async ({
 		electronApp,
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
-		// The filter declares the size iOS demands and renders at the sheet's own,
-		// so there is nothing for the platform to zoom.
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		await expect(switcherOf(mainWindow)).toBeVisible();
-		await mainWindow.locator('.compact-switcher__search-open').click();
-		const field = mainWindow.locator('.compact-switcher__field input');
+		const row = mainWindow.locator('[data-compact-chrome="true"]');
+		const before = await row.boundingBox();
+		const drawer = await openDrawer(mainWindow);
+		await drawer
+			.getByRole('button', { name: 'Search terminals and projects' })
+			.click();
+		const field = drawer.locator('.compact-drawer__field input');
+		await expect(field).toBeFocused();
 		const rendered = await field.evaluate((element) => {
 			const style = getComputedStyle(element);
 			const declared = Number.parseFloat(style.fontSize);
@@ -455,55 +546,81 @@ test.describe('compact chrome', () => {
 		});
 		expect(rendered.declared).toBeGreaterThanOrEqual(16);
 		expect(rendered.rendered).toBeCloseTo(13.5, 1);
-		await mainWindow.keyboard.press('Escape');
 
-		// Focusing the filter must not move the chrome row or change its size —
-		// the failure mode being guarded is the page scaling and scrolling the
-		// header away.
-		const row = mainWindow.locator('[data-compact-chrome="true"]');
-		const before = await row.boundingBox();
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		await switcher.locator('.compact-switcher__search-open').click();
-		await expect(
-			switcher.getByLabel('Search terminals and projects'),
-		).toBeFocused();
+		// Focusing the filter must not move the chrome row or change its size.
 		const after = await row.boundingBox();
 		if (!before || !after) throw new Error('Expected the compact row');
 		expect(Math.round(after.y)).toBe(Math.round(before.y));
 		expect(Math.round(after.width)).toBe(Math.round(before.width));
 	});
 
-	test('closes a terminal from the switcher and keeps the sheet open', async ({
+	test('edit mode closes a terminal and keeps the drawer open', async ({
 		appHarness,
 		electronApp,
 		mainWindow,
 	}) => {
 		await appHarness.sendAppCommand('new-terminal');
-		await expect(
-			mainWindow.getByLabel('Close terminal'),
-		).toHaveCount(2);
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
 
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		const rows = switcher.locator('[data-compact-switcher-terminal]');
+		const drawer = await openDrawer(mainWindow);
+		const rows = drawer.locator('[data-compact-switcher-terminal]');
 		await expect(rows).toHaveCount(2);
+		// Out of edit mode a row carries no close control or grip.
+		await expect(drawer.locator('.compact-drawer__row-close')).toHaveCount(0);
+		await expect(drawer.locator('[data-compact-switcher-grip]')).toHaveCount(0);
+
+		const edit = drawer.locator('[data-compact-switcher-edit="true"]');
+		await edit.click();
+		await expect(edit).toHaveText('Done');
+		// The create bar gives way to edit mode.
+		await expect(
+			drawer.locator('[data-compact-switcher-new-terminal]'),
+		).toHaveCount(0);
 		const closedTitle = (
-			await rows.first().locator('.compact-switcher__terminal-title').innerText()
+			await rows.first().locator('.compact-drawer__row-title').innerText()
 		).trim();
-		await switcher
-			.locator('.compact-switcher__row')
-			.first()
-			.getByRole('button', { name: `Close ${closedTitle}` })
-			.click();
+		await drawer.getByRole('button', { name: `Close ${closedTitle}` }).click();
 		await expect(rows).toHaveCount(1);
-		await expect(switcher).toBeVisible();
+		await expect(drawer).toBeVisible();
+		await edit.click();
+		await expect(edit).toHaveText('Edit');
 	});
 
-	test('closes a project from the switcher heading', async ({
+	test('edit mode reorders terminals from the keyboard', async ({
+		appHarness,
+		electronApp,
+		mainWindow,
+	}) => {
+		await appHarness.sendAppCommand('new-terminal');
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
+
+		await resize(mainWindow, electronApp, PHONE);
+		const drawer = await openDrawer(mainWindow);
+		const before = await rowTitles(drawer);
+		expect(before).toHaveLength(2);
+		await drawer.locator('[data-compact-switcher-edit="true"]').click();
+		const grip = drawer
+			.locator('.compact-drawer__row [data-compact-switcher-grip]')
+			.first();
+		await grip.focus();
+		await mainWindow.keyboard.press('ArrowDown');
+		await expect.poll(() => rowTitles(drawer)).toEqual([...before].reverse());
+		await expect(drawer.locator('.compact-drawer__live')).toContainText(
+			'moved to position 2 of 2',
+		);
+		// The order is the server's: a reload reads it back.
+		await mainWindow.reload();
+		await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible(
+			{ timeout: 15_000 },
+		);
+		const reopened = await openDrawer(mainWindow);
+		await expect
+			.poll(() => rowTitles(reopened))
+			.toEqual([...before].reverse());
+	});
+
+	test('edit mode closes a project from the rail', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -515,23 +632,22 @@ test.describe('compact chrome', () => {
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		const headings = switcher.locator('[data-compact-switcher-project]');
-		await expect(headings).toHaveCount(2);
-		const closedTitle = (
-			await headings
-				.last()
-				.locator('.compact-switcher__project-name')
-				.innerText()
-		).trim();
-		await switcher.getByRole('button', { name: `Close ${closedTitle}` }).click();
-		await expect(headings).toHaveCount(1);
-		await expect(switcher).toBeVisible();
+		const drawer = await openDrawer(mainWindow);
+		const projects = drawer.locator('[data-compact-switcher-project]');
+		await expect(projects).toHaveCount(2);
+		await expect(
+			drawer.locator('[data-compact-switcher-close-project]'),
+		).toHaveCount(0);
+		await drawer.locator('[data-compact-switcher-edit="true"]').click();
+		const close = drawer
+			.locator('[data-compact-switcher-close-project]')
+			.last();
+		await close.click();
+		await expect(projects).toHaveCount(1);
+		await expect(drawer).toBeVisible();
 	});
 
-	test('creating a terminal from the switcher shows the new terminal', async ({
+	test('the split control creates in the target folder and shows the new terminal', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -539,15 +655,15 @@ test.describe('compact chrome', () => {
 		await expect(mainWindow.locator('.terminal-panel')).toHaveCount(1);
 		const originalSessionId = await activeSessionId(mainWindow);
 
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		// The bar says where the terminal will land before it is pressed.
-		const create = switcher.locator('[data-compact-switcher-new-terminal]');
-		await expect(create).toHaveText(/^Terminal in .+ › General$/);
-		await expect(create).toHaveAccessibleName(/^New terminal in General of .+/);
+		const drawer = await openDrawer(mainWindow);
+		// The control names its launcher and says where the terminal will land.
+		const create = drawer.locator('[data-compact-switcher-new-terminal]');
+		await expect(create).toHaveText('Terminal');
+		await expect(create).toHaveAccessibleName(
+			/^New Terminal terminal in General of .+/,
+		);
 		await create.click();
-		await expect(switcher).toHaveCount(0);
+		await expect(drawer).toHaveCount(0);
 
 		// The terminal on screen is the one just created, not the one the user
 		// was looking at when they asked for it.
@@ -556,13 +672,47 @@ test.describe('compact chrome', () => {
 			.poll(() => activeSessionId(mainWindow))
 			.not.toBe(originalSessionId);
 
-		// And the switcher agrees with the screen about which one is current.
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const rows = switcherOf(mainWindow).locator(
-			'[data-compact-switcher-terminal]',
-		);
+		// And the drawer agrees with the screen about which one is current.
+		const again = await openDrawer(mainWindow);
+		const rows = again.locator('[data-compact-switcher-terminal]');
 		await expect(rows).toHaveCount(2);
 		await expect(rows.last()).toHaveAttribute('aria-current', 'true');
+	});
+
+	test('the dropup offers the launchers and the folder to open in', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const drawer = await openDrawer(mainWindow);
+		const more = drawer.locator('[data-compact-switcher-launchers="true"]');
+		await more.click();
+		await expect(more).toHaveAttribute('aria-expanded', 'true');
+		const dropup = drawer.getByRole('menu', { name: 'New terminal' });
+		await expect(dropup).toBeVisible();
+		await expect(dropup.getByRole('menuitem').first()).toHaveText(/Terminal/);
+		await expect(
+			drawer.getByRole('radiogroup', { name: 'Folder' }).getByRole('radio'),
+		).not.toHaveCount(0);
+		await expect(
+			drawer.getByRole('radio', { name: 'General' }),
+		).toHaveAttribute('aria-checked', 'true');
+
+		// Escape closes the dropup and leaves the drawer.
+		await mainWindow.keyboard.press('Escape');
+		await expect(dropup).toHaveCount(0);
+		await expect(drawer).toBeVisible();
+
+		// A folder's own + opens the same dropup aimed at that folder.
+		await drawer
+			.getByRole('button', { name: /^New terminal in General of / })
+			.click();
+		await expect(
+			drawer.getByRole('radio', { name: 'General' }),
+		).toHaveAttribute('aria-checked', 'true');
+		await dropup.getByRole('menuitem').first().click();
+		await expect(drawer).toHaveCount(0);
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
 	});
 
 	test('creating a terminal in a background project shows it there', async ({
@@ -581,20 +731,11 @@ test.describe('compact chrome', () => {
 		const secondSession = await activeSessionId(mainWindow);
 
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		await switcher
-			.locator('.compact-switcher__card')
-			.filter({
-				has: mainWindow.locator(
-					`.compact-switcher__terminal[data-project-id="${firstProject}"]`,
-				),
-			})
-			.locator('.compact-switcher__add')
-			.click();
+		const drawer = await openDrawer(mainWindow);
+		await railProject(mainWindow, firstProject).click();
+		await drawer.locator('[data-compact-switcher-new-terminal]').click();
 
-		await expect(switcher).toHaveCount(0);
+		await expect(drawer).toHaveCount(0);
 		await expect.poll(() => activeProjectId(mainWindow)).toBe(firstProject);
 		// Neither terminal that existed before is the one on screen.
 		await expect
@@ -607,84 +748,69 @@ test.describe('compact chrome', () => {
 			.toBe(true);
 	});
 
-	test('with the dashboard in front New project is the wide create control', async ({
+	test('with Home presented New project is the wide create control', async ({
 		electronApp,
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
 		await goHome(mainWindow);
-		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
-			'data-terminay-selected-view',
-			'home',
-		);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
+		const drawer = await openDrawer(mainWindow);
+		await expect(
+			drawer.locator('[data-compact-home-panel="true"]'),
+		).toBeVisible();
 		// Nothing offers a terminal "here" when here is not a project.
 		await expect(
-			switcher.locator('[data-compact-switcher-new-terminal]'),
+			drawer.locator('[data-compact-switcher-new-terminal]'),
 		).toHaveCount(0);
-		await expect(switcher.locator('.compact-switcher__create-main')).toHaveText(
+		await expect(drawer.locator('.compact-drawer__create-wide')).toHaveText(
 			'New project',
 		);
-		await expect(
-			switcher.getByRole('button', { name: 'Add connection' }),
-		).toBeVisible();
+		await expect(drawer.locator('[data-compact-switcher-edit]')).toHaveCount(0);
 	});
 
-	test('a project is one card, and its small controls are still thumb-sized', async ({
+	test('drawer controls are thumb-sized, and dials share one column', async ({
 		electronApp,
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, { ...PHONE, width: 320 });
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		const card = switcher.locator('.compact-switcher__card').first();
-		// Header, folder label, and row all sit inside the card.
-		await expect(card.locator('[data-compact-switcher-project]')).toHaveCount(1);
-		await expect(card.locator('.compact-switcher__folder-name')).toHaveText([
+		const drawer = await openDrawer(mainWindow);
+		await expect(drawer.locator('.compact-drawer__folder-label')).toHaveText([
 			'General',
 		]);
-		await expect(card.locator('[data-compact-switcher-terminal]')).toHaveCount(
-			1,
-		);
-		await expect(switcher.getByText('No panels')).toHaveCount(0);
+		await expect(drawer.getByText('No panels')).toHaveCount(0);
 
+		const row = drawer.locator('.compact-drawer__row-main').first();
+		const rowBox = await row.boundingBox();
+		if (!rowBox) throw new Error('Expected a drawer row');
+		expect(rowBox.height).toBeGreaterThanOrEqual(44);
 		for (const control of [
-			card.locator('.compact-switcher__project .compact-switcher__close'),
-			card.locator('.compact-switcher__row .compact-switcher__close'),
-			card.locator('.compact-switcher__folder-line .compact-switcher__add'),
+			drawer.locator('.compact-drawer__folder-add').first(),
+			drawer.locator('.compact-drawer__folder-more').first(),
+			drawer.locator('[data-compact-switcher-project]').first(),
 		]) {
 			const box = await control.boundingBox();
-			if (!box) throw new Error('Expected a switcher control');
+			if (!box) throw new Error('Expected a drawer control');
 			expect(box.width).toBeGreaterThanOrEqual(28);
 			expect(box.height).toBeGreaterThanOrEqual(28);
 		}
 
-		// The edge of a card is an edge even for a project coloured black.
-		const colours = await card.evaluate((element) => {
-			(element as HTMLElement).style.setProperty(
-				'--compact-switcher-project',
-				'#000000',
+		// The folder's ⋯ and every row's dial slot share one trailing column.
+		const lefts = await drawer
+			.locator('.compact-drawer__wslot')
+			.evaluateAll((slots) =>
+				slots.map((slot) => Math.round(slot.getBoundingClientRect().left)),
 			);
-			const sheet = element.closest('.compact-switcher');
-			if (!sheet) throw new Error('Expected the switcher sheet');
-			return {
-				border: getComputedStyle(element).borderTopColor,
-				sheet: getComputedStyle(sheet).backgroundColor,
-			};
-		});
-		expect(colours.border).not.toBe(colours.sheet);
-		expect(colours.border).not.toBe('rgba(0, 0, 0, 0)');
+		expect(lefts.length).toBeGreaterThanOrEqual(2);
+		expect(new Set(lefts).size).toBe(1);
 
-		// A press in the middle of the folder's small control still creates.
-		const add = card.locator('.compact-switcher__folder-line .compact-switcher__add');
-		const box = await add.boundingBox();
-		if (!box) throw new Error('Expected the folder new-terminal control');
-		await mainWindow.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-		await expect(switcher).toHaveCount(0);
-		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
+		// The drawer leaves a strip of scrim to press, and never scrolls sideways.
+		const drawerBox = await drawer.boundingBox();
+		if (!drawerBox) throw new Error('Expected the drawer');
+		expect(drawerBox.width).toBeLessThan(320);
+		const overflow = await drawer.evaluate(
+			(element) => element.scrollWidth - element.clientWidth,
+		);
+		expect(overflow).toBeLessThanOrEqual(1);
 	});
 
 	test('a project header counts what its rows show', async ({
@@ -706,7 +832,8 @@ test.describe('compact chrome', () => {
 					const seam = window.terminayAgentStatusTest;
 					if (!seam) throw new Error('Agent status test seam is unavailable');
 					const pid = await seam.terminalShellPid(sessionId);
-					if (pid === null) throw new Error('Terminal shell pid is unavailable');
+					if (pid === null)
+						throw new Error('Terminal shell pid is unavailable');
 					return await seam.publishSessions({
 						sourceId: 'com.terminay.e2e/agents',
 						harnesses: [{ id: 'codex', displayName: 'Codex' }],
@@ -726,23 +853,27 @@ test.describe('compact chrome', () => {
 				},
 				{ sessionId: agentSession, extra: fields },
 			);
-			if (!accepted) throw new Error('Agent session publication was not accepted');
+			if (!accepted)
+				throw new Error('Agent session publication was not accepted');
 		};
 		await publish({ status: 'running' });
 
 		await resize(mainWindow, electronApp, PHONE);
-		await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
-		const card = switcher.locator('.compact-switcher__card').first();
-		const summary = card.locator('[data-compact-switcher-summary]');
+		const drawer = await openDrawer(mainWindow);
+		const summary = drawer.locator('[data-compact-switcher-summary]');
 		await expect(summary).toHaveText('1 working · 1 idle');
 		await expect(summary).toHaveAttribute('aria-label', '1 working, 1 idle');
-		await expect(card.locator('.project-tab-activity-dot')).toHaveCount(0);
+		// The rail item for the project carries the working badge.
+		await expect(
+			drawer
+				.locator('[data-compact-switcher-project]')
+				.first()
+				.locator('.compact-drawer__badge--working'),
+		).toHaveText('1');
 
 		// What the header says is what its rows show, state for state.
 		const fromRows = () =>
-			card.evaluate((element) => {
+			drawer.evaluate((element) => {
 				const counts = { attention: 0, working: 0, done: 0, idle: 0 };
 				for (const row of element.querySelectorAll(
 					'[data-compact-switcher-terminal]',
@@ -769,8 +900,8 @@ test.describe('compact chrome', () => {
 		expect(await fromRows()).toBe('1 working · 1 idle');
 
 		// The leading group is drawn in the colour its row's indicator uses.
-		const colours = await card.evaluate((element) => {
-			const lead = element.querySelector('.compact-switcher__summary-group');
+		const colours = await drawer.evaluate((element) => {
+			const lead = element.querySelector('.compact-drawer__summary-group');
 			const indicator = element.querySelector(
 				'.agent-status-indicator[data-agent-state="working"]',
 			);
@@ -790,15 +921,15 @@ test.describe('compact chrome', () => {
 			lastTurnEndedAt: Date.now(),
 		});
 		await expect(
-			card.locator('.agent-status-indicator[data-agent-state="working"]'),
+			drawer.locator('.agent-status-indicator[data-agent-state="working"]'),
 		).toHaveCount(0);
 		await expect.poll(fromRows).not.toContain('working');
-		await expect.poll(async () => (await summary.innerText()).trim()).toBe(
-			await fromRows(),
-		);
+		await expect
+			.poll(async () => (await summary.innerText()).trim())
+			.toBe(await fromRows());
 	});
 
-	test('the compact switcher offers Tabs and Agents', async ({
+	test('the drawer offers Tabs and Agents for the project in front', async ({
 		appHarness,
 		electronApp,
 		mainWindow,
@@ -812,9 +943,7 @@ test.describe('compact chrome', () => {
 		});
 		const firstSession = await activeSessionId(mainWindow);
 		await appHarness.sendAppCommand('new-terminal');
-		await expect
-			.poll(() => activeSessionId(mainWindow))
-			.not.toBe(firstSession);
+		await expect.poll(() => activeSessionId(mainWindow)).not.toBe(firstSession);
 		const agentSession = await activeSessionId(mainWindow);
 		if (agentSession === null) throw new Error('Expected a second terminal');
 		await mainWindow.evaluate(async (terminalSessionId) => {
@@ -847,63 +976,47 @@ test.describe('compact chrome', () => {
 		await expect.poll(() => activeSessionId(mainWindow)).toBe(firstSession);
 
 		await resize(mainWindow, electronApp, PHONE);
-		const breadcrumb = mainWindow.locator('[data-compact-breadcrumb="true"]');
-		await breadcrumb.click();
-		const switcher = switcherOf(mainWindow);
-		await expect(switcher).toBeVisible();
+		const drawer = await openDrawer(mainWindow);
 
-		// Opens on Tabs: the list, its filter, and its create bar.
-		const tabsTab = switcher.getByRole('tab', { name: 'Tabs' });
-		const agentsTab = switcher.getByRole('tab', { name: 'Agents' });
-		await expect(switcher.getByRole('tab')).toHaveCount(2);
+		// Opens on Tabs: the tree and its create bar.
+		const tabsTab = drawer.getByRole('tab', { name: 'Tabs' });
+		const agentsTab = drawer.getByRole('tab', { name: 'Agents' });
+		await expect(drawer.getByRole('tab')).toHaveCount(2);
 		await expect(tabsTab).toHaveAttribute('aria-selected', 'true');
 		await expect(
-			switcher.locator('[data-compact-switcher-terminal]'),
+			drawer.locator('[data-compact-switcher-terminal]'),
 		).not.toHaveCount(0);
-		const filter = switcher.getByRole('button', {
-			name: 'Search terminals and projects',
-		});
-		const addConnection = switcher.getByRole('button', {
-			name: 'Add connection',
-		});
-		await expect(filter).toBeVisible();
-		await expect(addConnection).toBeVisible();
+		const create = drawer.locator('[data-compact-switcher-new-terminal]');
+		await expect(create).toBeVisible();
 
 		// Agents shows the project's agent in place of all of that, and
 		// raises no keyboard.
 		await agentsTab.click();
 		await expect(agentsTab).toHaveAttribute('aria-selected', 'true');
-		const agent = switcher.locator('.agents-sidebar__agent');
+		const agent = drawer.locator('.agents-sidebar__agent');
 		await expect(agent).toHaveCount(1);
-		await expect(switcher.locator('.agents-sidebar__name')).toContainText(
+		await expect(drawer.locator('.agents-sidebar__name')).toContainText(
 			'Agent reached from the switcher',
 		);
 		await expect(
-			switcher.locator('[data-compact-switcher-terminal]'),
+			drawer.locator('[data-compact-switcher-terminal]'),
 		).toHaveCount(0);
-		await expect(filter).toHaveCount(0);
-		await expect(addConnection).toHaveCount(0);
-		await expect(switcher.locator('input')).toHaveCount(0);
+		await expect(create).toHaveCount(0);
+		await expect(drawer.locator('input')).toHaveCount(0);
 
-		// Pressing the agent shows its terminal and dismisses the sheet.
+		// Pressing the agent shows its terminal and dismisses the drawer.
 		await agent.click();
-		await expect(switcher).toHaveCount(0);
+		await expect(drawer).toHaveCount(0);
 		await expect.poll(() => activeSessionId(mainWindow)).toBe(agentSession);
 
 		// Every open starts on Tabs.
-		await breadcrumb.click();
-		await expect(switcher).toBeVisible();
+		await openDrawer(mainWindow);
 		await expect(tabsTab).toHaveAttribute('aria-selected', 'true');
-		await mainWindow.keyboard.press('Escape');
-		await expect(switcher).toHaveCount(0);
 
-		// With the dashboard in front there is no project whose agents to show.
-		await goHome(mainWindow);
-		await mainWindow.locator('[data-compact-connection="true"]').click();
-		await expect(switcher).toBeVisible();
-		await expect(switcher.getByRole('tab')).toHaveCount(0);
-		await expect(
-			switcher.locator('[data-compact-switcher-terminal]'),
-		).not.toHaveCount(0);
+		// Home in the rail has no agents to show.
+		await drawer.locator('[data-compact-switcher-home="true"]').click();
+		await expect(drawer.getByRole('tab')).toHaveCount(0);
+		await mainWindow.keyboard.press('Escape');
+		await expect(drawer).toHaveCount(0);
 	});
 });

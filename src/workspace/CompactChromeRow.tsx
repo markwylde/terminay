@@ -1,16 +1,17 @@
 /**
- * The compact workspace chrome: one row, five controls.
+ * The compact workspace chrome: one row.
  *
  * At phone width the three bands a wide window can afford — the application
  * menu, the project strip, the panel tab strip — cost more than the terminal
  * they frame. This row keeps what a one-handed user actually reaches for and
- * sends the rest to the unified switcher, which the breadcrumb and the
- * connection glyph both open. Home is one of the places the switcher goes, so
- * it lives there rather than on the row.
+ * sends the rest to the rail drawer, which the title block and the connection
+ * glyph both open. Home is both a toggle on the row, one press from anywhere,
+ * and the first item of the drawer's rail.
  *
  * While Pixel is on it takes the glyph's trailing slot: docked in the header it
  * covers nothing, where the corner dock sat on the terminal's last lines. The
- * glyph's two warnings then ride on the breadcrumb, which opens the same sheet.
+ * glyph's two warnings then ride on the title block, which opens the same
+ * drawer.
  *
  * The Command Bar control is the one door the collapse could not do without.
  * Every command the hidden bands used to carry — new terminal, split, clear,
@@ -18,16 +19,18 @@
  * it and through nothing else at this width, because a phone has no key to
  * press. One control for all of them costs the row less than one control each.
  *
- * The breadcrumb says where you are rather than listing where you could go, so
- * it truncates the project before the terminal: the terminal is the thing being
- * typed into, and the one a user needs to read to know their keystrokes are
- * landing in the right place.
+ * The title block says where you are rather than listing where you could go.
+ * Its first line is the panel in front — the thing being typed into — and its
+ * second the project and folder, which gives up the project first so the
+ * worktree the keystrokes land in stays readable.
  */
 
-import { Bell, ChevronDown, Search, Server, TriangleAlert } from 'lucide-react';
+import { Bell, House, Search, Server, TriangleAlert } from 'lucide-react';
 import type { ReactNode, RefObject } from 'react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
+import { displayFolderName } from './compactSwitcherModel.ts';
+import { TerminalWorkflowBadge } from './workflows/WorkflowTabBadge';
 import { upgradeAvailableSuffix } from './serverUpgradeModel.ts';
 import { notificationsButtonLabel } from './TerminalActivityOverview';
 
@@ -59,18 +62,51 @@ export type CompactChromeRowProps = Readonly<{
 	onToggleNotifications: () => void;
 	onOpenSwitcher: (source: 'breadcrumb' | 'connection') => void;
 	onToggleExplorer: () => void;
+	/** Selects Home, or goes back to the project in front before Home. */
+	onToggleHome: () => void;
+	isHomeSelected: boolean;
+	/** True while Home is not selected and some terminal needs the user. */
+	homeAttention: boolean;
 	/** Present while Pixel is on: the element Pixel docks into replaces the
 	 * connection glyph. */
 	pixelSlotRef?: (element: HTMLSpanElement | null) => void;
-	projectColor?: string;
-	projectTitle: string;
-	/** Absent when the active project has no terminal in front. */
-	terminalTitle?: string;
-	/** The terminal the title belongs to, so the text can follow it. */
-	terminalPanelId?: string;
+	title: CompactTitle;
 	/** A pending update stays visible here; it is never worth hiding. */
 	updateAction?: ReactNode;
 }>;
+
+/** What the title block names: always the thing on screen. */
+export type CompactTitle =
+	| Readonly<{ kind: 'home'; tabTitle: string }>
+	| Readonly<{ kind: 'none' }>
+	| Readonly<{
+			kind: 'project';
+			color?: string;
+			/** The selected folder, when this window knows the project's folders. */
+			folderName?: string;
+			projectTitle: string;
+			/** The active panel; absent when the project has none in front. */
+			panel?: Readonly<{
+				title: string;
+				panelId: string;
+				isTerminal: boolean;
+				serverId?: string;
+				sessionId?: string;
+			}>;
+	  }>;
+
+/** The title block's accessible name, before any server warning. */
+export function compactTitleLabel(title: CompactTitle): string {
+	if (title.kind === 'home') return `Switch terminal — ${title.tabTitle}, Home`;
+	if (title.kind === 'none') return 'Switch terminal — No project';
+	const where =
+		title.folderName === undefined
+			? title.projectTitle
+			: `${title.folderName} in ${title.projectTitle}`;
+	return title.panel === undefined
+		? `Switch terminal — ${where}`
+		: `Switch terminal — ${title.panel.title}, ${where}`;
+}
 
 export function CompactChromeRow({
 	applicationMenu,
@@ -86,11 +122,11 @@ export function CompactChromeRow({
 	onOpenSwitcher,
 	onToggleNotifications,
 	onToggleExplorer,
+	onToggleHome,
+	isHomeSelected,
+	homeAttention,
 	pixelSlotRef,
-	projectColor,
-	projectTitle,
-	terminalTitle,
-	terminalPanelId,
+	title,
 	updateAction,
 }: CompactChromeRowProps) {
 	const countLabel = formatActivityCount(notificationCount);
@@ -102,10 +138,56 @@ export function CompactChromeRow({
 				: connection.upgradeVersion === undefined
 					? undefined
 					: `Server upgrade ${connection.upgradeVersion} available`;
-	const breadcrumbLabel =
-		terminalTitle === undefined
-			? `Switch terminal — ${projectTitle}`
-			: `Switch terminal — ${projectTitle}, ${terminalTitle}`;
+	const breadcrumbLabel = compactTitleLabel(title);
+	const projectColor = title.kind === 'project' ? title.color : undefined;
+	let primary: ReactNode;
+	let secondary: ReactNode;
+	if (title.kind === 'home') {
+		primary = title.tabTitle;
+		secondary = <span className="compact-title__where">Home</span>;
+	} else if (title.kind === 'none') {
+		primary = 'No project';
+		secondary = null;
+	} else {
+		primary =
+			title.panel === undefined ? (
+				title.projectTitle
+			) : title.panel.isTerminal ? (
+				<LiveTerminalTitle
+					panelId={title.panel.panelId}
+					fallback={title.panel.title}
+				/>
+			) : (
+				title.panel.title
+			);
+		secondary = (
+			<>
+				<span className="compact-breadcrumb__swatch" aria-hidden="true" />
+				<span
+					className="compact-breadcrumb__project"
+					data-compact-breadcrumb-segment="project"
+				>
+					{title.projectTitle}
+				</span>
+				{title.folderName === undefined ? null : (
+					<>
+						<span className="compact-breadcrumb__separator" aria-hidden="true">
+							›
+						</span>
+						<span className="compact-title__folder">
+							{displayFolderName(title.folderName)}
+						</span>
+					</>
+				)}
+				{title.panel?.isTerminal === true ? (
+					<TerminalWorkflowBadge
+						serverId={title.panel.serverId}
+						sessionId={title.panel.sessionId}
+					/>
+				) : null}
+			</>
+		);
+	}
 	return (
 		<div className="compact-chrome" data-compact-chrome="true">
 			{applicationMenu}
@@ -162,45 +244,45 @@ export function CompactChromeRow({
 						: ({ '--project-color': projectColor } as React.CSSProperties)
 				}
 			>
-				<span className="compact-breadcrumb__swatch" aria-hidden="true" />
 				<span
-					className="compact-breadcrumb__project"
-					data-compact-breadcrumb-segment="project"
+					className="compact-title__primary"
+					data-compact-breadcrumb-segment="terminal"
 				>
-					{projectTitle}
+					{primary}
 				</span>
-				{terminalTitle === undefined ? null : (
-					<>
-						<span className="compact-breadcrumb__separator" aria-hidden="true">
-							›
-						</span>
-						<span
-							className="compact-breadcrumb__terminal"
-							data-compact-breadcrumb-segment="terminal"
-						>
-							<LiveTerminalTitle
-								panelId={terminalPanelId}
-								fallback={terminalTitle}
-							/>
-						</span>
-					</>
-				)}
-				{breadcrumbAlert === undefined ? (
-					<ChevronDown
-						className="compact-breadcrumb__chevron"
-						size={12}
-						aria-hidden="true"
-					/>
-				) : (
-					<TriangleAlert
-						className="compact-breadcrumb__alert"
-						size={12}
-						aria-hidden="true"
-						data-compact-breadcrumb-alert="true"
-					/>
-				)}
+				<span className="compact-title__secondary">
+					{secondary}
+					{breadcrumbAlert === undefined ? null : (
+						<TriangleAlert
+							className="compact-breadcrumb__alert"
+							size={11}
+							aria-hidden="true"
+							data-compact-breadcrumb-alert="true"
+						/>
+					)}
+				</span>
 			</button>
 			{updateAction}
+			<button
+				type="button"
+				className={`compact-chrome__icon compact-home-toggle${isHomeSelected ? ' compact-chrome__icon--active' : ''}`}
+				onClick={onToggleHome}
+				aria-label={
+					isHomeSelected
+						? 'Back to project'
+						: homeAttention
+							? 'Home, a terminal needs you'
+							: 'Home'
+				}
+				aria-pressed={isHomeSelected}
+				title="Home"
+				data-compact-home-toggle="true"
+			>
+				<House size={15} aria-hidden="true" />
+				{homeAttention && !isHomeSelected ? (
+					<span className="compact-home-toggle__dot" aria-hidden="true" />
+				) : null}
+			</button>
 			{/* The bell is the one place a phone lists what needs the user. A
 			    notification a process sent has no terminal indicator to show it. */}
 			<button

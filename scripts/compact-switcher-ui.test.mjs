@@ -25,7 +25,7 @@ async function bundleComponent(entryPoint, outputName) {
 	return require(outputPath);
 }
 
-const { CompactChromeRow } = await bundleComponent(
+const { CompactChromeRow, compactTitleLabel } = await bundleComponent(
 	'src/workspace/CompactChromeRow.tsx',
 	'compact-chrome-row.cjs',
 );
@@ -33,10 +33,28 @@ const { CompactSwitcher } = await bundleComponent(
 	'src/workspace/CompactSwitcher.tsx',
 	'compact-switcher.cjs',
 );
+const { workflowStepLine } = await bundleComponent(
+	'src/workspace/workflows/WorkflowTabBadge.tsx',
+	'workflow-tab-badge.cjs',
+);
 
 test.after(() => rm(testDirectory, { force: true, recursive: true }));
 
 const noop = () => {};
+
+const terminalTitle = {
+	kind: 'project',
+	projectTitle: 'Paged',
+	color: '#7c5cff',
+	folderName: 'worktree-mobile-rail',
+	panel: {
+		title: 'server',
+		panelId: 'panel-a',
+		isTerminal: true,
+		serverId: 'local',
+		sessionId: 's-a',
+	},
+};
 
 const row = (overrides) =>
 	renderToStaticMarkup(
@@ -47,22 +65,23 @@ const row = (overrides) =>
 				serverLabel: 'Marks-MacBook-Air',
 				tone: 'remote-access-button--idle',
 			},
-			isCommandBarAvailable: true,
+			homeAttention: false,
 			isExplorerOpen: false,
 			isHomeSelected: false,
+			isNotificationsOpen: false,
 			isSwitcherOpen: false,
+			notificationCount: 0,
 			onOpenCommandBar: noop,
 			onOpenSwitcher: noop,
-			onShowDashboard: noop,
 			onToggleExplorer: noop,
-			projectColor: '#7c5cff',
-			projectTitle: 'Paged',
-			terminalTitle: 'server',
+			onToggleHome: noop,
+			onToggleNotifications: noop,
+			title: terminalTitle,
 			...overrides,
 		}),
 	);
 
-test('the compact row holds its controls in order, with Home left to the switcher', () => {
+test('the compact row holds its controls in order, with Home before Notifications', () => {
 	const markup = row({
 		applicationMenu: React.createElement(
 			'button',
@@ -74,7 +93,9 @@ test('the compact row holds its controls in order, with Home left to the switche
 		'connected-web-compact-menu__button',
 		'Toggle file explorer',
 		'data-compact-command-bar',
-		'compact-breadcrumb',
+		'data-compact-breadcrumb',
+		'data-compact-home-toggle',
+		'data-compact-notifications-button',
 		'data-compact-connection',
 	];
 	let cursor = -1;
@@ -83,10 +104,9 @@ test('the compact row holds its controls in order, with Home left to the switche
 		assert.ok(next > cursor, `${marker} is out of order`);
 		cursor = next;
 	}
-	assert.doesNotMatch(markup, /aria-label="Home"/);
 });
 
-test('with Pixel on, its slot takes the connection glyph\'s place and the breadcrumb carries the server warning', () => {
+test("with Pixel on, its slot takes the connection glyph's place and the title block carries the server warning", () => {
 	const markup = row({
 		pixelSlotRef: () => {},
 		connection: {
@@ -102,51 +122,94 @@ test('with Pixel on, its slot takes the connection glyph\'s place and the breadc
 	assert.match(markup, /Local unreachable/);
 });
 
-test('a host with native menus contributes no menu control', () => {
+test('the title block names the terminal over its project and folder, without the worktree prefix', () => {
 	const markup = row({});
-	assert.doesNotMatch(markup, /connected-web-compact-menu/);
-	// The rest of the row is unchanged by the menu's absence.
-	assert.match(markup, /data-compact-breadcrumb="true"/);
-});
-
-test('the breadcrumb names the project and the terminal', () => {
-	const markup = row({});
-	assert.match(markup, /data-compact-breadcrumb-segment="project"[^>]*>Paged</);
 	assert.match(
 		markup,
 		/data-compact-breadcrumb-segment="terminal"[^>]*>server</,
 	);
-	assert.match(markup, /aria-label="Switch terminal — Paged, server"/);
+	assert.match(markup, /data-compact-breadcrumb-segment="project"[^>]*>Paged</);
+	assert.match(markup, /compact-title__folder">mobile-rail</);
+	assert.doesNotMatch(markup, />worktree-mobile-rail</);
+	// The accessible name keeps the full folder name.
+	assert.match(
+		markup,
+		/aria-label="Switch terminal — server, worktree-mobile-rail in Paged"/,
+	);
 	assert.match(markup, /aria-haspopup="dialog"/);
 });
 
-test('a project with no terminal in front still names the project', () => {
-	const markup = row({ terminalTitle: undefined });
-	assert.match(markup, />Paged</);
-	assert.doesNotMatch(markup, /data-compact-breadcrumb-segment="terminal"/);
-	assert.match(markup, /aria-label="Switch terminal — Paged"/);
+test('a file panel in front is named by its file and carries no dial', () => {
+	const markup = row({
+		title: {
+			...terminalTitle,
+			folderName: 'General',
+			panel: { title: 'README.md', panelId: 'file-1', isTerminal: false },
+		},
+	});
+	assert.match(
+		markup,
+		/data-compact-breadcrumb-segment="terminal"[^>]*>README\.md</,
+	);
+	assert.doesNotMatch(markup, /workflow-dial/);
+	assert.match(
+		markup,
+		/aria-label="Switch terminal — README\.md, General in Paged"/,
+	);
+});
+
+test('a project with no panel in front is named by the project', () => {
+	const markup = row({
+		title: { kind: 'project', projectTitle: 'Paged', folderName: 'General' },
+	});
+	assert.match(
+		markup,
+		/data-compact-breadcrumb-segment="terminal"[^>]*>Paged</,
+	);
+	assert.match(markup, /aria-label="Switch terminal — General in Paged"/);
+});
+
+test('on Home the title block names the Home tab over Home', () => {
+	const markup = row({
+		isHomeSelected: true,
+		title: { kind: 'home', tabTitle: 'Workflows' },
+	});
+	assert.match(
+		markup,
+		/data-compact-breadcrumb-segment="terminal"[^>]*>Workflows</,
+	);
+	assert.match(markup, /compact-title__where">Home</);
+	assert.equal(
+		compactTitleLabel({ kind: 'home', tabTitle: 'Workflows' }),
+		'Switch terminal — Workflows, Home',
+	);
+});
+
+test('the Home toggle shows its state and an attention marker', () => {
+	const away = row({ homeAttention: true });
+	assert.match(away, /data-compact-home-toggle="true"/);
+	assert.match(away, /aria-label="Home, a terminal needs you"/);
+	assert.match(away, /compact-home-toggle__dot/);
+	const home = row({
+		homeAttention: true,
+		isHomeSelected: true,
+		title: { kind: 'home', tabTitle: 'Home' },
+	});
+	assert.match(
+		home,
+		/aria-pressed="true"[^>]*data-compact-home-toggle|data-compact-home-toggle[^>]*aria-pressed="true"|aria-pressed="true"/,
+	);
+	assert.match(home, /aria-label="Back to project"/);
+	// Home itself is where the attention is listed, so the dot is not repeated.
+	assert.doesNotMatch(home, /compact-home-toggle__dot/);
 });
 
 test('the connection control shows a glyph and keeps its server name for AT', () => {
 	const markup = row({});
-	// No visible label, and the tone the wide bar carries is preserved.
 	assert.doesNotMatch(markup, /compact-connection[^>]*>[^<]*Marks-MacBook-Air/);
 	assert.match(markup, /aria-label="Connections — Marks-MacBook-Air, Offline"/);
 	assert.match(markup, /remote-access-button--idle/);
 	assert.match(markup, /compact-connection__dot/);
-});
-
-test('an unreachable connection is marked on its dot', () => {
-	const markup = row({
-		connection: {
-			isExposed: true,
-			isReachable: false,
-			serverLabel: 'paged-prod',
-			tone: 'remote-access-button--active',
-		},
-	});
-	assert.match(markup, /compact-connection__dot--unreachable/);
-	assert.match(markup, /aria-label="Connections — paged-prod, Exposed"/);
 });
 
 test('a pending update stays on the compact row', () => {
@@ -158,48 +221,106 @@ test('a pending update stays on the compact row', () => {
 		),
 	});
 	assert.match(markup, /app-update-status/);
+	assert.ok(
+		markup.indexOf('app-update-status') <
+			markup.indexOf('data-compact-notifications-button'),
+	);
 });
+
+/* ------------------------------------------------------------ the drawer */
+
+const terminalRow = (overrides) => ({
+	isAgentStatus: false,
+	key: 'local:panel-a',
+	panelId: 'panel-a',
+	panelKind: 'terminal',
+	projectId: 'p1',
+	serverId: 'local',
+	sessionId: 's-a',
+	state: 'idle',
+	title: 'server',
+	...overrides,
+});
+
+const server = terminalRow({
+	preview: '✓ built in 2.41s',
+	folderId: 'general',
+});
+const claude = terminalRow({
+	isAgentStatus: true,
+	key: 'local:panel-b',
+	panelId: 'panel-b',
+	sessionId: 's-b',
+	state: 'working',
+	title: 'claude',
+	folderId: 'wt',
+});
+
+const folder = (folderId, name, panels, extra = {}) => ({
+	folderId,
+	isGeneral: false,
+	isLinked: false,
+	key: `local:folder:${folderId}`,
+	name,
+	panels,
+	...extra,
+});
+
+const paged = {
+	color: '#7c5cff',
+	emoji: '',
+	folders: [
+		folder('general', 'General', [server], { isGeneral: true }),
+		folder('wt', 'worktree-mobile-rail', [claude], { isLinked: true }),
+		folder('empty', 'scratch', []),
+	],
+	key: 'local:p1',
+	projectId: 'p1',
+	serverId: 'local',
+	panels: [server, claude],
+	summary: { attention: 0, working: 1, done: 0, idle: 1 },
+	title: 'Paged',
+};
+
+const dotfiles = {
+	color: '#4fd08a',
+	emoji: '🔧',
+	folders: [],
+	key: 'local:p2',
+	projectId: 'p2',
+	serverId: 'local',
+	panels: [
+		terminalRow({
+			key: 'local:panel-c',
+			panelId: 'panel-c',
+			projectId: 'p2',
+			sessionId: 's-c',
+			state: 'waiting',
+			title: 'codex',
+		}),
+	],
+	summary: { attention: 1, working: 0, done: 0, idle: 0 },
+	title: 'dotfiles',
+};
+
+const remotePaged = {
+	...paged,
+	folders: [],
+	key: 'remote:p1',
+	serverId: 'remote',
+	panels: [
+		terminalRow({
+			key: 'remote:panel-a',
+			serverId: 'remote',
+			title: 'deploy',
+		}),
+	],
+	summary: { attention: 0, working: 0, done: 0, idle: 1 },
+};
 
 const groups = [
 	{
-		projects: [
-			{
-				color: '#7c5cff',
-				emoji: '',
-				// A project whose folders this window does not know.
-				folders: [],
-				key: 'local:p1',
-				projectId: 'p1',
-				serverId: 'local',
-				panels: [
-					{
-						isAgentStatus: false,
-						key: 'local:panel-a',
-						panelId: 'panel-a',
-						panelKind: 'terminal',
-						preview: '✓ built in 2.41s',
-						projectId: 'p1',
-						serverId: 'local',
-						sessionId: 's-a',
-						state: 'idle',
-						title: 'server',
-					},
-					{
-						isAgentStatus: true,
-						key: 'local:panel-b',
-						panelId: 'panel-b',
-						panelKind: 'terminal',
-						projectId: 'p1',
-						serverId: 'local',
-						sessionId: 's-b',
-						state: 'working',
-						title: 'claude',
-					},
-				],
-				summary: { attention: 0, working: 1, done: 0, idle: 1 },
-				title: 'Paged',
-			},
-		],
+		projects: [paged, dotfiles],
 		serverId: 'local',
 		serverLabel: 'Marks-MacBook-Air',
 	},
@@ -209,313 +330,337 @@ const switcher = (overrides) =>
 	renderToStaticMarkup(
 		React.createElement(CompactSwitcher, {
 			activePanelKey: 'local:panel-a',
+			collapsedFolderIdsFor: () => new Set(),
+			currentServer: {
+				id: 'local',
+				label: 'Marks-MacBook-Air',
+				isReachable: true,
+			},
+			frontProjectKey: 'local:p1',
 			groups,
+			homeSections: [
+				{ section: 'home', summary: 'Overview' },
+				{ section: 'tabs', summary: '3 tabs open' },
+				{ section: 'bots', summary: 'Bots' },
+				{ section: 'automations', summary: 'Runs' },
+				{ section: 'workflows', summary: 'Checklists' },
+				{ section: 'recordings', summary: 'Recordings' },
+			],
+			isHomeSelected: false,
+			launchers: [
+				{ id: 'claude', displayName: 'Claude Code', icon: 'terminal' },
+				{ id: 'codex', displayName: 'Codex', icon: 'terminal' },
+			],
+			rememberedLauncherId: 'shell',
+			selectedFolderIdFor: () => 'general',
+			onActivateFolder: noop,
 			onActivatePanel: noop,
 			onAddConnection: noop,
 			onClosePanel: noop,
 			onCloseProject: noop,
+			onCreateTerminal: noop,
 			onDismiss: noop,
 			onEditProject: noop,
-			onEditPanel: noop,
+			onFolderMenuAction: noop,
+			onMovePanelToFolder: noop,
 			onNewProject: noop,
-			onNewTerminal: noop,
-			onNewTerminalInFolder: noop,
-			onQueryChange: noop,
-			query: '',
+			onOpenHomeSection: noop,
+			onRenamePanel: noop,
+			onReorderFolders: noop,
+			onReorderPanels: noop,
+			onReorderProjects: noop,
+			onToggleFolderCollapsed: noop,
 			...overrides,
 		}),
 	);
 
-test('the switcher groups terminals under their project and connection', () => {
+test('the drawer is a dialog holding a rail and a panel', () => {
 	const markup = switcher({});
-	const connection = markup.indexOf('Marks-MacBook-Air');
-	const project = markup.indexOf('Paged');
-	const terminal = markup.indexOf('>server<');
-	assert.ok(connection >= 0 && connection < project);
-	assert.ok(project < terminal);
 	assert.match(markup, /role="dialog"/);
 	assert.match(markup, /aria-label="Switch terminal"/);
+	assert.match(markup, /data-compact-drawer="true"/);
+	assert.match(markup, /<nav class="compact-drawer__rail" aria-label="Places"/);
 });
 
-test('a project with several folders lists each folder with its terminals beneath it', () => {
-	const [connection] = groups;
-	const [project] = connection.projects;
-	const [server, claude] = project.panels;
-	const folder = (folderId, name, panels) => ({
-		folderId,
-		key: `local:folder:${folderId}`,
-		name,
-		panels,
-	});
-	const markup = switcher({
-		groups: [
-			{
-				...connection,
-				projects: [
-					{
-						...project,
-						folders: [
-							folder('general', 'General', [server]),
-							folder('release', 'release-notes', [claude]),
-							folder('idle', 'one-window', []),
-						],
-					},
-				],
-			},
-		],
-	});
-	const order = ['>General<', '>server<', '>release-notes<', '>claude<', '>one-window<'].map(
-		(text) => markup.indexOf(text),
+test('the rail runs server, Home, divider, projects, New project', () => {
+	const markup = switcher({});
+	const order = [
+		'data-compact-switcher-server',
+		'data-compact-switcher-home',
+		'compact-drawer__rail-divider',
+		'data-compact-switcher-project="local:p1"',
+		'data-compact-switcher-project="local:p2"',
+		'compact-drawer__rail-add',
+	].map((marker) => markup.indexOf(marker));
+	assert.ok(order.every((index) => index >= 0));
+	assert.deepEqual(
+		order,
+		[...order].sort((left, right) => left - right),
 	);
-	assert.ok(order.every((index) => index >= 0), 'every folder and terminal is listed');
-	assert.deepEqual(order, [...order].sort((left, right) => left - right));
-	assert.equal(markup.match(/class="compact-switcher__folder"/g).length, 3);
-	// A folder with nothing in it is its label and nothing else.
-	assert.doesNotMatch(markup, /No panels/);
+	// The server control names its server, even with one attached.
+	assert.match(markup, /aria-label="Server Marks-MacBook-Air"/);
+	// One connection: no group headings.
+	assert.doesNotMatch(markup, /compact-drawer__rail-heading/);
+});
+
+test('rail items carry their badge: attention before working', () => {
+	const markup = switcher({});
 	assert.match(
 		markup,
-		/>one-window<\/span><span class="compact-switcher__folder-rule"[^>]*><\/span><\/button><button[^>]*aria-label="New terminal in one-window of Paged"[^>]*>(?:(?!<button)[\s\S])*<\/button><\/div><\/div>/,
-		'nothing follows an empty folder line inside its group',
+		/data-compact-switcher-project="local:p1"(?:(?!<\/button>)[\s\S])*compact-drawer__badge--working[^>]*>1</,
 	);
-	assert.match(markup, /aria-label="Folder release-notes in Paged"/);
-	// Each folder creates in itself, so the header has no control of its own.
-	for (const name of ['General', 'release-notes', 'one-window'])
-		assert.match(
-			markup,
-			new RegExp(`aria-label="New terminal in ${name} of Paged"`),
-		);
-	assert.doesNotMatch(markup, /aria-label="New terminal in Paged"/);
-	// Each terminal is listed once, under its folder.
-	assert.equal(markup.match(/>claude</g).length, 1);
+	assert.match(
+		markup,
+		/data-compact-switcher-project="local:p2"(?:(?!<\/button>)[\s\S])*compact-drawer__badge--attention[^>]*>1</,
+	);
+	// An emoji stands for a project when it has one; initials otherwise.
+	assert.match(markup, /compact-drawer__rail-glyph" aria-hidden="true">🔧</);
+	assert.match(markup, /compact-drawer__rail-glyph" aria-hidden="true">Pa</);
+	// Home counts what needs the user everywhere.
+	assert.match(markup, /aria-label="Home, 1 needs you"/);
 });
 
-test('a project with only its General folder still labels it', () => {
-	const [connection] = groups;
-	const [project] = connection.projects;
+test('two connections head their groups, the window server first', () => {
 	const markup = switcher({
 		groups: [
 			{
-				...connection,
-				projects: [
-					{
-						...project,
-						folders: [
-							{
-								folderId: 'general',
-								key: 'local:folder:general',
-								name: 'General',
-								panels: project.panels,
-							},
-						],
-					},
-				],
+				projects: [remotePaged],
+				serverId: 'remote',
+				serverLabel: 'paged-prod',
 			},
+			...groups,
 		],
 	});
-	assert.equal(markup.match(/class="compact-switcher__folder"/g).length, 1);
-	assert.ok(markup.indexOf('>General<') < markup.indexOf('>server<'));
-	assert.match(markup, /aria-label="New terminal in General of Paged"/);
+	const own = markup.indexOf('>Marks-MacBook-Air</span>');
+	const other = markup.indexOf('>paged-prod</span>');
+	assert.ok(own >= 0 && other > own);
+	assert.ok(
+		markup.indexOf('data-compact-switcher-project="local:p1"') <
+			markup.indexOf('data-compact-switcher-project="remote:p1"'),
+	);
 });
 
-test('everything of a project sits inside its own card and no other', () => {
-	const [connection] = groups;
-	const [project] = connection.projects;
-	const other = {
-		...project,
-		color: '#4fd08a',
-		folders: [
-			{
-				folderId: 'g2',
-				key: 'local:folder:g2',
-				name: 'scratch',
-				panels: [
-					{
-						...project.panels[0],
-						key: 'local:panel-z',
-						panelId: 'panel-z',
-						projectId: 'p2',
-						title: 'zsh',
-					},
-				],
-			},
-		],
-		key: 'local:p2',
-		projectId: 'p2',
-		title: 'dotfiles',
-	};
+test('the drawer opens on the project in front, its tree in folder order', () => {
+	const markup = switcher({});
+	assert.match(
+		markup,
+		/data-compact-switcher-project="local:p1"[^>]*|aria-pressed="true"[^>]*data-compact-switcher-project="local:p1"/,
+	);
+	const order = [
+		'>General<',
+		'>server<',
+		'>mobile-rail<',
+		'>claude<',
+		'>scratch<',
+	].map((text) => markup.indexOf(text));
+	assert.ok(
+		order.every((index) => index >= 0),
+		'every folder and row is listed',
+	);
+	assert.deepEqual(
+		order,
+		[...order].sort((left, right) => left - right),
+	);
+	assert.match(markup, /aria-label="Folder worktree-mobile-rail in Paged"/);
+	assert.match(markup, /compact-drawer__folder-glyph/);
+});
+
+test('opening on Home presents the sections and what needs you', () => {
 	const markup = switcher({
-		groups: [{ ...connection, projects: [project, other] }],
+		isHomeSelected: true,
+		homeFrontSection: 'workflows',
 	});
-	const cards = markup.split('class="compact-switcher__card"').slice(1);
-	assert.equal(cards.length, 2);
-	const [first, second] = cards;
-	assert.match(first, /data-compact-switcher-card="local:p1"/);
-	assert.match(first, />server</);
-	assert.match(first, />claude</);
-	assert.doesNotMatch(first, />zsh<|>scratch</);
-	assert.match(second, /data-compact-switcher-card="local:p2"/);
-	assert.match(second, />scratch</);
-	assert.match(second, />zsh</);
-	assert.doesNotMatch(second, />server<|>claude</);
-	// The card carries the colour once; nothing inside repeats it.
-	assert.match(first, /--compact-switcher-project:#7c5cff/);
-	assert.match(second, /--compact-switcher-project:#4fd08a/);
+	assert.match(markup, /data-compact-home-panel="true"/);
+	const sections = [
+		...markup.matchAll(/data-compact-home-section="(\w+)"/g),
+	].map((match) => match[1]);
+	assert.deepEqual(sections, [
+		'home',
+		'tabs',
+		'bots',
+		'automations',
+		'workflows',
+		'recordings',
+	]);
+	assert.match(
+		markup,
+		/aria-current="page"[^>]*data-compact-home-section="workflows"/,
+	);
+	assert.match(markup, /data-compact-needs-you="true"/);
+	assert.match(markup, />codex</);
+	// Home has no edit control and no folder tree.
+	assert.doesNotMatch(markup, /data-compact-switcher-edit/);
+	assert.doesNotMatch(markup, /data-compact-switcher-folder=/);
+	// With Home presented the create bar offers New project alone.
+	assert.doesNotMatch(markup, /data-compact-switcher-new-terminal/);
+	assert.match(
+		markup,
+		/compact-drawer__create-wide"[^>]*>(?:(?!<\/button>)[\s\S])*New project/,
+	);
+});
+
+test('a folder header holds its count, a new-terminal control, and a ⋯ menu', () => {
+	const markup = switcher({});
+	assert.match(markup, /data-compact-switcher-folder-add="local:folder:wt"/);
+	assert.match(
+		markup,
+		/aria-label="New terminal in worktree-mobile-rail of Paged"/,
+	);
+	assert.match(markup, /data-compact-switcher-folder-menu="local:folder:wt"/);
+	assert.match(markup, /aria-label="More for worktree-mobile-rail"/);
+	// An empty folder offers one New terminal entry.
+	assert.match(
+		markup,
+		/data-compact-switcher-empty-folder="local:folder:empty"/,
+	);
+});
+
+test('every dial sits in the trailing column, and folders carry none', () => {
+	const markup = switcher({});
+	const rows = markup.match(/class="compact-drawer__row[ "]/g) ?? [];
+	const slots = markup.match(/data-compact-workflow-slot="true"/g) ?? [];
+	assert.equal(slots.length, rows.length);
+	// The folder header's trailing column is the same 30px slot, holding ⋯.
+	assert.match(
+		markup,
+		/compact-drawer__wslot"><button[^>]*compact-drawer__folder-more/,
+	);
 });
 
 test('a row carries its preview line, and a row without one carries none', () => {
 	const markup = switcher({});
-	assert.match(
-		markup,
-		/compact-switcher__terminal-preview">✓ built in 2\.41s</,
-	);
+	assert.match(markup, /compact-drawer__row-sub">✓ built in 2\.41s</);
 	assert.equal(
-		markup.match(/compact-switcher__terminal-preview/g).length,
+		(markup.match(/compact-drawer__row-sub/g) ?? []).length,
 		1,
 		'a terminal with no buffer must show no placeholder',
 	);
 });
 
-test('the terminal in front is the current row', () => {
+test('the panel on screen is the current row', () => {
 	const markup = switcher({});
 	assert.match(
 		markup,
-		/data-compact-switcher-terminal="local:panel-a"[^>]*aria-current="true"|aria-current="true"[^>]*data-compact-switcher-terminal="local:panel-a"/,
+		/aria-current="true"[^>]*data-compact-switcher-terminal="local:panel-a"/,
 	);
 });
 
-test('row state uses the shared activity vocabulary', () => {
+test('row state uses the shared activity vocabulary, and working is a dot', () => {
 	const markup = switcher({});
-	// Both states use the shared vocabulary; idle is neutral, not absent, so a
-	// run of rows keeps one left margin.
 	assert.match(markup, /agent-status-indicator--working/);
 	assert.match(markup, /agent-status-indicator--idle/);
 });
 
-test('the project header summarises its terminals and carries no dot', () => {
+test('the panel header summarises its terminals', () => {
 	const markup = switcher({});
 	assert.match(markup, /data-compact-switcher-summary="local:p1"/);
 	assert.match(markup, /aria-label="1 working, 1 idle"/);
 	assert.match(
 		markup,
-		/compact-switcher__summary-group--working">1 working<\/span><span class="compact-switcher__summary-group"> · 1 idle</,
+		/compact-drawer__summary-group--working">1 working<\/span><span class="compact-drawer__summary-group"> · 1 idle</,
 	);
-	assert.doesNotMatch(markup, /project-tab-activity-dot/);
-	// The header still carries what editing and closing address.
-	assert.match(markup, /data-compact-switcher-project="local:p1"/);
-	const header = markup.slice(
-		markup.indexOf('class="compact-switcher__project"'),
-		markup.indexOf('class="compact-switcher__row"'),
-	);
-	const order = [
-		'compact-switcher__project-swatch',
-		'compact-switcher__project-name',
-		'compact-switcher__summary',
-		'aria-label="Close Paged"',
-	].map((marker) => header.indexOf(marker));
-	assert.ok(order.every((index) => index >= 0));
-	assert.deepEqual(order, [...order].sort((left, right) => left - right));
 });
 
-test('a project with no terminal shows no summary', () => {
-	const [connection] = groups;
-	const [project] = connection.projects;
+test('the split control repeats the remembered launcher and names where it creates', () => {
+	const shell = switcher({});
+	assert.match(shell, /data-compact-launcher="shell"/);
+	assert.match(shell, /compact-drawer__split-label">Terminal</);
+	assert.match(shell, /aria-label="New Terminal terminal in General of Paged"/);
+	assert.match(shell, /data-compact-switcher-launchers="true"/);
+	assert.match(
+		shell,
+		/compact-drawer__create-icon"[^>]*aria-label="New project"/,
+	);
+	// Add connection lives in the server menu now.
+	assert.doesNotMatch(shell, /aria-label="Add connection"/);
+
+	const codex = switcher({ rememberedLauncherId: 'codex' });
+	assert.match(codex, /compact-drawer__split-label">Codex</);
+	assert.match(codex, /aria-label="New Codex terminal in General of Paged"/);
+
+	const gone = switcher({ rememberedLauncherId: 'retired' });
+	assert.match(gone, /compact-drawer__split-label">Terminal</);
+});
+
+test('another server project offers only what switches there first', () => {
 	const markup = switcher({
+		frontProjectKey: 'remote:p1',
 		groups: [
+			...groups,
 			{
-				...connection,
-				projects: [
-					{
-						...project,
-						summary: { attention: 0, working: 0, done: 0, idle: 0 },
-					},
-				],
+				projects: [remotePaged],
+				serverId: 'remote',
+				serverLabel: 'paged-prod',
 			},
 		],
 	});
-	assert.doesNotMatch(markup, /compact-switcher__summary/);
+	// The project presented is another server's: no edit control, and its
+	// split control starts the default shell whatever this device remembers.
+	assert.doesNotMatch(markup, /data-compact-switcher-edit/);
+	assert.match(markup, /data-compact-launcher="shell"/);
+	assert.match(markup, />deploy</);
 });
 
-const front = { color: '#7c5cff', folderName: 'General', projectTitle: 'Paged' };
-
-test('every create action survives the collapse', () => {
-	const markup = switcher({ front, onNewTerminalHere: noop });
-	// A project whose folders are not listed creates from its header.
-	assert.match(markup, /aria-label="New terminal in Paged"/);
-	// The bar says where its terminal will land, in words and for AT.
-	assert.match(
-		markup,
-		/compact-switcher__create-label">Terminal<span class="compact-switcher__create-where"> in Paged › General<\/span>/,
+test("another server's menus offer only what needs no switch", async () => {
+	// The menus are layers opened by a press, so their gating is read from the
+	// component: a static render never opens one.
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	const rowLayer = source.slice(
+		source.indexOf("if (layer?.kind === 'row')"),
+		source.indexOf("layer?.kind === 'folder'"),
 	);
-	assert.match(markup, /aria-label="New terminal in General of Paged"/);
-	assert.match(markup, /data-compact-switcher-new-terminal="true"/);
-	assert.match(markup, /compact-switcher__create-icon"[^>]*aria-label="New project"/);
-	assert.match(
-		markup,
-		/compact-switcher__create-icon"[^>]*aria-label="Add connection"/,
+	// Open is always offered; Rename, Move and Close only on this server.
+	assert.match(rowLayer, /key: 'open'[\s\S]*if \(own\) \{[\s\S]*key: 'rename'/);
+	assert.match(rowLayer, /const own = row\.serverId === currentServer\.id;/);
+	const folderLayer = source.slice(
+		source.indexOf("layer?.kind === 'folder'"),
+		source.indexOf("layer?.kind === 'server'"),
 	);
+	assert.match(
+		folderLayer,
+		/isOwnServer && props\.folderMenuFor !== undefined[\s\S]*: \[\];/,
+	);
+	const launchers = source.slice(
+		source.indexOf('const launcherItems'),
+		source.indexOf('const announce'),
+	);
+	// Another server gets the default shell alone, and is told where to go.
+	assert.match(
+		launchers,
+		/const ids = \[COMPACT_SHELL_LAUNCHER, \.\.\.\(own \? launcherIds : \[\]\)\];/,
+	);
+	assert.match(launchers, /Switch to \$\{serverLabelOf\(project\.serverId\)\} for its launchers\./);
+	const create = source.slice(
+		source.indexOf('const create = ('),
+		source.indexOf('const launcherItems'),
+	);
+	assert.match(create, /project\.serverId === currentServer\.id\s*\?\s*launcherId\s*:\s*COMPACT_SHELL_LAUNCHER/);
 });
 
-test('the create bar names only the project when its folders are unknown', () => {
+test("another server's project draws no grips or close controls in its rail", () => {
 	const markup = switcher({
-		front: { color: '#7c5cff', projectTitle: 'Paged' },
-		onNewTerminalHere: noop,
+		groups: [
+			...groups,
+			{ projects: [remotePaged], serverId: 'remote', serverLabel: 'paged-prod' },
+		],
 	});
-	assert.match(
+	assert.doesNotMatch(
 		markup,
-		/compact-switcher__create-where"> in Paged<\/span>/,
+		/data-compact-switcher-close-project="remote:p1"/,
 	);
-});
-
-test('a connection heading carries its rule', () => {
-	const markup = switcher({});
-	assert.match(markup, /compact-switcher__connection-rule/);
-});
-
-test('with no project in front New project is the wide control', () => {
-	const markup = switcher({});
-	assert.doesNotMatch(markup, /data-compact-switcher-new-terminal/);
-	assert.match(
-		markup,
-		/class="compact-switcher__create-main"[^>]*>(?:(?!<\/button>)[\s\S])*>New project</,
-	);
-	// New project is offered once, and Add connection sits beside it.
-	assert.equal(markup.match(/New project/g).length, 1);
-	assert.match(
-		markup,
-		/compact-switcher__create-icon"[^>]*aria-label="Add connection"/,
-	);
-});
-
-test('a filter that matches nothing says so and keeps its create bar', () => {
-	const markup = switcher({
-		front,
-		groups: [],
-		onNewTerminalHere: noop,
-		query: 'nothing-here',
-	});
-	assert.match(markup, /Nothing matches/);
-	assert.match(markup, /data-compact-switcher-new-terminal="true"/);
-	// The front project is filtered out of the list and still named here.
-	assert.match(markup, /in Paged › General/);
-	assert.match(markup, /aria-label="New project"/);
-	assert.match(markup, /aria-label="Add connection"/);
 });
 
 test('the filter starts collapsed and takes no focus', () => {
 	const markup = switcher({});
-	// A collapsed control, not a field: opening the sheet must not raise a
-	// keyboard, and nothing here is autofocused.
-	assert.match(markup, /compact-switcher__search-open/);
 	assert.match(markup, /aria-label="Search terminals and projects"/);
 	assert.doesNotMatch(markup, /<input/);
 	assert.doesNotMatch(markup, /autoFocus|autofocus/);
 });
 
-test('the switcher opens on Tabs', () => {
+test('the drawer opens on Tabs when it presents the project in front', () => {
 	const markup = switcher({
 		agents: React.createElement('div', { className: 'agents-probe' }, 'agent'),
 	});
-	// The left column's two tabs, named, with Tabs the one selected.
 	assert.match(markup, /role="tablist"/);
 	const tabs = [...markup.matchAll(/<button[^>]*role="tab"[^>]*>/g)].map(
 		([tab]) => tab,
@@ -525,25 +670,102 @@ test('the switcher opens on Tabs', () => {
 		['Tabs', 'Agents'],
 	);
 	assert.match(tabs[0], /aria-selected="true"/);
-	assert.match(tabs[1], /aria-selected="false"/);
-	// Tabs is the switcher as it always was: the list, the filter, the create bar.
-	assert.match(markup, />server</);
-	assert.match(markup, /compact-switcher__search-open/);
-	assert.match(markup, /aria-label="Add connection"/);
-	// The agents are behind their tab, not beneath the list.
 	assert.doesNotMatch(markup, /agents-probe/);
-	assert.doesNotMatch(markup, /<input/);
 });
 
-test('no tab bar without agents content', () => {
+test('no tab bar without agents content, or for a background project', () => {
+	assert.doesNotMatch(switcher({}), /role="tablist"/);
+	assert.doesNotMatch(
+		switcher({
+			frontProjectKey: 'local:p2',
+			agents: React.createElement('div', null, 'agent'),
+			isHomeSelected: true,
+		}),
+		/role="tablist"/,
+	);
+});
+
+test('a rail project is the long-press target for editing it', () => {
 	const markup = switcher({});
-	assert.doesNotMatch(markup, /role="tablist"/);
-	assert.doesNotMatch(markup, /role="tab"/);
-	assert.doesNotMatch(markup, /role="tabpanel"/);
-	assert.match(markup, />server</);
+	assert.match(markup, /title="Long-press to edit project"/);
+	assert.match(markup, /aria-label="Paged"/);
 });
 
-test('the switcher is given agents only for a project in front with agents on', async () => {
+test('rows open their menu by long press, secondary click, or the keyboard', async () => {
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	assert.match(
+		source,
+		/event\.key === 'ContextMenu' \|\| \(event\.key === 'F10' && event\.shiftKey\)/,
+	);
+	const component = source.slice(
+		source.indexOf('function PanelRow('),
+		source.indexOf('function FolderSection('),
+	);
+	// bindClick lets a completed long press swallow the click that follows it.
+	assert.match(component, /onClick=\{longPress\.bindClick\(/);
+	assert.match(component, /useMenuGesture\(onMenu, isEditing\)/);
+	assert.match(component, /aria-haspopup="menu"/);
+});
+
+test('the dismiss key closes the topmost layer first', async () => {
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	assert.match(
+		source,
+		/if \(layerRef\.current !== null\) closeLayerRef\.current\(\);\s*else if \(searchOpenRef\.current\) closeSearchRef\.current\(\);\s*else onDismiss\(\);/,
+	);
+	// A drag in progress owns the key.
+	assert.match(source, /gripDragState\.active/);
+});
+
+test('the entrance is the drawer alone, and reduced motion removes it', async () => {
+	const css = await readFile('src/workspace/CompactSwitcher.css', 'utf8');
+	const animated = [
+		...css.matchAll(
+			/\n(\.[\w-]+(?:[^{]*))\{[^}]*animation:\s*compact-drawer-in/g,
+		),
+	];
+	assert.equal(animated.length, 1);
+	assert.match(animated[0][1], /^\.compact-drawer\s*$/);
+	assert.match(
+		css,
+		/@media \(prefers-reduced-motion: reduce\) \{\s*\.compact-drawer \{\s*animation: none;/,
+	);
+});
+
+test('a workflow step line names the step being worked on or waiting', () => {
+	const view = (steps) => ({
+		state: 'attached',
+		workflow: { steps },
+	});
+	assert.equal(workflowStepLine(undefined), undefined);
+	assert.equal(
+		workflowStepLine(
+			view([
+				{ status: 'done', title: 'Propose' },
+				{ status: 'needs_input', title: 'Review' },
+				{ status: 'not_started', title: 'Ship' },
+			]),
+		),
+		'Needs input · 2/3 Review',
+	);
+	assert.equal(
+		workflowStepLine(
+			view([
+				{ status: 'done', title: 'Propose' },
+				{ status: 'running', title: 'Implement' },
+			]),
+		),
+		'2/2 Implement',
+	);
+	assert.equal(
+		workflowStepLine(view([{ status: 'done', title: 'Propose' }])),
+		'All 1 step done',
+	);
+});
+
+/* ------------------------------------------------------------ the wiring */
+
+test('the drawer is given agents only for a project in front with agents on', async () => {
 	const app = await readFile('src/App.tsx', 'utf8');
 	const wiring = app.slice(
 		app.indexOf('<CompactSwitcher'),
@@ -552,46 +774,7 @@ test('the switcher is given agents only for a project in front with agents on', 
 	assert.match(wiring, /settings\.agentIntegration\.enabled/);
 	assert.match(wiring, /!isHomeSelected/);
 	assert.match(wiring, /activeProject !== null/);
-	// A press on an agent's row dismisses the sheet, as a panel row's does.
 	assert.match(app, /onCompactAgentActivated=\{closeCompactSwitcher\}/);
-});
-
-test('a project heading is the long-press target for editing', () => {
-	const markup = switcher({});
-	assert.match(markup, /data-compact-switcher-project="local:p1"/);
-	assert.match(markup, /title="Long-press to edit project"/);
-});
-
-test('a terminal row is the long-press target for editing that terminal', () => {
-	// Long-pressing a terminal tab opened its editor; no tab strip is drawn at
-	// this width, so the row that replaced it carries the gesture.
-	const markup = switcher({});
-	assert.match(markup, /data-compact-switcher-terminal="local:panel-a"/);
-	// Tab rows carry no hover tooltip.
-	assert.doesNotMatch(markup, /title="Long-press to edit tab"/);
-});
-
-test('a short press on a terminal row still activates it', async () => {
-	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
-	const component = source.slice(
-		source.indexOf('function CompactSwitcherPanel('),
-		source.indexOf('function CompactSwitcherProjectHeading('),
-	);
-	// bindClick is what lets a completed long press swallow the click that
-	// follows it, so activation and editing cannot both fire from one press.
-	assert.match(component, /onClick=\{longPress\.bindClick\(onActivate\)\}/);
-	assert.match(component, /const longPress = useLongPress\(onEdit\);/);
-	// Close is a sibling button, not nested inside the activate target.
-	assert.match(component, /className="compact-switcher__row"/);
-	assert.match(component, /className="compact-switcher__close"/);
-	assert.match(component, /aria-label=\{`Close \$\{panel\.title\}`\}/);
-	assert.match(component, /onClick=\{onClose\}/);
-});
-
-test('each project heading carries a close control beside new terminal', () => {
-	const markup = switcher({});
-	assert.match(markup, /aria-label="Close Paged"/);
-	assert.match(markup, /aria-label="New terminal in Paged"/);
 });
 
 test('editing a switcher panel names the panel rather than racing activation', async () => {
@@ -601,8 +784,6 @@ test('editing a switcher panel names the panel rather than racing activation', a
 		app.indexOf('const closeCompactSwitcherPanel'),
 	);
 	assert.match(handler, /activateCompactSwitcherPanel\(row\)/);
-	// The panel is named, so a project that does not hold it ignores the event
-	// and no ordering between activation and edit has to hold.
 	assert.match(
 		handler,
 		/'terminay-edit-terminal',\s*\{\s*detail: \{ panelId: row\.panelId \}/,
@@ -620,7 +801,6 @@ test('closing a switcher panel uses the hidden tab close events', async () => {
 	assert.match(handler, /terminay-request-close-file/);
 	assert.match(handler, /panelId: row\.panelId/);
 	assert.match(handler, /sessionId: row\.sessionId/);
-	assert.doesNotMatch(handler, /closePanel\(/);
 });
 
 test('closing a switcher project uses the project tab close path', async () => {
@@ -631,4 +811,39 @@ test('closing a switcher project uses the project tab close path', async () => {
 	);
 	assert.match(wiring, /onCloseProject=\{\(group\) => \{/);
 	assert.match(wiring, /closeComposedTab\(/);
+});
+
+test('folder actions in the drawer are the Folders tree context menu', async () => {
+	const app = await readFile('src/App.tsx', 'utf8');
+	assert.match(app, /describeFolderMenuRef\.current = describeFolderMenu;/);
+	const handler = app.slice(
+		app.indexOf('const runCompactFolderAction'),
+		app.indexOf('const reportCompactError'),
+	);
+	// Run in the folder's own workspace, brought to the front first.
+	assert.match(handler, /runInFolderWorkspace\(/);
+	assert.match(
+		handler,
+		/workspace\.folderMenu\(folder\.folderId\)\?\.run\(action, anchor\)/,
+	);
+	const controller = await readFile(
+		'src/workspace/useFolderMenuController.tsx',
+		'utf8',
+	);
+	assert.match(controller, /entries=\{shownMenu\.entries\}/);
+});
+
+test('the Home toggle returns to the project Home keeps as its command target', async () => {
+	const app = await readFile('src/App.tsx', 'utf8');
+	const handler = app.slice(
+		app.indexOf('const toggleCompactHome'),
+		app.indexOf('const compactRememberedLauncher'),
+	);
+	assert.match(handler, /selectHome\(\)/);
+	// A project that has gone since leaves Home selected.
+	assert.match(
+		handler,
+		/projectsRef\.current\.some\(\(project\) => project\.id === activeProjectId\)/,
+	);
+	assert.match(handler, /activateProject\(activeProjectId\)/);
 });

@@ -482,6 +482,11 @@ test.describe('server upgrade at phone width', () => {
 			).toBeVisible();
 
 			await glyph.click();
+			// The drawer lists server updates in its server menu, on the rail.
+			await mainWindow
+				.getByRole('dialog', { name: 'Switch terminal' })
+				.locator('[data-compact-switcher-server="true"]')
+				.click();
 			const row = mainWindow.locator('[data-server-upgrade-profile-id]');
 			await expect(row).toContainText('Update available · 5.2.0');
 			await row.getByRole('button', { name: 'Upgrade server…' }).click();
