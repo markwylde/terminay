@@ -20,7 +20,12 @@ def main():
         peer.settimeout(10)
         peer.connect(path)
         if args:
-            peer.sendall((json.dumps({'token': token, 'message': {'jsonrpc':'2.0','id':1,'method':'runtime/check-work' if args == ['--check-work'] else 'initialize'}})+'\n').encode())
+            # The check is a real MCP initialize, which the host's MCP server
+            # validates like any client's.
+            message = {'jsonrpc':'2.0','id':1,'method':'runtime/check-work'} if args == ['--check-work'] else {
+                'jsonrpc':'2.0','id':1,'method':'initialize',
+                'params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'terminay-bot-mcp-check','version':'1'}}}
+            peer.sendall((json.dumps({'token': token, 'message': message})+'\n').encode())
             data = b''
             while b'\n' not in data and len(data) <= MAX_LINE:
                 chunk = peer.recv(65536)

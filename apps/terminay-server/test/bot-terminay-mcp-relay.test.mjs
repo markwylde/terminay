@@ -136,3 +136,48 @@ test("the host seam mints only while allowed, revokes a mint a toggle-off overto
     assert.equal(createBotTerminayMcpHost({ capabilities, socketPath: () => undefined }).open(BOT, RUN, () => true), undefined)
   })
 })
+
+// The container adapter's start-up check, run against the real relay. The
+// check is an MCP initialize, which this server validates like any client's.
+test("the container adapter's start-up check passes against the real relay", async () => {
+  const { createServer } = await import("node:net")
+  const { spawn } = await import("node:child_process")
+  const { once } = await import("node:events")
+  const { randomBytes } = await import("node:crypto")
+  const { rmSync } = await import("node:fs")
+  const { fileURLToPath } = await import("node:url")
+  const adapterPath = fileURLToPath(new URL("../../../docker/terminay-bot/bin/terminay-bot-mcp", import.meta.url))
+  await withEndpoint(async () => ({ ok: true, result: {} }), async ({ socketPath, capabilities }) => {
+    const lease = capabilities.mintBot(BOT, RUN)
+    const relay = createBotTerminayMcpRelay({ socketPath, token: lease.token })
+    const token = "c".repeat(64)
+    const path = `/tmp/terminay-mcp-${randomBytes(12).toString("hex")}.sock`
+    // Stands in for the in-container relay: one frame in, the relay's replies out.
+    const server = createServer((socket) => {
+      let buffer = ""
+      socket.on("data", (bytes) => {
+        buffer += bytes
+        const at = buffer.indexOf("\n")
+        if (at < 0) return
+        const frame = JSON.parse(buffer.slice(0, at))
+        assert.equal(frame.token, token)
+        relay.handle(1, frame.message, (message) => socket.write(`${JSON.stringify(message)}\n`))
+      })
+    })
+    await new Promise((resolve) => server.listen(path, resolve))
+    try {
+      const child = spawn("python3", [adapterPath, "--terminay-mcp", "--check-runtime"], {
+        env: { PATH: process.env.PATH, TERMINAY_MCP_SOCKET: path, TERMINAY_MCP_TOKEN: token },
+        stdio: ["ignore", "ignore", "pipe"],
+      })
+      let stderr = ""
+      child.stderr.on("data", (bytes) => (stderr += bytes))
+      const [code] = await once(child, "close")
+      assert.equal(code, 0, stderr)
+    } finally {
+      relay.close()
+      server.close()
+      rmSync(path, { force: true })
+    }
+  })
+})
