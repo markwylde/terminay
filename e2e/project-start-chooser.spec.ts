@@ -454,7 +454,7 @@ test('at phone width the chooser and the folder browser fit without horizontal o
 	await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
 	await mainWindow
 		.getByRole('dialog', { name: 'Switch terminal' })
-		.getByRole('button', { name: 'New project' })
+		.getByRole('button', { name: 'New project' }).first()
 		.click();
 	const chooser = activeStartChooser(mainWindow);
 	await expect(chooser).toBeVisible({ timeout: 15_000 });

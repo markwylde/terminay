@@ -4,11 +4,28 @@ import { test } from 'node:test';
 import {
 	buildCompactSwitcherGroups,
 	COMPACT_SWITCHER_PREVIEW_MAX_LENGTH,
+	compactNeedsYou,
+	compactProjectInitials,
+	compactRailBadge,
 	compactSwitcherIsEmpty,
+	displayFolderName,
 	filterCompactSwitcherGroups,
 	formatCompactSwitcherSummary,
+	orderCompactRailConnections,
 	previewLineFromOutput,
 } from '../src/workspace/compactSwitcherModel.ts';
+import {
+	gripAutoscrollStep,
+	gripKeyTarget,
+	gripShiftFor,
+	gripTargetIndex,
+	moveItem,
+} from '../src/workspace/gripReorderModel.ts';
+import {
+	COMPACT_SHELL_LAUNCHER,
+	recallCompactLauncher,
+	rememberCompactLauncher,
+} from '../src/workspace/localViewState.ts';
 
 const panel = (overrides) => ({
 	color: '#7c5cff',
@@ -372,6 +389,29 @@ test('each project lists its folders, each folder its panels', () => {
 	);
 });
 
+test("a folder lists its panels in the server's order, local panels last", () => {
+	const [project] = buildCompactSwitcherGroups({
+		foldersByProject: {
+			'local:p1': [
+				{ id: 'general', name: 'General', panelIds: ['panel-b', 'panel-a'] },
+			],
+		},
+		sources: [
+			source('local', 'Local', [paged], {
+				p1: [
+					{ ...terminal('panel-local', 'scratch', 's-l'), folderId: 'general' },
+					{ ...terminal('panel-a', 'server', 's-a'), folderId: 'general' },
+					{ ...terminal('panel-b', 'build', 's-b'), folderId: 'general' },
+				],
+			}),
+		],
+	})[0].projects;
+	assert.deepEqual(
+		project.folders[0].panels.map((row) => row.title),
+		['build', 'server', 'scratch'],
+	);
+});
+
 test('a panel in an unknown folder stays reachable under the first', () => {
 	const groups = buildCompactSwitcherGroups({
 		foldersByProject: { 'local:p1': [{ id: 'general', name: 'General' }] },
@@ -467,4 +507,211 @@ test('an untracked terminal is listed idle and counted idle', async () => {
 	);
 	assert.equal(project.summary.working, 1);
 	assert.equal(project.summary.idle, 1);
+});
+
+test('a rail badge shows what needs the user before what is working', () => {
+	assert.deepEqual(
+		compactRailBadge({ attention: 1, working: 3, done: 0, idle: 2 }),
+		{ count: 1, tone: 'attention' },
+	);
+	assert.deepEqual(
+		compactRailBadge({ attention: 0, working: 2, done: 1, idle: 0 }),
+		{ count: 2, tone: 'working' },
+	);
+	// Done and idle earn no badge: the rail says what is live.
+	assert.equal(
+		compactRailBadge({ attention: 0, working: 0, done: 2, idle: 4 }),
+		undefined,
+	);
+});
+
+test('a rail badge counts one server project only', () => {
+	const sources = [
+		source('local', 'Local', [paged], {
+			p1: [
+				panel({ panelId: 'a', title: 'a', sessionId: 'sa', status: 'working' }),
+			],
+		}),
+		source('remote', 'Remote', [paged], {
+			p1: [
+				panel({ panelId: 'b', title: 'b', sessionId: 'sb', status: 'idle' }),
+			],
+		}),
+	];
+	const groups = buildCompactSwitcherGroups({ sources });
+	assert.deepEqual(compactRailBadge(groups[0].projects[0].summary), {
+		count: 1,
+		tone: 'working',
+	});
+	assert.equal(compactRailBadge(groups[1].projects[0].summary), undefined);
+});
+
+test('the rail puts the window server first and keeps the others in order', () => {
+	const groups = buildCompactSwitcherGroups({ sources: twoServers });
+	assert.deepEqual(
+		orderCompactRailConnections(groups, 'remote').map(
+			(group) => group.serverId,
+		),
+		['remote', 'local'],
+	);
+	assert.deepEqual(
+		orderCompactRailConnections(groups, 'local').map(
+			(group) => group.serverId,
+		),
+		['local', 'remote'],
+	);
+});
+
+test('needs you lists waiting and blocked terminals across every project with their folder', () => {
+	const groups = buildCompactSwitcherGroups({
+		foldersByProject: {
+			'local:p1': [
+				{ id: 'general', name: 'General', isGeneral: true },
+				{ id: 'wt', name: 'worktree-fix', isLinked: true },
+			],
+		},
+		sources: [
+			source('local', 'Local', [paged, dotfiles], {
+				p1: [
+					{
+						...panel({
+							panelId: 'a',
+							title: 'claude',
+							sessionId: 'sa',
+							status: 'waiting',
+						}),
+						folderId: 'wt',
+					},
+					panel({
+						panelId: 'b',
+						title: 'build',
+						sessionId: 'sb',
+						status: 'working',
+					}),
+					panel({
+						panelId: 'f',
+						title: 'notes.md',
+						kind: 'file',
+						status: 'waiting',
+					}),
+				],
+				p2: [
+					panel({
+						panelId: 'c',
+						title: 'codex',
+						sessionId: 'sc',
+						status: 'blocked',
+						projectId: 'p2',
+					}),
+				],
+			}),
+		],
+	});
+	const rows = compactNeedsYou(groups);
+	assert.deepEqual(
+		rows.map((row) => [row.panel.title, row.project.title, row.folderName]),
+		[
+			['claude', 'Paged', 'worktree-fix'],
+			['codex', 'dotfiles', undefined],
+		],
+	);
+	assert.equal(groups[0].projects[0].folders[1].isLinked, true);
+	assert.equal(groups[0].projects[0].folders[0].isGeneral, true);
+});
+
+test('a worktree folder drops its prefix for display only', () => {
+	assert.equal(
+		displayFolderName('worktree-mobile-workflow-rail-overlap'),
+		'mobile-workflow-rail-overlap',
+	);
+	assert.equal(displayFolderName('General'), 'General');
+	assert.equal(displayFolderName('release-notes'), 'release-notes');
+	// A name that is only the prefix keeps it rather than becoming empty.
+	assert.equal(displayFolderName('worktree-'), 'worktree-');
+});
+
+test('rail initials stand for a project', () => {
+	assert.equal(compactProjectInitials('terminay'), 'Te');
+	assert.equal(compactProjectInitials('paged net'), 'PN');
+	assert.equal(compactProjectInitials('dot-files'), 'DF');
+	assert.equal(compactProjectInitials('  '), '?');
+});
+
+test('a dragged item lands past the middles it has crossed', () => {
+	const spans = [
+		{ start: 0, size: 40 },
+		{ start: 40, size: 40 },
+		{ start: 80, size: 40 },
+	];
+	assert.equal(gripTargetIndex(spans, 0, 0), 0);
+	// Not yet past the next item's middle.
+	assert.equal(gripTargetIndex(spans, 0, 30), 0);
+	assert.equal(gripTargetIndex(spans, 0, 45), 1);
+	assert.equal(gripTargetIndex(spans, 0, 85), 2);
+	assert.equal(gripTargetIndex(spans, 2, -50), 1);
+	assert.equal(gripTargetIndex(spans, 2, -90), 0);
+	// The others step aside by the dragged item's size, toward its old place.
+	assert.equal(gripShiftFor(1, 0, 2, 40), -40);
+	assert.equal(gripShiftFor(2, 0, 2, 40), -40);
+	assert.equal(gripShiftFor(0, 2, 0, 40), 40);
+	assert.equal(gripShiftFor(2, 0, 1, 40), 0);
+	assert.deepEqual(moveItem(['a', 'b', 'c'], 0, 2), ['b', 'c', 'a']);
+	assert.deepEqual(moveItem(['a', 'b', 'c'], 2, 0), ['c', 'a', 'b']);
+	assert.deepEqual(moveItem(['a', 'b', 'c'], 5, 0), ['a', 'b', 'c']);
+});
+
+test('a grip moves one place by key, and not past either end', () => {
+	assert.equal(gripKeyTarget('ArrowUp', 1, 3), 0);
+	assert.equal(gripKeyTarget('ArrowDown', 1, 3), 2);
+	assert.equal(gripKeyTarget('ArrowUp', 0, 3), undefined);
+	assert.equal(gripKeyTarget('ArrowDown', 2, 3), undefined);
+	assert.equal(gripKeyTarget('Enter', 1, 3), undefined);
+});
+
+test('a drag held near an edge scrolls toward it', () => {
+	assert.ok(gripAutoscrollStep(105, 100, 500) < 0);
+	assert.ok(gripAutoscrollStep(495, 100, 500) > 0);
+	assert.equal(gripAutoscrollStep(300, 100, 500), 0);
+});
+
+test('the remembered launcher falls back to the shell', () => {
+	const store = new Map();
+	globalThis.localStorage = {
+		getItem: (key) => (store.has(key) ? store.get(key) : null),
+		setItem: (key, value) => store.set(key, String(value)),
+	};
+	try {
+		assert.equal(
+			recallCompactLauncher('local', ['codex']),
+			COMPACT_SHELL_LAUNCHER,
+		);
+		rememberCompactLauncher('local', 'codex');
+		assert.equal(recallCompactLauncher('local', ['claude', 'codex']), 'codex');
+		// Each server remembers its own.
+		assert.equal(
+			recallCompactLauncher('remote', ['codex']),
+			COMPACT_SHELL_LAUNCHER,
+		);
+		// A launcher the server no longer lists is the shell.
+		assert.equal(
+			recallCompactLauncher('local', ['claude']),
+			COMPACT_SHELL_LAUNCHER,
+		);
+		// Storage that throws is the shell, and no error.
+		globalThis.localStorage = {
+			getItem: () => {
+				throw new Error('denied');
+			},
+			setItem: () => {
+				throw new Error('denied');
+			},
+		};
+		assert.equal(
+			recallCompactLauncher('local', ['codex']),
+			COMPACT_SHELL_LAUNCHER,
+		);
+		rememberCompactLauncher('local', 'codex');
+	} finally {
+		delete globalThis.localStorage;
+	}
 });

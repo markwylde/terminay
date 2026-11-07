@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -366,6 +366,7 @@ const compactRow = (connection = {}) =>
 				tone: 'remote-access-button--idle',
 				...connection,
 			},
+			homeAttention: false,
 			isExplorerOpen: false,
 			isHomeSelected: false,
 			isNotificationsOpen: false,
@@ -373,10 +374,10 @@ const compactRow = (connection = {}) =>
 			notificationCount: 0,
 			onOpenCommandBar: noop,
 			onOpenSwitcher: noop,
-			onShowDashboard: noop,
 			onToggleExplorer: noop,
+			onToggleHome: noop,
 			onToggleNotifications: noop,
-			projectTitle: 'Paged',
+			title: { kind: 'project', projectTitle: 'Paged' },
 		}),
 	);
 
@@ -392,37 +393,26 @@ test('at phone width the connection glyph carries the same warning and name', ()
 	assert.match(warned, /compact-connection__upgrade[^>]*data-server-upgrade-indicator="5\.2\.0"/);
 });
 
-test('at phone width the switcher lists the same server updates', () => {
-	const sheet = (overrides = {}) =>
-		renderToStaticMarkup(
-			React.createElement(CompactSwitcher, {
-				groups: [],
-				onActivatePanel: noop,
-				onAddConnection: noop,
-				onClosePanel: noop,
-				onCloseProject: noop,
-				onDismiss: noop,
-				onEditPanel: noop,
-				onEditProject: noop,
-				onNewProject: noop,
-				onNewTerminal: noop,
-				onNewTerminalInFolder: noop,
-				onQueryChange: noop,
-				query: '',
-				...overrides,
-			}),
-		);
-	assert.doesNotMatch(sheet(), /Server updates/);
-	const markup = sheet({
-		serverUpgrades: React.createElement(ServerUpgradeMenuRows, {
+test('at phone width the drawer server menu lists the same server updates', async () => {
+	// The drawer's server menu is a layer opened from the rail; the rows it is
+	// given are the sheet variant of the same server update rows.
+	const sheetRows = renderToStaticMarkup(
+		React.createElement(ServerUpgradeMenuRows, {
 			rows: [row({ action: 'upgrading' }), row({ profileId: 'remote:build', label: 'Build box' })],
 			namesServers: true,
 			onUpgrade: noop,
 			variant: 'sheet',
 		}),
-	});
-	assert.match(markup, /Server updates/);
-	assert.match(markup, /Upgrading…/);
-	assert.match(markup, /Build box ·/);
-	assert.match(markup, /Upgrade server…/);
+	);
+	assert.match(sheetRows, /Upgrading…/);
+	assert.match(sheetRows, /Build box ·/);
+	assert.match(sheetRows, /Upgrade server…/);
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	const serverLayer = source.slice(
+		source.indexOf("layer?.kind === 'server'"),
+		source.indexOf("key: 'add-connection'"),
+	);
+	assert.match(serverLayer, /if \(props\.serverUpgrades\)/);
+	assert.match(serverLayer, /Server updates<\/p>\s*\{props\.serverUpgrades\}/);
+	assert.equal(typeof CompactSwitcher, 'function');
 });
