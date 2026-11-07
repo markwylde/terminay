@@ -12,4 +12,4 @@
 
 - [x] 3.1 Run `openspec validate workflow-overlay-hides-rail` and `openspec validate --all`. Verify: the change is valid, and `--all` shows no failures beyond the 7 pre-existing failures in other changes (add-terminay-bots, bot-chat-image-attachments, linked-folders, one-window-one-server, outbound-bot-triggers, server-notification-manager, unified-settings-window).
 - [x] 3.2 After verification, archive the change so the delta folds into `openspec/specs/terminal-workflows/spec.md`. Verify: `openspec validate --all --archived` reports no failures in `terminal-workflows` or in the archived change beyond the baseline.
-- [ ] 3.3 Open the PR on Gitea and read back every CI status on the head SHA. Verify: each status is `success` or `skipped`.
+- [x] 3.3 Open the PR on Gitea and read back every CI status on the head SHA. Verify: each status is `success` or `skipped`.
