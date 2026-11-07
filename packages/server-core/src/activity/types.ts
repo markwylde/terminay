@@ -43,7 +43,9 @@ export type TerminalActivitySignal =
 			readonly busy: boolean;
 			readonly processName: string;
 	  }
-	| { readonly kind: 'userInput' };
+	| { readonly kind: 'userInput' }
+	/** The server applied a changed size to the PTY. Never user input. */
+	| { readonly kind: 'resize' };
 
 export type ForegroundObservationState = 'available' | 'limited';
 

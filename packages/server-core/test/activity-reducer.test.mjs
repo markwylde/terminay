@@ -336,3 +336,55 @@ test("a command-executing marker is working however recently the user typed", ()
   const executing = reducer.applySignal("session-a", { kind: "command", phase: "executing" }, { now: 1_050 });
   assert.equal(executing.snapshot.status, "working");
 });
+
+function settledIdle() {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  reducer.applySignal("session-a", { kind: "userInput" }, { now: 1 });
+  reducer.tick(5_000);
+  reducer.acknowledge("session-a", { now: 5_000 });
+  const idle = reducer.get("session-a");
+  assert.equal(idle.status, "idle");
+  assert.equal(idle.acknowledged, true);
+  return reducer;
+}
+
+test("a prompt redrawn for a resize is not raw-output activity", () => {
+  const reducer = settledIdle();
+  const before = reducer.snapshot();
+  assert.equal(reducer.applySignal("session-a", { kind: "resize" }, { now: 10_000 }), undefined);
+  assert.equal(reducer.applyRawOutput("session-a", { now: 10_005 }), undefined);
+  assert.equal(reducer.applyRawOutput("session-a", { now: 10_999 }), undefined);
+  assert.deepEqual(reducer.tick(20_000), []);
+  assert.deepEqual(reducer.snapshot(), before);
+});
+
+test("output still arriving a second after a resize is working", () => {
+  const reducer = settledIdle();
+  reducer.applySignal("session-a", { kind: "resize" }, { now: 10_000 });
+  assert.equal(reducer.applyRawOutput("session-a", { now: 10_500 }), undefined);
+  const working = reducer.applyRawOutput("session-a", { now: 11_000 });
+  assert.equal(working.snapshot.status, "working");
+  assert.equal(working.snapshot.source, "raw:output");
+});
+
+test("a resize is not input: it neither settles nor acknowledges", () => {
+  const unsettled = createTerminalActivityReducer({ now: () => 0 });
+  unsettled.applySignal("session-a", { kind: "resize" }, { now: 1 });
+  unsettled.applyRawOutput("session-a", { now: 2_000 });
+  unsettled.tick(5_000);
+  assert.equal(unsettled.get("session-a").acknowledged, true, "start-up output stays acknowledged");
+
+  const ringing = createTerminalActivityReducer({ now: () => 0 });
+  ringing.applySignal("session-b", { kind: "bell" }, { now: 1 });
+  ringing.applySignal("session-b", { kind: "resize" }, { now: 2 });
+  const after = ringing.get("session-b");
+  assert.equal(after.attention, true);
+  assert.equal(after.acknowledged, false);
+});
+
+test("a resize does not hide structured work", () => {
+  const reducer = settledIdle();
+  reducer.applySignal("session-a", { kind: "resize" }, { now: 10_000 });
+  const executing = reducer.applySignal("session-a", { kind: "command", phase: "executing" }, { now: 10_010 });
+  assert.equal(executing.snapshot.status, "working");
+});
