@@ -336,6 +336,9 @@ export class TerminalService {
 	private readonly inputListeners = new Set<
 		(identity: TerminalIdentity, bytes: Uint8Array) => void
 	>();
+	private readonly resizeListeners = new Set<
+		(identity: TerminalIdentity, dimensions: TerminalDimensions) => void
+	>();
 	private sessionCounter = 0;
 	private subscriptionCounter = 0;
 	private stopping = false;
@@ -408,6 +411,20 @@ export class TerminalService {
 			throw new TypeError('terminal input listener must be a function');
 		this.inputListeners.add(listener);
 		return () => this.inputListeners.delete(listener);
+	}
+
+	/** Observe each changed size this service applies to a PTY. A same-size
+	 * request reaches neither the PTY nor these listeners. */
+	onResize(
+		listener: (
+			identity: TerminalIdentity,
+			dimensions: TerminalDimensions,
+		) => void,
+	): Unsubscribe {
+		if (typeof listener !== 'function')
+			throw new TypeError('terminal resize listener must be a function');
+		this.resizeListeners.add(listener);
+		return () => this.resizeListeners.delete(listener);
 	}
 
 	/** Observe one exact session's current foreground process. Snapshots never
@@ -1420,6 +1437,15 @@ export class TerminalService {
 			next.rows === mutable.dimensions.rows
 		)
 			return;
+		// Heard before the PTY is resized: the redraw that answers the resize
+		// can arrive before this call returns, and must already be known as one.
+		for (const listener of this.resizeListeners) {
+			try {
+				listener({ ...mutable.identity }, { ...next });
+			} catch {
+				// An observer cannot interfere with the PTY.
+			}
+		}
 		await mutable.process.resize(next);
 		mutable.dimensions.cols = next.cols;
 		mutable.dimensions.rows = next.rows;

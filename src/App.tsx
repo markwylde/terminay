@@ -132,6 +132,7 @@ import {
 	TerminalPanel,
 	TerminalPanelClientContext,
 	type TerminalPanelClientContextValue,
+	TerminalWorkspaceVisibleContext,
 } from './components/TerminalPanel';
 import type {
 	TerminalContextReader,
@@ -5961,6 +5962,7 @@ const ProjectWorkspace = memo(forwardRef<
 							<TerminalPanelClientContext.Provider
 								value={terminalPanelClientContext}
 							>
+								<TerminalWorkspaceVisibleContext.Provider value={isActive}>
 								<FilePanelSaveRegistryProvider registry={filePanelSaveRegistry}>
 									<EmptyFolderContext.Provider value={emptyFolderDescription}>
 									<DockviewReact
@@ -5982,6 +5984,7 @@ const ProjectWorkspace = memo(forwardRef<
 									/>
 									</EmptyFolderContext.Provider>
 								</FilePanelSaveRegistryProvider>
+								</TerminalWorkspaceVisibleContext.Provider>
 							</TerminalPanelClientContext.Provider>
 						</div>
 					}
