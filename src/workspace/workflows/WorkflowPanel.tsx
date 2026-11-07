@@ -63,7 +63,9 @@ export function WorkflowPanel(props: WorkflowPanelProps) {
 		>
 			{props.mode === 'expanded' ? (
 				<ExpandedWorkflow {...props} onCollapse={collapse} />
-			) : (
+			) : overlay ? null : (
+				// The overlay replaces the rail; the aside keeps the rail's strip so
+				// the terminal does not refit.
 				<WorkflowRail view={props.view} onExpand={expand} />
 			)}
 			{overlay ? (
