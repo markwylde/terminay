@@ -54,6 +54,7 @@ import {
 	useEffect,
 	useImperativeHandle,
 	useMemo,
+	useReducer,
 	useRef,
 	useState,
 } from 'react';
@@ -826,6 +827,10 @@ type ProjectWorkspaceProps = {
 		folderId: string,
 		entries: WorkspaceInventoryEntry[],
 	) => void;
+	/** This workspace read its repository's worktree listing again. The
+	 * compact switcher names linked folders by branch from that listing, and
+	 * reads it through the handle, so it has to be told to look again. */
+	onWorktreeStatusChange?: () => void;
 	/**
 	 * The folder this workspace presents. A workspace is exactly one folder
 	 * scope: its panel area, its Files pane, and its new-terminal action all
@@ -1593,6 +1598,7 @@ const ProjectWorkspace = memo(forwardRef<
 			isStatusBarVisible,
 			statusBarSlot,
 			onWorkspaceInventoryChange,
+			onWorktreeStatusChange,
 			onCommitProjectSidebar,
 			onUpdateProject,
 			popoutUrl,
@@ -3028,6 +3034,9 @@ const ProjectWorkspace = memo(forwardRef<
 		});
 		const worktreePanelStatusRef = useRef(worktreePanelStatus);
 		worktreePanelStatusRef.current = worktreePanelStatus;
+		useEffect(() => {
+			onWorktreeStatusChange?.();
+		}, [onWorktreeStatusChange, worktreePanelStatus]);
 		// The one worktree this folder stands for: what Changes reports.
 		const changes = useMemo(
 			() => folderChanges(folder, project.rootFolder, worktreePanelStatus),
@@ -7332,6 +7341,12 @@ function App({
 	// One observation of the bar decides compact chrome for every surface that
 	// changes at phone width, so a row and the strip under it cannot disagree.
 	const isCompactChrome = useCompactChrome(projectTabBarRef);
+	// Only the compact switcher reads the worktree listings through the
+	// handles, so only the compact layout re-renders when one is read again.
+	const [, noteWorktreeStatusChange] = useReducer(
+		(revision: number) => revision + 1,
+		0,
+	);
 	// Each layout keeps its own preference: phones default to hidden, and
 	// toggling one layout never changes what the other shows. Optimistic, so
 	// the bar changes the moment the command runs rather than after the
@@ -11447,6 +11462,9 @@ function App({
 							onPopoutProject={popoutProject}
 							onTerminalTabDrag={reportTerminalTabDrag}
 							onWorkspaceInventoryChange={updateWorkspaceInventory}
+							onWorktreeStatusChange={
+								isCompactChrome ? noteWorktreeStatusChange : undefined
+							}
 							onCommitProjectSidebar={commitProjectSidebar}
 							onUpdateProject={updateProject}
 							popoutUrl={popoutUrl}
