@@ -45,6 +45,9 @@ interface MutableSession {
 	settled: boolean;
 	rawActivityAt?: number;
 	lastUserInputAt?: number;
+	/** When the server last applied a changed size to this PTY. A shell or TUI
+	 * redraws for the new size; that redraw is not work. */
+	lastResizeAt?: number;
 	inputQuietDeadline?: number;
 	providerSequence?: number;
 }
@@ -248,6 +251,12 @@ export class TerminalActivityReducer {
 				session.attention = false;
 				session.acknowledged = true;
 				break;
+			case 'resize':
+				// Not input: it settles nothing, acknowledges nothing, and leaves
+				// the source alone. It only opens the window in which the redraw
+				// that answers it is not raw-output activity.
+				session.lastResizeAt = at;
+				break;
 		}
 		if (session.provider === undefined) derive(session, at, this.rawActivityMs);
 		return this.commitIfChanged(session, before);
@@ -269,9 +278,11 @@ export class TerminalActivityReducer {
 		if (session.provider !== undefined || session.claimed) return undefined;
 		const before = snapshotOf(session);
 		// Output directly after input is the echo of the user's own typing, or a
-		// repaint answering it, and is not work. It neither begins nor extends
-		// raw working; the derive below still publishes a period `expire` ended.
-		if (!recentInput(session, at)) {
+		// repaint answering it, and is not work. Output directly after a resize
+		// is the redraw for the new size, and is not work either. Neither begins
+		// nor extends raw working; the derive below still publishes a period
+		// `expire` ended.
+		if (!recentInput(session, at) && !recentResize(session, at)) {
 			session.authority = 'raw';
 			session.source = 'raw:output';
 			session.rawActivityAt = at;
@@ -844,6 +855,13 @@ function recentInput(session: MutableSession, at: number): boolean {
 	return (
 		session.lastUserInputAt !== undefined &&
 		at - session.lastUserInputAt < DEFAULT_RAW_ACTIVITY_MS
+	);
+}
+
+function recentResize(session: MutableSession, at: number): boolean {
+	return (
+		session.lastResizeAt !== undefined &&
+		at - session.lastResizeAt < DEFAULT_RAW_ACTIVITY_MS
 	);
 }
 
