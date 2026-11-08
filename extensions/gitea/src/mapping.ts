@@ -46,10 +46,10 @@ export function trackedBranch(
 }
 
 /**
- * The first pull request in `pulls` whose head is this worktree's tracked
- * branch in this repository. A fork's pull request with the same branch name
- * is not it. Callers list open pull requests before merged ones, so an open
- * pull request wins. Once a merged pull request's branch is deleted, Gitea
+ * Match the local branch first, then its upstream, within this repository.
+ * A fork's pull request with the same branch name is not it. Callers list
+ * open pull requests before merged ones, so open wins within each branch.
+ * Once a merged pull request's branch is deleted, Gitea
  * reports its head ref as `refs/pull/<n>/head`; its label keeps the branch.
  */
 export function matchPullRequest(
@@ -58,14 +58,22 @@ export function matchPullRequest(
 	owner: string,
 	repo: string,
 ): GiteaPullRequest | undefined {
-	const branch = trackedBranch(worktree);
-	if (branch === undefined) return undefined;
+	if (worktree.branch == null) return undefined;
+	const branches = new Set([worktree.branch, worktree.upstream?.branch]);
 	const fullName = `${owner}/${repo}`.toLowerCase();
-	return pulls.find((pull) => {
-		if (pull.head?.ref !== branch && pull.head?.label !== branch) return false;
-		const headRepo = pull.head.repo?.full_name;
-		return typeof headRepo !== 'string' || headRepo.toLowerCase() === fullName;
-	});
+	for (const branch of branches) {
+		if (branch === undefined) continue;
+		const match = pulls.find((pull) => {
+			if (pull.head?.ref !== branch && pull.head?.label !== branch)
+				return false;
+			const headRepo = pull.head.repo?.full_name;
+			return (
+				typeof headRepo !== 'string' || headRepo.toLowerCase() === fullName
+			);
+		});
+		if (match !== undefined) return match;
+	}
+	return undefined;
 }
 
 const WIP_TITLE = /^\s*(\[wip\]|wip:)/i;

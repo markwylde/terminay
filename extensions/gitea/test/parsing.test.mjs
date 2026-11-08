@@ -210,7 +210,7 @@ const worktree = (branch, upstream = branch) => ({
 	head: '0'.repeat(40),
 });
 
-test('a pull request matches by upstream branch, else branch name, in the same repository', () => {
+test('a pull request matches the local branch, with upstream fallback in the same repository', () => {
 	const pulls = [
 		{ number: 1, head: { ref: 'feat/a', repo: { full_name: 'fork/repo' } } },
 		{ number: 2, head: { ref: 'feat/a', repo: { full_name: 'Owner/Repo' } } },
@@ -236,7 +236,7 @@ test('a pull request matches by upstream branch, else branch name, in the same r
 		matchPullRequest(pulls, worktree('local', 'feat/b'), 'owner', 'repo')
 			.number,
 		3,
-		'a configured upstream wins over the branch name',
+		'a differently named upstream is used when the local name has no match',
 	);
 	assert.equal(
 		matchPullRequest(
@@ -325,11 +325,109 @@ test('checks count every status and keep failures first when truncating', () => 
 test('Gitea Actions status paths resolve against the origin', () => {
 	const checks = toChecks(
 		[
-			{ context: 'CI / Build', status: 'success', target_url: '/owner/repo/actions/runs/1/jobs/0' },
-			{ context: 'CI / Protocol-relative', status: 'success', target_url: '//evil.example/x' },
+			{
+				context: 'CI / Build',
+				status: 'success',
+				target_url: '/owner/repo/actions/runs/1/jobs/0',
+			},
+			{
+				context: 'CI / Protocol-relative',
+				status: 'success',
+				target_url: '//evil.example/x',
+			},
 		],
 		'https://git.example.net',
 	);
-	assert.equal(checks.items[0].url, 'https://git.example.net/owner/repo/actions/runs/1/jobs/0');
+	assert.equal(
+		checks.items[0].url,
+		'https://git.example.net/owner/repo/actions/runs/1/jobs/0',
+	);
 	assert.equal(checks.items[1].url, undefined);
+});
+
+test('local branch PR wins over its base upstream regardless of listing order', () => {
+	const local = {
+		number: 523,
+		head: { ref: 'feature', repo: { full_name: 'owner/repo' } },
+	};
+	const upstream = {
+		number: 10,
+		head: { ref: 'main', repo: { full_name: 'owner/repo' } },
+	};
+	for (const pulls of [[upstream, local], [local, upstream], [local]]) {
+		assert.equal(
+			matchPullRequest(pulls, worktree('feature', 'main'), 'owner', 'repo'),
+			local,
+		);
+	}
+});
+
+test('local merged label match wins over an upstream open PR', () => {
+	const upstream = { number: 10, head: { ref: 'main' } };
+	const local = {
+		number: 22,
+		merged: true,
+		head: {
+			ref: 'refs/pull/22/head',
+			label: 'feature',
+			repo: { full_name: 'Owner/Repo' },
+		},
+	};
+	assert.equal(
+		matchPullRequest(
+			[upstream, local],
+			worktree('feature', 'main'),
+			'owner',
+			'repo',
+		),
+		local,
+	);
+});
+
+test('a fork local match cannot mask a valid upstream match', () => {
+	const fork = {
+		number: 1,
+		head: { ref: 'local', repo: { full_name: 'fork/repo' } },
+	};
+	const upstream = {
+		number: 2,
+		head: { ref: 'feature', repo: { full_name: 'owner/repo' } },
+	};
+	assert.equal(
+		matchPullRequest(
+			[fork, upstream],
+			worktree('local', 'feature'),
+			'owner',
+			'repo',
+		),
+		upstream,
+	);
+});
+
+test('missing repository metadata remains a local match', () => {
+	for (const repo of [undefined, null, {}]) {
+		const local = { number: 1, head: { ref: 'local', repo } };
+		const upstream = { number: 2, head: { ref: 'feature' } };
+		assert.equal(
+			matchPullRequest(
+				[upstream, local],
+				worktree('local', 'feature'),
+				'owner',
+				'repo',
+			),
+			local,
+		);
+	}
+});
+
+test('a detached worktree cannot match even with upstream metadata', () => {
+	assert.equal(
+		matchPullRequest(
+			[{ head: { ref: 'feature' } }],
+			worktree(null, 'feature'),
+			'owner',
+			'repo',
+		),
+		undefined,
+	);
 });

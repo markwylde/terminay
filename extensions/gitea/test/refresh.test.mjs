@@ -488,3 +488,54 @@ test('becoming active refreshes at once; becoming inactive only slows the next r
 	assert.deepEqual(run.clock.pending(), [INACTIVE_REFRESH_INTERVAL_MS]);
 	run.controller.abort();
 });
+
+test('a feature tracking main publishes its own PR and head checks without extra requests', async () => {
+	const gitea = fakeGitea({
+		statuses: {
+			abc: [{ context: 'feature CI', status: 'success' }],
+			main: [{ context: 'base CI', status: 'failure' }],
+		},
+	});
+	const ctx = context();
+	ctx.worktrees = [
+		{ ...ctx.worktrees[1], upstream: { remote: 'origin', branch: 'main' } },
+	];
+	const run = harness({ gitea, contexts: [ctx] });
+	await flush();
+	assert.equal(run.published.length, 1);
+	assert.equal(run.published[0].properties.pullRequest.number, 285);
+	assert.equal(run.published[0].properties.checks.passed, 1);
+	assert.equal(run.published[0].properties.checks.items[0].name, 'feature CI');
+	assert.equal(gitea.calls.length, 3);
+	assert.ok(gitea.calls.some(({ url }) => url.includes('/commits/abc/status')));
+	assert.ok(
+		!gitea.calls.some(({ url }) => url.includes('/commits/main/status')),
+	);
+	run.controller.abort();
+});
+
+test('invalid local PR publication does not fall back to the upstream PR', async () => {
+	const pull = (number, ref, url) => ({
+		number,
+		title: 'PR',
+		html_url: url,
+		head: { ref, sha: 'abc' },
+	});
+	const gitea = fakeGitea({
+		statuses: { abc: [{ context: 'local CI', status: 'success' }] },
+		pulls: [
+			pull(1, 'main', `${ORIGIN}/owner/repo/pulls/1`),
+			pull(2, 'feat/about', 'http://insecure/pulls/2'),
+		],
+	});
+	const ctx = context();
+	ctx.worktrees = [
+		{ ...ctx.worktrees[1], upstream: { remote: 'origin', branch: 'main' } },
+	];
+	const run = harness({ gitea, contexts: [ctx] });
+	await flush();
+	assert.equal(run.published.length, 1);
+	assert.equal(run.published[0].properties?.pullRequest, undefined);
+	assert.equal(gitea.calls.length, 3);
+	run.controller.abort();
+});
