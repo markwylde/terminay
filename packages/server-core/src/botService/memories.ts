@@ -16,6 +16,11 @@ Use distinct Compose project names for separate workloads on the shared engine t
 Memories are Markdown notes in /home/bot/memories.
 `;
 
+/** What a bot with Terminay MCP access is told about it. */
+export const BOT_TERMINAY_MCP_NOTE = `
+You have full control of the user's Terminay through the \`terminay\` MCP server, the same tools Pixel has: projects, folders, terminals, tabs, the window layout, settings, automations, macros and workflows. Window tools act on the Terminay window the user last messaged you from, or else the most recently opened window: call get_layout to see what is on screen. split_terminal opens one new terminal per call; arrange_tabs makes grids, columns and rows. Before create_project, call list_recent_folders and put the new project beside the user's other projects unless they say otherwise. After changing anything, check what the tool returns, and never claim a change a result does not show.
+`;
+
 /** Small seam for group 4.9's shared, confined helper. No host path access. */
 export interface BotMemoryFiles {
 	list(
@@ -123,8 +128,11 @@ export class BotMemories extends EventEmitter {
 		});
 	}
 	async context(bot: BotProfile): Promise<string> {
+		const environment =
+			BOT_ENVIRONMENT_NOTE +
+			(bot.terminayMcpAccess === true ? BOT_TERMINAY_MCP_NOTE : '');
 		if (!bot.pinnedMemories.length)
-			return `${bot.instructions}\n\n${BOT_ENVIRONMENT_NOTE}`;
+			return `${bot.instructions}\n\n${environment}`;
 		const listing = await this.list(bot.id);
 		const pinned = listing.filter((m) => bot.pinnedMemories.includes(m.path));
 		let block = '';
@@ -136,7 +144,7 @@ export class BotMemories extends EventEmitter {
 			const contents = await this.read(bot.id, memory.path);
 			block += truncate(`${heading + contents}\n`, remaining);
 		}
-		return `${bot.instructions}\n\n${BOT_ENVIRONMENT_NOTE}${block}`;
+		return `${bot.instructions}\n\n${environment}${block}`;
 	}
 	async watch(botId: string, listener: () => void): Promise<() => void> {
 		this.bots.get(botId);

@@ -85,6 +85,11 @@ export function createBotMessageOperations(
 				uploads.map((u) => text(u, 24, 'upload token')),
 			);
 			assertBotAuthority(r.context);
+			// The bot's Terminay tools act on the window that messaged it.
+			service.recordViewer(p.botId, {
+				clientId: r.context.clientId,
+				connectionId: r.context.connectionId,
+			});
 			return { result: json(result) };
 		},
 		[op.upload]: async (r) => {

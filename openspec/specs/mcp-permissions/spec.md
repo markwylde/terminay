@@ -14,7 +14,7 @@ Every MCP operation other than `get_mcp_capabilities` SHALL belong to exactly on
 - **Workflow Templates**: `create_workflow_template`, `update_workflow_template`, and `delete_workflow_template`.
 - **Read Automations**: `list_automations`, `get_automation`, and `list_automation_runs`.
 - **Full Automation Management**: `create_automation`, `update_automation`, `delete_automation`, `set_automation_enabled`, `run_automation`, `stop_automation_run`, `remove_automation_run`, `prune_automation_runs`, and `dismiss_missed_runs`.
-- **Projects & Windows**: `list_projects`, `create_project`, `update_project`, `move_project`, `close_project`, `list_workspace_windows`, `open_workspace_window`, `rename_workspace_window`, and `close_workspace_window`.
+- **Projects & Windows**: `list_projects`, `list_recent_folders`, `create_project`, `update_project`, `move_project`, `close_project`, `list_workspace_windows`, `open_workspace_window`, `rename_workspace_window`, and `close_workspace_window`.
 - **Read Settings**: `get_settings` and `list_shell_profiles`.
 - **Change Settings**: `update_settings`, `save_shell_profile`, `delete_shell_profile`, `reorder_shell_profiles`, and `set_default_shell_profile`.
 - **App Windows**: `show_window`, `close_window`, and `list_windows`, and the opening of a window for a connected server's tool that declares a UI.

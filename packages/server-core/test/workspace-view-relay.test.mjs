@@ -151,3 +151,17 @@ test("both relay operations need only read scope", () => {
   assert.deepEqual(ops.policies[WORKSPACE_VIEW_OPERATIONS.attach], { scope: "read" });
   assert.deepEqual(ops.policies[WORKSPACE_VIEW_OPERATIONS.respond], { scope: "read" });
 });
+
+test("latest names the most recently attached window, skipping connections bound to one project", () => {
+  const { view, attach } = relay();
+  assert.equal(view.latest(), undefined);
+  attach("conn-a", "client-a");
+  attach("conn-b", "client-b");
+  attach("conn-bound", "client-c", { projectId: "p1" });
+  assert.deepEqual(view.latest(), { clientId: "client-b", connectionId: "conn-b" });
+  // Attaching again moves a window to the end.
+  attach("conn-a", "client-a");
+  assert.deepEqual(view.latest(), { clientId: "client-a", connectionId: "conn-a" });
+  view.closeConnection("conn-a");
+  assert.deepEqual(view.latest(), { clientId: "client-b", connectionId: "conn-b" });
+});

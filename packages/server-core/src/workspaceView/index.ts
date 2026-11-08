@@ -130,6 +130,24 @@ export class WorkspaceViewRelay {
 		return found;
 	}
 
+	/**
+	 * The most recently attached window whose connection is not bound to one
+	 * project: where a caller with no window of its own is shown things.
+	 */
+	latest(): WorkspaceViewTarget | undefined {
+		let found: WorkspaceViewTarget | undefined;
+		for (const [connectionId, attached] of this.attached) {
+			const claims = attached.claims;
+			const bound =
+				typeof claims === 'object' &&
+				claims !== null &&
+				!Array.isArray(claims) &&
+				typeof (claims as Record<string, JsonValue>).projectId === 'string';
+			if (!bound) found = { clientId: attached.clientId, connectionId };
+		}
+		return found;
+	}
+
 	/** Whether the connection's authenticated boundary admits a project. */
 	admits(connectionId: string, projectId: string): boolean {
 		const claims = this.attached.get(connectionId)?.claims;
@@ -246,6 +264,8 @@ export class WorkspaceViewRelay {
 		return {
 			commands: {
 				[WORKSPACE_VIEW_OPERATIONS.attach]: (request: CommandRequest) => {
+					// Re-attaching moves a connection to the end: the latest window.
+					this.attached.delete(request.context.connectionId);
 					this.attached.set(request.context.connectionId, {
 						clientId: request.context.clientId,
 						claims: request.context.claims,

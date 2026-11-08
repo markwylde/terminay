@@ -174,6 +174,32 @@ export class BotService extends EventEmitter {
 	readonly connections = new BotConnectionResources((id) =>
 		this.hooks.closeConnection?.(id),
 	);
+	/** The window connection that sent each bot its latest message. */
+	private readonly viewers = new Map<
+		string,
+		{ readonly clientId: string; readonly connectionId: string }
+	>();
+
+	/** Record the window that just messaged a bot, so its tools act there. */
+	recordViewer(
+		botId: string,
+		viewer: { readonly clientId: string; readonly connectionId: string },
+	): void {
+		this.viewers.set(botId, viewer);
+	}
+
+	/** The window that sent the bot its latest message, while it is connected. */
+	viewerOf(
+		botId: string,
+	): { readonly clientId: string; readonly connectionId: string } | undefined {
+		return this.viewers.get(botId);
+	}
+
+	/** A connection closed: no bot is talking to it any more. */
+	forgetViewerConnection(connectionId: string): void {
+		for (const [botId, viewer] of this.viewers)
+			if (viewer.connectionId === connectionId) this.viewers.delete(botId);
+	}
 	private readonly memoryWatches = new Map<
 		string,
 		{ connectionId: string; close: () => void }

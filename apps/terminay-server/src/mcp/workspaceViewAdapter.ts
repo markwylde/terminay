@@ -32,6 +32,7 @@ export interface WorkspaceViewAdapterOptions {
 		readonly terminalSessionId: string;
 		readonly projectId: string;
 		readonly chatId?: string;
+		readonly botId?: string;
 	}) => WorkspaceViewTarget | undefined;
 	readonly state: () => WorkspaceState | Promise<WorkspaceState>;
 	/** Apply a workspace command for the caller; throws when it is refused. */
@@ -512,11 +513,20 @@ export function createWorkspaceViewAdapter(
 					...optional('project', project(caller.projectId)),
 				};
 			}
-			// A bot has no client to place beside, so it places nothing.
-			if (context.bot !== undefined)
-				return optional('project', request.project);
-			// A chat: whatever is in front on its client.
-			const reply = await ask(context, 'layout', {}, undefined, signal);
+			// A chat or a bot: whatever is in front on its client. A bot with
+			// no window open still gets its terminal, placed nowhere.
+			let reply: Record<string, unknown>;
+			try {
+				reply = await ask(context, 'layout', {}, undefined, signal);
+			} catch (error) {
+				if (
+					context.bot !== undefined &&
+					error instanceof ControlEndpointError &&
+					error.code === 'renderer_unavailable'
+				)
+					return optional('project', request.project);
+				throw error;
+			}
 			const layout = isRecord(reply.layout) ? reply.layout : {};
 			const projectId =
 				typeof layout.projectId === 'string' &&
@@ -596,24 +606,22 @@ export async function requestAgentView(
 	projectId: string | undefined,
 	signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
-	// A bot execution has no agent's client, whoever is viewing the bot, so it
-	// never reaches a client's view (ADR-0100).
-	if (context.bot !== undefined)
-		throw new ControlEndpointError(
-			'renderer_unavailable',
-			'A bot has no Terminay window of its own, so there is no view to read or change.',
-		);
+	// A bot acts on the window that last messaged it, or else the latest
+	// window (ADR-0101).
 	const target = options.targetFor({
 		terminalSessionId: context.terminalSessionId,
 		projectId: context.projectId,
 		...(context.chat === undefined ? {} : { chatId: context.chat.chatId }),
+		...(context.bot === undefined ? {} : { botId: context.bot.botId }),
 	});
 	if (target === undefined)
 		throw new ControlEndpointError(
 			'renderer_unavailable',
-			context.chat === undefined
-				? 'No Terminay window is showing your terminal, so there is no view to read or change.'
-				: 'No Terminay window has sent this chat a message since it connected, so there is no view to read or change.',
+			context.bot !== undefined
+				? 'No Terminay window is open, so there is no view to read or change.'
+				: context.chat === undefined
+					? 'No Terminay window is showing your terminal, so there is no view to read or change.'
+					: 'No Terminay window has sent this chat a message since it connected, so there is no view to read or change.',
 		);
 	let reply: JsonValue;
 	try {
