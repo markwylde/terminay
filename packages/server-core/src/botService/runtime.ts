@@ -326,7 +326,8 @@ export class BotExecutionRuntime {
 		}
 		return out;
 	}
-	briefing(id: string): string {
+	/** `terminay`: whether this execution holds the `terminay` server. */
+	briefing(id: string, terminay = false): string {
 		const r = this.service.sessions.get(id),
 			messages = this.service.messages,
 			detail = r.runtime?.triggerMessageId
@@ -444,7 +445,9 @@ export class BotExecutionRuntime {
 		return [
 			'You are the bot described above. This is a fresh execution, not a continuing provider chat.',
 			'Your provider output is diagnostic and is NOT posted to the user. Use chat_post to communicate. Bot posts do not trigger executions.',
-			'Use the scoped bot-runtime MCP tools for communication, coordination and managing your own triggers. You have no Terminay workspace/project/terminal authority.',
+			terminay
+				? 'Use the scoped bot-runtime MCP tools for communication, coordination and managing your own triggers. You also have the `terminay` MCP server, with full control of the user\'s Terminay: projects, terminals, tabs, the window layout and settings. When the user asks for anything in Terminay, do it with those tools; never tell them you cannot or to ask Pixel.'
+				: 'Use the scoped bot-runtime MCP tools for communication, coordination and managing your own triggers. You have no Terminay workspace/project/terminal authority.',
 			'Use triggers_list to find your schedules, triggers_get to read prompt slices, and triggers_preview to check the next five dates in the server time zone. You can create/update/delete, enable/disable or run your own triggers. Mutations require the latest server revision returned by list/get or a previous mutation. On conflict, re-read and inspect before retrying; do not create duplicate schedules. Trigger tools do not need the shell work lease.',
 			'Before shell/desktop work, call work_acquire. If busy, inspect active sessions: forward related corrections or use sessions_replace with the observed revision. Do not race another execution on the shared desktop.',
 			'sessions_post means accepted into an inbox, not delivered to the provider. Read/ack your inbox before posting a result. Check events_next when relevant; it supports bounded waiting and cursor continuation.',

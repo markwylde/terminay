@@ -144,6 +144,8 @@ interface Live {
 	closing: boolean;
 	timer?: ReturnType<typeof setTimeout>;
 	turn: boolean;
+	/** Whether this execution was given the `terminay` server. */
+	terminay: boolean;
 }
 /** Device settings override defaults at matching paths, preserving other files. */
 export function botAgentConfigFiles(
@@ -1258,7 +1260,18 @@ export class BotService extends EventEmitter {
 					},
 					onClient: (client) => this.bindClient(record.id, client),
 				});
-				live = { runner, closing: false, turn: true };
+				live = {
+					runner,
+					closing: false,
+					turn: true,
+					terminay: bridge.servers.some(
+						(server) =>
+							typeof server === 'object' &&
+							server !== null &&
+							!Array.isArray(server) &&
+							server.name === 'terminay',
+					),
+				};
 				pendingCredential = undefined;
 				this.live.set(record.id, live);
 				const client = await runner.open();
@@ -1283,7 +1296,7 @@ export class BotService extends EventEmitter {
 			this.sessions.append(record.id, { kind: 'user', text: item.prompt });
 			const first = record.acpSessionId === null;
 			await live.runner.client.prompt(
-				`${first ? `${record.snapshot.context}\n\n` : ''}${this.runtime.briefing(record.id)}\n\n${record.origin.kind === 'chat' ? '' : item.prompt}`,
+				`${first ? `${record.snapshot.context}\n\n` : ''}${this.runtime.briefing(record.id, live.terminay)}\n\n${record.origin.kind === 'chat' ? '' : item.prompt}`,
 				record.snapshot.maxTurnMs,
 				first ? images : [],
 			);
