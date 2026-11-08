@@ -70,6 +70,7 @@ export interface AppControlAdapterOptions {
 			readonly terminalSessionId: string;
 			readonly projectId: string;
 			readonly chatId?: string;
+			readonly botId?: string;
 		}) => WorkspaceViewTarget | undefined;
 	};
 }
@@ -263,6 +264,14 @@ export function createAppControlAdapter(
 				projects: listed.map((project) => describeProject(state, project)),
 				...(listed.length < inReach.length ? { truncated: true } : {}),
 			};
+		},
+		listRecentFolders: async (_params, context) => {
+			requireWorkspaceReach(context);
+			const state = await options.state();
+			const folders = [...(state.recentProjectFolders ?? [])]
+				.sort((a, b) => b.usedAt - a.usedAt)
+				.map((entry) => ({ path: entry.path, used_at: entry.usedAt }));
+			return { folders };
 		},
 		createProject: async (params, context, signal) => {
 			requireWorkspaceReach(context);

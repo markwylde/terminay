@@ -733,6 +733,15 @@ function registerAppControlTools(
 		async (_params, extra) => call('list_projects', {}, extra.signal),
 	);
 	server.registerTool(
+		'list_recent_folders',
+		{
+			description: `List the folders projects were recently started in on this server, most recent first, each with its absolute path and when it was last used (Unix milliseconds). Use it to choose a root for create_project: a new project usually belongs beside the others. ${WORKSPACE_REACH_NOTE}`,
+			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
+		},
+		async (_params, extra) => call('list_recent_folders', {}, extra.signal),
+	);
+	server.registerTool(
 		'create_project',
 		{
 			description: `Create a project, started at once, and open its first terminal. root ~ starts it in the home folder with no root folder; any other root becomes its folder and, without a name, names it. It goes into window, or else the window you are talking from, and that window shows it (shown says whether it did). Returns its project handle and first terminal. Nothing here lists or browses folders. ${WORKSPACE_REACH_NOTE}`,

@@ -83,10 +83,14 @@ async function fixture() {
 		context: { connectionId: 'window-conn', clientId: 'window', authScope: 'full' },
 	});
 	let target = { clientId: 'window', connectionId: 'window-conn' };
+	const callers = [];
 	const projectHandles = new ProjectHandleCodec('server-a', KEY);
 	const view = createWorkspaceViewAdapter({
 		relay,
-		targetFor: () => target,
+		targetFor: (caller) => {
+			callers.push(caller);
+			return target;
+		},
 		state: () => repository.workspace.state,
 		apply: (command) => apply(command),
 		projectHandles,
@@ -96,6 +100,7 @@ async function fixture() {
 		apply,
 		addTerminal,
 		requests,
+		callers,
 		view,
 		projectHandles,
 		setAnswer: (next) => { answer = next; },
@@ -200,17 +205,26 @@ test('with no client to talk to, a view tool fails instead of pretending', async
 	assert.equal(requests.length, 0);
 });
 
-test('a bot execution has no agent\'s client, even while a window is attached', async () => {
-	const { view, requests } = await fixture();
+test('a bot execution reads and changes the window its target names, as a chat does', async () => {
+	const { view, requests, callers, setTarget } = await fixture();
 	const bot = context({
 		terminalSessionId: 'bot:abcdefabcdef:abcdefabcdefabcdefabcdef',
 		projectId: AUTOMATION_SPACE_PROJECT_ID,
 		reach: 'workspace',
 		bot: { botId: 'abcdefabcdef', executionId: 'abcdefabcdefabcdefabcdef' },
 	});
-	await rejects(view.focusTab({ tab: 'sibling' }, bot, new AbortController().signal), 'renderer_unavailable');
-	await rejects(view.getLayout({}, bot, new AbortController().signal), 'renderer_unavailable');
-	assert.equal(requests.length, 0);
+	const signal = new AbortController().signal;
+	const layout = await view.getLayout({}, bot, signal);
+	assert.ok(layout.root ?? layout.layout?.root, JSON.stringify(layout));
+	const focused = await view.focusTab({ tab: 'sibling' }, bot, signal);
+	assert.equal(focused.focused, true);
+	assert.equal(requests.length, 2);
+	assert.equal(requests.at(-1).toConnectionId, 'window-conn');
+	assert.equal(callers.at(-1).botId, 'abcdefabcdef');
+	// With no window open there is nothing to read or change.
+	setTarget(undefined);
+	await rejects(view.getLayout({}, bot, signal), 'renderer_unavailable');
+	assert.equal(requests.length, 2);
 });
 
 test('a client refusal keeps its meaning', async () => {

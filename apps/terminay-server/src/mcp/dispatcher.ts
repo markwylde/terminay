@@ -8,6 +8,7 @@ import {
 	parseCloseWorkspaceWindow,
 	parseCreateProject,
 	parseListProjects,
+	parseListRecentFolders,
 	parseListWorkspaceWindows,
 	parseMoveProject,
 	parseOpenWorkspaceWindow,
@@ -303,6 +304,11 @@ export interface ServerControlHandlers {
 		context: ControlRequestContext,
 		signal: AbortSignal,
 	) => unknown | Promise<unknown>;
+	readonly listRecentFolders?: (
+		params: Record<string, unknown>,
+		context: ControlRequestContext,
+		signal: AbortSignal,
+	) => unknown | Promise<unknown>;
 	readonly createProject?: (
 		params: Record<string, unknown>,
 		context: ControlRequestContext,
@@ -483,6 +489,7 @@ export const CONTROL_PERMISSION_GROUPS: Readonly<
 	prune_automation_runs: 'automationsManage',
 	dismiss_missed_runs: 'automationsManage',
 	list_projects: 'projectsWindows',
+	list_recent_folders: 'projectsWindows',
 	create_project: 'projectsWindows',
 	update_project: 'projectsWindows',
 	move_project: 'projectsWindows',
@@ -799,6 +806,7 @@ const DEFAULT_SCOPES: Readonly<
 	prune_automation_runs: 'write',
 	dismiss_missed_runs: 'write',
 	list_projects: 'read',
+	list_recent_folders: 'read',
 	create_project: 'write',
 	update_project: 'write',
 	move_project: 'write',
@@ -884,6 +892,7 @@ const HANDLER_BY_OPERATION: Readonly<
 	prune_automation_runs: 'pruneAutomationRuns',
 	dismiss_missed_runs: 'dismissMissedRuns',
 	list_projects: 'listProjects',
+	list_recent_folders: 'listRecentFolders',
 	create_project: 'createProject',
 	update_project: 'updateProject',
 	move_project: 'moveProject',
@@ -1748,6 +1757,7 @@ export function createTerminalControlAdapter(
 			? {}
 			: {
 					listProjects: appControlHandler(parseListProjects, (a, p, c, s) => a.listProjects(p, c, s)),
+					listRecentFolders: appControlHandler(parseListRecentFolders, (a, p, c, s) => a.listRecentFolders(p, c, s)),
 					createProject: appControlHandler(parseCreateProject, (a, p, c, s) => a.createProject(p, c, s)),
 					updateProject: appControlHandler(parseUpdateProject, (a, p, c, s) => a.updateProject(p, c, s)),
 					moveProject: appControlHandler(parseMoveProject, (a, p, c, s) => a.moveProject(p, c, s)),

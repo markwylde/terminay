@@ -80,16 +80,19 @@ function manualClock() {
   }
 }
 
-test("no MCP operation starts a project, lists recent folders, or browses server folders", async () => {
+test("no MCP operation starts a project or browses server folders; only list_recent_folders reads recent folders", async () => {
   // ADR-0066: the root folder browser is reachable only with root-change
   // authority on a client connection, never through an MCP capability token.
+  // ADR-0102 lets workspace reach read the recent project folders, nothing more.
   // The control endpoint routes nothing outside this fixed set.
   const { PROJECT_START_OPERATIONS } = await import("@terminay/protocol")
   const reserved = Object.values(PROJECT_START_OPERATIONS)
   for (const op of CONTROL_OPERATIONS) {
     assert.equal(reserved.includes(op), false, op)
-    assert.doesNotMatch(op, /browse|root_folder|recent|start_project/, op)
+    assert.doesNotMatch(op, /browse|root_folder|start_project|forget/, op)
+    if (/recent/.test(op)) assert.equal(op, "list_recent_folders")
   }
+  assert.equal(CONTROL_PERMISSION_GROUPS.list_recent_folders, "projectsWindows")
 })
 
 test("every operation but capability discovery has exactly one fixed permission group", () => {

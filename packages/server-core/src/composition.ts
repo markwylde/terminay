@@ -613,6 +613,7 @@ export interface ServerCoreComposition {
 			readonly terminalSessionId: string;
 			readonly projectId: string;
 			readonly chatId?: string;
+			readonly botId?: string;
 		}) => WorkspaceViewTarget | undefined;
 	};
 	/** The user's connected MCP servers, when composed. */
@@ -1385,9 +1386,19 @@ export function createServerCoreComposition(
 			readonly terminalSessionId: string;
 			readonly projectId: string;
 			readonly chatId?: string;
+			readonly botId?: string;
 		}): WorkspaceViewTarget | undefined => {
 			if (caller.chatId !== undefined)
 				return agentChat?.viewerOf(caller.chatId);
+			// A bot acts on the window that last messaged it, or else on the
+			// latest window, as an opted-in bot has full Terminay control.
+			if (caller.botId !== undefined) {
+				const viewer = options.bots?.viewerOf(caller.botId);
+				return viewer !== undefined &&
+					workspaceViewRelay.connectionFor(viewer) !== undefined
+					? viewer
+					: workspaceViewRelay.latest();
+			}
 			const holder = terminalOperations.presentationHolder({
 				projectId: caller.projectId,
 				sessionId: caller.terminalSessionId,
@@ -2035,6 +2046,7 @@ export function createServerCoreComposition(
 		appWindows?.closeConnection(connectionId);
 		workspaceViewRelay?.closeConnection(connectionId);
 		agentChat?.forgetViewerConnection(connectionId);
+		options.bots?.forgetViewerConnection(connectionId);
 		options.bots?.connections.revoke(connectionId);
 		options.onConnectionClosed?.(connectionId, clientId);
 	};

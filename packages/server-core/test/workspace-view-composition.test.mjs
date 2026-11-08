@@ -187,3 +187,20 @@ test("a window bound to another project is never asked about this one", async ()
     await server.close();
   }
 });
+
+test("a bot with no window that messaged it acts on the most recently attached window", async () => {
+  const server = await composed();
+  try {
+    const { targetFor } = server.composition.workspaceView;
+    const bot = { terminalSessionId: "bot:abcdefabcdef:abcdefabcdefabcdefabcdef", projectId: "system:automations", botId: "abcdefabcdef" };
+    assert.equal(targetFor(bot), undefined);
+    const desktop = await server.connect("desktop");
+    const laptop = await server.connect("laptop");
+    const asked = [];
+    await serve(desktop.client, "desktop", asked);
+    await serve(laptop.client, "laptop", asked);
+    assert.equal(targetFor(bot).clientId, "laptop");
+  } finally {
+    await server.close();
+  }
+});

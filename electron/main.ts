@@ -3721,6 +3721,7 @@ function createDesktopMcpAppControlAdapter(): AppControlAdapter {
 	};
 	return {
 		listProjects: (p, c, s) => bound().listProjects(p, c, s),
+		listRecentFolders: (p, c, s) => bound().listRecentFolders(p, c, s),
 		createProject: (p, c, s) => bound().createProject(p, c, s),
 		updateProject: (p, c, s) => bound().updateProject(p, c, s),
 		moveProject: (p, c, s) => bound().moveProject(p, c, s),
@@ -4944,6 +4945,8 @@ async function describeMcpOperation(
 			return { summary: 'reorder folders', details: [] };
 		case 'list_projects':
 			return { summary: 'list your projects', details: [] };
+		case 'list_recent_folders':
+			return { summary: 'list your recent project folders', details: [] };
 		case 'create_project':
 			return {
 				summary: `create a project${typeof params.name === 'string' ? ` named "${params.name}"` : ''}`,

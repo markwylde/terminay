@@ -103,6 +103,7 @@ const SPEC_GROUPS = {
 	],
 	projectsWindows: [
 		'list_projects',
+		'list_recent_folders',
 		'create_project',
 		'update_project',
 		'move_project',
@@ -231,6 +232,7 @@ function gated() {
 		handlers: Object.fromEntries(
 			[
 				'listProjects',
+				'listRecentFolders',
 				'createProject',
 				'updateProject',
 				'moveProject',
@@ -1036,6 +1038,29 @@ test('a window handle from another server resolves to nothing', async () => {
 				f.signal,
 			),
 			'not_found',
+		);
+	} finally {
+		await f.cleanup();
+	}
+});
+
+test('list_recent_folders: workspace reach reads the folders projects started in, newest first; project reach cannot', async () => {
+	const f = await fixture();
+	try {
+		const first = join(f.home, 'code');
+		const second = join(f.home, 'code', 'api');
+		await f.adapter.createProject({ root: first }, workspaceTerminal(), f.signal);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		await f.adapter.createProject({ root: second }, workspaceTerminal(), f.signal);
+		const listed = await f.adapter.listRecentFolders({}, workspaceTerminal(), f.signal);
+		assert.deepEqual(
+			listed.folders.slice(0, 2).map((folder) => folder.path),
+			[second, first],
+		);
+		assert.ok(listed.folders.every((folder) => Number.isFinite(folder.used_at)));
+		await rejectsWith(
+			Promise.resolve().then(() => f.adapter.listRecentFolders({}, context(), f.signal)),
+			'out_of_scope',
 		);
 	} finally {
 		await f.cleanup();

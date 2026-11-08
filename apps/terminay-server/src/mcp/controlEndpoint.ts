@@ -84,6 +84,7 @@ export const CONTROL_OPERATIONS = [
 	'prune_automation_runs',
 	'dismiss_missed_runs',
 	'list_projects',
+	'list_recent_folders',
 	'create_project',
 	'update_project',
 	'move_project',

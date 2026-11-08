@@ -12,6 +12,7 @@ import type { ControlError, ControlRequestContext } from './controlEndpoint.js';
 export type ProjectRootRef = string;
 
 export type ListProjectsParams = Record<string, never>;
+export type ListRecentFoldersParams = Record<string, never>;
 export interface CreateProjectParams {
 	readonly root: ProjectRootRef;
 	readonly name?: string;
@@ -66,6 +67,7 @@ type Handler<P> = (
  * past the reach check and the MCP permission gate when it is called. */
 export interface AppControlAdapter {
 	readonly listProjects: Handler<ListProjectsParams>;
+	readonly listRecentFolders: Handler<ListRecentFoldersParams>;
 	readonly createProject: Handler<CreateProjectParams>;
 	readonly updateProject: Handler<UpdateProjectParams>;
 	readonly moveProject: Handler<MoveProjectParams>;
@@ -79,6 +81,7 @@ export interface AppControlAdapter {
 /** The tools an `AppControlAdapter` binds; without one they are unavailable. */
 export const APP_CONTROL_OPERATIONS = Object.freeze([
 	'list_projects',
+	'list_recent_folders',
 	'create_project',
 	'update_project',
 	'move_project',
@@ -117,6 +120,10 @@ export function isAppControlParamFailure(value: unknown): value is Failure {
 }
 
 export function parseListProjects(): Parsed<ListProjectsParams> {
+	return {};
+}
+
+export function parseListRecentFolders(): Parsed<ListRecentFoldersParams> {
 	return {};
 }
 

@@ -114,6 +114,8 @@ export function describeChatMcpCall(
 			return 'Stopping an automation run';
 		case 'list_projects':
 			return 'Looking at the projects';
+		case 'list_recent_folders':
+			return 'Looking at recent project folders';
 		case 'create_project': {
 			const project = quoted(params.name, 60);
 			return project === ''
