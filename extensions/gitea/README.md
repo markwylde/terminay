@@ -50,11 +50,15 @@ needed:
   45 seconds for any other. After
   consecutive failures the interval widens to 1, 2, 5, then 10 minutes, and one
   success resets it.
-- Each refresh makes one `GET /repos/{owner}/{repo}/pulls?state=open` request,
-  plus one `GET /repos/{owner}/{repo}/commits/{ref}/status` for each worktree
-  whose branch has an upstream. `ref` is the pull request's head commit when
-  one matches, and the upstream branch otherwise. At most four requests per
-  server run at once.
+- Each refresh lists open pull requests once and recently updated closed pull
+  requests once, plus one combined commit status per worktree on a branch.
+  PR matching tries the local branch name first, then its distinct configured
+  upstream. Within each name, an open PR wins over a merged PR; unmerged closed
+  PRs and PRs from another head repository do not match. Deleted merged branches
+  can match by their head label. Detached worktrees have no PR.
+  The status ref is the selected PR's head commit, or the configured upstream
+  branch (else the local branch name) when no PR matches. At most four requests
+  per server run at once.
 - A cancelled context or a disabled extension schedules nothing. The
   extension spawns no processes; every request uses `fetch`.
 
