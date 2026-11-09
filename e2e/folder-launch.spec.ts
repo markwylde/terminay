@@ -52,10 +52,16 @@ test('native and argv folder launches show fresh terminals at the exact local cw
 			.getAttribute('data-project-id');
 		const executable = await app.evaluate(() => process.execPath);
 		const appPath = await app.evaluate(({ app }) => app.getAppPath());
-		const exitCode = await new Promise<number | null>((resolve, reject) => {
+		// Match Playwright's primary Electron launch policy inside Docker. The
+		// restricted CI kernel does not permit Chromium's namespace sandbox.
+		const result = await new Promise<{
+			code: number | null;
+			signal: NodeJS.Signals | null;
+			stderr: string;
+		}>((resolve, reject) => {
 			const child = spawn(
 				executable,
-				[appPath, '--working-directory', 'warm folder'],
+				[appPath, '--no-sandbox', '--working-directory', 'warm folder'],
 				{
 					cwd: tempDir,
 					env: {
@@ -63,13 +69,19 @@ test('native and argv folder launches show fresh terminals at the exact local cw
 						TERMINAY_USER_DATA_DIR: userDataDir,
 						TERMINAY_TEST: '1',
 					},
-					stdio: 'ignore',
+					stdio: ['ignore', 'ignore', 'pipe'],
 				},
 			);
+			let stderr = '';
+			child.stderr.on('data', (chunk) => {
+				stderr = (stderr + String(chunk)).slice(-10_000);
+			});
 			child.once('error', reject);
-			child.once('exit', resolve);
+			child.once('close', (code, signal) => resolve({ code, signal, stderr }));
 		});
-		expect(exitCode).toBe(0);
+		expect(result, `Secondary Electron launch: ${result.stderr}`).toMatchObject(
+			{ code: 0, signal: null },
+		);
 		await expect(
 			page.locator('.project-workspace--active .dv-tab'),
 		).toHaveCount(2, { timeout: 20_000 });

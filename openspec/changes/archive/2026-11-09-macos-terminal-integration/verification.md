@@ -54,3 +54,7 @@ Final verification after the readiness fix: 38 focused parser, presentation, ser
 CI inspection found that packaged macOS checks pass `--headless` and `--use-mock-keychain` as Electron runtime switches. Both are now explicitly separated from user operands and covered by the runtime-switch regression test, preventing an unsupported-option dialog during packaged checks.
 
 The shared argument adapter also preserves NSIS's `--updated` application relaunch marker (`app-builder-lib/templates/nsis/common.nsh`), covered in the same runtime-switch test. AppImage updater relaunches with no arguments; Squirrel relaunches by bundle identity.
+
+Linux x64 CI exposed a test-harness launch mismatch: Playwright disables Chromium's namespace sandbox in its Docker launcher, while the manually spawned secondary process did not. The secondary test now uses the same `--no-sandbox` runtime flag and asserts both clean exit code and signal, retaining bounded stderr diagnostics. Production sandbox policy is unchanged.
+
+The corrected secondary-process test passes through `npm run test:e2e -- e2e/folder-launch.spec.ts` (1 passed, 4.5 seconds), with artifacts at `.docker-cache/e2e/20261109T124821Z-36995`.
