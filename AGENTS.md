@@ -71,3 +71,27 @@ whose schema is vendored at `openspec/schemas/spec-driven-with-adr/`.
   isolates Electron, Chromium, and Xvfb in Docker. Never run Playwright's
   Electron suite directly on the host unless the user explicitly requests it;
   `npm run test:e2e:host` is reserved for isolated CI runners.
+
+## Running Node tests locally
+
+A broken local install makes some suites hang forever instead of failing.
+Agents have repeatedly stalled for hours on this.
+
+- **Install with `npm ci`, never `npm ci --ignore-scripts`.** The root
+  `postinstall` (`scripts/ensure-node-pty-helper-mode.mjs`) makes node-pty's
+  `spawn-helper` executable. Without it, every PTY spawn fails with
+  `posix_spawnp failed`. The session-holder and terminal-service tests then
+  fail, the holders they started stay alive, and `node --test` never exits. If
+  a worktree was installed without scripts, run
+  `node scripts/ensure-node-pty-helper-mode.mjs` before testing.
+- **Build workspace dependencies first.** A package's tests import other
+  packages' `dist/`. Run `npx turbo run build --filter=<package>...` before its
+  tests. `ERR_MODULE_NOT_FOUND ... /dist/index.js` means a dependency wasn't
+  built, not that the change is broken.
+- **Always bound a test run by wall-clock time.** `--test-timeout` does not
+  catch a process kept alive by leaked handles after its tests finish. Run
+  suites under `timeout` (for example `timeout 900 node --test test/*.test.mjs`)
+  and treat exit 124 as a hang to investigate.
+- **Never wait idle on a background test run.** If it hasn't reported within
+  the time you expect, check `pgrep -fl "node --test"` and its log, name the
+  stuck file, and kill only the processes you started.
