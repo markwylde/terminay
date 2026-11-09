@@ -50,3 +50,5 @@ A packaged cold-start smoke exposed a subscription-order race. The launch now wa
 Archived-baseline validation also reports four pre-existing failures in 2026-09-06-agent-provider-status-conformance, 2026-10-07-notifications-icon-and-project-dot, 2026-10-10-macros-script-editor, and 2026-11-04-mcp-workflow-templates. This archive and its canonical spec validate.
 
 Final verification after the readiness fix: 38 focused parser, presentation, server, resolver and relay tests passed, plus the panel-persistence cleanup regression (1 passed). Final TypeScript and lint checks passed. All 13 tasks are complete; the archive validates with its canonical spec.
+
+CI inspection found that packaged macOS checks pass `--headless` and `--use-mock-keychain` as Electron runtime switches. Both are now explicitly separated from user operands and covered by the runtime-switch regression test, preventing an unsupported-option dialog during packaged checks.

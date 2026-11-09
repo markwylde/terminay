@@ -5,7 +5,7 @@ export const MAX_FOLDER_LAUNCHES = 64;
 export const MAX_FOLDER_PATH_LENGTH = 4096;
 // Electron/Chromium switches that occur before the application's operands.
 const RUNTIME_SWITCH =
-	/^(?:--(?:no-sandbox|disable-gpu|disable-dev-shm-usage|enable-logging|inspect(?:-brk)?|remote-debugging-port|original-process-start-time|allow-file-access-from-files)(?:=.*)?|-psn_\d+_\d+)$/u;
+	/^(?:--(?:no-sandbox|headless|use-mock-keychain|disable-gpu|disable-dev-shm-usage|enable-logging|inspect(?:-brk)?|remote-debugging-port|original-process-start-time|allow-file-access-from-files)(?:=.*)?|-psn_\d+_\d+)$/u;
 
 export function folderLaunchOperands(
 	argv: readonly string[],
