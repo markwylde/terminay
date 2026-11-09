@@ -36,6 +36,6 @@ case "$TERMINAY_PROOF_RUNTIME" in
     ;;
   secure-werift)
     env -u DISPLAY -u WAYLAND_DISPLAY \
-      node --test scripts/production-headless-webrtc-secure-werift.test.mjs
+      node --test --test-force-exit --test-timeout=120000 scripts/production-headless-webrtc-secure-werift.test.mjs
     ;;
 esac

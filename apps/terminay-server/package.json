@@ -37,7 +37,7 @@
     "build:postcompile:package": "node ../../scripts/copy-built-in-extension-artifacts.mjs ../../build/built-in-extensions dist/built-in-extensions && node ./scripts/write-release-integrity-manifest.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
-    "test": "npm run build && npm run build --workspace @terminay/client-core && node --test test/*.test.mjs",
-    "test:ci": "npm run build:postcompile:reuse-extension-tests && node --test test/*.test.mjs"
+    "test": "npm run build && npm run build --workspace @terminay/client-core && node --test --test-force-exit --test-timeout=120000 test/*.test.mjs",
+    "test:ci": "npm run build:postcompile:reuse-extension-tests && node --test --test-force-exit --test-timeout=120000 test/*.test.mjs"
   }
 }

@@ -21,7 +21,7 @@ const docker = (...args) =>
 try {
 	execFileSync(
 		process.execPath,
-		['--test', 'scripts/bot-runtime-public-inputs.test.mjs'],
+		['--test', '--test-force-exit', '--test-timeout=120000', 'scripts/bot-runtime-public-inputs.test.mjs'],
 		{ stdio: 'inherit', cwd: root },
 	);
 	execFileSync(

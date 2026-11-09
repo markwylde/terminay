@@ -32,7 +32,7 @@ jobs:
           node-version: 24
 
       - name: Test generator
-        run: node --test scripts/generate-spec-progress.test.mjs
+        run: node --test --test-force-exit --test-timeout=120000 scripts/generate-spec-progress.test.mjs
 
       - name: Generate widget
         run: node scripts/generate-spec-progress.mjs --update-readme

@@ -54,7 +54,7 @@ export async function runTask19ApplicationProtocolSuites(root = process.cwd(), n
 	await validateTask19ApplicationProtocolSuites(root)
 	const results = []
 	for (const suite of TASK19_APPLICATION_PROTOCOL_SUITES) {
-		const result = spawnSync(nodePath, ['--test', suite], {
+		const result = spawnSync(nodePath, ['--test', '--test-force-exit', '--test-timeout=120000', suite], {
 			cwd: root,
 			encoding: 'utf8',
 			env: { ...process.env },

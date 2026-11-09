@@ -81,7 +81,7 @@ jobs:
           TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
         run: |
           node scripts/run-together.mjs \
-            'npm run test:packaged-built-in-extension-runtime && node --test scripts/packaged-session-holder-macos.test.mjs' \
+            'npm run test:packaged-built-in-extension-runtime && node --test --test-force-exit --test-timeout=120000 scripts/packaged-session-holder-macos.test.mjs' \
             'bash scripts/packaged-macos-pr-smoke.sh'
 
       - name: Upload packaged smoke diagnostics
@@ -368,7 +368,7 @@ jobs:
 
       - name: Validate image packaging contract
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
-        run: node --test scripts/ghcr-image.test.mjs
+        run: node --test --test-force-exit --test-timeout=120000 scripts/ghcr-image.test.mjs
 
       - name: Pair Desktop's pairing code with the image
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}

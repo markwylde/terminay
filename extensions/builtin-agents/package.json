@@ -36,9 +36,9 @@
 	"scripts": {
 		"compile": "tsc -p tsconfig.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "npm run compile && node --test test/*.test.mjs",
-		"test:ci": "node --test test/*.test.mjs",
-		"test:packed": "npm run compile && node --test test/packed.test.mjs"
+		"test": "npm run compile && node --test --test-force-exit --test-timeout=120000 test/*.test.mjs",
+		"test:ci": "node --test --test-force-exit --test-timeout=120000 test/*.test.mjs",
+		"test:packed": "npm run compile && node --test --test-force-exit --test-timeout=120000 test/packed.test.mjs"
 	},
 	"dependencies": {
 		"@markwylde/all-your-agents": "1.4.4"

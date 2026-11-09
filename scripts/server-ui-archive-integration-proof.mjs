@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 
-const child = spawn(process.execPath, ['--test', 'scripts/server-ui-archive-integration-proof.test.mjs'], {
+const child = spawn(process.execPath, ['--test', '--test-force-exit', '--test-timeout=120000', 'scripts/server-ui-archive-integration-proof.test.mjs'], {
   cwd: process.cwd(), stdio: 'inherit',
 })
 const result = await new Promise((resolve, reject) => {
