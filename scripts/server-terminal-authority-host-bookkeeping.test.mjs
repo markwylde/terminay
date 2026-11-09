@@ -1624,3 +1624,56 @@ async function importAuthority() {
 		await rm(directory, { recursive: true, force: true });
 	}
 }
+
+test('native terminal creation kills a spawned PTY if panel persistence throws', async () => {
+	const pty = createPtyFactory();
+	const spawn = pty.spawn.bind(pty);
+	pty.spawn = (options) => {
+		const process = spawn(options);
+		const kill = process.kill.bind(process);
+		process.kill = () => {
+			kill();
+			process.emitExit({ exitCode: 0, signal: 'SIGTERM' });
+		};
+		return process;
+	};
+	const authority = new ServerTerminalAuthority({
+		serverId: 'native-launch-test',
+		terminalService: new TerminalService({
+			serverId: 'native-launch-test',
+			ptyFactory: pty,
+		}),
+	});
+	const operations = authority.composition.workspaceOperations;
+	const apply = operations.applyHostCommand;
+	operations.applyHostCommand = (id, command, revision) => {
+		if (command.type === 'terminal.createPanel')
+			throw new Error('panel persistence failed');
+		return apply(id, command, revision);
+	};
+	try {
+		await assert.rejects(
+			authority.create({
+				projectId: 'native-project',
+				sessionId: 'failed-native-terminal',
+				shellPath: '/bin/zsh',
+				cwd: tmpdir(),
+				cols: 80,
+				rows: 24,
+			}),
+			/panel persistence failed/,
+		);
+		assert.equal(pty.processes.length, 1);
+		assert.equal(pty.processes[0].kills, 1);
+		assert.equal(authority.get('failed-native-terminal')?.status, 'exited');
+		assert.equal(
+			Object.values(authority.workspace.state.panels).some(
+				(p) => p.sessionId === 'failed-native-terminal',
+			),
+			false,
+		);
+	} finally {
+		operations.applyHostCommand = apply;
+		await authority.shutdown();
+	}
+});
