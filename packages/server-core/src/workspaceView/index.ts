@@ -105,11 +105,48 @@ const MAX_CLIENT_MESSAGE_CHARS = 512;
 
 export class WorkspaceViewRelay {
 	private readonly attached = new Map<string, Attached>();
+	private readonly attachmentListeners = new Set<() => void>();
 	private readonly pending = new Map<string, Pending>();
 	private readonly timeoutMs: number;
 
 	constructor(private readonly options: WorkspaceViewRelayOptions = {}) {
 		this.timeoutMs = options.timeoutMs ?? WORKSPACE_VIEW_TIMEOUT_MS;
+	}
+
+	/** Event-driven readiness for a host-selected connection, never latest(). */
+	waitForConnection(
+		connectionId: string,
+		signal: AbortSignal,
+	): Promise<WorkspaceViewTarget> {
+		return new Promise((resolve, reject) => {
+			const cleanup = () => {
+				this.attachmentListeners.delete(check);
+				signal.removeEventListener('abort', abort);
+			};
+			const abort = () => {
+				cleanup();
+				reject(
+					new WorkspaceViewError(
+						'cancelled',
+						'The local window did not become ready.',
+					),
+				);
+			};
+			const check = () => {
+				const hit = this.attached.get(connectionId);
+				if (hit) {
+					cleanup();
+					resolve({ clientId: hit.clientId, connectionId });
+				}
+			};
+			if (signal.aborted) {
+				abort();
+				return;
+			}
+			this.attachmentListeners.add(check);
+			signal.addEventListener('abort', abort, { once: true });
+			check();
+		});
 	}
 
 	/**
@@ -270,6 +307,7 @@ export class WorkspaceViewRelay {
 						clientId: request.context.clientId,
 						claims: request.context.claims,
 					});
+					for (const listener of this.attachmentListeners) listener();
 					return { attached: true };
 				},
 				[WORKSPACE_VIEW_OPERATIONS.respond]: (request: CommandRequest) =>

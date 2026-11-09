@@ -66,6 +66,12 @@
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.inherit.plist",
     "extendInfo": {
+      "CFBundleDocumentTypes": [{
+        "CFBundleTypeName": "Folder",
+        "CFBundleTypeRole": "Editor",
+        "LSHandlerRank": "Alternate",
+        "LSItemContentTypes": ["public.folder", "public.directory"]
+      }],
       "NSMicrophoneUsageDescription": "Terminay uses the microphone to record dictation and transcribe it into the active terminal."
     },
     // Squirrel.Mac installs updates from the zip; the DMG stays the installer.

@@ -479,6 +479,7 @@ export class ServerTerminalAuthority {
 	private readonly listeners = new Set<(event: TerminalEvent) => void>();
 	/** Clients on this machine's renderer ports, as opposed to remote peers. */
 	private readonly embeddedRendererClientIds = new Set<string>();
+	private readonly rendererPortListeners = new Set<() => void>();
 	private readonly rendererConnectionsByOwner = new Map<
 		string,
 		ServerConnectionLike
@@ -1875,6 +1876,52 @@ export class ServerTerminalAuthority {
 		return () => this.listeners.delete(listener);
 	}
 
+	/** Main-only presentation of a native local folder launch. Readiness is
+	 * scoped to the selected owner's authenticated port, never latest client. */
+	async waitForNativeFolderWindow(
+		ownerId: number,
+		signal: AbortSignal,
+	): Promise<import('../packages/server-core/src/workspaceView/index').WorkspaceViewTarget> {
+		const connection = await new Promise<ServerConnectionLike>(
+			(resolve, reject) => {
+				const cleanup = () => {
+					this.rendererPortListeners.delete(check);
+					signal.removeEventListener('abort', abort);
+				};
+				const abort = () => {
+					cleanup();
+					reject(new Error('The local window did not become ready.'));
+				};
+				const check = () => {
+					const hit = this.rendererConnectionsByOwner.get(String(ownerId));
+					if (hit) {
+						cleanup();
+						resolve(hit);
+					}
+				};
+				if (signal.aborted) {
+					abort();
+					return;
+				}
+				this.rendererPortListeners.add(check);
+				signal.addEventListener('abort', abort, { once: true });
+				check();
+			},
+		);
+		const relay = this.composition.workspaceView?.relay;
+		if (!relay) throw new Error('The local workspace view is unavailable.');
+		const target = await relay.waitForConnection(
+			connection.connectionId,
+			signal,
+		);
+		return target;
+	}
+
+	async presentNativeFolder(ownerId: number, projectId: string, sessionId: string, signal: AbortSignal): Promise<void> {
+		const target = await this.waitForNativeFolderWindow(ownerId, signal);
+		await this.composition.workspaceView!.relay.request(target, 'focus', {projectId, tab:{sessionId}}, projectId, signal);
+	}
+
 	/** Bind one private, fixed-server MessagePort to the server protocol. */
 	acceptRendererPort(
 		port: ServerMessagePort,
@@ -1919,6 +1966,7 @@ export class ServerTerminalAuthority {
 			onDeliveryDiagnostic: this.options.onDeliveryDiagnostic,
 		});
 		this.rendererConnectionsByOwner.set(ownerId, connection);
+		for (const listener of this.rendererPortListeners) listener();
 		void connection.start().catch((error) => {
 			mainServerPortDiagnostics.lastError =
 				error instanceof Error ? error.message : String(error);
@@ -2020,30 +2068,32 @@ export class ServerTerminalAuthority {
 					handle.projectId
 					? options.folderId
 					: undefined;
-			const registered = this.composition.workspaceOperations?.applyHostCommand(
-				`authority:terminal:${handle.sessionId}`.slice(0, 128),
-				{
-					type: 'terminal.createPanel',
-					sessionId: handle.sessionId,
-					projectId: handle.projectId,
-					...(folderId === undefined ? {} : { folderId }),
-					panelId: `p:${handle.sessionId}`.slice(0, 128),
-					title: this.nextTerminalPanelTitle(handle.projectId),
-					cwd: handle.snapshot().cwd,
-					createdAt: handle.snapshot().createdAt,
-					...(handle.snapshot().launch === undefined
-						? {}
-						: { launch: handle.snapshot().launch }),
-				},
-				this.workspace.state.revision,
-			);
-			if (registered === undefined)
-				throw new Error('workspace operation registry is unavailable');
-			if (!registered.ok) {
+			try {
+				const registered = this.composition.workspaceOperations?.applyHostCommand(
+					`authority:terminal:${handle.sessionId}`.slice(0, 128),
+					{
+						type: 'terminal.createPanel',
+						sessionId: handle.sessionId,
+						projectId: handle.projectId,
+						...(folderId === undefined ? {} : { folderId }),
+						panelId: `p:${handle.sessionId}`.slice(0, 128),
+						title: this.nextTerminalPanelTitle(handle.projectId),
+						cwd: handle.snapshot().cwd,
+						createdAt: handle.snapshot().createdAt,
+						...(handle.snapshot().launch === undefined
+							? {}
+							: { launch: handle.snapshot().launch }),
+					},
+					this.workspace.state.revision,
+				);
+				if (registered === undefined)
+					throw new Error('workspace operation registry is unavailable');
+				if (!registered.ok) throw new Error(registered.conflict.message);
+			} catch (error) {
 				await this.service.kill(handle.snapshot()).catch(() => undefined);
 				this.sessions.delete(handle.sessionId);
 				this.buffers.delete(handle.sessionId);
-				throw new Error(registered.conflict.message);
+				throw error;
 			}
 		}
 		const snapshot = this.snapshot(handle.sessionId);

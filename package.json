@@ -61,7 +61,7 @@
 		"test:close-protection": "node --test scripts/process-cwd-foreground.test.mjs scripts/foreground-close-protection.test.mjs scripts/main-window-close-confirmation.test.mjs scripts/user-data-process-lock.test.mjs",
 		"test:shell-integration": "node --test --experimental-strip-types src/terminalSettings.shellIntegration.test.ts",
 		"test:program-set-tab-titles": "node --test --experimental-strip-types scripts/terminal-title-report.test.mjs src/terminalSettings.programTitles.test.ts src/workspace/terminalTitleEdit.test.ts",
-		"test:terminals-survive-restart": "node --test --experimental-strip-types scripts/single-instance-refusal.test.mjs scripts/app-quit-plan.test.mjs src/terminalSettings.keepTerminals.test.ts src/components/endedTerminalReplay.test.ts",
+		"test:terminals-survive-restart": "node --test --experimental-strip-types scripts/single-instance-refusal.test.mjs scripts/folder-launch.test.mjs scripts/native-folder-presentation.test.mjs scripts/app-quit-plan.test.mjs src/terminalSettings.keepTerminals.test.ts src/components/endedTerminalReplay.test.ts",
 		"test:session-holder-desktop": "npm run build:app && node --test scripts/session-holder-electron-node.test.mjs",
 		"test:session-holder-standalone": "npm run build:shared && npm run build --workspace @terminay/server && npm run build:server-postcompile && node --test scripts/standalone-session-holder.test.mjs",
 		"typecheck:workspaces": "turbo run typecheck",

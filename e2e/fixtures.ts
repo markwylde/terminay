@@ -356,6 +356,7 @@ async function closeElectronAppGracefully(
  * directories, which is what a relaunch is.
  */
 export async function launchDesktopApp(options: {
+	readonly args?: readonly string[];
 	readonly tempDir: string;
 	readonly userDataDir: string;
 	readonly testInfo: TestInfo;
@@ -387,7 +388,7 @@ export async function launchDesktopApp(options: {
 		const botApi = path.basename(testInfo.file) === 'bots.spec.ts'
 			? await startBotSocketServer(path.join(tempDir, 'fake-bots'), { emitLifecycleEvents: true }) : undefined;
 		const electronApp = await electron.launch({
-			args: ['.'],
+			args: ['.', ...(options.args ?? [])],
 			env: {
 				...process.env,
 				CI: '1',

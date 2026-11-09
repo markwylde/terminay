@@ -1,4 +1,13 @@
 import './headlessBootstrap';
+import {
+	FolderLaunchQueue,
+	folderLaunchOperands,
+	folderLaunchRelaunchArgs,
+	forwardedFolderLaunch,
+	parseFolderLaunch,
+} from './folderLaunch';
+import { presentLocalFolderLaunch } from './nativeFolderPresentation';
+import { openLocalFolder } from '../packages/server-core/src/localFolderLaunch';
 import { randomUUID } from 'node:crypto';
 import {
 	accessSync,
@@ -412,8 +421,29 @@ const resolvedUserDataPath = resolveDesktopUserDataPath({
 if (resolvedUserDataPath) {
 	app.setPath('userData', resolvedUserDataPath);
 }
-if (!app.requestSingleInstanceLock()) {
-	// Say why, so a launch that shows nothing is never silent.
+const nativeFolderQueue = new FolderLaunchQueue(reportNativeFolderError);
+const nativeFolderInvocation = {
+	kind: 'terminay-folder-launch',
+	args: folderLaunchOperands(process.argv, app.isPackaged),
+	cwd: process.cwd(),
+};
+// Register before ready: Launch Services can deliver the opening document early.
+app.on('open-file', (event, folder) => {
+	event.preventDefault();
+	submitNativeFolders([folder], process.cwd());
+});
+if (!app.requestSingleInstanceLock(nativeFolderInvocation)) {
+	// The primary owns completion; a folder invocation acknowledges submission.
+	try {
+		if (parseFolderLaunch(nativeFolderInvocation.args, nativeFolderInvocation.cwd).length > 0) {
+			app.exit(0);
+			process.exit(0);
+		}
+	} catch (error) {
+		console.error('[Terminay] Folder launch failed:', error instanceof Error ? error.message : 'Invalid arguments.');
+		app.exit(2);
+		process.exit(2);
+	}
 	console.error(singleInstanceRefusalMessage(app.getPath('userData')));
 	app.exit(1);
 	process.exit(1);
@@ -422,7 +452,13 @@ if (!app.requestSingleInstanceLock()) {
 // electron-builder's appId, which the installer's shortcut carries too.
 if (process.platform === 'win32') app.setAppUserModelId('com.terminay.app');
 // A second launch exits above; the first brings its window forward.
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv, workingDirectory, data) => {
+	const invocation = forwardedFolderLaunch(data);
+	const folders = submitNativeFolders(
+		invocation?.args ?? folderLaunchOperands(argv, app.isPackaged),
+		invocation?.cwd ?? workingDirectory,
+	);
+	if (folders) return;
 	const window =
 		BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().at(-1);
 	if (window === undefined || window.isDestroyed()) return;
@@ -430,6 +466,35 @@ app.on('second-instance', () => {
 	window.show();
 	window.focus();
 });
+submitNativeFolders(nativeFolderInvocation.args, nativeFolderInvocation.cwd);
+
+function submitNativeFolders(args: readonly string[], cwd: string): boolean {
+	try {
+		const folders = parseFolderLaunch(args, cwd);
+		nativeFolderQueue.submit(folders);
+		return folders.length > 0;
+	} catch (error) {
+		reportNativeFolderError(error);
+		return true;
+	}
+}
+function reportNativeFolderError(error: unknown): void {
+	const message = (
+		error instanceof Error ? error.message : 'The folder could not be opened.'
+	).slice(0, 500);
+	console.error('[Terminay] Folder launch failed:', message);
+	void app
+		.whenReady()
+		.then(() =>
+			dialog.showMessageBox({
+				type: 'error',
+				title: 'Could not open folder in Terminay',
+				message,
+				detail:
+					'Check that the folder exists and is accessible, then try again.',
+			}),
+		);
+}
 
 /** The settings files are read on nearly every host interaction. Re-reading
  * them from disk each time is invisible in this process's own CPU numbers but
@@ -7880,6 +7945,61 @@ app.on('activate', () => {
 	}
 });
 
+/** Native OS intent only: no IPC/protocol registration exposes this function. */
+async function openNativeFolder(folder: string): Promise<void> {
+	const authority = requireMcpAuthority();
+	const operations = authority.composition.workspaceOperations;
+	const defaultViewId = authority.workspace.state.viewOrder[0];
+	if (!operations || !defaultViewId)
+		throw new Error('The Local workspace is unavailable.');
+	const presentation = (
+		viewId: string,
+		present: (ownerId: number, signal: AbortSignal) => Promise<void>,
+	) =>
+		presentLocalFolderLaunch({
+			localProfileId: embeddedLocalProfileId,
+			viewId,
+			candidates: [...windowServerControllers.values()].map((controller) => ({
+				window: controller.window,
+				profileId: controller.currentProfileId(),
+				viewId: workspaceViewByWebContents.get(
+					controller.window.webContents.id,
+				),
+				auxiliary: controller.isAuxiliary,
+			})),
+			createLocalWindow: (viewId) => createWindow({ workspaceViewId: viewId }),
+			present,
+		});
+	const opened = await openLocalFolder({
+		folder,
+		canonicalDirectory: (value) => mcpRootFolders.canonicalDirectory(value),
+		state: () => authority.workspace.state,
+		defaultViewId,
+		beforeCreate: (viewId) =>
+			presentation(viewId, async (ownerId, signal) => {
+				await authority.waitForNativeFolderWindow(ownerId, signal);
+			}),
+		apply: (command) => {
+			const result = operations.applyHostCommand(
+				`native-folder:${randomUUID()}`,
+				command,
+				authority.workspace.state.revision,
+			);
+			if (!result.ok) throw new Error(result.conflict.message);
+		},
+		createTerminal: (projectId, cwd) =>
+			createServerOwnedTerminalSession(projectId, cwd, 'explicit'),
+	});
+	await presentation(opened.viewId, (ownerId, signal) =>
+		authority.presentNativeFolder(
+			ownerId,
+			opened.projectId,
+			opened.sessionId,
+			signal,
+		),
+	);
+}
+
 async function completeDesktopStartup(): Promise<void> {
 	const embeddedStartupWindow = await embeddedRuntimeReady;
 	app.setName('Terminay');
@@ -7943,6 +8063,7 @@ async function completeDesktopStartup(): Promise<void> {
 	endStartupPhase('agent-integration');
 	desktopStartupTimeline.begin('ui-handoff');
 	await openStartupWindow(embeddedStartupWindow);
+	nativeFolderQueue.ready(openNativeFolder);
 	desktopStartupTimeline.end('ui-handoff');
 	presentStateRecoveryNotices(embeddedStartupWindow);
 	// Hosted signaling is a network round-trip, so it never delays the window.
@@ -8047,7 +8168,7 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 				process.env.TERMINAY_TEST !== '1' ||
 				process.env.TERMINAY_TEST_EXIT_INSTEAD_OF_RELAUNCH !== '1'
 			)
-				app.relaunch();
+				app.relaunch({ args: folderLaunchRelaunchArgs(process.argv, app.isPackaged) });
 			app.exit(0);
 		},
 		onDiagnostic: recordCanonicalRecoveryDiagnostic,
@@ -8061,4 +8182,7 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 void app
 	.whenReady()
 	.then(completeDesktopStartup)
-	.catch((error) => recoverFailedDesktopBootstrap(error));
+	.catch((error) => {
+		nativeFolderQueue.fail(error);
+		return recoverFailedDesktopBootstrap(error);
+	});
