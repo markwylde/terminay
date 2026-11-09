@@ -194,7 +194,6 @@ export function parseWorkspaceChangeRecordDto(
 	}
 	if (value.recentProjectFolders !== undefined
 		&& (!Array.isArray(value.recentProjectFolders)
-			|| value.recentProjectFolders.length > 50
 			|| value.recentProjectFolders.some((entry) => !isRecord(entry)
 				|| typeof entry.path !== 'string'
 				|| entry.path.length === 0

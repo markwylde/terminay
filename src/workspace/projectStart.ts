@@ -155,7 +155,7 @@ export function openProjectWithRoot(
 	return undefined;
 }
 
-/** The recent folders the chooser lists: the server's answer, bounded. */
+/** The recent folders the chooser lists: the server's answer, in full. */
 export type RecentFolderRow = Readonly<{
 	path: string;
 	name: string;
@@ -164,14 +164,57 @@ export type RecentFolderRow = Readonly<{
 
 export function recentFolderRows(
 	result: RecentListResult | null,
-	limit = 50,
 ): readonly RecentFolderRow[] {
 	if (result === null) return [];
-	return result.entries.slice(0, limit).map((entry) => ({
+	return result.entries.map((entry) => ({
 		path: entry.path,
 		name: folderName(entry.path),
 		available: entry.available,
 	}));
+}
+
+/** How many recent folders the chooser shows before Show more. */
+export const RECENT_FOLDERS_COLLAPSED = 5;
+
+/** Whether the chooser offers a search box over these recent folders. */
+export function recentFoldersSearchable(
+	rows: readonly RecentFolderRow[],
+): boolean {
+	return rows.length > RECENT_FOLDERS_COLLAPSED;
+}
+
+/** The recent folders matching `query`: every whitespace-separated term
+ * appears, ignoring case, in the folder's name or path. Recency order is kept. */
+export function matchRecentFolders(
+	rows: readonly RecentFolderRow[],
+	query: string,
+): readonly RecentFolderRow[] {
+	const terms = query.toLowerCase().split(/\s+/u).filter(Boolean);
+	if (terms.length === 0) return rows;
+	return rows.filter((row) => {
+		const haystack = `${row.name}\n${row.path}`.toLowerCase();
+		return terms.every((term) => haystack.includes(term));
+	});
+}
+
+/** What the chooser draws: the matches, collapsed to the first few unless
+ * expanded, and how many matches that leaves hidden. */
+export function visibleRecentFolders(
+	rows: readonly RecentFolderRow[],
+	query: string,
+	expanded: boolean,
+): Readonly<{
+	rows: readonly RecentFolderRow[];
+	matched: number;
+	hidden: number;
+}> {
+	const matches = matchRecentFolders(rows, query);
+	const shown = expanded ? matches : matches.slice(0, RECENT_FOLDERS_COLLAPSED);
+	return {
+		rows: shown,
+		matched: matches.length,
+		hidden: matches.length - shown.length,
+	};
 }
 
 /**

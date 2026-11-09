@@ -213,7 +213,62 @@
 	opacity: 0.5;
 }
 
+/* Search over every recent folder, above the list. */
+.project-start__search {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 10px;
+	border: 1px solid rgba(220, 226, 240, 0.12);
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.03);
+	color: rgba(220, 226, 240, 0.45);
+}
+
+.project-start__search:focus-within {
+	border-color: rgba(120, 170, 255, 0.9);
+}
+
+.project-start__search-input {
+	flex: 1;
+	min-width: 0;
+	height: 34px;
+	padding: 0;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: rgba(240, 244, 252, 0.92);
+	font: inherit;
+	font-size: 13px;
+}
+
+.project-start__search-input::placeholder {
+	color: rgba(220, 226, 240, 0.4);
+}
+
+.project-start__search-input::-webkit-search-cancel-button {
+	filter: invert(0.8);
+}
+
+/* Reveals the rest of the list, under its last row. */
+.project-start__show-more {
+	all: unset;
+	box-sizing: border-box;
+	align-self: flex-start;
+	padding: 6px 10px;
+	border-radius: 6px;
+	color: rgba(220, 226, 240, 0.7);
+	font-size: 12.5px;
+	cursor: pointer;
+}
+
+.project-start__show-more:hover {
+	background: rgba(255, 255, 255, 0.06);
+	color: rgba(240, 244, 252, 0.92);
+}
+
 .project-start__action:focus-visible,
+.project-start__show-more:focus-visible,
 .project-start__recent-open:focus-visible,
 .project-start__recent-forget:focus-visible,
 .no-root-folder__action:focus-visible {
@@ -240,6 +295,7 @@
 
 .project-start--compact .project-start__recent-open,
 .project-start--compact .project-start__recent-forget,
+.project-start--compact .project-start__show-more,
 .project-start--compact .project-start__action {
 	min-height: 44px;
 }

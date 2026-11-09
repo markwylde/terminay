@@ -1,5 +1,8 @@
-import type { ProjectStartChoiceDto, RecentListResult } from '@terminay/client-core';
-import { FolderOpen, House, X } from 'lucide-react';
+import type {
+	ProjectStartChoiceDto,
+	RecentListResult,
+} from '@terminay/client-core';
+import { FolderOpen, House, Search, X } from 'lucide-react';
 import {
 	type CSSProperties,
 	type JSX,
@@ -7,6 +10,7 @@ import {
 	type RefObject,
 	useCallback,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 } from 'react';
@@ -15,9 +19,12 @@ import {
 	commitStartChoice,
 	openProjectWithRoot,
 	type ProjectStartStore,
+	RECENT_FOLDERS_COLLAPSED,
 	type RecentFolderRow,
 	recentFolderRows,
+	recentFoldersSearchable,
 	startRefusalMessage,
+	visibleRecentFolders,
 } from './projectStart';
 import { RootFolderBrowser } from './RootFolderBrowser';
 import './projectStart.css';
@@ -202,6 +209,13 @@ export type ProjectStartChooserViewProps = Readonly<{
 /** Arrow keys move through every control in order; Tab and Enter work as
  * they do anywhere. */
 function moveFocus(event: KeyboardEvent<HTMLElement>): void {
+	// In the search box, sideways keys and Home/End edit the text.
+	if (
+		event.target instanceof HTMLInputElement &&
+		event.key !== 'ArrowUp' &&
+		event.key !== 'ArrowDown'
+	)
+		return;
 	const items = [
 		...event.currentTarget.querySelectorAll<HTMLElement>(
 			'[data-start-chooser-item]',
@@ -235,6 +249,31 @@ export function ProjectStartChooserView({
 	onForgetRecent,
 }: ProjectStartChooserViewProps): JSX.Element {
 	const titleId = `project-start-${projectId}-title`;
+	const [query, setQuery] = useState('');
+	const [expanded, setExpanded] = useState(false);
+	const listRef = useRef<HTMLUListElement | null>(null);
+	const focusRevealed = useRef(false);
+	const searchable = recent !== null && recentFoldersSearchable(recent);
+	const visible = useMemo(
+		() => visibleRecentFolders(recent ?? [], searchable ? query : '', expanded),
+		[recent, searchable, query, expanded],
+	);
+	// Show more leaves with its press, so focus goes to the first folder it
+	// revealed rather than to the page.
+	useEffect(() => {
+		if (!expanded || !focusRevealed.current) return;
+		focusRevealed.current = false;
+		listRef.current
+			?.querySelectorAll<HTMLElement>('[data-terminay-recent-open]')
+			[RECENT_FOLDERS_COLLAPSED]?.focus();
+	}, [expanded]);
+	const openFirstMatch = () => {
+		if (busy) return;
+		const first = visibleRecentFolders(recent ?? [], query, true).rows.find(
+			(row) => row.available,
+		);
+		if (first !== undefined) onOpenRecent(first.path);
+	};
 	return (
 		<section
 			className={`project-workspace project-start${isActive ? ' project-workspace--active' : ''}${isCompact ? ' project-start--compact' : ''}`}
@@ -246,7 +285,11 @@ export function ProjectStartChooserView({
 		>
 			<div className="project-start__panel" onKeyDown={moveFocus}>
 				<header className="project-start__header">
-					<h2 className="project-start__title" id={titleId} title={projectTitle}>
+					<h2
+						className="project-start__title"
+						id={titleId}
+						title={projectTitle}
+					>
 						Start {projectTitle}
 					</h2>
 					{serverLabel === undefined ? null : (
@@ -271,7 +314,9 @@ export function ProjectStartChooserView({
 						<FolderOpen size={18} aria-hidden="true" />
 						<span className="project-start__action-text">
 							<strong>Open a folder</strong>
-							<small>Choose this project&apos;s root folder on the server.</small>
+							<small>
+								Choose this project&apos;s root folder on the server.
+							</small>
 						</span>
 					</button>
 					<button
@@ -312,55 +357,110 @@ export function ProjectStartChooserView({
 				) : recent.length === 0 ? (
 					<p className="project-start__note">No recent projects yet.</p>
 				) : (
-					<ul
-						className="project-start__recent"
-						aria-labelledby={`${titleId}-recent`}
-						data-terminay-recent-folders="true"
-					>
-						{recent.map((row) => (
-							<li
-								key={row.path}
-								className="project-start__recent-row"
-								data-terminay-recent-folder={row.path}
-								data-available={row.available}
-							>
-								<button
-									type="button"
-									className="project-start__recent-open"
-									// Still reachable, so a person can hear why it is not
-									// offered; it opens nothing.
-									aria-disabled={!row.available || busy || undefined}
-									onClick={() => {
-										if (row.available && !busy) onOpenRecent(row.path);
+					<>
+						{searchable ? (
+							<div className="project-start__search">
+								<Search size={14} aria-hidden="true" />
+								<input
+									type="search"
+									className="project-start__search-input"
+									placeholder={`Search ${recent.length} recent projects`}
+									aria-label="Search recent projects"
+									value={query}
+									onChange={(event) => setQuery(event.currentTarget.value)}
+									onKeyDown={(event) => {
+										if (event.key === 'Enter') {
+											event.preventDefault();
+											openFirstMatch();
+										} else if (event.key === 'Escape' && query !== '') {
+											event.preventDefault();
+											event.stopPropagation();
+											setQuery('');
+										}
 									}}
+									spellCheck={false}
+									autoComplete="off"
 									data-start-chooser-item=""
-									data-terminay-recent-open="true"
-								>
-									<span className="project-start__recent-name">{row.name}</span>
-									<span className="project-start__recent-path" title={row.path}>
-										{row.path}
-									</span>
-									{row.available ? null : (
-										<span className="project-start__recent-unavailable">
-											Unavailable
-										</span>
-									)}
-								</button>
-								<button
-									type="button"
-									className="project-start__recent-forget"
-									aria-label={`Forget ${row.name}`}
-									title={`Forget ${row.path}`}
-									disabled={busy}
-									onClick={() => onForgetRecent(row.path)}
-									data-start-chooser-item=""
-									data-terminay-recent-forget="true"
-								>
-									<X size={14} aria-hidden="true" />
-								</button>
-							</li>
-						))}
-					</ul>
+									data-terminay-recent-search="true"
+								/>
+							</div>
+						) : null}
+						{visible.matched === 0 ? (
+							<p className="project-start__note" role="status">
+								No recent projects match &ldquo;{query.trim()}&rdquo;.
+							</p>
+						) : (
+							<ul
+								ref={listRef}
+								className="project-start__recent"
+								aria-labelledby={`${titleId}-recent`}
+								data-terminay-recent-folders="true"
+							>
+								{visible.rows.map((row) => (
+									<li
+										key={row.path}
+										className="project-start__recent-row"
+										data-terminay-recent-folder={row.path}
+										data-available={row.available}
+									>
+										<button
+											type="button"
+											className="project-start__recent-open"
+											// Still reachable, so a person can hear why it is not
+											// offered; it opens nothing.
+											aria-disabled={!row.available || busy || undefined}
+											onClick={() => {
+												if (row.available && !busy) onOpenRecent(row.path);
+											}}
+											data-start-chooser-item=""
+											data-terminay-recent-open="true"
+										>
+											<span className="project-start__recent-name">
+												{row.name}
+											</span>
+											<span
+												className="project-start__recent-path"
+												title={row.path}
+											>
+												{row.path}
+											</span>
+											{row.available ? null : (
+												<span className="project-start__recent-unavailable">
+													Unavailable
+												</span>
+											)}
+										</button>
+										<button
+											type="button"
+											className="project-start__recent-forget"
+											aria-label={`Forget ${row.name}`}
+											title={`Forget ${row.path}`}
+											disabled={busy}
+											onClick={() => onForgetRecent(row.path)}
+											data-start-chooser-item=""
+											data-terminay-recent-forget="true"
+										>
+											<X size={14} aria-hidden="true" />
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+						{visible.hidden > 0 ? (
+							<button
+								type="button"
+								className="project-start__show-more"
+								onClick={() => {
+									focusRevealed.current = true;
+									setExpanded(true);
+								}}
+								data-start-chooser-item=""
+								data-terminay-recent-show-more="true"
+							>
+								Show {visible.hidden} more
+							</button>
+						) : null}
+					</>
 				)}
 			</div>
 		</section>

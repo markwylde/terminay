@@ -21,8 +21,6 @@ export const PROJECT_START_OPERATIONS = Object.freeze({
 	browseRootFolders: 'fs.browse-root-folders',
 } as const);
 
-/** Most recent project folders a server keeps. */
-export const MAX_RECENT_PROJECT_FOLDERS = 50;
 /** Most directory names one `fs.browse-root-folders` answer carries. */
 export const MAX_BROWSE_ROOT_FOLDER_ENTRIES = 1000;
 const MAX_PATH_CHARS = 4096;
@@ -150,8 +148,7 @@ export function parseRecentListResult(value: unknown): RecentListResult {
 	if (
 		!isRecord(value) ||
 		!isRevision(value.revision) ||
-		!Array.isArray(value.entries) ||
-		value.entries.length > MAX_RECENT_PROJECT_FOLDERS
+		!Array.isArray(value.entries)
 	)
 		throw new TypeError('recent folders result is invalid');
 	const seen = new Set<string>();
