@@ -4,7 +4,6 @@ import {
   CLIENT_SERVER_COMPATIBILITY,
   FEATURE_CAPABILITIES,
   MAX_BROWSE_ROOT_FOLDER_ENTRIES,
-  MAX_RECENT_PROJECT_FOLDERS,
   PROJECT_START_OPERATIONS,
   PROJECT_START_REFUSALS,
   parseBrowseRootFoldersRequest,
@@ -27,7 +26,6 @@ test('the start choice is a versioned feature capability with stable operation n
   })
   assert.equal(PROJECT_START_REFUSALS.startConflict, 'start_conflict')
   assert.equal(PROJECT_START_REFUSALS.noProjectRoot, 'no_project_root')
-  assert.equal(MAX_RECENT_PROJECT_FOLDERS, 50)
   assert.equal(MAX_BROWSE_ROOT_FOLDER_ENTRIES, 1000)
   // Asked of a server by the bundle's client, never required.
   assert.equal(CLIENT_SERVER_COMPATIBILITY.requiredCapabilities.includes(FEATURE_CAPABILITIES.projectStartChoice), false)
@@ -69,14 +67,14 @@ test('recent.forget names one path', () => {
     assert.throws(() => parseRecentForgetRequest(malformed), /invalid/)
 })
 
-test('recent.list entries are bounded, unique, and say whether each folder is available', () => {
+test('recent.list entries are unbounded, unique, and say whether each folder is available', () => {
   const entry = (path, available = true) => ({ path, usedAt: 1, available })
   assert.equal(parseRecentListResult({ revision: 2, entries: [entry('/a'), entry('/b', false)] }).entries.length, 2)
+  assert.equal(parseRecentListResult({ revision: 2, entries: Array.from({ length: 500 }, (_, i) => entry(`/f${i}`)) }).entries.length, 500)
   for (const malformed of [
     { revision: 2, entries: [entry('/a'), entry('/a')] },
     { revision: 2, entries: [{ path: '/a', usedAt: 1 }] },
     { revision: 2, entries: [{ path: '/a', usedAt: -1, available: true }] },
-    { revision: 2, entries: Array.from({ length: 51 }, (_, i) => entry(`/f${i}`)) },
     { entries: [] },
   ]) assert.throws(() => parseRecentListResult(malformed), /invalid/)
 })
@@ -116,6 +114,7 @@ test('a change record carries the recent project folders when they changed', () 
   const base = { fromRevision: 1, revision: 2, cursor: '2', changed: {}, removed: {} }
   assert.deepEqual(parseWorkspaceChangeRecordDto({ ...base, recentProjectFolders: [{ path: '/a', usedAt: 4 }] }).recentProjectFolders, [{ path: '/a', usedAt: 4 }])
   assert.deepEqual(parseWorkspaceChangeRecordDto({ ...base, recentProjectFolders: [] }).recentProjectFolders, [])
-  for (const recentProjectFolders of [{}, [{ path: '' , usedAt: 1 }], [{ path: '/a' }], Array.from({ length: 51 }, (_, i) => ({ path: `/f${i}`, usedAt: i }))])
+  assert.equal(parseWorkspaceChangeRecordDto({ ...base, recentProjectFolders: Array.from({ length: 500 }, (_, i) => ({ path: `/f${i}`, usedAt: i })) }).recentProjectFolders.length, 500)
+  for (const recentProjectFolders of [{}, [{ path: '' , usedAt: 1 }], [{ path: '/a' }]])
     assert.throws(() => parseWorkspaceChangeRecordDto({ ...base, recentProjectFolders }), /invalid workspace change record/)
 })

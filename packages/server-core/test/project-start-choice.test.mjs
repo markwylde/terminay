@@ -5,7 +5,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { FEATURE_CAPABILITIES, PROJECT_START_OPERATIONS } from "@terminay/protocol";
 import {
-  MAX_RECENT_PROJECT_FOLDERS,
   OrderedEventJournal,
   RootFolderBrowser,
   WORKSPACE_OPERATIONS,
@@ -107,7 +106,7 @@ test("the validator rejects a start state with a root, a none origin with a root
   assert.throws(() => validateWorkspace(withProject({ root: "", rootOrigin: "none", start: "later" })), /start state is invalid/);
   assert.throws(() => validateWorkspace({ ...state, recentProjectFolders: [{ path: "/a", usedAt: 1 }, { path: "/a", usedAt: 2 }] }), /recent project folder is invalid/);
   assert.throws(() => validateWorkspace({ ...state, recentProjectFolders: [{ path: "/a", usedAt: 1, name: "a" }] }), /unknown field/);
-  assert.throws(() => validateWorkspace({ ...state, recentProjectFolders: Array.from({ length: 51 }, (_, i) => ({ path: `/f${i}`, usedAt: i })) }), /recent project folders are invalid/);
+  assert.doesNotThrow(() => validateWorkspace({ ...state, recentProjectFolders: Array.from({ length: 500 }, (_, i) => ({ path: `/f${i}`, usedAt: i })) }));
   assert.throws(() => validateWorkspace({ ...state, recentProjectFolders: undefined }), /recent project folders are invalid/);
 });
 
@@ -318,7 +317,7 @@ test("a project-claimed connection can start only its own project", async () => 
 
 // --- 3.3 recent folders ------------------------------------------------------
 
-test("recent folders are most recent first, unique, bounded, and forgettable", async () => {
+test("recent folders are most recent first, unique, unbounded, and forgettable", async () => {
   const { workspace, registry, viewId, command } = harness();
   registry.applyHostCommand("p", { type: "project.create", projectId: "project-a", viewId, root: "/srv/start" });
   const root = (path, usedAt) => registry.applyHostCommand(`r-${++serial}`, { type: "project.root.update", projectId: "project-a", root: path, usedAt });
@@ -326,14 +325,12 @@ test("recent folders are most recent first, unique, bounded, and forgettable", a
   root("/srv/two", 2);
   root("/srv/one", 3);
   assert.deepEqual(workspace.state.recentProjectFolders, [{ path: "/srv/one", usedAt: 3 }, { path: "/srv/two", usedAt: 2 }]);
-  for (let index = 0; index < MAX_RECENT_PROJECT_FOLDERS; index += 1) root(`/srv/f${index}`, 10 + index);
-  assert.equal(workspace.state.recentProjectFolders.length, MAX_RECENT_PROJECT_FOLDERS);
-  assert.equal(workspace.state.recentProjectFolders[0].path, `/srv/f${MAX_RECENT_PROJECT_FOLDERS - 1}`);
-  // The 51st folder dropped the least recently used ones.
-  assert.equal(workspace.state.recentProjectFolders.some((entry) => entry.path === "/srv/two" || entry.path === "/srv/one"), false);
+  for (let index = 0; index < 60; index += 1) root(`/srv/f${index}`, 10 + index);
   root("/srv/extra", 1_000);
-  assert.equal(workspace.state.recentProjectFolders.length, MAX_RECENT_PROJECT_FOLDERS);
-  assert.equal(workspace.state.recentProjectFolders.some((entry) => entry.path === "/srv/f0"), false);
+  // Nothing is dropped for count: every folder stays, most recent first.
+  assert.equal(workspace.state.recentProjectFolders.length, 63);
+  assert.equal(workspace.state.recentProjectFolders[0].path, "/srv/extra");
+  assert.deepEqual(workspace.state.recentProjectFolders.slice(-2).map((entry) => entry.path), ["/srv/one", "/srv/two"]);
 
   const before = workspace.state.projects["project-a"];
   const forgotten = await command(PROJECT_START_OPERATIONS.recentForget, { path: "/srv/extra" });

@@ -5,8 +5,6 @@ import {
 } from '@terminay/protocol';
 
 export const WORKSPACE_SCHEMA_VERSION = 7;
-/** The most recent project folders a server remembers. */
-export const MAX_RECENT_PROJECT_FOLDERS = 50;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 /** A persisted record is rejected when it carries a field this server does not
  * define, so a state file written by a different shape is never half-read. */
@@ -302,8 +300,7 @@ export interface WorkspaceState {
 	readonly panels: Readonly<Record<ProtocolId, WorkspacePanel>>;
 	readonly terminalSessions: Readonly<Record<ProtocolId, TerminalSession>>;
 	/** The folders that most recently became an explicit project root on this
-	 * server, most recent first, unique by path, at most
-	 * `MAX_RECENT_PROJECT_FOLDERS`. */
+	 * server, most recent first, unique by path. */
 	readonly recentProjectFolders: readonly RecentProjectFolder[];
 }
 
@@ -1111,7 +1108,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 const RECENT_PROJECT_FOLDER_KEYS = Object.freeze(['path', 'usedAt']);
 
 function validateRecentProjectFolders(value: unknown): void {
-	if (!Array.isArray(value) || value.length > MAX_RECENT_PROJECT_FOLDERS)
+	if (!Array.isArray(value))
 		throw new TypeError('recent project folders are invalid');
 	const paths = new Set<string>();
 	for (const entry of value as unknown[]) {
@@ -1134,7 +1131,7 @@ function validateRecentProjectFolders(value: unknown): void {
 }
 
 /** The recent project folders with `path` first, used at `usedAt`, each path
- * once, the least recently used dropped beyond the bound. */
+ * once. */
 function withRecentProjectFolder(
 	recents: readonly RecentProjectFolder[],
 	path: string,
@@ -1145,7 +1142,7 @@ function withRecentProjectFolder(
 	return [
 		{ path: boundedPath(path), usedAt },
 		...recents.filter((entry) => entry.path !== path),
-	].slice(0, MAX_RECENT_PROJECT_FOLDERS);
+	];
 }
 
 /** Refuse a command that would give a project awaiting its start choice a
