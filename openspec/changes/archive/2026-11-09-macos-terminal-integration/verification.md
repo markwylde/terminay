@@ -52,3 +52,5 @@ Archived-baseline validation also reports four pre-existing failures in 2026-09-
 Final verification after the readiness fix: 38 focused parser, presentation, server, resolver and relay tests passed, plus the panel-persistence cleanup regression (1 passed). Final TypeScript and lint checks passed. All 13 tasks are complete; the archive validates with its canonical spec.
 
 CI inspection found that packaged macOS checks pass `--headless` and `--use-mock-keychain` as Electron runtime switches. Both are now explicitly separated from user operands and covered by the runtime-switch regression test, preventing an unsupported-option dialog during packaged checks.
+
+The shared argument adapter also preserves NSIS's `--updated` application relaunch marker (`app-builder-lib/templates/nsis/common.nsh`), covered in the same runtime-switch test. AppImage updater relaunches with no arguments; Squirrel relaunches by bundle identity.

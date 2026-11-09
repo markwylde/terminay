@@ -62,6 +62,7 @@ test('runtime args, executable and development entry are not folders', () => {
 			[
 				'-psn_0_123',
 				'--no-sandbox',
+				'--updated',
 				'--headless',
 				'--use-mock-keychain',
 				'--original-process-start-time=123',
