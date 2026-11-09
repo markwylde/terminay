@@ -31,8 +31,8 @@
 	"scripts": {
 		"compile": "tsc -p tsconfig.json",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
-		"test": "npm run compile && node --test test/*.test.mjs",
-		"test:ci": "node --test test/*.test.mjs",
+		"test": "npm run compile && node --test --test-force-exit --test-timeout=120000 test/*.test.mjs",
+		"test:ci": "node --test --test-force-exit --test-timeout=120000 test/*.test.mjs",
 		"pack": "node -e \"require('node:fs').mkdirSync('.tmp-pack', { recursive: true })\" && npm pack --json --pack-destination .tmp-pack"
 	},
 	"peerDependencies": {

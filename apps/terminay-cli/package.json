@@ -40,8 +40,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "test:ci": "node --test test/*.test.mjs"
+    "test": "npm run build && node --test --test-force-exit --test-timeout=120000 test/*.test.mjs",
+    "test:ci": "node --test --test-force-exit --test-timeout=120000 test/*.test.mjs"
   },
   "devDependencies": {
     "selfsigned": "^5.5.0"

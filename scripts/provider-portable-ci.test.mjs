@@ -211,7 +211,7 @@ test("benchmarks that measure the machine run apart from every gate", async () =
     assert.match(job(benchmarks, name), /^ {4}continue-on-error: true$/mu, `${name} never fails the workflow`);
   }
   const loadTest = "scripts/task20-secure-werift-multi-peer-load.test.mjs";
-  assert.match(scripts["benchmark:webrtc-multi-peer-load"], new RegExp(`TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT=[^ ]+ node --test ${loadTest.replaceAll(".", "\\.")}$`, "u"));
+  assert.match(scripts["benchmark:webrtc-multi-peer-load"], new RegExp(`TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT=[^ ]+ node --test(?: --[^ ]+)* ${loadTest.replaceAll(".", "\\.")}$`, "u"));
   assert.match(job(benchmarks, "webrtc-multi-peer-load"), /run: npm run benchmark:webrtc-multi-peer-load/u);
   assert.match(job(benchmarks, "webrtc-multi-peer-load"), /TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT: \$\{\{ github\.workspace \}\}\/build\/webrtc-runtime/u);
 

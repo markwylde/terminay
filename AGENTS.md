@@ -71,3 +71,46 @@ whose schema is vendored at `openspec/schemas/spec-driven-with-adr/`.
   isolates Electron, Chromium, and Xvfb in Docker. Never run Playwright's
   Electron suite directly on the host unless the user explicitly requests it;
   `npm run test:e2e:host` is reserved for isolated CI runners.
+
+## Running Node tests locally
+
+A broken local install used to make some suites hang forever instead of
+failing, and agents sat on those hangs for hours.
+
+- **Every `node --test` invocation is bounded.** Scripts and CI run
+  `node --test --test-force-exit --test-timeout=120000`. `--test-timeout` fails
+  a test that stalls. `--test-force-exit` ends a file's process once its tests
+  finish, even if a failed test leaked a child process, socket or timer.
+  Without it, the run never exits. Keep both flags on any new invocation,
+  including ad-hoc runs and runners that spawn `node --test` themselves.
+- **Install with `npm ci`, never `npm ci --ignore-scripts`.** The root
+  `postinstall` (`scripts/ensure-node-pty-helper-mode.mjs`) makes node-pty's
+  `spawn-helper` executable. Without it, every PTY spawn fails with
+  `posix_spawnp failed`. If a worktree was installed without scripts, run
+  `node scripts/ensure-node-pty-helper-mode.mjs` before testing.
+- **Build workspace dependencies first.** A package's tests import other
+  packages' `dist/`. Run `npx turbo run build --filter=<package>...` before its
+  tests. `ERR_MODULE_NOT_FOUND ... /dist/index.js` means a dependency wasn't
+  built, not that the change is broken.
+
+## Long-running and background processes
+
+Starting a test suite, build, server, poller or any other long-running process
+and then waiting on it without checking is unacceptable. A notification that
+never arrives looks exactly like a process that is still working. Agents have
+lost hours this way, and the user only found out by asking.
+
+- **Bound it.** Run it under `timeout <seconds>`, with a limit a little above
+  how long it should take. Exit status 124 means it hung, and that is a finding
+  to report, not something to retry silently.
+- **Check on it.** Before starting it, decide how long it should take. Check
+  its output and process at least every few minutes, and immediately once that
+  expected time has passed. Use `Monitor` with a periodic check, or poll its
+  log yourself, never a single open-ended wait. A run with no new output for several minutes
+  is presumed stuck.
+- **Act on a stall.** Find the stuck file or step (`pgrep -fl "node --test"`,
+  the tail of its log), kill only the processes you started, say what hung and
+  why, then fix or bound it. Never end your turn on "still running" without a
+  wake-up already scheduled.
+- **Keep the user informed.** Tell them what you started, how long it should
+  take, and what you found. Don't go quiet.
