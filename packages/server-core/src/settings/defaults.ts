@@ -34,7 +34,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 	// On: new zsh, bash, fish, and PowerShell terminals load Terminay's shell
 	// integration after the user's own startup files (ADR-0082).
 	shellIntegration: true,
-	convertEol: true,
+	convertEol: false,
 	dictation: {
 		enabled: true,
 		provider: 'openai',

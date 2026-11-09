@@ -7,7 +7,7 @@ export type SettingAuthority =
 	| 'device-override'
 	| 'transient';
 
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 export type SettingsObject = { readonly [key: string]: JsonValue };
 

@@ -460,7 +460,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	programSetTabTitles: true,
 	shellIntegration: true,
 	updateChannel: 'stable',
-	convertEol: true,
+	convertEol: false,
 	cursorBlink: true,
 	cursorStyle: 'block',
 	cursorWidth: 1,
@@ -1932,7 +1932,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'convertEol',
 				label: 'Convert LF to CRLF',
 				description:
-					'Translate line feeds to carriage return plus line feed on write.',
+					'Also return to column 0 on every line feed. Off by default; turn on only for output that sends bare line feeds expecting a new line.',
 				sectionId: 'input',
 				categoryId: 'interaction',
 				input: 'boolean',

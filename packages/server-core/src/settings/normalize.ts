@@ -46,6 +46,31 @@ export function normalizeSettingsAndSecrets(
 }
 
 const MIGRATED_SHELL_PROFILE_ID = 'migrated-shell';
+/** The snapshot schema that introduced shell profiles. */
+const SHELL_PROFILES_SCHEMA_VERSION = 2;
+/** The snapshot schema whose `convertEol` value is an explicit choice. Before
+ * it, `true` was the stored default and cannot be told apart from a choice. */
+const CONVERT_EOL_CHOICE_SCHEMA_VERSION = 3;
+
+function isSchemaAtLeast(value: unknown, version: number): boolean {
+	return Number.isSafeInteger(value) && (value as number) >= version;
+}
+
+/** Reset the former `convertEol: true` default once, when a snapshot written
+ * before schema 3 is loaded. Settings commands never pass through here, so a
+ * later explicit opt-in is kept. */
+function migrateConvertEolDefault(
+	input: unknown,
+	settings: SettingsObject,
+): SettingsObject {
+	const source = isSettingsObject(input) ? input : {};
+	if (
+		isSchemaAtLeast(source.schemaVersion, CONVERT_EOL_CHOICE_SCHEMA_VERSION) ||
+		settings.convertEol !== true
+	)
+		return settings;
+	return { ...settings, convertEol: false };
+}
 
 /** Upgrade the v1 shell tuple once. Existing v2 snapshots are never remigrated,
  * even when they retain the legacy compatibility fields for older clients. */
@@ -55,7 +80,7 @@ function migrateLegacyShellSettings(
 ): SettingsObject {
 	const source = isSettingsObject(input) ? input : {};
 	if (
-		source.schemaVersion === SETTINGS_SCHEMA_VERSION ||
+		isSchemaAtLeast(source.schemaVersion, SHELL_PROFILES_SCHEMA_VERSION) ||
 		settings.shellProfiles !== undefined
 	)
 		return settings;
@@ -119,7 +144,7 @@ export function migrateServerSettings(input: unknown): ServerSettingsState {
 		schemaVersion: SETTINGS_SCHEMA_VERSION,
 		revision,
 		cursor: String(revision),
-		settings: normalized.settings,
+		settings: migrateConvertEolDefault(input, normalized.settings),
 		secretReferences: normalized.secretReferences,
 	};
 }

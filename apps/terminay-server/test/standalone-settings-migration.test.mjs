@@ -53,7 +53,7 @@ test('standalone settings migration preserves the raw source and safely retries 
 			priorBackup,
 		);
 		const migrated = JSON.parse(await readFile(settingsPath, 'utf8'));
-		assert.equal(migrated.schemaVersion, 2);
+		assert.equal(migrated.schemaVersion, 3);
 		assert.equal(
 			migrated.settings.shellProfiles.defaultProfileId,
 			'migrated-shell',
