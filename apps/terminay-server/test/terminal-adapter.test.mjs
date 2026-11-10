@@ -153,7 +153,8 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
     submit: true,
   });
   assert.equal(written.submitted, true);
-  assert.equal(new TextDecoder().decode(pty.processes[1].writes[0]), "echo ok\r");
+  // Enter is its own write, so a full-screen agent reads it as a key press.
+  assert.deepEqual(pty.processes[1].writes.map((bytes) => new TextDecoder().decode(bytes)), ["echo ok", "\r"]);
   assert.deepEqual(await request("run", "run_command", {
     terminal: "sibling",
     command: "printf ok",
@@ -165,7 +166,7 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
     submitted: true,
     bracketed: false,
   });
-  assert.equal(new TextDecoder().decode(pty.processes[1].writes[1]), "printf ok\r");
+  assert.deepEqual(pty.processes[1].writes.slice(2).map((bytes) => new TextDecoder().decode(bytes)), ["printf ok", "\r"]);
   const status = await request("status", "get_terminal_status", { terminal: "sibling" });
   assert.equal(status.status, "running");
   assert.equal(status.output_position, 18);
@@ -792,15 +793,108 @@ test("run_command frames with bracketed paste only when the program enabled it",
     dispatch({ id, version: 1, op: "run_command", params: { terminal: "shell", command } }, { ...context(), requestId: id });
   const shell = pty.processes[1];
 
+  const decoded = () => shell.writes.map((bytes) => new TextDecoder().decode(bytes));
   const plain = await run("plain", "X=1 sh -c 'echo $X'\necho two");
   assert.equal(plain.bracketed, false);
-  assert.equal(new TextDecoder().decode(shell.writes[0]), "X=1 sh -c 'echo $X'\recho two\r");
+  assert.deepEqual(decoded().slice(0, 2), ["X=1 sh -c 'echo $X'\recho two", "\r"]);
 
   shell.emitData("\u001b[?2004h$ ");
   const framed = await run("framed", "echo one\necho two");
   assert.equal(framed.bracketed, true);
   assert.equal(framed.from, 10);
-  assert.equal(new TextDecoder().decode(shell.writes[1]), "\u001b[200~echo one\necho two\u001b[201~\r");
+  // The paste and its Enter are separate writes: an agent such as Claude Code
+  // treats a carriage return in the same read as the paste as pasted text.
+  assert.deepEqual(decoded().slice(2), ["\u001b[200~echo one\necho two\u001b[201~", "\r"]);
   assert.equal(framed.submitted_bytes, Buffer.byteLength("\u001b[200~echo one\necho two\u001b[201~\r", "utf8"));
+  await terminal.stop?.();
+});
+
+test("write_terminal presses named keys and Enter as separate writes after the text", async () => {
+  const pty = createPtyFactory();
+  const ids = ["caller", "agent"];
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    generateSessionId: () => ids.shift(),
+  });
+  await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  const pauses = [];
+  const adapter = createServerTerminalControlAdapter({
+    terminal,
+    launchResolver: createLaunchResolver(),
+    inputDelay: async (ms) => {
+      pauses.push(ms);
+    },
+  });
+  const dispatch = createTerminalControlAdapter({ adapter });
+  const write = (id, params) =>
+    dispatch({ id, version: 1, op: "write_terminal", params: { terminal: "agent", ...params } }, { ...context(), requestId: id });
+  const agent = pty.processes[1];
+  const decoded = () => agent.writes.map((bytes) => new TextDecoder().decode(bytes));
+
+  const sent = await write("send", { text: "merge it", keys: ["Backspace", "Ctrl+C"], submit: true });
+  assert.deepEqual(decoded(), ["merge it", "\u007f", "\u0003", "\r"]);
+  assert.equal(sent.bytes, Buffer.byteLength("merge it\u007f\u0003\r"));
+  assert.equal(sent.submitted, true);
+  assert.equal(pauses.length, 3);
+  assert.ok(pauses.every((ms) => ms > 0));
+
+  // Enter alone, for text already in an agent's input.
+  pauses.length = 0;
+  assert.equal((await write("enter", { submit: true })).bytes, 1);
+  assert.deepEqual(decoded().slice(4), ["\r"]);
+  assert.equal(pauses.length, 0);
+
+  const empty = await write("empty", { text: "" });
+  assert.equal(empty.ok, false);
+  assert.equal(empty.error.code, "bad_request");
+  assert.match(empty.error.message, /keys/);
+  const unknown = await write("unknown", { text: "x", keys: ["Ctrl+Q"] });
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error.message, /Backspace/);
+  const tooMany = await write("too-many", { text: "x", keys: Array.from({ length: 65 }, () => "Left") });
+  assert.equal(tooMany.ok, false);
+  assert.equal(tooMany.error.code, "bad_request");
+  assert.equal(agent.writes.length, 5);
+
+  // Text, keys, and Enter, in order, each on its own, with exact byte counts.
+  const ordered = await write("ordered", { text: "ab", keys: ["Backspace", "Left"], submit: true });
+  assert.deepEqual(decoded().slice(5), ["ab", "\u007f", "\u001b[D", "\r"]);
+  assert.deepEqual([ordered.bytes, ordered.submitted], [7, true]);
+
+  // Enter as a key is not a submit.
+  const enterKey = await write("enter-key", { keys: ["Enter"] });
+  assert.deepEqual(decoded().slice(9), ["\r"]);
+  assert.deepEqual([enterKey.bytes, enterKey.submitted], [1, false]);
+  await terminal.stop?.();
+});
+
+test("a write_terminal call cancelled between its text and Enter writes no Enter", async () => {
+  const pty = createPtyFactory();
+  const ids = ["caller", "agent"];
+  const terminal = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    generateSessionId: () => ids.shift(),
+  });
+  await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  const controller = new AbortController();
+  const adapter = createServerTerminalControlAdapter({
+    terminal,
+    launchResolver: createLaunchResolver(),
+    inputDelay: async () => {
+      controller.abort();
+    },
+  });
+  const dispatch = createTerminalControlAdapter({ adapter });
+  const result = await dispatch(
+    { id: "cancel", version: 1, op: "write_terminal", params: { terminal: "agent", text: "merge it", submit: true } },
+    { ...context(), requestId: "cancel", signal: controller.signal },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "cancelled");
+  assert.deepEqual(pty.processes[1].writes.map((bytes) => new TextDecoder().decode(bytes)), ["merge it"]);
   await terminal.stop?.();
 });

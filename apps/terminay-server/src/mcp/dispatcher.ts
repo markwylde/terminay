@@ -1,4 +1,4 @@
-import type { McpPermissionGroup } from '@terminay/server-core';
+import type { McpPermissionGroup, TerminalKey } from '@terminay/server-core';
 import {
 	APP_CONTROL_OPERATIONS,
 	type AppControlAdapter,
@@ -15,6 +15,11 @@ import {
 	parseRenameWorkspaceWindow,
 	parseUpdateProject,
 } from './appControlTools.js';
+import {
+	isTerminalKeyName,
+	MAX_TERMINAL_KEYS,
+	TERMINAL_KEY_NAMES,
+} from './terminalKeys.js';
 import {
 	type AppWindowControlAdapter,
 	isAppWindowParamFailure,
@@ -599,6 +604,8 @@ export const WINDOW_HANDLE_PATTERN = /^win_[A-Za-z0-9_-]{22}$/;
 export interface WriteTerminalParams {
 	readonly terminal: TerminalRef;
 	readonly text: string;
+	/** Named keys pressed after the text, each written on its own. */
+	readonly keys?: readonly TerminalKey[];
 	readonly submit?: boolean;
 }
 export interface RunCommandParams {
@@ -2015,6 +2022,7 @@ async function invokeAdapter<T>(
 		const result = await work();
 		return signal.aborted ? cancelledResult() : result;
 	} catch (error) {
+		if (signal.aborted) return cancelledResult();
 		return { ok: false, error: publicControlError(error) };
 	}
 }
@@ -2385,13 +2393,30 @@ function parseWriteTerminal(
 ): ParseResult<WriteTerminalParams> {
 	const terminal = parseTerminalOnly(value);
 	if (isControlFailure(terminal)) return terminal;
-	const text = boundedText(value.text, 'text', maxTextBytes);
+	const text = boundedText(value.text ?? '', 'text', maxTextBytes);
 	if (isControlFailure(text)) return text;
 	if (value.submit !== undefined && typeof value.submit !== 'boolean')
 		return badRequest('submit must be a boolean');
+	let keys: TerminalKey[] | undefined;
+	if (value.keys !== undefined) {
+		if (
+			!Array.isArray(value.keys) ||
+			value.keys.length > MAX_TERMINAL_KEYS ||
+			!value.keys.every(isTerminalKeyName)
+		)
+			return badRequest(
+				`keys must be at most ${MAX_TERMINAL_KEYS} of: ${TERMINAL_KEY_NAMES.join(', ')}`,
+			);
+		keys = value.keys;
+	}
+	if (text.length === 0 && (keys?.length ?? 0) === 0 && value.submit !== true)
+		return badRequest(
+			'Nothing to write: give text, keys, or submit: true. Control characters cannot be sent as text; press them with keys, such as ["Backspace"] or ["Ctrl+C"], and Enter with submit: true.',
+		);
 	return {
 		...terminal,
 		text,
+		...(keys === undefined ? {} : { keys }),
 		...(value.submit === undefined ? {} : { submit: value.submit }),
 	};
 }

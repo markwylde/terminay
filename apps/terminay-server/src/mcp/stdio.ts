@@ -38,6 +38,7 @@ import {
 	PROJECT_HANDLE_PATTERN,
 	WINDOW_HANDLE_PATTERN,
 } from './dispatcher.js';
+import { MAX_TERMINAL_KEYS, TERMINAL_KEY_NAMES } from './terminalKeys.js';
 import {
 	DEFAULT_AUTOMATION_RUNS_LIMIT,
 	MAX_AUTOMATION_RUNS_LIMIT,
@@ -421,8 +422,13 @@ function registerTools(
 	server.registerTool(
 		'write_terminal',
 		{
-			description: 'Write exact text to a live sibling terminal.',
-			inputSchema: { terminal, text, submit: z.boolean().optional() },
+			description: `Type into a live terminal: text, then named keys, then Enter. text is written exactly as given. A model cannot put control characters in text, and an escape such as "\\r" arrives as a literal backslash and r, so press keys instead. keys presses named keys in order after the text (${TERMINAL_KEY_NAMES.join(', ')}), for example ["Backspace", "Backspace"] to delete two characters or ["Ctrl+C"] to interrupt. submit: true presses Enter last. Each key is written on its own after a short pause, so a full-screen program such as Claude Code or Codex reads it as a key press, not pasted text. To send a message to an agent, pass it as text with submit: true; to press Enter on text already in its input, pass submit: true alone. Read the terminal afterwards to check the result. Returns bytes written and submitted.`,
+			inputSchema: {
+				terminal,
+				text: text.optional(),
+				keys: z.array(z.enum(TERMINAL_KEY_NAMES)).max(MAX_TERMINAL_KEYS).optional(),
+				submit: z.boolean().optional(),
+			},
 		},
 		async (params, extra) => call('write_terminal', params, extra.signal),
 	);

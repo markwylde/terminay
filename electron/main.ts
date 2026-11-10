@@ -175,7 +175,13 @@ import {
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
 import { RootFolderBrowser } from '../packages/server-core/src/rootFolderBrowser';
-import { commandSubmissionInput } from '../packages/server-core/src/terminalService/commandSubmission';
+import {
+	commandPasteInput,
+	SUBMIT_INPUT,
+	TERMINAL_KEYS,
+	terminalInputKey,
+	writeSeparatedInput,
+} from '../packages/server-core/src/terminalService/commandSubmission';
 import { nodeTerminalLaunchPathAuthority } from '../packages/server-core/src/terminalService/launchResolver';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
 import {
@@ -4181,20 +4187,37 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				};
 			return { terminal: opened.id, status: opened.status };
 		},
-		writeTerminal: async (params, context) => {
+		writeTerminal: async (params, context, signal) => {
 			const target = terminal(context, params.terminal);
-			const data = params.submit === true ? `${params.text}\r` : params.text;
-			await requireMcpAuthority().write(
-				target.id,
-				data,
-				mcpAuthorization(target.projectId),
+			const bytes = await writeSeparatedInput(
+				{
+					body: params.text,
+					keys: [
+						...(params.keys ?? []).map((key) => TERMINAL_KEYS[key]),
+						...(params.submit === true ? [SUBMIT_INPUT] : []),
+					],
+				},
+				(data) =>
+					requireMcpAuthority().write(
+						target.id,
+						data,
+						mcpAuthorization(target.projectId),
+					),
+				{
+					terminal: terminalInputKey(
+						requireMcpAuthority().service.serverId,
+						target.id,
+					),
+					signal,
+				},
 			);
 			return {
 				terminal: target.id,
-				bytes: new TextEncoder().encode(data).byteLength,
+				bytes,
+				submitted: params.submit === true,
 			};
 		},
-		runCommand: async (params, context) => {
+		runCommand: async (params, context, signal) => {
 			const target = terminal(context, params.terminal);
 			const service = requireMcpAuthority().service;
 			const bracketed = await service.bracketedPasteMode(
@@ -4202,17 +4225,32 @@ function createDesktopMcpTerminalAdapter(): TerminalControlAdapter {
 				mcpAuthorization(target.projectId),
 			);
 			const from = service.getSession(target.id)?.outputPosition ?? 0;
-			const data = commandSubmissionInput(params.command, bracketed);
-			await requireMcpAuthority().write(
-				target.id,
-				data,
-				mcpAuthorization(target.projectId),
+			// Enter goes on its own, so a full-screen agent reads it as a key
+			// press rather than as the end of the paste.
+			const submittedBytes = await writeSeparatedInput(
+				{
+					body: commandPasteInput(params.command, bracketed),
+					keys: [SUBMIT_INPUT],
+				},
+				(data) =>
+					requireMcpAuthority().write(
+						target.id,
+						data,
+						mcpAuthorization(target.projectId),
+					),
+				{
+					terminal: terminalInputKey(
+						requireMcpAuthority().service.serverId,
+						target.id,
+					),
+					signal,
+				},
 			);
 			return {
 				terminal: target.id,
 				command_id: context.requestId,
 				from,
-				submitted_bytes: new TextEncoder().encode(data).byteLength,
+				submitted_bytes: submittedBytes,
 				submitted: true,
 				bracketed,
 			};

@@ -119,7 +119,12 @@ import {
 	ConnectedServerRegistry,
 	type ConnectedServerVault,
 } from './connectedServers/index.js';
-import { commandSubmissionInput } from './terminalService/commandSubmission.js';
+import {
+	commandPasteInput,
+	SUBMIT_INPUT,
+	terminalInputKey,
+	writeSeparatedInput,
+} from './terminalService/commandSubmission.js';
 import type { AutomationRepository } from './automationService/repository.js';
 import type { AutomationRunLog } from './automationService/runLog.js';
 import type { AutomationRunController } from './automationService/types.js';
@@ -1246,18 +1251,11 @@ export function createServerCoreComposition(
 			window.terminalSessionId,
 			authorization,
 		);
-		await terminalInputSources.write({
-			identity: {
-				serverId: options.serverId,
-				projectId: window.projectId,
-				sessionId: window.terminalSessionId,
-			},
-			clientId: 'app-window',
-			source: 'window_message',
-			data:
+		await writeSeparatedInput(
+			{
 				// Without bracketed paste every line break would submit a line
 				// of its own; a window message is submitted once.
-				commandSubmissionInput(
+				body: commandPasteInput(
 					// A tab is a keystroke there too: a plain shell completes on it.
 					bracketed
 						? text
@@ -1267,8 +1265,26 @@ export function createServerCoreComposition(
 								.trim(),
 					bracketed,
 				),
-			authorization,
-		});
+				// Enter on its own, so an agent reads it as a key press.
+				keys: [SUBMIT_INPUT],
+			},
+			async (data) => {
+				await terminalInputSources.write({
+					identity: {
+						serverId: options.serverId,
+						projectId: window.projectId,
+						sessionId: window.terminalSessionId,
+					},
+					clientId: 'app-window',
+					source: 'window_message',
+					data,
+					authorization,
+				});
+			},
+			{
+				terminal: terminalInputKey(options.serverId, window.terminalSessionId),
+			},
+		);
 	};
 	const runningProject = (sessionId: string): string | undefined => {
 		const session = terminal.getSession(sessionId);
@@ -1299,25 +1315,37 @@ export function createServerCoreComposition(
 							target.sessionId,
 							authorization,
 						);
-						await terminalInputSources.write({
-							identity: {
-								serverId: target.serverId,
-								projectId: target.projectId,
-								sessionId: target.sessionId,
+						await writeSeparatedInput(
+							{
+								body: commandPasteInput(
+									bracketed
+										? text
+										: text
+												.replace(/\s*\r?\n\s*/g, ' ')
+												.replace(/\t/g, ' ')
+												.trim(),
+									bracketed,
+								),
+								// Enter on its own, so an agent reads it as a key press.
+								keys: [SUBMIT_INPUT],
 							},
-							clientId: request.context.clientId,
-							source: 'workflow',
-							data: commandSubmissionInput(
-								bracketed
-									? text
-									: text
-											.replace(/\s*\r?\n\s*/g, ' ')
-											.replace(/\t/g, ' ')
-											.trim(),
-								bracketed,
-							),
-							authorization,
-						});
+							async (data) => {
+								await terminalInputSources.write({
+									identity: {
+										serverId: target.serverId,
+										projectId: target.projectId,
+										sessionId: target.sessionId,
+									},
+									clientId: request.context.clientId,
+									source: 'workflow',
+									data,
+									authorization,
+								});
+							},
+							{
+								terminal: terminalInputKey(target.serverId, target.sessionId),
+							},
+						);
 					},
 				});
 	// A workflow lasts as long as its terminal session (ADR-0076, ADR-0097).
