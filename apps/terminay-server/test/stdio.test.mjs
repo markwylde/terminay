@@ -198,6 +198,11 @@ test('server-owned MCP stdio entry registers tools and uses the local control so
 		// Every tool tells the agent what it does.
 		for (const tool of tools.tools)
 			assert.ok((tool.description ?? '').length >= 20, `${tool.name} has a description`);
+		// Creating a project never moves the user's view (ADR-0103).
+		const createProjectTool = tools.tools.find((tool) => tool.name === 'create_project');
+		assert.match(createProjectTool?.description ?? '', /background/u);
+		assert.match(createProjectTool?.description ?? '', /focus_project/u);
+		assert.doesNotMatch(createProjectTool?.description ?? '', /shown says/u);
 		const readTool = tools.tools.find((tool) => tool.name === 'read_terminal');
 		const readSchema = readTool?.inputSchema;
 		const searchTool = tools.tools.find((tool) => tool.name === 'search_terminal');

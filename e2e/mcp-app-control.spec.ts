@@ -226,27 +226,43 @@ test('Pixel shows Home > Automations on the window it was asked from, and no oth
 	);
 });
 
-test('Pixel creates a project at ~ and its first terminal opens in this window', async ({
+test('Pixel creates a project at ~ in the background and the user keeps their project and terminal', async ({
 	appHarness,
 	mainWindow,
 }) => {
 	test.setTimeout(120_000);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+	const userProject = mainWindow.locator('.project-tab').first();
+	await expect(userProject).toHaveClass(/project-tab--active/);
+	const userTerminal = await activeTerminalSessionId(mainWindow);
 	await openPixel(appHarness, mainWindow);
 	await ask(mainWindow, 'make a project in my home folder');
 	await expect(balloon(mainWindow)).toContainText(
-		/Created Home from Pixel with terminal \S+, on screen\./,
+		/Created Home from Pixel with terminal \S+\./,
 		{ timeout: 30_000 },
 	);
 	const reply = (await balloon(mainWindow).textContent()) ?? '';
-	const terminal = /with terminal (\S+?), on screen/.exec(reply)?.[1];
+	expect(reply).not.toContain('reported shown');
+	const terminal = /with terminal (\S+?)\./.exec(reply)?.[1];
 	expect(terminal).toBeDefined();
 	expect(terminal).not.toBe('none');
 
+	// The new project is a background tab; nothing the user was on moved.
+	const created = mainWindow.locator('.project-tab', {
+		hasText: 'Home from Pixel',
+	});
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+	await expect(created).toHaveCount(1);
+	await expect(created).not.toHaveClass(/project-tab--active/);
+	await expect(userProject).toHaveClass(/project-tab--active/);
+	expect(await activeTerminalSessionId(mainWindow)).toBe(userTerminal);
 	await expect(
-		mainWindow.locator('.project-tab', { hasText: 'Home from Pixel' }),
-	).toHaveCount(1);
+		terminalPanelForSession(mainWindow, terminal as string),
+	).toBeHidden();
+
+	// Showing it is the user's choice.
+	await created.click();
+	await expect(created).toHaveClass(/project-tab--active/);
 	await expect(
 		terminalPanelForSession(mainWindow, terminal as string),
 	).toBeVisible({ timeout: 20_000 });

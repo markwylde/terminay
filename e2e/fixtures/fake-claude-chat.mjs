@@ -118,7 +118,7 @@ async function turn(text) {
 		const created = await tool('create_project', { root: '~', name: 'Home from Pixel' });
 		say(
 			created.ok
-				? `Created ${created.result.name} with terminal ${created.result.terminal ?? 'none'}${created.result.shown ? ', on screen.' : '.'}`
+				? `Created ${created.result.name} with terminal ${created.result.terminal ?? 'none'}${'shown' in created.result ? ', reported shown.' : '.'}`
 				: `I could not create it: ${created.error.code} (${created.error.message}).`,
 		);
 	} else if (text === 'set scrollback to 4321') {
