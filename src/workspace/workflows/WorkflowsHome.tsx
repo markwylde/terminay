@@ -690,7 +690,7 @@ function WorkflowColumn(props: {
 							return (
 								<li
 									key={step.id}
-									className={`workflow-step${highlighted ? ' workflow-step--active' : ''}`}
+									className={`workflow-step${highlighted ? ' workflow-step--active' : ''}${step.status === 'skipped' ? ' workflow-step--skipped' : ''}`}
 									data-status={step.status}
 								>
 									<WorkflowStepMarker step={step} labelled={false} />

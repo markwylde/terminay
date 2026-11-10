@@ -317,3 +317,78 @@ test('an agent saves a workflow template over MCP, Settings lists it, and the ag
 		killHolders(userDataDir);
 	}
 });
+
+test('an agent skips a step with a reason, and the user skips and restores a step from the panel', async ({
+	mainWindow,
+	userDataDir,
+}, testInfo) => {
+	test.setTimeout(120_000);
+	try {
+		const sessionId = await settledTerminalSessionId(mainWindow.locator('.terminal-panel:visible'));
+		const created = await callWithIds(mainWindow, sessionId, userDataDir, 'create_workflow', {
+			name: 'Skip flow',
+			opening_prompt: 'If this is not a visual change, drop the screenshots step.',
+			steps: [
+				{ title: 'Propose', prompt: 'Propose it.', icon: 'lightbulb' },
+				{ title: 'Implement', prompt: 'Build it.', icon: 'code' },
+				{ title: 'Screenshots', prompt: 'Capture it.', icon: 'camera' },
+				{ title: 'Ship', prompt: 'Open the PR.' },
+			],
+		});
+		expect(created.summary).toBe('not_started,not_started,not_started,not_started');
+		const ids = created.ids;
+		const update = (stepId: string | undefined, status: string, note?: string) =>
+			callFrom(mainWindow, sessionId, userDataDir, 'update_workflow_step', {
+				step_id: stepId,
+				status,
+				...(note === undefined ? {} : { note }),
+			});
+		expect(await update(ids[0], 'running')).toBe('running,not_started,not_started,not_started');
+		expect(await update(ids[2], 'skipped', 'not a visual change')).toBe('running,not_started,skipped,not_started');
+
+		// The rail shows the skipped step as its own state.
+		const skippedMarker = workflowPanel(mainWindow, sessionId).locator('.workflow-marker[data-status="skipped"]');
+		await expect(skippedMarker).toHaveCount(1, { timeout: READY_TIMEOUT_MS });
+		await expect(skippedMarker).toHaveAttribute('aria-label', 'Screenshots: skipped');
+		await expect(skippedMarker).toHaveClass(/workflow-marker--skipped/u);
+		await workflowPanel(mainWindow, sessionId).screenshot({ path: testInfo.outputPath('workflow-rail-skipped.png') });
+
+		// Expanded, it is struck through with its reason, and counts as done.
+		await workflowPanel(mainWindow, sessionId).getByRole('button', { name: 'Expand workflow' }).click();
+		const expanded = mainWindow.locator('.workflow-expanded:visible');
+		await expect(expanded).toBeVisible({ timeout: READY_TIMEOUT_MS });
+		const skippedRow = expanded.locator('.workflow-step[data-status="skipped"]');
+		await expect(skippedRow).toContainText('Screenshots');
+		await expect(skippedRow).toContainText('not a visual change');
+		await expect(skippedRow.locator('.workflow-step-time')).toHaveCount(0);
+		expect(
+			await skippedRow.locator('.workflow-step-title').evaluate((element) => getComputedStyle(element).textDecorationLine),
+		).toBe('line-through');
+		await expect(expanded.locator('.workflow-progress')).toContainText('1 of 4 done');
+
+		// The running step offers no Skip; a not-started one does.
+		await expect(expanded.getByRole('button', { name: 'Skip Propose' })).toHaveCount(0);
+		await expanded.getByRole('button', { name: 'Skip Ship' }).click();
+		const ship = expanded.locator('.workflow-step').filter({ hasText: 'Ship' });
+		await expect(ship).toHaveAttribute('data-status', 'skipped', { timeout: READY_TIMEOUT_MS });
+		await expect(ship).toContainText('Skipped from the panel');
+		await expect(expanded.locator('.workflow-progress')).toContainText('2 of 4 done');
+		expect(await callFrom(mainWindow, sessionId, userDataDir, 'get_workflow', {})).toBe('running,not_started,skipped,skipped');
+		await expanded.screenshot({ path: testInfo.outputPath('workflow-expanded-skipped.png') });
+
+		// Restore puts it back, with no note.
+		await expanded.getByRole('button', { name: 'Restore Ship' }).click();
+		await expect(ship).toHaveAttribute('data-status', 'not_started', { timeout: READY_TIMEOUT_MS });
+		await expect(ship).not.toContainText('Skipped from the panel');
+		expect(await callFrom(mainWindow, sessionId, userDataDir, 'get_workflow', {})).toBe('running,not_started,skipped,not_started');
+
+		// Done and skipped steps finish the workflow.
+		await update(ids[0], 'done', 'proposed');
+		await update(ids[1], 'done', 'built');
+		expect(await update(ids[3], 'done', 'shipped')).toBe('done,done,skipped,done');
+		await expect(expanded.locator('.workflow-progress')).toContainText('4 of 4 done', { timeout: READY_TIMEOUT_MS });
+		await expanded.screenshot({ path: testInfo.outputPath('workflow-finished-with-skip.png') });
+	} finally {
+		killHolders(userDataDir);
+	}
+});

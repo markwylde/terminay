@@ -453,3 +453,80 @@ test("launch and resume text is /goal, the opening prompt, and the fixed instruc
   assert.match(WORKFLOW_RESUME_INSTRUCTION, /resume_step_id/u);
   assert.throws(() => workflowLaunchText("x".repeat(16 * 1024)), code("invalid_workflow"));
 });
+
+// skip-workflow-steps
+
+test("a skipped step is settled: all-skipped and mixed done/skipped workflows are finished", () => {
+  assert.equal(isUnfinished(workflowOf([["a", "skipped"], ["b", "skipped"]])), false);
+  assert.equal(isUnfinished(workflowOf([["a", "done"], ["b", "skipped"]])), false);
+  assert.equal(isUnfinished(workflowOf([["a", "skipped"], ["b", "failed"]])), true);
+  assert.equal(resumeStepId(workflowOf([["a", "done"], ["b", "skipped"]])), null);
+});
+
+test("the resume point passes over a skipped step, and stays on the active step when an earlier one is restored", () => {
+  assert.equal(resumeStepId(workflowOf([["a", "done"], ["b", "skipped"], ["c", "not_started"]])), "c");
+  assert.equal(resumeStepId(workflowOf([["a", "done"], ["b", "not_started"], ["c", "running"]])), "c");
+});
+
+test("skipped step times follow the table", () => {
+  const at = (status, from, extra) => applyStepUpdate(workflowOf([["a", from, extra]]), "a", status, undefined, 100).steps[0];
+  const direct = at("skipped", "not_started");
+  assert.deepEqual([direct.startedAt, direct.endedAt], [100, 100]);
+  const fromRunning = at("skipped", "running", { startedAt: 10 });
+  assert.deepEqual([fromRunning.startedAt, fromRunning.endedAt], [10, 100]);
+  const retried = at("running", "skipped", { startedAt: 10, endedAt: 20 });
+  assert.deepEqual([retried.startedAt, retried.endedAt], [100, null]);
+  const asked = at("needs_input", "skipped", { startedAt: 10, endedAt: 20 });
+  assert.deepEqual([asked.startedAt, asked.endedAt], [100, null]);
+  const repeated = applyStepUpdate(
+    workflowOf([["a", "skipped", { startedAt: 10, endedAt: 20, note: "old" }]]),
+    "a",
+    "skipped",
+    "not a visual change",
+    100,
+  ).steps[0];
+  assert.deepEqual([repeated.startedAt, repeated.endedAt, repeated.note], [10, 20, "not a visual change"]);
+  const restored = at("not_started", "skipped", { startedAt: 10, endedAt: 20, note: "Skipped from the panel" });
+  assert.deepEqual([restored.startedAt, restored.endedAt, restored.note], [null, null, ""]);
+});
+
+test("an expected status applies the update only while the step still holds it", () => {
+  const workflow = workflowOf([["a", "running", { startedAt: 10 }]]);
+  assert.throws(
+    () => applyStepUpdate(workflow, "a", "skipped", "Skipped from the panel", 100, "not_started"),
+    (error) => error?.code === "step_changed" && error.details?.status === "running" && error.details?.stepId === "a",
+  );
+  const applied = applyStepUpdate(workflowOf([["a", "not_started"]]), "a", "skipped", "x", 100, "not_started");
+  assert.equal(applied.steps[0].status, "skipped");
+});
+
+test("a stale expected status leaves the stored step and its file unchanged", () => {
+  const directory = root();
+  const store = new WorkflowStore({ directory });
+  store.attach("s1", fresh());
+  store.updateStep("s1", "step-0", "running");
+  const before = readFileSync(join(directory, workflowFileName("s1")), "utf8");
+  assert.throws(() => store.updateStep("s1", "step-0", "skipped", "x", "not_started"), code("step_changed"));
+  assert.equal(readFileSync(join(directory, workflowFileName("s1")), "utf8"), before);
+  assert.equal(store.get("s1").workflow.steps[0].status, "running");
+});
+
+test("a stored skipped step survives a reload", () => {
+  const directory = root();
+  const store = new WorkflowStore({ directory });
+  store.attach("s1", fresh());
+  store.updateStep("s1", "step-1", "skipped", "does not apply");
+  const restored = new WorkflowStore({ directory });
+  restored.restore(["s1"]);
+  const view = restored.get("s1");
+  assert.equal(view.state, "attached");
+  assert.equal(view.workflow.steps[1].status, "skipped");
+  assert.equal(view.workflow.steps[1].note, "does not apply");
+});
+
+test("launch and resume instructions name skipped and every unsettled step", () => {
+  assert.match(WORKFLOW_LAUNCH_INSTRUCTION, /set it to skipped with a one-line reason/u);
+  assert.match(WORKFLOW_LAUNCH_INSTRUCTION, /Continue until every step is done or skipped\./u);
+  assert.match(WORKFLOW_RESUME_INSTRUCTION, /then every other step that is not done or skipped, in step order/u);
+  assert.match(WORKFLOW_RESUME_INSTRUCTION, /set it to skipped with a one-line reason/u);
+});

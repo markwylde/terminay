@@ -7,7 +7,12 @@
 
 import { type ReactElement, useEffect, useState } from 'react';
 import { useTerminalWorkflow } from './useServerWorkflows';
-import { tabSummary, type WorkflowTabSummary } from './workflowPanelModel';
+import {
+	finishedLabel,
+	isSettledStatus,
+	tabSummary,
+	type WorkflowTabSummary,
+} from './workflowPanelModel';
 import { useWorkflowCompletionSeen } from './workflowSeen';
 import './WorkflowPanel.css';
 
@@ -100,8 +105,8 @@ export function workflowStepLine(
 	const failed = steps.findIndex((step) => step.status === 'failed');
 	if (failed >= 0)
 		return `Failed · ${position(failed)} ${steps[failed]?.title ?? ''}`.trim();
-	const next = steps.findIndex((step) => step.status !== 'done');
-	if (next < 0) return `All ${total} ${total === 1 ? 'step' : 'steps'} done`;
+	const next = steps.findIndex((step) => !isSettledStatus(step.status));
+	if (next < 0) return finishedLabel(steps);
 	return `Next · ${position(next)} ${steps[next]?.title ?? ''}`.trim();
 }
 

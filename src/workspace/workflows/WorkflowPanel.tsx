@@ -9,15 +9,19 @@ import type {
 	SessionWorkflow,
 	Workflow,
 	WorkflowClient,
+	WorkflowStep,
 	WorkflowTarget,
 } from '@terminay/client-core';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { WorkflowStepMarker } from './workflowIcons';
 import {
+	canRestore,
+	canSkip,
 	doneCount,
 	elapsed,
 	isActive,
+	PANEL_SKIP_NOTE,
 	statusLabel,
 	stepTime,
 	type WorkflowPanelMode,
@@ -151,7 +155,11 @@ function ExpandedWorkflow(
 					This terminal’s workflow could not be restored.
 				</p>
 			) : (
-				<WorkflowSteps workflow={props.view.workflow} />
+				<WorkflowSteps
+					workflow={props.view.workflow}
+					client={props.client}
+					target={props.target}
+				/>
 			)}
 			<RemoveWorkflow {...props} />
 		</div>
@@ -175,7 +183,15 @@ function WorkflowSummary({ workflow }: { readonly workflow: Workflow }) {
 	);
 }
 
-function WorkflowSteps({ workflow }: { readonly workflow: Workflow }) {
+function WorkflowSteps({
+	workflow,
+	client,
+	target,
+}: {
+	readonly workflow: Workflow;
+	readonly client: WorkflowClient | undefined;
+	readonly target: WorkflowTarget;
+}) {
 	const now = useNow(workflow);
 	return (
 		<>
@@ -191,7 +207,7 @@ function WorkflowSteps({ workflow }: { readonly workflow: Workflow }) {
 					return (
 						<li
 							key={step.id}
-							className={`workflow-step${isActive(step.status) ? ' workflow-step--active' : ''}`}
+							className={`workflow-step${isActive(step.status) ? ' workflow-step--active' : ''}${step.status === 'skipped' ? ' workflow-step--skipped' : ''}`}
 							data-status={step.status}
 							aria-current={isActive(step.status) ? 'step' : undefined}
 						>
@@ -212,11 +228,77 @@ function WorkflowSteps({ workflow }: { readonly workflow: Workflow }) {
 							{time === undefined ? null : (
 								<span className="workflow-step-time">{time}</span>
 							)}
+							{client === undefined ? null : (
+								<StepAction step={step} client={client} target={target} />
+							)}
 						</li>
 					);
 				})}
 			</ol>
 		</>
+	);
+}
+
+/**
+ * Skip on a step that has not started or failed, Restore on a skipped one.
+ * Each carries the status shown, so a step that changed meanwhile (an agent
+ * started it) is refused rather than overwritten.
+ */
+function StepAction({
+	step,
+	client,
+	target,
+}: {
+	readonly step: WorkflowStep;
+	readonly client: WorkflowClient;
+	readonly target: WorkflowTarget;
+}) {
+	const [failed, setFailed] = useState<'skip' | 'restore' | undefined>();
+	const [pending, setPending] = useState(false);
+	// A fresh status from the server clears an earlier failure.
+	useEffect(() => {
+		setFailed(undefined);
+	}, [step.status]);
+	const skip = canSkip(step.status);
+	const restore = canRestore(step.status);
+	if (!skip && !restore && failed === undefined) return null;
+	const act = () => {
+		const kind = skip ? 'skip' : 'restore';
+		setFailed(undefined);
+		setPending(true);
+		void client
+			.updateStep(
+				target,
+				step.id,
+				skip ? 'skipped' : 'not_started',
+				skip
+					? { note: PANEL_SKIP_NOTE, expectedStatus: step.status }
+					: { expectedStatus: step.status },
+			)
+			.catch(() => setFailed(kind))
+			.finally(() => setPending(false));
+	};
+	return (
+		<span className="workflow-step-action">
+			{skip || restore ? (
+				<button
+					type="button"
+					className="workflow-step-button"
+					disabled={pending}
+					aria-label={`${skip ? 'Skip' : 'Restore'} ${step.title}`}
+					onClick={act}
+				>
+					{skip ? 'Skip' : 'Restore'}
+				</button>
+			) : null}
+			{failed === undefined ? null : (
+				<span className="workflow-error" role="alert">
+					{failed === 'skip'
+						? 'The step could not be skipped.'
+						: 'The step could not be restored.'}
+				</span>
+			)}
+		</span>
 	);
 }
 

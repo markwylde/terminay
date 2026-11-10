@@ -41,6 +41,15 @@ const badge = await bundle('src/workspace/workflows/WorkflowTabBadge.tsx', 'badg
 const clientCore = await bundle('packages/client-core/src/workflows.ts', 'client-core.cjs');
 // From source: the fast CI gate runs before any package is built.
 const serverCore = await bundle('packages/server-core/src/workflowService/types.ts', 'server-types.cjs');
+// Every bundle is built before the first test is declared: a test declared
+// after a later top-level await never runs under --test-force-exit.
+const seenStore = await bundle('src/workspace/workflows/workflowSeen.ts', 'seen.cjs');
+const library = await bundle('src/components/workflows/workflowLibraryModel.ts', 'library.cjs');
+const category = await bundle('src/components/settings/WorkflowsCategory.tsx', 'category.cjs');
+const settingsClient = await bundle('src/components/workflows/useWorkflowSettingsClient.ts', 'settings-client.cjs');
+const groups = await bundle('src/shared/macroLibraryGroups.ts', 'groups.cjs');
+const commandBar = await bundle('src/workspace/CommandBar.tsx', 'command-bar.cjs');
+const commands = await bundle('src/workspace/workflows/commandBarWorkflows.tsx', 'command-workflows.cjs');
 
 
 const step = (id, status, extra = {}) => ({
@@ -216,7 +225,6 @@ test('below 60 columns beside the expanded panel the panel stays a rail, and the
 
 // 5.5
 
-const seenStore = await bundle('src/workspace/workflows/workflowSeen.ts', 'seen.cjs');
 const MIN = 60_000;
 
 test('the dial is amber and filled to done over total while a step runs, with no count as text', () => {
@@ -374,10 +382,6 @@ test('seen completions are kept on the device, shared across windows, and capped
 
 // 6.1 / 6.2: Settings › Workflows
 
-const library = await bundle('src/components/workflows/workflowLibraryModel.ts', 'library.cjs');
-const category = await bundle('src/components/settings/WorkflowsCategory.tsx', 'category.cjs');
-const settingsClient = await bundle('src/components/workflows/useWorkflowSettingsClient.ts', 'settings-client.cjs');
-const groups = await bundle('src/shared/macroLibraryGroups.ts', 'groups.cjs');
 
 const templateState = (templates, categories = []) => ({ revision: 3, cursor: 'c3', categories, templates });
 const savedTemplate = (id, extra = {}) => ({
@@ -567,8 +571,6 @@ test('a stale save explains itself, and a refusal is read through the facade wra
 
 // 7.1 / 7.2: Command Bar
 
-const commandBar = await bundle('src/workspace/CommandBar.tsx', 'command-bar.cjs');
-const commands = await bundle('src/workspace/workflows/commandBarWorkflows.tsx', 'command-workflows.cjs');
 
 const templateFor = (id, name, category = '') => ({
 	id, name, description: '', category, openingPrompt: '', revision: 1,
@@ -724,4 +726,99 @@ test('the replace dialog names the workflow and offers Cancel first', () => {
 	assert.match(markup, /role="alertdialog"/);
 	assert.match(markup, /Replace “&lt;W1&gt;”\?/);
 	assert.ok(markup.indexOf('>Cancel<') < markup.indexOf('>Replace<'));
+});
+
+// skip-workflow-steps
+
+test('the client and server agree on the step statuses, including skipped', () => {
+	assert.deepEqual([...clientCore.WORKFLOW_STEP_STATUSES], [...serverCore.WORKFLOW_STEP_STATUSES]);
+	assert.ok(clientCore.WORKFLOW_STEP_STATUSES.includes('skipped'));
+});
+
+test('a skipped step is a dashed, dimmed grey marker with a dash, named skipped, distinct from done and not started', () => {
+	const style = model.markerStyle('skipped');
+	assert.deepEqual(style, { tone: 'skipped', filled: false, glyph: 'dash' });
+	assert.notDeepEqual(style, model.markerStyle('not_started'));
+	assert.notDeepEqual(style, model.markerStyle('done'));
+	const markup = render({ view: attached([step('a', 'done'), step('b', 'skipped', { icon: 'camera' })]) });
+	assert.match(markup, /class="workflow-marker workflow-marker--skipped" data-status="skipped" role="img" aria-label="Step b: skipped"/);
+	assert.ok(markup.includes(icons.WORKFLOW_ICON_PATHS.camera), 'a skipped step keeps its icon');
+	const plain = render({ view: attached([step('a', 'skipped')]) });
+	assert.ok(plain.includes('M4.5 8h7'), 'a skipped step without an icon shows a dash');
+});
+
+test('the expanded panel strikes a skipped step, shows its note and no duration, and counts it as done', () => {
+	const markup = render({
+		mode: 'expanded',
+		view: attached([
+			step('a', 'done', { startedAt: 0, endedAt: 65_000 }),
+			step('b', 'skipped', { startedAt: 65_000, endedAt: 65_000, note: 'not a visual change' }),
+			step('c', 'not_started'),
+		]),
+	});
+	assert.match(markup, /2 of 3 done/);
+	assert.match(markup, /class="workflow-step workflow-step--skipped" data-status="skipped"/);
+	assert.match(markup, /not a visual change/);
+	const skippedRow = markup.slice(markup.indexOf('data-status="skipped"'), markup.indexOf('data-status="not_started"'));
+	assert.ok(!skippedRow.includes('workflow-step-time'), 'no duration on a skipped step');
+});
+
+test('done and skipped steps finish a workflow, and the dial and label say so', () => {
+	const finished = model.tabSummary(attached([step('a', 'done', { endedAt: 10 }), step('b', 'skipped', { endedAt: 25 })]));
+	assert.equal(finished.tone, 'done');
+	assert.equal(finished.fraction, 1);
+	assert.equal(finished.label, 'All 2 steps done or skipped');
+	assert.equal(finished.completionKey, 'wf-1:25');
+	const allSkipped = model.tabSummary(attached([step('a', 'skipped', { endedAt: 5 })]));
+	assert.equal(allSkipped.label, 'All 1 step done or skipped');
+	assert.equal(model.isFinished({ steps: [step('a', 'skipped'), step('b', 'failed')] }), false);
+	const next = model.tabSummary(attached([step('a', 'skipped'), { ...step('b', 'not_started'), title: 'Verify' }]));
+	assert.equal(next.label, 'Next: Verify · 1 of 2');
+	assert.equal(next.fraction, 0.5);
+	assert.equal(badge.workflowStepLine(attached([step('a', 'done'), step('b', 'skipped')])), 'All 2 steps done or skipped');
+	// Restoring a step reopens the workflow.
+	assert.equal(model.completionKey({ id: 'wf-1', steps: [step('a', 'done', { endedAt: 1 }), step('b', 'not_started')] }), undefined);
+	// Elapsed stops at the last end once finished.
+	assert.equal(model.elapsed({ steps: [step('a', 'done', { startedAt: 0, endedAt: 60_000 }), step('b', 'skipped', { startedAt: 120_000, endedAt: 120_000 })] }, 10 * MIN), '2m');
+});
+
+test('Skip is offered on not started and failed steps, Restore on skipped ones, and nothing else', () => {
+	assert.deepEqual(
+		['not_started', 'running', 'done', 'failed', 'needs_input', 'skipped'].map((status) => [status, model.canSkip(status), model.canRestore(status)]),
+		[
+			['not_started', true, false],
+			['running', false, false],
+			['done', false, false],
+			['failed', true, false],
+			['needs_input', false, false],
+			['skipped', false, true],
+		],
+	);
+	const client = { updateStep: async () => {}, remove: async () => {} };
+	const markup = render({
+		mode: 'expanded',
+		client,
+		view: attached([
+			step('a', 'done'),
+			step('b', 'running', { startedAt: 0 }),
+			step('c', 'failed'),
+			step('d', 'needs_input'),
+			step('e', 'skipped'),
+			step('f', 'not_started'),
+		]),
+	});
+	const actions = [...markup.matchAll(/aria-label="(Skip|Restore) (Step [a-f])"/g)].map(([, action, title]) => `${action} ${title}`);
+	assert.deepEqual(actions, ['Skip Step c', 'Restore Step e', 'Skip Step f']);
+	assert.equal(model.PANEL_SKIP_NOTE, 'Skipped from the panel');
+});
+
+test('the client sends a step update with its note and expected status to update-step', async () => {
+	const sent = [];
+	const real = new clientCore.WorkflowClient({ command: async (operation, payload) => sent.push([operation, payload]) });
+	await real.updateStep(target, 'step-1', 'skipped', { note: 'Skipped from the panel', expectedStatus: 'failed' });
+	await real.updateStep(target, 'step-1', 'not_started', { expectedStatus: 'skipped' });
+	assert.deepEqual(sent, [
+		['workflow.update-step', { target, stepId: 'step-1', status: 'skipped', note: 'Skipped from the panel', expectedStatus: 'failed' }],
+		['workflow.update-step', { target, stepId: 'step-1', status: 'not_started', expectedStatus: 'skipped' }],
+	]);
 });

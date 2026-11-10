@@ -458,3 +458,20 @@ test("template_not_found reaches the agent through stdio, and every description 
     assert.equal(tools.filter((tool) => /workflow/.test(tool.name) && !/workflow_template/.test(tool.name)).every((tool) => !/template/.test(tool.name)), true);
   });
 });
+
+// skip-workflow-steps
+
+test("an agent skips a step with a reason, and a workflow of done and skipped steps is finished", async () => {
+  const { call } = service();
+  assert.deepEqual(parseUpdateWorkflowStep({ step_id: "step-1", status: "skipped", note: "n/a" }), { stepId: "step-1", status: "skipped", note: "n/a" });
+  const created = await call("create_workflow", { name: "Flow", opening_prompt: "Go.", steps });
+  const [first, second] = created.workflow.steps;
+  await call("update_workflow_step", { step_id: first.id, status: "done", note: "ok" });
+  const skipped = await call("update_workflow_step", { step_id: second.id, status: "skipped", note: "not a visual change" });
+  assert.equal(skipped.workflow.steps[1].status, "skipped");
+  assert.equal(skipped.workflow.steps[1].note, "not a visual change");
+  assert.equal(skipped.unfinished, false);
+  assert.equal(skipped.resume_step_id, null);
+  const read = await call("get_workflow");
+  assert.equal(read.workflow.steps[1].status, "skipped");
+});

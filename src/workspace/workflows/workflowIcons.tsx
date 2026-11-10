@@ -31,6 +31,7 @@ const GLYPH_PATHS: Readonly<Record<Exclude<WorkflowStatusGlyph, 'none' | 'dot'>,
 		check: 'M3.5 8.5 6.5 11.5 12.5 4.5',
 		cross: 'M4.5 4.5l7 7M11.5 4.5l-7 7',
 		exclamation: 'M8 3v6.5M8 12.2v.3',
+		dash: 'M4.5 8h7',
 	});
 
 export function WorkflowIcon({ name }: { readonly name: WorkflowIconName }) {

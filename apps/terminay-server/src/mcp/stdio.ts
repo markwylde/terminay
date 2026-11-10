@@ -1016,7 +1016,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'get_workflow',
 		{
-			description: `${WORKFLOW_NOUN} Read the workflow attached to a terminal: its id, name, opening prompt, template_id (the workflow template it was copied from, or null), and each step's id, title, prompt, icon, status, note, started_at and ended_at, plus resume_step_id, the step to continue from (the step left running or waiting on the user if there is one, otherwise the first step that is not done; null when every step is done). Fails with no_workflow when the terminal has none. ${WORKFLOW_TERMINAL_NOTE}`,
+			description: `${WORKFLOW_NOUN} Read the workflow attached to a terminal: its id, name, opening prompt, template_id (the workflow template it was copied from, or null), and each step's id, title, prompt, icon, status, note, started_at and ended_at, plus resume_step_id, the step to continue from (the step left running or waiting on the user if there is one, otherwise the first step that is not done or skipped; null when every step is done or skipped). Fails with no_workflow when the terminal has none. ${WORKFLOW_TERMINAL_NOTE}`,
 			inputSchema: { terminal },
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
@@ -1050,7 +1050,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'update_workflow_step',
 		{
-			description: `${WORKFLOW_NOUN} Report a workflow step's status: not_started, running, done, failed, or needs_input (you need the user to decide or do something). Set a step to running before you work on it. Any status may follow any other, but at most one step is running or needs_input at a time; starting another fails with step_active naming the active step's id. note is one line of at most 200 characters: given, it replaces the step's note; empty, it clears it; left out, it keeps it. not_started clears the note. This never changes a workflow template. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
+			description: `${WORKFLOW_NOUN} Report a workflow step's status: not_started, running, done, failed, needs_input (you need the user to decide or do something), or skipped (a step you were told to drop, or that does not apply; give the reason as the note). A workflow is finished when every step is done or skipped. Set a step to running before you work on it. Any status may follow any other, but at most one step is running or needs_input at a time; starting another fails with step_active naming the active step's id. note is one line of at most 200 characters: given, it replaces the step's note; empty, it clears it; left out, it keeps it. not_started clears the note. This never changes a workflow template. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
 			inputSchema: {
 				terminal,
 				step_id: z.string().regex(ID_PATTERN),
@@ -1060,6 +1060,7 @@ function registerWorkflowTools(
 					'done',
 					'failed',
 					'needs_input',
+					'skipped',
 				]),
 				note: z.string().max(200).optional(),
 			},

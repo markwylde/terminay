@@ -324,11 +324,24 @@ export function createWorkflowOperationRegistry(
 			if (!isWorkflowStepStatus(payload.status))
 				throw new WorkflowServiceError(
 					'invalid_workflow',
-					'status must be not_started, running, done, failed or needs_input',
+					'status must be not_started, running, done, failed, needs_input or skipped',
 					{ field: 'status' },
 				);
+			const expected = payload.expectedStatus;
+			if (expected !== undefined && !isWorkflowStepStatus(expected))
+				throw new WorkflowServiceError(
+					'invalid_workflow',
+					'expectedStatus must be a step status',
+					{ field: 'expectedStatus' },
+				);
 			return asJson(
-				store.updateStep(where.sessionId, stepId, payload.status, payload.note),
+				store.updateStep(
+					where.sessionId,
+					stepId,
+					payload.status,
+					payload.note,
+					expected,
+				),
 			);
 		} catch (error) {
 			throw toProtocolError(error);
@@ -412,7 +425,9 @@ export function toProtocolError(error: unknown): unknown {
 					error.code === 'step_not_found' ||
 					error.code === 'unauthorized_target'
 				? 'not_found'
-				: error.code === 'workflow_exists' || error.code === 'step_active'
+				: error.code === 'workflow_exists' ||
+						error.code === 'step_active' ||
+						error.code === 'step_changed'
 					? 'conflict'
 					: 'internal';
 	const details =

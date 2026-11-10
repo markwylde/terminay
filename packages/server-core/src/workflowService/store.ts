@@ -176,9 +176,17 @@ export class WorkflowStore {
 		stepId: string,
 		status: WorkflowStepStatus,
 		note: unknown,
+		expectedStatus?: WorkflowStepStatus,
 	): SessionWorkflowView {
 		const workflow = this.workflowOf(sessionId);
-		const next = applyStepUpdate(workflow, stepId, status, note, this.now());
+		const next = applyStepUpdate(
+			workflow,
+			stepId,
+			status,
+			note,
+			this.now(),
+			expectedStatus,
+		);
 		return this.commit(sessionId, { state: 'attached', workflow: next });
 	}
 

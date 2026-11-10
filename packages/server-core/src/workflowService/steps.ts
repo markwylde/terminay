@@ -11,19 +11,26 @@ export function isActiveStatus(status: WorkflowStepStatus): boolean {
 	return ACTIVE.has(status);
 }
 
-/** A workflow is unfinished while any step is not done. */
+const SETTLED: ReadonlySet<WorkflowStepStatus> = new Set(['done', 'skipped']);
+
+/** A step is settled when it is done or deliberately skipped. */
+export function isSettled(status: WorkflowStepStatus): boolean {
+	return SETTLED.has(status);
+}
+
+/** A workflow is unfinished while any step is not settled. */
 export function isUnfinished(workflow: Workflow): boolean {
-	return workflow.steps.some((step) => step.status !== 'done');
+	return workflow.steps.some((step) => !isSettled(step.status));
 }
 
 /**
  * The step to continue from: the active step if there is one, else the first
- * step that is not done, else null.
+ * step that is not settled, else null.
  */
 export function resumeStepId(workflow: Workflow): string | null {
 	const active = workflow.steps.find((step) => isActiveStatus(step.status));
 	if (active !== undefined) return active.id;
-	return workflow.steps.find((step) => step.status !== 'done')?.id ?? null;
+	return workflow.steps.find((step) => !isSettled(step.status))?.id ?? null;
 }
 
 /**
@@ -36,6 +43,7 @@ export function applyStepUpdate(
 	status: WorkflowStepStatus,
 	note: unknown,
 	now: number,
+	expectedStatus?: WorkflowStepStatus,
 ): Workflow {
 	const index = workflow.steps.findIndex((step) => step.id === stepId);
 	if (index < 0)
@@ -43,6 +51,13 @@ export function applyStepUpdate(
 			'step_not_found',
 			'that step is not in this workflow',
 			{ stepId },
+		);
+	const current = workflow.steps[index] as WorkflowStep;
+	if (expectedStatus !== undefined && current.status !== expectedStatus)
+		throw new WorkflowServiceError(
+			'step_changed',
+			`step "${current.title}" is now ${current.status}`,
+			{ stepId, status: current.status },
 		);
 	if (isActiveStatus(status)) {
 		const active = workflow.steps.find(
@@ -78,7 +93,7 @@ function nextStep(
 		// From not started, or a retry of a finished step.
 		return { ...step, status, note: withNote, startedAt: now, endedAt: null };
 	}
-	// done or failed
+	// done, failed or skipped
 	if (step.status === status) return { ...step, note: withNote };
 	return {
 		...step,

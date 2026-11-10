@@ -13,6 +13,7 @@ export const WORKFLOW_STEP_STATUSES = Object.freeze([
 	'done',
 	'failed',
 	'needs_input',
+	'skipped',
 ] as const);
 export type WorkflowStepStatus = (typeof WORKFLOW_STEP_STATUSES)[number];
 

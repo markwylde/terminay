@@ -293,3 +293,33 @@ test('2.1 reset is the default view', () => {
 		folded: [],
 	});
 });
+
+// skip-workflow-steps
+
+test('a skipped step counts as done for tone, progress, finished, and sort', () => {
+	assert.equal(workflowTone(attached('s', 'n', [step('1', 'done'), step('2', 'skipped')])), 'done');
+	assert.equal(workflowTone(attached('s', 'n', [step('1', 'skipped')])), 'done');
+	assert.equal(workflowTone(attached('s', 'n', [step('1', 'skipped'), step('2', 'not_started')])), 'idle');
+	assert.equal(isHighlighted('skipped'), false);
+	const skippedRows = buildWorkflowRows(
+		[source('s1', [['a', 'Alpha', [terminal('x'), terminal('y')]]])],
+		new Map([
+			[
+				's1',
+				server(
+					attached('session-x', 'Skips', [step('1', 'done'), step('2', 'skipped', { note: 'n/a' })]),
+					attached('session-y', 'Half', [step('1', 'done'), step('2', 'not_started')]),
+				),
+			],
+		]),
+	);
+	assert.deepEqual(
+		skippedRows.map((row) => [row.sessionId, row.done, row.fraction, row.tone]),
+		[
+			['session-x', 2, 1, 'done'],
+			['session-y', 1, 0.5, 'idle'],
+		],
+	);
+	assert.deepEqual(applyWorkflowsHomeView(skippedRows, view({ showFinished: false })).shown.map((r) => r.sessionId), ['session-y']);
+	assert.deepEqual(applyWorkflowsHomeView(skippedRows, view({ sort: 'progress' })).shown.map((r) => r.sessionId), ['session-x', 'session-y']);
+});

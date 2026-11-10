@@ -17,8 +17,8 @@ export const WORKFLOW_PANEL_WIDTH = 264;
 /** A terminal narrower than this beside the expanded panel keeps the rail. */
 export const WORKFLOW_MIN_TERMINAL_COLUMNS = 60;
 
-export type WorkflowMarkerTone = 'done' | 'running' | 'alert' | 'idle';
-export type WorkflowStatusGlyph = 'check' | 'dot' | 'cross' | 'exclamation' | 'none';
+export type WorkflowMarkerTone = 'done' | 'running' | 'alert' | 'idle' | 'skipped';
+export type WorkflowStatusGlyph = 'check' | 'dot' | 'cross' | 'exclamation' | 'dash' | 'none';
 
 export interface WorkflowMarkerStyle {
 	readonly tone: WorkflowMarkerTone;
@@ -35,6 +35,7 @@ const MARKERS: Readonly<Record<WorkflowStepStatus, WorkflowMarkerStyle>> =
 		failed: { tone: 'alert', filled: true, glyph: 'cross' },
 		needs_input: { tone: 'alert', filled: true, glyph: 'exclamation' },
 		not_started: { tone: 'idle', filled: false, glyph: 'none' },
+		skipped: { tone: 'skipped', filled: false, glyph: 'dash' },
 	});
 
 export function markerStyle(status: WorkflowStepStatus): WorkflowMarkerStyle {
@@ -48,6 +49,7 @@ const STATUS_LABELS: Readonly<Record<WorkflowStepStatus, string>> =
 		done: 'done',
 		failed: 'failed',
 		needs_input: 'needs you',
+		skipped: 'skipped',
 	});
 
 export function statusLabel(status: WorkflowStepStatus): string {
@@ -63,9 +65,43 @@ export function isActive(status: WorkflowStepStatus): boolean {
 	return status === 'running' || status === 'needs_input';
 }
 
-export function doneCount(workflow: Workflow): number {
-	return workflow.steps.filter((step) => step.status === 'done').length;
+/** Settled steps count as done: done, or deliberately skipped. */
+export function isSettledStatus(status: WorkflowStepStatus): boolean {
+	return status === 'done' || status === 'skipped';
 }
+
+/** Every step is settled (and there is at least one). */
+export function isFinished(workflow: Pick<Workflow, 'steps'>): boolean {
+	return (
+		workflow.steps.length > 0 &&
+		workflow.steps.every((step) => isSettledStatus(step.status))
+	);
+}
+
+export function doneCount(workflow: Pick<Workflow, 'steps'>): number {
+	return workflow.steps.filter((step) => isSettledStatus(step.status)).length;
+}
+
+/** "All 8 steps done", or "All 8 steps done or skipped" when any was skipped. */
+export function finishedLabel(steps: readonly Pick<WorkflowStep, 'status'>[]): string {
+	const total = steps.length;
+	const noun = total === 1 ? 'step' : 'steps';
+	const skipped = steps.some((step) => step.status === 'skipped');
+	return `All ${total} ${noun} done${skipped ? ' or skipped' : ''}`;
+}
+
+/** The panel offers Skip on a step that has not started or failed. */
+export function canSkip(status: WorkflowStepStatus): boolean {
+	return status === 'not_started' || status === 'failed';
+}
+
+/** The panel offers Restore on a skipped step. */
+export function canRestore(status: WorkflowStepStatus): boolean {
+	return status === 'skipped';
+}
+
+/** The note the panel's Skip writes. */
+export const PANEL_SKIP_NOTE = 'Skipped from the panel';
 
 /** The tone of a workflow's progress dial: red, amber, green, or grey. */
 export type WorkflowDialTone = 'alert' | 'running' | 'done' | 'idle';
@@ -88,8 +124,7 @@ export interface WorkflowTabSummary {
 
 /** The completion a finished workflow is at: its id and its latest step end. */
 export function completionKey(workflow: Workflow): string | undefined {
-	if (workflow.steps.length === 0) return undefined;
-	if (!workflow.steps.every((step) => step.status === 'done')) return undefined;
+	if (!isFinished(workflow)) return undefined;
 	const ends = workflow.steps.map((step) => step.endedAt ?? 0);
 	return `${workflow.id}:${Math.max(...ends)}`;
 }
@@ -122,7 +157,7 @@ export function tabSummary(
 			fraction: 1,
 			completionKey: key,
 			ticking: false,
-			label: `All ${total} ${total === 1 ? 'step' : 'steps'} done`,
+			label: finishedLabel(steps),
 		};
 	const active = steps.find((step) => isActive(step.status));
 	const failed = steps.filter((step) => step.status === 'failed');
@@ -144,7 +179,7 @@ export function tabSummary(
 		const [first, ...rest] = failures;
 		parts = [first as string, count, ...rest];
 	} else {
-		const next = steps.find((step) => step.status !== 'done');
+		const next = steps.find((step) => !isSettledStatus(step.status));
 		parts = next === undefined ? [count] : [`Next: ${next.title}`, count];
 	}
 	return {
@@ -169,7 +204,7 @@ export function formatDuration(milliseconds: number): string {
 
 /** A step's duration once it ended, its running time while active, or nothing. */
 export function stepTime(step: WorkflowStep, now: number): string | undefined {
-	if (step.startedAt === null) return undefined;
+	if (step.startedAt === null || step.status === 'skipped') return undefined;
 	if (step.endedAt !== null) return formatDuration(step.endedAt - step.startedAt);
 	return isActive(step.status) ? formatDuration(now - step.startedAt) : undefined;
 }
@@ -182,7 +217,7 @@ export function elapsed(workflow: Workflow, now: number): string | undefined {
 	if (starts.length === 0) return undefined;
 	const first = Math.min(...starts);
 	const ends = workflow.steps.map((step) => step.endedAt);
-	const finished = workflow.steps.every((step) => step.status === 'done');
+	const finished = isFinished(workflow);
 	const last = finished
 		? Math.max(...ends.filter((value): value is number => value !== null))
 		: now;
