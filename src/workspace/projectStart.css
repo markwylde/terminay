@@ -128,6 +128,7 @@
 }
 
 .project-start__recent-row {
+	border-radius: 6px;
 	display: flex;
 	align-items: stretch;
 	gap: 4px;
@@ -269,7 +270,7 @@
 
 .project-start__action:focus-visible,
 .project-start__show-more:focus-visible,
-.project-start__recent-open:focus-visible,
+.project-start__recent-row:has(.project-start__recent-open:focus-visible),
 .project-start__recent-forget:focus-visible,
 .no-root-folder__action:focus-visible {
 	outline: 2px solid rgba(120, 170, 255, 0.9);

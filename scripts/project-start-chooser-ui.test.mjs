@@ -75,7 +75,7 @@ const chooser = (overrides = {}) =>
 		}),
 	);
 
-/** Every control the arrow keys and Tab walk, in document order. */
+/** Every control the arrow keys walk, in document order. */
 function chooserItems(markup) {
 	return [
 		...markup.matchAll(/<button[^>]*data-start-chooser-item=""[^>]*>/gu),
@@ -128,9 +128,10 @@ test('an unavailable recent folder is shown, reachable, not openable, and still 
 	assert.doesNotMatch(forget, /disabled/u);
 });
 
-test('every start and every recent entry with its Forget is in the keyboard order', () => {
-	const items = chooserItems(chooser());
-	assert.equal(items.length, 6);
+test('the arrow keys walk each start and each recent row, and Tab still reaches Forget', () => {
+	const markup = chooser();
+	const items = chooserItems(markup);
+	assert.equal(items.length, 4);
 	assert.match(
 		items[0],
 		/data-terminay-start-action="folder"/u,
@@ -138,10 +139,36 @@ test('every start and every recent entry with its Forget is in the keyboard orde
 	);
 	assert.match(items[1], /data-terminay-start-action="home"/u);
 	assert.match(items[2], /data-terminay-recent-open/u);
-	assert.match(items[3], /data-terminay-recent-forget/u);
-	assert.match(items[4], /data-terminay-recent-open/u);
-	assert.match(items[5], /data-terminay-recent-forget/u);
+	assert.match(items[3], /data-terminay-recent-open/u);
 	for (const item of items) assert.match(item, /type="button"/u);
+	// Forget is out of the arrow order but stays a focusable button for Tab.
+	const forgets = [
+		...markup.matchAll(/<button[^>]*data-terminay-recent-forget[^>]*>/gu),
+	].map(([tag]) => tag);
+	assert.equal(forgets.length, 2);
+	for (const forget of forgets) {
+		assert.doesNotMatch(forget, /data-start-chooser-item/u);
+		assert.doesNotMatch(forget, /tabindex="-1"/u);
+	}
+});
+
+test('the arrows from a forget control return to its row, not to the first start', async () => {
+	const source = await readFile(
+		'src/workspace/ProjectStartChooser.tsx',
+		'utf8',
+	);
+	assert.match(
+		source,
+		/focused\?\.dataset\.terminayRecentForget !== undefined[\s\S]{0,200}closest\('\[data-terminay-recent-folder\]'\)[\s\S]{0,120}\[data-terminay-recent-open\]/u,
+	);
+});
+
+test('a focused recent folder outlines its whole row', () => {
+	assert.match(
+		css,
+		/\.project-start__recent-row:has\(\.project-start__recent-open:focus-visible\)[^{]*\{[^}]*outline: 2px solid/u,
+	);
+	assert.doesNotMatch(css, /^\.project-start__recent-open:focus-visible/mu);
 });
 
 const manyRecent = (count) =>
@@ -178,7 +205,9 @@ test('many recent folders show five, a search box above, and Show more below', (
 		),
 	].map(([tag]) => tag);
 	assert.match(items[2], /data-terminay-recent-search/u);
+	// Down from the search box reaches the first row, then the second.
 	assert.match(items[3], /data-terminay-recent-open/u);
+	assert.match(items[4], /data-terminay-recent-open/u);
 	assert.match(items.at(-1), /data-terminay-recent-show-more/u);
 });
 
@@ -222,7 +251,15 @@ test('a refused choice is shown inline, and the starts wait while one is being m
 	assert.match(busy, /data-terminay-start-action="folder"/u);
 	assert.equal(
 		chooserItems(busy).filter((item) => / disabled=""/u.test(item)).length,
-		4,
+		2,
+	);
+	assert.equal(
+		[
+			...busy.matchAll(
+				/<button[^>]*data-terminay-recent-forget[^>]*disabled=""[^>]*>|<button[^>]*disabled=""[^>]*data-terminay-recent-forget[^>]*>/gu,
+			),
+		].length,
+		2,
 	);
 });
 
@@ -523,6 +560,13 @@ test('the chooser focuses its first start, Open a folder, when it is shown', asy
 	assert.match(
 		source,
 		/ref=\{firstActionRef\}[\s\S]{0,200}data-terminay-start-action="folder"/u,
+	);
+	// With a search box, focus moves there from the first start, so typing
+	// searches at once, but never from where the person has already moved.
+	assert.match(source, /ref=\{searchRef\}/u);
+	assert.match(
+		source,
+		/if \(!isActive \|\| !searchable \|\| isCompact\) return;[\s\S]{0,400}focused\.dataset\.terminayStartAction === 'folder'[\s\S]{0,200}searchRef\.current\?\.focus\(/u,
 	);
 	// A creation that ends awaiting a choice does not send focus to a terminal.
 	assert.match(
