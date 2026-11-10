@@ -159,7 +159,7 @@ export function createAppControlAdapter(
 	/** Ask the agent's client; undefined when there is none to ask. */
 	const askClient = async (
 		context: ControlRequestContext,
-		op: 'layout' | 'showProject' | 'presentView',
+		op: 'layout' | 'presentView',
 		params: Record<string, JsonValue | undefined>,
 		projectId: string | undefined,
 		signal: AbortSignal,
@@ -317,20 +317,9 @@ export function createAppControlAdapter(
 			} catch (error) {
 				terminalFailure = reasonOf(error);
 			}
-			let shown = false;
-			let reason: string | undefined;
-			try {
-				await askClient(
-					context,
-					'showProject',
-					{ projectId },
-					projectId,
-					signal,
-				);
-				shown = true;
-			} catch (error) {
-				reason = reasonOf(error);
-			}
+			// The new project stays in the background: only the user, or an
+			// explicit view tool such as focus_project, changes what a client
+			// shows (ADR-0103).
 			const after = await options.state();
 			const created = after.projects[projectId];
 			return {
@@ -340,8 +329,6 @@ export function createAppControlAdapter(
 				...(terminal === undefined
 					? { terminal_reason: terminalFailure }
 					: { terminal }),
-				shown,
-				...(reason === undefined ? {} : { reason }),
 			};
 		},
 		updateProject: async (params, context, signal) => {

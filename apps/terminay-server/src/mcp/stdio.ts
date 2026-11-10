@@ -744,7 +744,7 @@ function registerAppControlTools(
 	server.registerTool(
 		'create_project',
 		{
-			description: `Create a project, started at once, and open its first terminal. root ~ starts it in the home folder with no root folder; any other root becomes its folder and, without a name, names it. It goes into window, or else the window you are talking from, and that window shows it (shown says whether it did). Returns its project handle and first terminal. Nothing here lists or browses folders. ${WORKSPACE_REACH_NOTE}`,
+			description: `Create a project, started at once, and open its first terminal. root ~ starts it in the home folder with no root folder; any other root becomes its folder and, without a name, names it. It goes into window, or else the window you are talking from, as a background tab: nothing on screen changes and the user keeps what they were looking at. Call focus_project with the returned handle only if the user asks to see it. Returns its project handle and first terminal. Nothing here lists or browses folders. ${WORKSPACE_REACH_NOTE}`,
 			inputSchema: {
 				root,
 				name: name.optional(),

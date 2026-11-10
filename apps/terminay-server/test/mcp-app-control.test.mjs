@@ -440,6 +440,7 @@ async function fixture({ withClient = true, rebinds = true } = {}) {
 
 	// The agent's client, at the relay's wire.
 	const requests = [];
+	const control = { failFirstTerminal: false };
 	let answer = (request) =>
 		request.op === 'layout'
 			? { ok: true, result: { layout: { projectId: 'project-a' } } }
@@ -502,6 +503,7 @@ async function fixture({ withClient = true, rebinds = true } = {}) {
 		windowHandles,
 		canonicalFolder: (root) => rootFolders.canonicalDirectory(root),
 		openFirstTerminal: async (projectId) => {
+			if (control.failFirstTerminal) throw new Error('posix_spawnp failed');
 			const sessionId = `first-${opened.length + 1}`;
 			addTerminal(sessionId, projectId);
 			opened.push({
@@ -534,6 +536,7 @@ async function fixture({ withClient = true, rebinds = true } = {}) {
 		workspace,
 		adapter,
 		requests,
+		control,
 		opened,
 		listings,
 		principals,
@@ -599,7 +602,7 @@ test('list_projects: project reach sees only its own project; workspace reach se
 	}
 });
 
-test("create_project with ~ starts it with no root folder in the home directory and shows it on the agent's client", async () => {
+test("create_project with ~ starts it with no root folder in the home directory and leaves the agent's client view alone", async () => {
 	const f = await fixture();
 	try {
 		const created = await f.adapter.createProject(
@@ -621,9 +624,13 @@ test("create_project with ~ starts it with no root folder in the home directory 
 		assert.equal(created.root_folder, false);
 		assert.equal(created.terminal, 'first-1');
 		assert.deepEqual(f.opened, [{ sessionId: 'first-1', projectId, root: '' }]);
-		assert.equal(created.shown, true);
-		assert.deepEqual(f.requests.at(-1).params, { projectId });
-		assert.equal(f.requests.at(-1).op, 'showProject');
+		// Nothing on screen changes: the client is only asked for its layout.
+		assert.equal('shown' in created, false);
+		assert.equal('reason' in created, false);
+		assert.deepEqual(
+			f.requests.map((request) => request.op),
+			['layout'],
+		);
 		// It went into the window the agent's client shows.
 		assert.equal(project.viewId, f.firstView);
 		assert.ok(
@@ -703,7 +710,7 @@ test('create_project refuses a missing folder, a file, and a relative path, and 
 	}
 });
 
-test("create_project with no agent's client still creates it, in the first window, and says it was not shown", async () => {
+test("create_project with no agent's client still creates it, in the first window", async () => {
 	const f = await fixture({ withClient: false });
 	try {
 		const created = await f.adapter.createProject(
@@ -711,10 +718,36 @@ test("create_project with no agent's client still creates it, in the first windo
 			workspaceTerminal(),
 			f.signal,
 		);
-		assert.equal(created.shown, false);
-		assert.match(created.reason, /renderer_unavailable/u);
+		assert.equal('shown' in created, false);
+		assert.equal('reason' in created, false);
 		assert.equal(created.window, f.windowHandles.handleFor(f.firstView));
 		assert.equal(created.terminal, 'first-1');
+	} finally {
+		await f.cleanup();
+	}
+});
+
+test('create_project keeps a project whose first terminal fails, reports terminal_reason, and changes no view', async () => {
+	const f = await fixture();
+	try {
+		f.control.failFirstTerminal = true;
+		const created = await f.adapter.createProject(
+			{ root: '~' },
+			workspaceTerminal(),
+			f.signal,
+		);
+		const projectId = f.projectHandles.resolve(
+			created.project,
+			f.workspace.state,
+		);
+		assert.ok(f.workspace.state.projects[projectId], 'the project remains');
+		assert.equal(created.terminal, undefined);
+		assert.match(created.terminal_reason, /posix_spawnp failed/u);
+		assert.equal('shown' in created, false);
+		assert.deepEqual(
+			f.requests.map((request) => request.op),
+			['layout'],
+		);
 	} finally {
 		await f.cleanup();
 	}
