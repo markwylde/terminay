@@ -30,7 +30,9 @@ const activeWorkspace = (page: Page) =>
 	page.locator('.project-workspace--active');
 
 const projectTabTitle = (page: Page, projectId: string) =>
-	page.locator(`.project-tab[data-project-id="${projectId}"] .project-tab-title`);
+	page.locator(
+		`.project-tab[data-project-id="${projectId}"] .project-tab-title`,
+	);
 
 /** Create a project and wait for its chooser. Returns the project's id. */
 async function createAwaitingProject(page: Page): Promise<string> {
@@ -43,7 +45,10 @@ async function createAwaitingProject(page: Page): Promise<string> {
 }
 
 /** A chooser on screen: its heading, both starts, the first one focused. */
-async function expectChooserShown(page: Page, projectId: string): Promise<void> {
+async function expectChooserShown(
+	page: Page,
+	projectId: string,
+): Promise<void> {
 	const chooser = startChooserFor(page, projectId);
 	await expect(chooser).toBeVisible();
 	await expect(chooser.getByRole('heading', { level: 2 })).toHaveText(
@@ -96,7 +101,9 @@ test('a project created beside a rooted one waits for its start, and Home starts
 
 	// It runs in the server account's home, and has no root of its own: not
 	// the rooted project's folder, and not home either.
-	expect(await activeTerminalCwd(mainWindow)).toBe(await realpath(os.homedir()));
+	expect(await activeTerminalCwd(mainWindow)).toBe(
+		await realpath(os.homedir()),
+	);
 	await expect(activeWorkspace(mainWindow)).not.toHaveAttribute(
 		'data-terminay-project-root',
 		rootedRoot,
@@ -230,9 +237,9 @@ test('a folder opened through the browser becomes a recent folder that a later p
 	);
 	await expect(field).toHaveValue(`${parent}/`);
 	await field.fill(`${folder}/`);
-	await expect(browser.locator('[data-terminay-root-folder-choose]')).toHaveText(
-		`Open “${name}”`,
-	);
+	await expect(
+		browser.locator('[data-terminay-root-folder-choose]'),
+	).toHaveText(`Open “${name}”`);
 	// Enter chooses the folder the field names.
 	await field.press('Enter');
 	await expect(browser).toHaveCount(0);
@@ -285,7 +292,9 @@ test('a folder opened through the browser becomes a recent folder that a later p
 	);
 	const third = await createAwaitingProject(mainWindow);
 	await startChooserFor(mainWindow, third)
-		.locator(`[data-terminay-recent-folder="${folder}"] [data-terminay-recent-open]`)
+		.locator(
+			`[data-terminay-recent-folder="${folder}"] [data-terminay-recent-open]`,
+		)
 		.click();
 	await expect(startChooserFor(mainWindow, third)).toHaveCount(0);
 	await expect(
@@ -309,7 +318,9 @@ test('a folder opened through the browser becomes a recent folder that a later p
 		chooser.locator(`[data-terminay-recent-folder="${elsewhere}"]`),
 	).toBeVisible();
 	// Forgetting a folder starts nothing.
-	await expect(chooser.locator('[data-terminay-start-action="folder"]')).toBeVisible();
+	await expect(
+		chooser.locator('[data-terminay-start-action="folder"]'),
+	).toBeVisible();
 	await chooseProjectStart(mainWindow, 'home');
 	const fifth = await createAwaitingProject(mainWindow);
 	await expect(
@@ -330,7 +341,15 @@ test('the folder browser keeps one height between folders and completes a typed 
 	);
 	const workspace = await createWorkspace({
 		name: 'browse-heights',
-		seed: { directories: ['sparse/one', 'sparse/two', ...many, 'projects-a', 'projects-b'] },
+		seed: {
+			directories: [
+				'sparse/one',
+				'sparse/two',
+				...many,
+				'projects-a',
+				'projects-b',
+			],
+		},
 	});
 	const base = await realpath(workspace.rootDir);
 
@@ -343,16 +362,22 @@ test('the folder browser keeps one height between folders and completes a typed 
 	const list = browser.locator('.root-folder-browser__list');
 
 	await browseToFolder(mainWindow, path.join(base, 'sparse'));
-	await expect(browser.locator('[data-terminay-root-folder-entry]')).toHaveCount(2);
+	await expect(
+		browser.locator('[data-terminay-root-folder-entry]'),
+	).toHaveCount(2);
 	const sparseHeight = (await browser.boundingBox())?.height;
 	const sparseBody = (await body.boundingBox())?.height;
 	await browseToFolder(mainWindow, path.join(base, 'many'));
-	await expect(browser.locator('[data-terminay-root-folder-entry]')).toHaveCount(200);
+	await expect(
+		browser.locator('[data-terminay-root-folder-entry]'),
+	).toHaveCount(200);
 	expect((await browser.boundingBox())?.height).toBe(sparseHeight);
 	expect((await body.boundingBox())?.height).toBe(sparseBody);
 	// The longer listing scrolls inside that height.
 	expect(
-		await list.evaluate((element) => element.scrollHeight > element.clientHeight),
+		await list.evaluate(
+			(element) => element.scrollHeight > element.clientHeight,
+		),
 	).toBe(true);
 	await browseToFolder(mainWindow, path.join(base, 'sparse'));
 	expect((await browser.boundingBox())?.height).toBe(sparseHeight);
@@ -419,7 +444,8 @@ test('a project still awaiting its start after a restart shows its chooser again
 		const page = current.page;
 		const tab = page.locator(`.project-tab[data-project-id="${projectId}"]`);
 		await expect(tab).toBeVisible({ timeout: READY_TIMEOUT_MS });
-		if (!(await startChooserFor(page, projectId).isVisible())) await tab.click();
+		if (!(await startChooserFor(page, projectId).isVisible()))
+			await tab.click();
 		await expectChooserShown(page, projectId);
 		// The started project came back with its one terminal; the awaiting one
 		// came back with none, and stays that way.
@@ -448,13 +474,16 @@ test('at phone width the chooser and the folder browser fit without horizontal o
 	await nativeWindow.evaluate((window) => {
 		window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
 	});
-	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
+	await expect(
+		mainWindow.locator('[data-compact-chrome="true"]'),
+	).toBeVisible();
 
 	// The compact chrome has no tab strip; its switcher creates the project.
 	await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
 	await mainWindow
 		.getByRole('dialog', { name: 'Switch terminal' })
-		.getByRole('button', { name: 'New project' }).first()
+		.getByRole('button', { name: 'New project' })
+		.first()
 		.click();
 	const chooser = activeStartChooser(mainWindow);
 	await expect(chooser).toBeVisible({ timeout: 15_000 });
@@ -491,11 +520,89 @@ test('at phone width the chooser and the folder browser fit without horizontal o
 	await chooser.locator('[data-terminay-start-action="folder"]').click();
 	const browser = rootFolderBrowser(mainWindow);
 	await expect(browser).toBeVisible();
-	await expect(browser.locator('[data-terminay-root-folder-listed]')).toBeVisible();
+	await expect(
+		browser.locator('[data-terminay-root-folder-listed]'),
+	).toBeVisible();
 	expect(await overflow('[data-in-page-window="root-folder-browser"]')).toEqual(
 		[],
 	);
 	await browser.getByRole('button', { name: 'Cancel' }).click();
 	await expect(browser).toHaveCount(0);
 	await expect(chooser).toBeVisible();
+});
+
+test('with many recent folders the search box takes focus, and type, ↓ ↓, Enter opens the second match', async ({
+	createWorkspace,
+	mainWindow,
+}, testInfo) => {
+	test.setTimeout(150_000);
+	// Seven folders that each became a root, so the chooser shows a search box.
+	const folders: string[] = [];
+	for (let index = 1; index <= 7; index += 1) {
+		const folder = await realpath(
+			(await createWorkspace({ name: `kbd-pick-${index}` })).rootDir,
+		);
+		await setProjectRoot(mainWindow, folder);
+		await expect(activeWorkspace(mainWindow)).toHaveAttribute(
+			'data-terminay-project-root',
+			folder,
+		);
+		folders.push(folder);
+	}
+	// Most recent first: the last root set leads, the one before it is second.
+	const first = folders[6] ?? '';
+	const second = folders[5] ?? '';
+
+	const projectId = await createAwaitingProject(mainWindow);
+	const chooser = startChooserFor(mainWindow, projectId);
+	const search = chooser.locator('[data-terminay-recent-search]');
+	await expect(search).toBeFocused({ timeout: 15_000 });
+	await mainWindow.screenshot({
+		path: testInfo.outputPath('start-chooser-search-focused.png'),
+	});
+
+	await mainWindow.keyboard.type('kbd-pick');
+	const rowOpen = (folder: string) =>
+		chooser.locator(
+			`[data-terminay-recent-folder="${folder}"] [data-terminay-recent-open]`,
+		);
+	const forgets = chooser.locator('[data-terminay-recent-forget]');
+	await mainWindow.keyboard.press('ArrowDown');
+	await expect(rowOpen(first)).toBeFocused();
+	await mainWindow.keyboard.press('ArrowDown');
+	await expect(rowOpen(second)).toBeFocused();
+	// ↓ walked rows only; no forget control took focus on the way.
+	expect(
+		await forgets.evaluateAll((nodes) =>
+			nodes.some((node) => node === document.activeElement),
+		),
+	).toBe(false);
+	// The whole row, forget control included, carries the outline.
+	expect(
+		await chooser
+			.locator(`[data-terminay-recent-folder="${second}"]`)
+			.evaluate((row) => getComputedStyle(row).outlineStyle),
+	).toBe('solid');
+	await mainWindow.screenshot({
+		path: testInfo.outputPath('start-chooser-row-focused.png'),
+	});
+
+	// Tab still reaches the row's forget control, and ↑ comes back to the row.
+	await mainWindow.keyboard.press('Tab');
+	await expect(
+		chooser.locator(
+			`[data-terminay-recent-folder="${second}"] [data-terminay-recent-forget]`,
+		),
+	).toBeFocused();
+	await mainWindow.keyboard.press('ArrowUp');
+	await expect(rowOpen(second)).toBeFocused();
+
+	await mainWindow.keyboard.press('Enter');
+	await expect(startChooserFor(mainWindow, projectId)).toHaveCount(0, {
+		timeout: 15_000,
+	});
+	await expect(activeWorkspace(mainWindow)).toHaveAttribute(
+		'data-terminay-project-root',
+		second,
+	);
 });

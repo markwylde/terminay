@@ -206,8 +206,9 @@ export type ProjectStartChooserViewProps = Readonly<{
 	onForgetRecent: (path: string) => void;
 }>;
 
-/** Arrow keys move through every control in order; Tab and Enter work as
- * they do anywhere. */
+/** Arrow keys move through the starts, the search box, each recent folder's
+ * row and Show more, in order; a row's forget control is reached with Tab.
+ * Tab and Enter work as they do anywhere. */
 function moveFocus(event: KeyboardEvent<HTMLElement>): void {
 	// In the search box, sideways keys and Home/End edit the text.
 	if (
@@ -221,11 +222,22 @@ function moveFocus(event: KeyboardEvent<HTMLElement>): void {
 			'[data-start-chooser-item]',
 		),
 	];
-	const next = chooserFocusMove(
-		event.key,
-		items.indexOf(document.activeElement as HTMLElement),
-		items.length,
-	);
+	const focused = document.activeElement as HTMLElement | null;
+	let index = items.indexOf(focused as HTMLElement);
+	// A forget control is out of the arrow order: back up returns to its own
+	// row's folder, and onward continues from that row.
+	if (index < 0 && focused?.dataset.terminayRecentForget !== undefined) {
+		const own = focused
+			.closest('[data-terminay-recent-folder]')
+			?.querySelector<HTMLElement>('[data-terminay-recent-open]');
+		index = own === null || own === undefined ? -1 : items.indexOf(own);
+		if (index >= 0 && (event.key === 'ArrowUp' || event.key === 'ArrowLeft')) {
+			event.preventDefault();
+			items[index]?.focus();
+			return;
+		}
+	}
+	const next = chooserFocusMove(event.key, index, items.length);
 	if (next === null) return;
 	event.preventDefault();
 	items[next]?.focus();
@@ -252,6 +264,7 @@ export function ProjectStartChooserView({
 	const [query, setQuery] = useState('');
 	const [expanded, setExpanded] = useState(false);
 	const listRef = useRef<HTMLUListElement | null>(null);
+	const searchRef = useRef<HTMLInputElement | null>(null);
 	const focusRevealed = useRef(false);
 	const searchable = recent !== null && recentFoldersSearchable(recent);
 	const visible = useMemo(
@@ -267,6 +280,22 @@ export function ProjectStartChooserView({
 			?.querySelectorAll<HTMLElement>('[data-terminay-recent-open]')
 			[RECENT_FOLDERS_COLLAPSED]?.focus();
 	}, [expanded]);
+	// With a search box, a new project begins there, so typing finds a folder
+	// at once. It takes focus only from the first start or from nowhere, never
+	// from where the person has already moved, and never in the compact
+	// layout, where a phone's keyboard would cover the chooser.
+	useEffect(() => {
+		if (!isActive || !searchable || isCompact) return;
+		const focused = document.activeElement;
+		if (
+			focused === null ||
+			focused === document.body ||
+			(focused instanceof HTMLElement &&
+				focused.dataset.terminayStartAction === 'folder' &&
+				focused.closest(`[data-terminay-project-id="${projectId}"]`) !== null)
+		)
+			searchRef.current?.focus({ preventScroll: true });
+	}, [isActive, searchable, isCompact, projectId]);
 	const openFirstMatch = () => {
 		if (busy) return;
 		const first = visibleRecentFolders(recent ?? [], query, true).rows.find(
@@ -362,6 +391,7 @@ export function ProjectStartChooserView({
 							<div className="project-start__search">
 								<Search size={14} aria-hidden="true" />
 								<input
+									ref={searchRef}
 									type="search"
 									className="project-start__search-input"
 									placeholder={`Search ${recent.length} recent projects`}
@@ -437,7 +467,6 @@ export function ProjectStartChooserView({
 											title={`Forget ${row.path}`}
 											disabled={busy}
 											onClick={() => onForgetRecent(row.path)}
-											data-start-chooser-item=""
 											data-terminay-recent-forget="true"
 										>
 											<X size={14} aria-hidden="true" />
