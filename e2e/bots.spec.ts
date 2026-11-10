@@ -848,9 +848,50 @@ test.describe('Home › Bots', () => {
 		await expect(mainWindow.locator('.notifications-count')).toHaveText('1', {
 			timeout: 15_000,
 		});
+		// Home's control, the Bots item and the bot's own sidebar row count
+		// posts, so a second unread post from the same bot reads 2 there while
+		// the header still counts one notification.
+		const homeControl = mainWindow.locator(
+			'[data-terminay-home-control="true"]',
+		);
+		const homeUnread = mainWindow.locator(
+			'[data-terminay-home-control-unread]',
+		);
+		const botsUnread = mainWindow.locator(
+			'[data-terminay-home-section-badge="bots"]',
+		);
+		const larkUnread = mainWindow.locator(
+			'[data-terminay-home-sidebar-bot-unread]',
+		);
+		await expect(homeUnread).toHaveText('1');
+		await expect(botsUnread).toHaveText('1');
+		await expect(larkUnread).toHaveText('1');
+		await expect(homeControl).toHaveAccessibleName('Home, 1 unread message');
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await trigger.locator('[data-terminay-bot-trigger-run]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await expect(
+			sessions.and(
+				tab.locator('[data-terminay-bot-session-state="completed"]'),
+			),
+		).toHaveCount(2, { timeout: 30_000 });
+		await expect(homeUnread).toHaveText('2', { timeout: 15_000 });
+		await expect(botsUnread).toHaveText('2');
+		await expect(larkUnread).toHaveText('2');
+		await expect(mainWindow.locator('.notifications-count')).toHaveText('1');
+		await expect(homeControl).toHaveAccessibleName('Home, 2 unread messages');
+		await expect(
+			mainWindow.locator('[data-terminay-home-section-tab="bots"]'),
+		).toHaveAccessibleName('Bots, 2 unread messages');
+		await expect(
+			mainWindow.locator('[data-terminay-home-sidebar-bot]'),
+		).toHaveAccessibleName('Lark, 2 unread messages');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-unread-counts.png'),
+		});
 		await bell.click();
 		await expect(botRow).toHaveCount(1);
-		await expect(botRow).toContainText('New message');
+		await expect(botRow).toContainText('2 new messages');
 		await expect(botRow).toContainText('Lark');
 		// Let the popover finish fading in.
 		await mainWindow.waitForTimeout(300);
@@ -863,6 +904,9 @@ test.describe('Home › Bots', () => {
 		await botRow.getByRole('button', { name: 'Dismiss Lark' }).click();
 		await expect(botRow).toHaveCount(0);
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+		await expect(homeUnread).toHaveCount(0);
+		await expect(botsUnread).toHaveCount(0);
+		await expect(larkUnread).toHaveCount(0);
 		await expect(
 			tab.locator('[data-terminay-bot-mode-button="configure"]'),
 		).toHaveAttribute('aria-pressed', 'true');
@@ -870,7 +914,7 @@ test.describe('Home › Bots', () => {
 		await expect(menu).toHaveCount(0);
 		await chat(tab);
 		await expect(tab.locator('[data-terminay-bot-unread]')).toHaveText(
-			'1 new message',
+			'2 new messages',
 		);
 
 		// Activating a row opens the bot's Chat and clears the notification.
@@ -881,6 +925,7 @@ test.describe('Home › Bots', () => {
 		await expect(mainWindow.locator('.notifications-count')).toHaveText('1', {
 			timeout: 30_000,
 		});
+		await expect(larkUnread).toHaveText('1');
 		await bell.click();
 		await botRow.locator('.terminal-activity-menu__item').click();
 		await expect(menu).toHaveCount(0);
@@ -889,6 +934,11 @@ test.describe('Home › Bots', () => {
 		).toHaveAttribute('aria-pressed', 'true');
 		await expect(tab.locator('[data-terminay-bot-composer]')).toBeVisible();
 		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+		// Reading the post in Chat clears every count.
+		await expect(homeUnread).toHaveCount(0);
+		await expect(botsUnread).toHaveCount(0);
+		await expect(larkUnread).toHaveCount(0);
+		await expect(homeControl).toHaveAccessibleName('Home');
 		await bell.click();
 		await expect(botRow).toHaveCount(0);
 		await mainWindow.waitForTimeout(300);

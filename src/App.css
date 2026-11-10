@@ -1196,6 +1196,36 @@
   -webkit-app-region: no-drag;
 }
 
+/* Unread bot messages, on the corner of the house. */
+.project-tab-home {
+  position: relative;
+}
+
+.project-tab-home__badge {
+  position: absolute;
+  top: 1px;
+  right: -3px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  color: #0d0f12;
+  background: #f85149;
+  font-family: var(--terminal-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.project-tab-home--active .project-tab-home__badge {
+  top: 3px;
+  right: 3px;
+}
+
 .project-tab-home:hover {
   color: #dce2f0;
   background: rgba(255, 255, 255, 0.08);
