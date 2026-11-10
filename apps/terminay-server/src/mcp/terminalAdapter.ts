@@ -1,7 +1,11 @@
 import {
 	type ActivityEvent,
 	type ActivitySnapshot,
-	commandSubmissionInput,
+	commandPasteInput,
+	SUBMIT_INPUT,
+	TERMINAL_KEYS,
+	type SeparatedInputOptions,
+	terminalInputKey,
 	TerminalActivityService,
 	type TerminalAuthorization,
 	type TerminalEvent,
@@ -13,6 +17,7 @@ import {
 	TerminalService,
 	type TerminalSessionSnapshot,
 	findAutomationSpace,
+	writeSeparatedInput,
 	type WorkspacePanel,
 	WorkspaceRepository,
 	type WorkspaceState,
@@ -57,6 +62,11 @@ export interface ServerTerminalControlAdapterOptions {
 	readonly workspace?: WorkspaceRepositoryType;
 	readonly maxReadBytes?: number;
 	readonly maxWaitSeconds?: number;
+	/**
+	 * The pause before each key press written after text, such as the Enter
+	 * that submits it. Defaults to a real timer; tests pass their own.
+	 */
+	readonly inputDelay?: (ms: number) => Promise<void>;
 	/** What schedules a wait's deadline. Defaults to the global timers. */
 	readonly waitTimers?: Readonly<{
 		setTimeout: (handler: () => void, ms: number) => unknown;
@@ -136,8 +146,10 @@ export function createServerTerminalControlAdapter(
 		getTerminalStatus: (params, context) =>
 			terminalStatus(options, params, context),
 		openTerminal: (params, context) => openTerminal(options, params, context),
-		writeTerminal: (params, context) => writeTerminal(options, params, context),
-		runCommand: (params, context) => runCommand(options, params, context),
+		writeTerminal: (params, context, signal) =>
+			writeTerminal(options, params, context, signal),
+		runCommand: (params, context, signal) =>
+			runCommand(options, params, context, signal),
 		closeTerminal: (params, context) => closeTerminal(options, params, context),
 		// Showing a terminal is the agent's client's to do (ADR-0070): the host
 		// only resolves it within scope.
@@ -726,17 +738,24 @@ async function writeTerminal(
 	options: AdapterOptions,
 	params: WriteTerminalParams,
 	context: ControlRequestContext,
+	signal?: AbortSignal,
 ): Promise<unknown> {
 	const session = targetSession(options, context, params.terminal);
-	const text = params.submit === true ? `${params.text}\r` : params.text;
-	await options.terminal.write(
-		session,
-		text,
-		authorization(session, options.terminal.serverId, 'write'),
+	const auth = authorization(session, options.terminal.serverId, 'write');
+	const bytes = await writeSeparatedInput(
+		{
+			body: params.text,
+			keys: [
+				...(params.keys ?? []).map((key) => TERMINAL_KEYS[key]),
+				...(params.submit === true ? [SUBMIT_INPUT] : []),
+			],
+		},
+		(data) => options.terminal.write(session, data, auth),
+		separatedInputOptions(options, session, signal),
 	);
 	return {
 		terminal: session.sessionId,
-		bytes: new TextEncoder().encode(text).byteLength,
+		bytes,
 		submitted: params.submit === true,
 	};
 }
@@ -745,6 +764,7 @@ async function runCommand(
 	options: AdapterOptions,
 	params: RunCommandParams,
 	context: ControlRequestContext,
+	signal?: AbortSignal,
 ): Promise<unknown> {
 	const session = targetSession(options, context, params.terminal);
 	const auth = authorization(session, options.terminal.serverId, 'write');
@@ -752,15 +772,35 @@ async function runCommand(
 	const from =
 		options.terminal.getSession(session)?.outputPosition ??
 		session.outputPosition;
-	const text = commandSubmissionInput(params.command, bracketed);
-	await options.terminal.write(session, text, auth);
+	// Enter goes on its own, so a full-screen agent reads it as a key press
+	// rather than as the end of the paste.
+	const submittedBytes = await writeSeparatedInput(
+		{
+			body: commandPasteInput(params.command, bracketed),
+			keys: [SUBMIT_INPUT],
+		},
+		(data) => options.terminal.write(session, data, auth),
+		separatedInputOptions(options, session, signal),
+	);
 	return {
 		terminal: session.sessionId,
 		command_id: context.requestId,
 		from,
-		submitted_bytes: new TextEncoder().encode(text).byteLength,
+		submitted_bytes: submittedBytes,
 		submitted: true,
 		bracketed,
+	};
+}
+
+function separatedInputOptions(
+	options: AdapterOptions,
+	session: TerminalSessionSnapshot,
+	signal: AbortSignal | undefined,
+): SeparatedInputOptions {
+	return {
+		terminal: terminalInputKey(options.terminal.serverId, session.sessionId),
+		...(signal === undefined ? {} : { signal }),
+		...(options.inputDelay === undefined ? {} : { sleep: options.inputDelay }),
 	};
 }
 

@@ -435,7 +435,7 @@ test("workspace reach addresses any project's terminal on the same server; proje
 		}),
 		{ terminal: 'beta-1', bytes: 8, submitted: true },
 	);
-	assert.deepEqual(pty.processes[2].writes, ['echo hi\r']);
+	assert.deepEqual(pty.processes[2].writes, ['echo hi', '\r']);
 	assert.deepEqual(
 		await call(workspaceContext, 'get_terminal_status', {
 			terminal: 'alpha-1',
