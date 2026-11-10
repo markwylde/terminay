@@ -27,5 +27,5 @@
 
 ## 6. End-to-end and checks
 
-- [ ] 6.1 Extend `e2e/workflows.spec.ts`: an agent-set `skipped` step shows struck through with its note and counts toward progress; the user skips a not-started step and restores it from the panel, and the change shows in `get_workflow`; no Skip appears on the running step. Capture screenshots of the rail and expanded panel with a skipped step. Verify: `npm run test:e2e -- e2e/workflows.spec.ts` passes in Docker.
-- [ ] 6.2 Run `npm run lint`, `npm run typecheck`, the server-core and terminay-server node tests (bounded), the model tests, and `openspec validate --all`. Verify: all exit 0, or any pre-existing unrelated failures are recorded.
+- [x] 6.1 Extend `e2e/workflows.spec.ts`: an agent-set `skipped` step shows struck through with its note and counts toward progress; the user skips a not-started step and restores it from the panel, and the change shows in `get_workflow`; no Skip appears on the running step. Capture screenshots of the rail and expanded panel with a skipped step. Verify: `npm run test:e2e -- e2e/workflows.spec.ts` passes in Docker.
+- [x] 6.2 Run `npm run lint`, `npm run typecheck`, the server-core and terminay-server node tests (bounded), the model tests, and `openspec validate --all`. Verify: all exit 0, or any pre-existing unrelated failures are recorded.
