@@ -370,6 +370,7 @@ import {
 } from './workspace/RemoteAccessConnectionMenu';
 import {
 	type ActivityCountBadge,
+	formatActivityCount,
 	summarizeActivityBadge,
 } from './workspace/activityCountBadge';
 import {
@@ -378,7 +379,11 @@ import {
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
 } from './workspace/TerminalActivityOverview';
-import { publishedNotificationItems } from './workspace/publishedNotifications';
+import {
+	botUnreadCounts,
+	botUnreadLabel,
+	publishedNotificationItems,
+} from './workspace/publishedNotifications';
 import {
 	bindPushHost,
 	boundedNotificationCount,
@@ -8663,6 +8668,12 @@ function App({
 					},
 		[currentServerBotList, currentServerId],
 	);
+	// Unread bot posts, counted on Home's control, its Bots item and each bot.
+	const botUnread = useMemo(
+		() => botUnreadCounts(publishedNotifications, notificationBots),
+		[notificationBots, publishedNotifications],
+	);
+	const botUnreadTotal = botUnread?.total ?? 0;
 	const terminalActivityItems = useMemo(() => {
 		const entries = projects.flatMap(
 			(project) => inventoryByProject[project.id] ?? [],
@@ -8933,14 +8944,15 @@ function App({
 			!serverWorkflows.has(entry.serverId),
 	);
 	const workflowsNeedingYou = needsYouCount(workflowRows);
-	const workflowBadges = useMemo(
+	const homeSectionBadges = useMemo(
 		() => ({
+			bots: { count: botUnreadTotal, label: botUnreadLabel(botUnreadTotal) },
 			workflows: {
 				count: workflowsNeedingYou,
 				label: `${workflowsNeedingYou} ${workflowsNeedingYou === 1 ? 'workflow needs' : 'workflows need'} you`,
 			},
 		}),
-		[workflowsNeedingYou],
+		[botUnreadTotal, workflowsNeedingYou],
 	);
 	// An MCP agent the user is talking to here reads and arranges this
 	// window's panes through the server (ADR-0070). The window is described
@@ -10846,12 +10858,25 @@ function App({
 						type="button"
 						className={`project-tab-home${isHomeSelected ? ' project-tab-home--active' : ''}`}
 						onClick={selectHome}
-						aria-label="Home"
+						aria-label={
+							botUnreadTotal > 0
+								? `Home, ${botUnreadLabel(botUnreadTotal)}`
+								: 'Home'
+						}
 						aria-pressed={isHomeSelected}
 						title="Home"
 						data-terminay-home-control="true"
 					>
 						<House size={14} aria-hidden="true" />
+						{botUnreadTotal > 0 ? (
+							<span
+								className="project-tab-home__badge"
+								aria-hidden="true"
+								data-terminay-home-control-unread="true"
+							>
+								{formatActivityCount(botUnreadTotal)}
+							</span>
+						) : null}
 					</button>
 				</div>
 				<ProjectTabList
@@ -11336,7 +11361,7 @@ function App({
 						onActiveTabChange={setHomeFrontTab}
 						onSidebarWidthCommit={setHomeSidebarWidth}
 						renderSection={renderHomeSection}
-						sectionBadges={workflowBadges}
+						sectionBadges={homeSectionBadges}
 						renderBots={(host) => (
 							<BotsSection servers={serverBots} host={host} />
 						)}
@@ -11352,6 +11377,7 @@ function App({
 								servers={serverBots}
 								activeBot={activeBot}
 								onOpenBot={openBot}
+								unread={botUnread}
 								onNewBot={() => {
 									openBots();
 									requestNewBot();

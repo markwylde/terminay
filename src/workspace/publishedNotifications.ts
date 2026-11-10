@@ -106,6 +106,39 @@ export function botNotificationHeadline(count: number): string {
 	return count <= 1 ? 'New message' : `${count} new messages`;
 }
 
+/** Unread bot posts on the server that published the snapshot. */
+export type BotUnreadCounts = Readonly<{
+	serverId: string;
+	/** Only bots with unread posts are present. */
+	byBot: ReadonlyMap<string, number>;
+	total: number;
+}>;
+
+/**
+ * How many posts each bot has waiting, from the same records the
+ * Notifications list shows, so a count and its row never disagree. A bot this
+ * window does not know is not counted.
+ */
+export function botUnreadCounts(
+	snapshot: NotificationSnapshot | undefined,
+	bots: NotificationBots | undefined,
+): BotUnreadCounts | undefined {
+	if (snapshot === undefined || bots === undefined) return undefined;
+	const byBot = new Map<string, number>();
+	let total = 0;
+	for (const record of Object.values(snapshot.notifications)) {
+		if (record.owner !== 'bot' || !bots.bots.has(record.botId)) continue;
+		byBot.set(record.botId, (byBot.get(record.botId) ?? 0) + record.count);
+		total += record.count;
+	}
+	return { serverId: bots.serverId, byBot, total };
+}
+
+/** Said after a name, e.g. "Bots, 3 unread messages". */
+export function botUnreadLabel(count: number): string {
+	return `${count} unread ${count === 1 ? 'message' : 'messages'}`;
+}
+
 export function publishedNotificationItems(
 	snapshot: NotificationSnapshot,
 	entries: readonly WorkspaceInventoryEntry[],

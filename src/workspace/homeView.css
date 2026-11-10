@@ -500,6 +500,11 @@
 	color: rgba(220, 226, 240, 0.42);
 }
 
+/* A bot's unread count follows its running time rather than splitting the row. */
+.home-sidebar__meta + .home-sidebar__badge {
+	margin-left: 0;
+}
+
 .home-sidebar__empty {
 	margin: 2px 0 0;
 	padding: 0 10px;

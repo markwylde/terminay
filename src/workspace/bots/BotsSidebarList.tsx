@@ -5,9 +5,14 @@
  */
 
 import { Plus } from 'lucide-react';
+import { formatActivityCount } from '../activityCountBadge';
+import {
+	type BotUnreadCounts,
+	botUnreadLabel,
+} from '../publishedNotifications';
 import { BotAvatar } from './BotAvatar';
-import type { BotTabTarget } from './botTabHost';
 import { BOT_ACTIVITY_LABELS, botActivity, shortAge } from './botsModel';
+import type { BotTabTarget } from './botTabHost';
 import { useNow } from './useNow';
 import { botEntries, type ServerBots } from './useServerBots';
 import './bots.css';
@@ -17,11 +22,14 @@ export function BotsSidebarList({
 	activeBot,
 	onOpenBot,
 	onNewBot,
+	unread,
 }: Readonly<{
 	servers: ReadonlyMap<string, ServerBots>;
 	activeBot: Readonly<{ serverId: string; botId: string }> | undefined;
 	onOpenBot: (target: BotTabTarget) => void;
 	onNewBot: () => void;
+	/** Unread posts per bot, on the server that counted them. */
+	unread?: BotUnreadCounts | undefined;
 }>) {
 	const entries = botEntries(servers).sort((a, b) =>
 		a.bot.name.localeCompare(b.bot.name),
@@ -50,12 +58,21 @@ export function BotsSidebarList({
 					const active =
 						activeBot?.serverId === entry.serverId &&
 						activeBot?.botId === entry.bot.id;
+					const unreadCount =
+						unread?.serverId === entry.serverId
+							? (unread.byBot.get(entry.bot.id) ?? 0)
+							: 0;
 					return (
 						<button
 							key={`${entry.serverId}/${entry.bot.id}`}
 							type="button"
 							className={`home-sidebar__section home-sidebar__bot${active ? ' home-sidebar__section--active' : ''}`}
 							title={`${entry.bot.name} · ${BOT_ACTIVITY_LABELS[activity]}`}
+							{...(unreadCount > 0
+								? {
+										'aria-label': `${entry.bot.name}, ${botUnreadLabel(unreadCount)}`,
+									}
+								: {})}
 							onClick={() =>
 								onOpenBot({ serverId: entry.serverId, botId: entry.bot.id })
 							}
@@ -78,6 +95,15 @@ export function BotsSidebarList({
 									<span className="home-sidebar__meta">{meta}</span>
 								) : null;
 							})()}
+							{unreadCount > 0 ? (
+								<span
+									className="home-sidebar__badge"
+									aria-hidden="true"
+									data-terminay-home-sidebar-bot-unread={entry.bot.id}
+								>
+									{formatActivityCount(unreadCount)}
+								</span>
+							) : null}
 						</button>
 					);
 				})

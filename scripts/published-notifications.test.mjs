@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { formatActivityCount } from '../src/workspace/activityCountBadge.ts';
 import {
 	botNotificationHeadline,
+	botUnreadCounts,
+	botUnreadLabel,
 	publishedNotificationItems,
 } from '../src/workspace/publishedNotifications.ts';
 
@@ -306,4 +309,68 @@ test('the same bot id on two servers is two rows, each kept with its own server'
 test('a bot row reads how many posts are waiting', () => {
 	assert.equal(botNotificationHeadline(1), 'New message');
 	assert.equal(botNotificationHeadline(3), '3 new messages');
+});
+
+test('unread bot posts are counted per bot and in total, for the bots this window knows', () => {
+	const counts = botUnreadCounts(
+		snapshot(
+			record('n-1', 'build', 'agent-finished'),
+			botRecord('n-2', 'bot-bird', { count: 3 }),
+			botRecord('n-3', 'bot-owl', { count: 1 }),
+			botRecord('n-4', 'bot-gone', { count: 5 }),
+		),
+		bots('local', [
+			['bot-bird', 'Bird'],
+			['bot-owl', 'Owl'],
+			['bot-quiet', 'Quiet'],
+		]),
+	);
+	assert.equal(counts.serverId, 'local');
+	assert.equal(counts.total, 4);
+	assert.deepEqual(
+		[...counts.byBot],
+		[
+			['bot-bird', 3],
+			['bot-owl', 1],
+		],
+	);
+});
+
+test("nothing is counted without a published list or the server's bots", () => {
+	assert.equal(botUnreadCounts(undefined, bots('local', [])), undefined);
+	assert.equal(
+		botUnreadCounts(snapshot(botRecord('n-1', 'bot-bird')), undefined),
+		undefined,
+	);
+	assert.equal(botUnreadCounts(snapshot(), bots('local', [])).total, 0);
+});
+
+test('an unread count is said in words', () => {
+	assert.equal(botUnreadLabel(1), '1 unread message');
+	assert.equal(botUnreadLabel(12), '12 unread messages');
+});
+
+test('above 99 a badge reads 99+ while its words keep the exact count', () => {
+	const counts = botUnreadCounts(
+		snapshot(
+			botRecord('n-1', 'bot-bird', { count: 70 }),
+			botRecord('n-2', 'bot-owl', { count: 50 }),
+		),
+		bots('local', [
+			['bot-bird', 'Bird'],
+			['bot-owl', 'Owl'],
+		]),
+	);
+	assert.equal(counts.total, 120);
+	assert.equal(formatActivityCount(counts.total), '99+');
+	assert.equal(botUnreadLabel(counts.total), '120 unread messages');
+});
+
+test('counts are kept with the server that published them', () => {
+	const counts = botUnreadCounts(
+		snapshot(botRecord('n-1', 'bot-bird', { count: 3 })),
+		bots('remote-2', [['bot-bird', 'Bird']]),
+	);
+	assert.equal(counts.serverId, 'remote-2');
+	assert.equal(counts.byBot.get('bot-bird'), 3);
 });
