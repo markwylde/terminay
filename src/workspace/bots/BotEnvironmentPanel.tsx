@@ -225,6 +225,19 @@ function OverviewView({
 
 	const state = overview.state;
 	const up = state === 'running';
+	const missing = state === 'not-created';
+	const settling = state === 'starting' || state === 'building';
+	// The one action that brings the machine up, named for what it will do.
+	const startLabel =
+		busy === 'start' || settling
+			? missing || state === 'building'
+				? 'Creating…'
+				: 'Starting…'
+			: missing
+				? 'Create environment'
+				: state === 'failed'
+					? 'Try again'
+					: 'Start';
 	const activity = [...sessions]
 		.sort((a, b) => b.startedAt - a.startedAt)
 		.slice(0, 6);
@@ -236,8 +249,10 @@ function OverviewView({
 				</div>
 				<div className="bots-grow">
 					<h3 className="bots-hero__title">
-						{bot.name}’s machine is{' '}
-						{up ? 'running' : ENVIRONMENT_LABELS[state].toLowerCase()}
+						{bot.name}’s machine{' '}
+						{state === 'failed'
+							? 'failed to start'
+							: `is ${ENVIRONMENT_LABELS[state].toLowerCase()}`}
 					</h3>
 					<p className="bots-faint">
 						{up
@@ -246,9 +261,13 @@ function OverviewView({
 										? '—'
 										: `${overview.cpuPercent.toFixed(0)}%`
 								} CPU · ${formatBytes(overview.memoryBytes)} memory`
-							: state === 'starting' || state === 'building'
+							: settling
 								? 'Getting ready…'
-								: 'Start it to use the desktop and shell. Files work while it is stopped.'}
+								: missing
+									? 'Create it to use the desktop and shell. Sessions also create it when they start, and files work without it.'
+									: state === 'failed'
+										? 'Try again, or recreate it from the current image. The home is kept.'
+										: 'Start it to use the desktop and shell. Files work while it is stopped.'}
 					</p>
 				</div>
 				<div className="bots-row-actions">
@@ -266,15 +285,11 @@ function OverviewView({
 						<button
 							type="button"
 							className="bots-btn bots-btn--primary"
-							disabled={
-								busy !== undefined ||
-								state === 'starting' ||
-								state === 'building'
-							}
+							disabled={busy !== undefined || settling}
 							onClick={() => lifecycle('start')}
 							data-terminay-bot-env-action="start"
 						>
-							Start
+							{startLabel}
 						</button>
 					)}
 					<div className="bots-menuwrap">
@@ -290,6 +305,20 @@ function OverviewView({
 						</button>
 						{menu ? (
 							<div className="bots-menu" role="menu">
+								{missing ? (
+									<button
+										type="button"
+										role="menuitem"
+										disabled={busy !== undefined}
+										onClick={() => {
+											setMenu(false);
+											lifecycle('start');
+										}}
+										data-terminay-bot-env-action="create"
+									>
+										Create environment
+									</button>
+								) : null}
 								<button
 									type="button"
 									role="menuitem"
@@ -301,11 +330,12 @@ function OverviewView({
 									data-terminay-bot-env-action="restart"
 								>
 									Restart
+									{up ? null : <small>Needs a running machine</small>}
 								</button>
 								<button
 									type="button"
 									role="menuitem"
-									disabled={busy !== undefined || state === 'not-created'}
+									disabled={busy !== undefined || missing}
 									onClick={() => {
 										setMenu(false);
 										ask('recreate');
@@ -313,6 +343,7 @@ function OverviewView({
 									data-terminay-bot-env-action="recreate"
 								>
 									Recreate
+									{missing ? <small>Nothing to recreate yet</small> : null}
 								</button>
 								<button
 									type="button"

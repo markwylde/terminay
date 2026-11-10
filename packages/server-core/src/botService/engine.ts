@@ -73,6 +73,9 @@ export interface EngineDriver {
 		kind: 'container' | 'volume' | 'network' | 'image',
 		name: string,
 	): Promise<EngineResource | undefined>;
+	/** The id of storage a removed container left behind under this name. An
+	 * engine that keeps no such storage, or cannot tell, answers undefined. */
+	leftover?(name: string): Promise<string | undefined>;
 	exec(
 		container: string,
 		command: readonly string[],

@@ -24,6 +24,7 @@ import {
 } from './idle.js';
 import { BOT_IMAGE } from './image.js';
 import { BotLogTail } from './log.js';
+import { EngineCommandError } from './process.js';
 import { BotImageBuildError, type BotStore } from './store.js';
 import type { BotTokenLease } from './tokens.js';
 
@@ -289,7 +290,21 @@ export class BotEnvironmentService extends EventEmitter {
 			);
 		}
 		args.push(BOT_IMAGE);
-		await driver.run(args);
+		try {
+			await driver.run(args);
+		} catch (error) {
+			if (!(error instanceof EngineCommandError) || error.code !== 'conflict')
+				throw error;
+			// The engine refuses the name yet lists no container for it: storage
+			// a removed container left behind still holds it. Remove that storage
+			// by its own id, so a container that takes the name meanwhile is
+			// never touched, and create once more.
+			if (await driver.inspect('container', name)) throw error;
+			const leftover = await driver.leftover?.(name).catch(() => undefined);
+			if (!leftover) throw error;
+			await driver.run(['container', 'rm', '-f', leftover]);
+			await driver.run(args);
+		}
 	}
 	private async socketGid(driver: EngineDriver, id: string): Promise<number> {
 		// Inspect the daemon-side inode in the same uid namespace as the bot.

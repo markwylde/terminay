@@ -11,6 +11,7 @@ import {
 	investigatesFailures,
 	hasTerminayMcpAccess,
 	needsYou,
+	recoveryNotice,
 	SESSION_ORIGIN_CHIPS,
 	SESSION_ORIGIN_FILTER_LABELS,
 	sessionOriginLabel,
@@ -217,4 +218,31 @@ test('a retry of the same content reuses its idempotency key', () => {
 	const first = chatSendAttempt(undefined, 'hello|a', fresh);
 	assert.equal(chatSendAttempt(first, 'hello|a', fresh).key, 'key-1');
 	assert.equal(chatSendAttempt(first, 'hello|a,b', fresh).key, 'key-2');
+});
+
+test('an environment that needs the user names the bot, the tone and the action', () => {
+	const missing = recoveryNotice('Codexia', 'not-created', false);
+	assert.equal(missing?.kind, 'not-created');
+	assert.equal(missing?.tone, 'warn');
+	assert.equal(missing?.create, 'Create environment');
+	assert.equal(missing?.recreate, undefined);
+	assert.match(missing?.title ?? '', /^Codexia’s environment is not created$/);
+
+	const failed = recoveryNotice('Codexia', 'failed', false);
+	assert.equal(failed?.tone, 'error');
+	assert.equal(failed?.create, 'Try again');
+	assert.equal(failed?.recreate, true);
+
+	// A missing container is created from the current image, so an outdated
+	// image changes nothing about what a not-created bot offers.
+	assert.equal(recoveryNotice('Codexia', 'not-created', true)?.kind, 'not-created');
+
+	const outdated = recoveryNotice('Codexia', 'stopped', true);
+	assert.equal(outdated?.kind, 'outdated');
+	assert.equal(outdated?.create, undefined);
+	assert.equal(outdated?.recreate, true);
+
+	for (const state of ['running', 'stopped', 'starting', 'building'] as const)
+		assert.equal(recoveryNotice('Codexia', state, false), undefined);
+	assert.equal(recoveryNotice('Codexia', undefined, false), undefined);
 });
