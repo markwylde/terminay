@@ -150,6 +150,27 @@ export class SocketDriver implements EngineDriver {
 	) {
 		transport.expectedIdentity = details.pin.identity;
 	}
+	async leftover(name: string): Promise<string | undefined> {
+		if (this.details.pin.kind !== 'podman') return undefined;
+		// Podman lists storage with no container behind it only on request. The
+		// name filter matches substrings, so the exact name is checked here.
+		const listed = await this.transport.json<
+			{ Id?: string; Names?: string[]; State?: string }[] | undefined
+		>(
+			'GET',
+			`/v4.0.0/libpod/containers/json?${query({ all: true, external: true, filters: { name: [name] } })}`,
+			undefined,
+			// Listing storage can be slow where many build leftovers remain.
+			{ deadlineMs: 20_000 },
+		);
+		const held = (listed ?? []).filter((entry) => entry.Names?.includes(name));
+		const [only] = held;
+		return held.length === 1 &&
+			only?.State === 'storage' &&
+			/^[0-9a-f]{64}$/.test(only.Id ?? '')
+			? only.Id
+			: undefined;
+	}
 	async inspect(
 		kind: 'container' | 'volume' | 'network' | 'image',
 		name: string,

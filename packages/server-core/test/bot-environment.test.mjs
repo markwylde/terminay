@@ -7,7 +7,10 @@ import {
 	BotIdleDeadline,
 	BotLogTail,
 	createBotEnvironmentOperations,
+	EngineCommandError,
+	SocketDriver,
 } from '../dist/botService/index.js';
+import { botFailure } from '../dist/botService/failure.js';
 import { botId, fakeClock, fakeDriver, name } from './fixtures/bot-driver.mjs';
 
 const setup = (t, options = {}) => {
@@ -628,4 +631,107 @@ test('disposing an event follower and closing environments cancels pending repai
 	engine.emit('container-event', { Actor: { Attributes: { name } } });
 	assert.equal(changed, 0);
 	assert.equal(clock.timers.size, 0);
+});
+
+test('a bot name held by storage a removed container left behind is cleared by its own id, once, and creation retried', async (t) => {
+	const { service, driver } = setup(t);
+	const run = driver.run;
+	const storage = 'b'.repeat(64);
+	const creates = () =>
+		driver.calls.filter(
+			(args) => args[0] === 'container' && args[1] === 'create',
+		).length;
+	const removals = () =>
+		driver.calls.filter((args) => args[0] === 'container' && args[1] === 'rm');
+	let held = true;
+	let clears = true;
+	driver.leftover = async (key) => (held && key === name ? storage : undefined);
+	driver.run = async (args, options) => {
+		if (args[0] === 'container' && args[1] === 'create' && held) {
+			driver.calls.push(args);
+			throw new EngineCommandError('conflict', 'engine API request failed');
+		}
+		if (args[0] === 'container' && args[1] === 'rm' && clears) held = false;
+		return run(args, options);
+	};
+	await service.start(botId);
+	assert.equal(service.state(botId), 'running');
+	assert.equal(creates(), 2);
+	// The storage is removed by its id, never by the bot's name.
+	assert.deepEqual(removals(), [['container', 'rm', '-f', storage]]);
+
+	const restart = async () => {
+		await service.remove(botId, false);
+		service.register({ id: botId });
+		held = true;
+		return { creates: creates(), removals: removals().length };
+	};
+	const refused = (error) =>
+		error instanceof EngineCommandError && error.code === 'conflict';
+
+	// A name that stays refused fails after the one retry instead of looping.
+	let before = await restart();
+	clears = false;
+	await assert.rejects(service.start(botId), refused);
+	assert.equal(service.state(botId), 'failed');
+	assert.equal(creates() - before.creates, 2);
+
+	// With no leftover storage to name, nothing is removed and nothing retried.
+	before = await restart();
+	driver.leftover = async () => undefined;
+	await assert.rejects(service.start(botId), refused);
+	assert.equal(creates() - before.creates, 1);
+	assert.equal(removals().length, before.removals);
+
+	// An engine that cannot say fails the same way as one with no leftover.
+	before = await restart();
+	driver.leftover = async () => {
+		throw new EngineCommandError('deadline', 'engine operation deadline exceeded');
+	};
+	await assert.rejects(service.start(botId), refused);
+	assert.equal(creates() - before.creates, 1);
+
+	const failure = botFailure(
+		new EngineCommandError('conflict', 'engine API request failed'),
+	);
+	assert.equal(failure.code, 'conflict');
+	assert.match(failure.message, /another container already uses the bot’s name/);
+});
+
+test('only Podman storage listed under exactly the bot name, with no container behind it, counts as a leftover', async () => {
+	const id = 'c'.repeat(64);
+	const routes = [];
+	const driver = (kind, listed) =>
+		new SocketDriver(
+			{ pin: { kind, address: 'local', identity: 'identity' } },
+			{
+				json: async (method, route) => {
+					routes.push([method, route]);
+					return listed;
+				},
+			},
+		);
+	const entry = (extra = {}) => ({ Id: id, Names: [name], State: 'storage', ...extra });
+	assert.equal(await driver('podman', [entry()]).leftover(name), id);
+	const [method, route] = routes[0];
+	assert.equal(method, 'GET');
+	assert.match(route, /^\/v4\.0\.0\/libpod\/containers\/json\?/);
+	assert.equal(new URLSearchParams(route.split('?')[1]).get('external'), 'true');
+	// The engine's name filter matches substrings.
+	assert.equal(
+		await driver('podman', [entry({ Names: [`${name}-old`] })]).leftover(name),
+		undefined,
+	);
+	assert.equal(
+		await driver('podman', [entry({ State: 'exited' })]).leftover(name),
+		undefined,
+	);
+	assert.equal(
+		await driver('podman', [entry({ Id: 'short' })]).leftover(name),
+		undefined,
+	);
+	assert.equal(await driver('podman', undefined).leftover(name), undefined);
+	const asked = routes.length;
+	assert.equal(await driver('docker', [entry()]).leftover(name), undefined);
+	assert.equal(routes.length, asked);
 });

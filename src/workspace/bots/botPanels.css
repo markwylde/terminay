@@ -1619,6 +1619,13 @@
 	opacity: 0.45;
 	cursor: default;
 }
+/* Says why an action is unavailable instead of leaving a dead row. */
+.bots-menu button small {
+	display: block;
+	margin-top: 1px;
+	font-size: 11px;
+	white-space: nowrap;
+}
 .bots-usegrid {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -2415,6 +2422,70 @@
 	max-height: 42%;
 	overflow: auto;
 	padding: 0 16px;
+}
+/* An environment that needs the user: the reason and its action together. */
+.bots-alert {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+	margin: 10px 0;
+	padding: 10px 12px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	font-size: 12.5px;
+}
+.bots-alert--warn {
+	background: var(--bots-work-bg);
+	border-color: rgba(232, 185, 49, 0.35);
+}
+.bots-alert--error {
+	background: var(--bots-need-bg);
+	border-color: rgba(238, 98, 88, 0.4);
+}
+.bots-alert__icon {
+	flex: none;
+}
+.bots-alert--warn .bots-alert__icon,
+.bots-alert--warn strong {
+	color: var(--bots-work);
+}
+.bots-alert--error .bots-alert__icon,
+.bots-alert--error strong {
+	color: var(--bots-need);
+}
+.bots-alert__body {
+	flex: 1 1 260px;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	color: var(--bots-fg);
+}
+.bots-alert__body strong {
+	font-weight: 600;
+}
+.bots-alert__error {
+	margin-top: 4px;
+	color: var(--bots-need);
+	overflow-wrap: anywhere;
+}
+.bots-alert__actions,
+.bots-alert__confirm {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+.bots-alert__confirm {
+	flex: 1 0 100%;
+	justify-content: flex-end;
+	padding-top: 8px;
+	border-top: 1px solid var(--bots-line2);
+	color: var(--bots-fg);
+}
+.bots-alert__confirm span {
+	margin-right: auto;
 }
 .bots-recovery:empty {
 	display: none;

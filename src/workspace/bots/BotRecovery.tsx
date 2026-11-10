@@ -1,7 +1,9 @@
 import { BotEnvironmentClient } from '@terminay/client-core';
+import { TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { EngineSummary } from './BotsSection';
 import { useBotEngine } from './useBotEngine';
+import { recoveryNotice } from './botsModel';
 import { refusalText, type ServerBots } from './useServerBots';
 
 /** Shared recovery stays visible above Chat and every Configure panel. */
@@ -16,13 +18,25 @@ export function BotRecovery({
 }) {
 	const engine = useBotEngine(server);
 	const [error, setError] = useState<string>();
-	const [busy, setBusy] = useState(false);
+	const [busy, setBusy] = useState<'start' | 'recreate'>();
 	const [confirm, setConfirm] = useState(false);
 	const state = server.environments.get(botId);
 	const problem =
 		!engine.status?.available || engine.status.image.state !== 'current';
+	const name = server.bots.find((bot) => bot.id === botId)?.name ?? 'This bot';
+	const usable =
+		engine.status?.available === true &&
+		engine.status.image.state !== 'building';
+	const notice = usable
+		? recoveryNotice(
+				name,
+				state,
+				engine.status?.image.state === 'outdated' &&
+					(state === 'running' || state === 'stopped'),
+			)
+		: undefined;
 	const action = async (recreate: boolean) => {
-		setBusy(true);
+		setBusy(recreate ? 'recreate' : 'start');
 		setError(undefined);
 		setConfirm(false);
 		try {
@@ -35,7 +49,7 @@ export function BotRecovery({
 		} catch (cause) {
 			setError(refusalText(cause));
 		} finally {
-			setBusy(false);
+			setBusy(undefined);
 		}
 	};
 	return (
@@ -47,51 +61,79 @@ export function BotRecovery({
 				hideReady={!problem && !engine.error}
 				visible={visible}
 			/>
-			{engine.status?.available && engine.status.image.state !== 'building' ? (
-				<div className="bots-engine__actions">
-					{state === 'not-created' || state === 'failed' ? (
-						<button
-							type="button"
-							className="bots-btn bots-btn--sm"
-							disabled={busy}
-							onClick={() => void action(false)}
-						>
-							Create environment
-						</button>
-					) : null}
-					{engine.status.image.state === 'outdated' || state === 'failed' ? (
-						<button
-							type="button"
-							className="bots-btn bots-btn--sm"
-							disabled={busy}
-							onClick={() => setConfirm(true)}
-						>
-							Recreate container
-						</button>
-					) : null}
-					{confirm ? (
-						<div role="alertdialog" aria-label="Recreate container?">
-							Recreating stops active sessions and keeps the bot home.{' '}
-							<button
-								type="button"
-								className="bots-btn"
-								onClick={() => void action(true)}
+			{notice ? (
+				<div
+					className={`bots-alert bots-alert--${notice.tone}`}
+					role="alert"
+					data-terminay-bot-recovery-notice={notice.kind}
+				>
+					<TriangleAlert
+						className="bots-alert__icon"
+						size={16}
+						aria-hidden="true"
+					/>
+					<div className="bots-alert__body">
+						<strong>{notice.title}</strong>
+						<span>{notice.detail}</span>
+						{error ? (
+							<span
+								className="bots-alert__error"
+								data-terminay-bot-recovery-error
 							>
-								Confirm recreate
-							</button>
+								{error}
+							</span>
+						) : null}
+					</div>
+					<div className="bots-alert__actions">
+						{notice.recreate ? (
 							<button
 								type="button"
-								className="bots-btn"
+								className={`bots-btn bots-btn--sm${notice.create ? '' : ' bots-btn--primary'}`}
+								disabled={busy !== undefined}
+								onClick={() => setConfirm(true)}
+							>
+								{busy === 'recreate' ? 'Recreating…' : 'Recreate container'}
+							</button>
+						) : null}
+						{notice.create ? (
+							<button
+								type="button"
+								className="bots-btn bots-btn--sm bots-btn--primary"
+								disabled={busy !== undefined}
+								onClick={() => void action(false)}
+							>
+								{busy === 'start' ? 'Creating…' : notice.create}
+							</button>
+						) : null}
+					</div>
+					{confirm ? (
+						<div
+							className="bots-alert__confirm"
+							role="alertdialog"
+							aria-label="Recreate container?"
+						>
+							<span>
+								Recreating stops active sessions and keeps the bot home.
+							</span>
+							<button
+								type="button"
+								className="bots-btn bots-btn--sm"
 								onClick={() => setConfirm(false)}
 							>
 								Cancel
 							</button>
+							<button
+								type="button"
+								className="bots-btn bots-btn--sm bots-btn--primary"
+								onClick={() => void action(true)}
+							>
+								Confirm recreate
+							</button>
 						</div>
 					) : null}
 				</div>
-			) : null}
-			{error ? (
-				<p role="alert" className="bots-note bots-note--warn">
+			) : error ? (
+				<p role="alert" className="bots-note bots-note--error">
 					{error}
 				</p>
 			) : null}

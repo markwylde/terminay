@@ -357,3 +357,49 @@ export function chatSendAttempt(
 		? previous
 		: { signature, key: fresh() };
 }
+
+export type RecoveryNotice = Readonly<{
+	kind: 'not-created' | 'failed' | 'outdated';
+	tone: 'warn' | 'error';
+	title: string;
+	detail: string;
+	/** The label of the create action, when creating is the way forward. */
+	create?: string;
+	recreate?: boolean;
+}>;
+
+/** What an environment that needs the user says, and the actions it offers. */
+export function recoveryNotice(
+	name: string,
+	state: BotEnvironmentSummary | undefined,
+	imageOutdated: boolean,
+): RecoveryNotice | undefined {
+	if (state === 'failed')
+		return {
+			kind: 'failed',
+			tone: 'error',
+			title: `${name}’s environment failed to start`,
+			detail:
+				'Try again, or recreate the container from the current image. The bot home is kept either way.',
+			create: 'Try again',
+			recreate: true,
+		};
+	if (state === 'not-created')
+		return {
+			kind: 'not-created',
+			tone: 'warn',
+			title: `${name}’s environment is not created`,
+			detail:
+				'Sessions create it when they start. Create it now to use the shell and desktop.',
+			create: 'Create environment',
+		};
+	if (imageOutdated)
+		return {
+			kind: 'outdated',
+			tone: 'warn',
+			title: `${name}’s container uses an older image`,
+			detail: 'Recreate it to pick up the current image. The bot home is kept.',
+			recreate: true,
+		};
+	return undefined;
+}

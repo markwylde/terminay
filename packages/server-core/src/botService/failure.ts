@@ -16,6 +16,8 @@ const engineMessages: Readonly<Record<string, string>> = {
 	'unsupported-engine-mode':
 		'This container engine mode is unsupported. Use rootful Docker or Podman.',
 	'unsupported-platform': 'Bots are not supported on this server platform.',
+	conflict:
+		'The container engine refused this because another container already uses the bot’s name or is in the wrong state. Recreate the bot environment, or remove the conflicting container on the engine.',
 	'not-found':
 		'A required container resource is missing. Create or recreate the bot environment.',
 };
