@@ -308,3 +308,53 @@ test("template commands are revisioned and announce only the revision", async ()
     await server.close();
   }
 });
+
+// skip-workflow-steps
+
+test("a client skips and restores a step through update-step, and a stale expected status is refused", async () => {
+  const server = await composed();
+  try {
+    const { client } = await server.connect("desktop");
+    const launched = await client.command(WORKFLOW_OPERATIONS.launch, { templateId: template.id, target });
+    const [first, second] = launched.workflow.steps.map((step) => step.id);
+    const skipped = await client.command(WORKFLOW_OPERATIONS.updateStep, {
+      target, stepId: second, status: "skipped", note: "Skipped from the panel", expectedStatus: "not_started",
+    });
+    assert.equal(skipped.workflow.steps[1].status, "skipped");
+    assert.equal(skipped.workflow.steps[1].note, "Skipped from the panel");
+    await client.command(WORKFLOW_OPERATIONS.updateStep, { target, stepId: first, status: "running" });
+    await rejectsWith(
+      client.command(WORKFLOW_OPERATIONS.updateStep, { target, stepId: first, status: "skipped", expectedStatus: "not_started" }),
+      "conflict",
+      (error) => assert.equal(error.details.reason, "step_changed"),
+    );
+    await rejectsWith(
+      client.command(WORKFLOW_OPERATIONS.updateStep, { target, stepId: first, status: "skipped", expectedStatus: "bogus" }),
+      "validation",
+    );
+    const restored = await client.command(WORKFLOW_OPERATIONS.updateStep, { target, stepId: second, status: "not_started", expectedStatus: "skipped" });
+    assert.deepEqual([restored.workflow.steps[1].status, restored.workflow.steps[1].note], ["not_started", ""]);
+    assert.equal(restored.workflow.steps[0].status, "running");
+    // Nothing is typed by a step update.
+    assert.equal(server.process().writes.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("a step update naming a terminal outside the caller's reach, or another server, changes nothing", async () => {
+  const server = await composed();
+  try {
+    const { client } = await server.connect("desktop");
+    const launched = await client.command(WORKFLOW_OPERATIONS.launch, { templateId: template.id, target });
+    const stepId = launched.workflow.steps[0].id;
+    const bound = await server.connect("bound-phone");
+    await rejectsWith(bound.client.command(WORKFLOW_OPERATIONS.updateStep, { target, stepId, status: "skipped" }), "not_found");
+    await rejectsWith(client.command(WORKFLOW_OPERATIONS.updateStep, { target: { ...target, projectId: "project-b" }, stepId, status: "skipped" }), "not_found");
+    await rejectsWith(client.command(WORKFLOW_OPERATIONS.updateStep, { target: { ...target, serverId: "other" }, stepId, status: "skipped" }), "not_found");
+    const after = await client.query(WORKFLOW_OPERATIONS.get, { terminalSessionId: identity.sessionId });
+    assert.equal(after.workflow.steps[0].status, "not_started");
+  } finally {
+    await server.close();
+  }
+});

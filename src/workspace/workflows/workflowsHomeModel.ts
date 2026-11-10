@@ -11,6 +11,7 @@
 import type { SessionWorkflow, WorkflowStepStatus } from '@terminay/client-core';
 import type { DashboardServerSource } from '../crossServerRows.ts';
 import { buildDashboardGroups, type DashboardPanelRow } from '../dashboardRows.ts';
+import { doneCount, isFinished } from './workflowPanelModel.ts';
 import type {
 	WorkflowsHomeSort,
 	WorkflowsHomeStatus,
@@ -61,7 +62,7 @@ export function workflowTone(view: SessionWorkflow): WorkflowsHomeTone {
 	if (steps.some((step) => step.status === 'failed' || step.status === 'needs_input'))
 		return 'alert';
 	if (steps.some((step) => step.status === 'running')) return 'running';
-	if (steps.length > 0 && steps.every((step) => step.status === 'done')) return 'done';
+	if (isFinished(view.workflow)) return 'done';
 	return 'idle';
 }
 
@@ -95,7 +96,7 @@ export function buildWorkflowRows(
 				const attached = view.state === 'attached';
 				const total = attached ? view.workflow.steps.length : 0;
 				const done = attached
-					? view.workflow.steps.filter((step) => step.status === 'done').length
+					? doneCount(view.workflow)
 					: 0;
 				rows.push(
 					Object.freeze({

@@ -467,3 +467,60 @@
   color: #fff;
   background: #da3633;
 }
+
+/* A deliberately skipped step: settled, but visibly not done. */
+.workflow-marker--skipped {
+  --workflow-tone: #6e7681;
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.workflow-step--skipped .workflow-step-title {
+  color: var(--text-secondary, #9aa4af);
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.workflow-step-action {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding-top: 1px;
+  font-size: 12px;
+}
+
+.workflow-step-button {
+  padding: 0 6px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 4px;
+  color: var(--text-secondary, #9aa4af);
+  background: transparent;
+  font: inherit;
+  line-height: 18px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.workflow-step:hover .workflow-step-button,
+.workflow-step:focus-within .workflow-step-button,
+.workflow-step--skipped .workflow-step-button {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .workflow-step-button {
+    opacity: 1;
+  }
+}
+
+.workflow-step-button:hover {
+  color: inherit;
+  border-color: rgb(255 255 255 / 0.32);
+}
+
+.workflow-step-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

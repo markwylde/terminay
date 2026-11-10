@@ -28,6 +28,7 @@ import type { DashboardServerSource } from './crossServerRows.ts';
 import type { DashboardAgent, DashboardStatusCounts } from './dashboardRows.ts';
 import { buildDashboardGroups } from './dashboardRows.ts';
 import {
+	isSettledStatus,
 	tabSummary,
 	type WorkflowTabSummary,
 } from './workflows/workflowPanelModel.ts';
@@ -254,14 +255,14 @@ function latestEnd(steps: readonly WorkflowStep[]): number | undefined {
 	return latest;
 }
 
-/** The step a row names: active, else the first failed, else the first not done. */
+/** The step a row names: active, else the first failed, else the first not settled. */
 function currentStep(steps: readonly WorkflowStep[]): WorkflowStep | undefined {
 	return (
 		steps.find(
 			(step) => step.status === 'running' || step.status === 'needs_input',
 		) ??
 		steps.find((step) => step.status === 'failed') ??
-		steps.find((step) => step.status !== 'done')
+		steps.find((step) => !isSettledStatus(step.status))
 	);
 }
 

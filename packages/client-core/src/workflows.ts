@@ -15,6 +15,7 @@ export const WORKFLOW_OPERATIONS = Object.freeze({
   get: "workflows.get",
   launch: "workflow.launch",
   resume: "workflow.resume",
+  updateStep: "workflow.update-step",
   remove: "workflow.remove",
 } as const);
 
@@ -30,7 +31,7 @@ export const WORKFLOW_ICON_NAMES = Object.freeze([
 ] as const);
 export type WorkflowIconName = (typeof WORKFLOW_ICON_NAMES)[number];
 
-export const WORKFLOW_STEP_STATUSES = Object.freeze(["not_started", "running", "done", "failed", "needs_input"] as const);
+export const WORKFLOW_STEP_STATUSES = Object.freeze(["not_started", "running", "done", "failed", "needs_input", "skipped"] as const);
 export type WorkflowStepStatus = (typeof WORKFLOW_STEP_STATUSES)[number];
 
 /** Bounds the server enforces; the editor shows them before it refuses. */
@@ -227,6 +228,30 @@ export class WorkflowClient {
 
   async resume(target: WorkflowTarget, options: CommandOptions = {}): Promise<void> {
     await this.transport.command(WORKFLOW_OPERATIONS.resume, { target: targetPayload(target) }, options);
+  }
+
+  /**
+   * Set one step's status. `expectedStatus` makes the update apply only while
+   * the step still holds it; otherwise the server refuses with `step_changed`.
+   */
+  async updateStep(
+    target: WorkflowTarget,
+    stepId: string,
+    status: WorkflowStepStatus,
+    update: { readonly note?: string; readonly expectedStatus?: WorkflowStepStatus } = {},
+    options: CommandOptions = {},
+  ): Promise<void> {
+    await this.transport.command(
+      WORKFLOW_OPERATIONS.updateStep,
+      {
+        target: targetPayload(target),
+        stepId: boundedId(stepId),
+        status,
+        ...(update.note === undefined ? {} : { note: update.note }),
+        ...(update.expectedStatus === undefined ? {} : { expectedStatus: update.expectedStatus }),
+      },
+      options,
+    );
   }
 
   async remove(target: WorkflowTarget, options: CommandOptions = {}): Promise<void> {
