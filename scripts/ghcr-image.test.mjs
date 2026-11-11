@@ -43,7 +43,7 @@ workflows.set(
 );
 
 test('server Dockerfile assembles the self-contained server and runs as a non-root user', () => {
-	assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm-slim AS build/m);
+	assert.match(dockerfile, /^FROM \$\{DOCKER_HUB\}\/node:24\.15\.0-bookworm-slim AS build/m);
 	assert.match(dockerfile, /npm install --global npm@12\.2\.1/u);
 	assert.match(
 		dockerfile,
@@ -59,7 +59,7 @@ test('server Dockerfile assembles the self-contained server and runs as a non-ro
 	assert.match(dockerfile, /build-standalone-server-artifact\.mjs/u);
 	assert.match(dockerfile, /org\.opencontainers\.image\.source/u);
 	assert.match(dockerfile, /org\.opencontainers\.image\.revision/u);
-	assert.match(dockerfile, /^FROM debian:bookworm-slim AS runtime/m);
+	assert.match(dockerfile, /^FROM \$\{DOCKER_HUB\}\/debian:bookworm-slim AS runtime/m);
 	assert.match(dockerfile, /^USER terminay$/m);
 	// The server's account is unprivileged; sudo is how its terminals reach root.
 	assert.match(

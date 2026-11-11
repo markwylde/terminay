@@ -1,6 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24.15.0-bookworm-slim AS build
+# Docker Hub's library namespace. The internal Gitea CI passes its mirror
+# (scripts/docker-hub-build-args.sh).
+ARG DOCKER_HUB=docker.io/library
+
+FROM ${DOCKER_HUB}/node:24.15.0-bookworm-slim AS build
 
 WORKDIR /workspace
 
@@ -90,7 +94,7 @@ RUN set -eu; \
   tar -xzf "$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync("/tmp/standalone-build.json", "utf8")).archivePath)')" \
     --strip-components=1 -C /out/terminay
 
-FROM debian:bookworm-slim AS runtime
+FROM ${DOCKER_HUB}/debian:bookworm-slim AS runtime
 
 ARG OCI_VERSION=0.0.0
 ARG OCI_REVISION=unknown

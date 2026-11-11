@@ -236,8 +236,8 @@ test('the floor Dockerfiles build from the declared images', async () => {
 		new URL('../Dockerfile.linux-floor-runtime', import.meta.url),
 		'utf8',
 	);
-	assert.deepEqual(build.match(/^FROM .*$/gmu), [`FROM ${LINUX_FLOOR_BUILD_IMAGE}`]);
-	assert.deepEqual(runtime.match(/^FROM .*$/gmu), [`FROM ${LINUX_FLOOR_RUNTIME_IMAGE}`]);
+	assert.deepEqual(build.match(/^FROM .*$/gmu), [`FROM \${DOCKER_HUB}/${LINUX_FLOOR_BUILD_IMAGE}`]);
+	assert.deepEqual(runtime.match(/^FROM .*$/gmu), [`FROM \${DOCKER_HUB}/${LINUX_FLOOR_RUNTIME_IMAGE}`]);
 	// The runtime host is clean: nothing in it can compile or run JavaScript
 	// except the artifact under test.
 	const instructions = runtime

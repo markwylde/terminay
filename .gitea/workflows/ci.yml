@@ -15,6 +15,14 @@ on:
 permissions:
   contents: read
 
+# Docker Hub rate-limits these runners. Every image build therefore takes
+# Docker Hub's library images and BuildKit's Dockerfile frontend from the
+# internal mirror, at the same tags and digests; the jobs that build log in to
+# it first. scripts/docker-hub-build-args.sh turns this into build arguments.
+# GitHub's release workflows leave it unset and pull from Docker Hub.
+env:
+  TERMINAY_DOCKER_HUB_MIRROR: git.i.wylde.net/docker
+
 concurrency:
   group: terminay-ci-${{ github.ref }}
   cancel-in-progress: true
@@ -156,6 +164,11 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -332,6 +345,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
+
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -351,7 +369,9 @@ jobs:
         run: |
           set -euo pipefail
           image_log="$RUNNER_TEMP/terminay-image-build.log"
+          # shellcheck disable=SC2046 # one docker build argument per line
           DOCKER_BUILDKIT=1 docker build \
+            $(sh scripts/docker-hub-build-args.sh) \
             --file ./Dockerfile \
             --tag "terminay-image-smoke:${GITHUB_SHA}" \
             --build-arg OCI_REVISION="${GITHUB_SHA}" \
@@ -396,6 +416,11 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
       - name: Set up Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -430,6 +455,11 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
 
       - name: Test latest MCP clients in Docker
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
@@ -500,9 +530,11 @@ jobs:
             echo "Restored $BASE_TAG from the internal registry."
             exit 0
           fi
+          # shellcheck disable=SC2046 # one docker build argument per line
           DOCKER_BUILDKIT=1 docker build \
             --pull \
             --platform linux/amd64 \
+            $(sh scripts/docker-hub-build-args.sh) \
             --file Dockerfile.e2e-base \
             --tag "$BASE_TAG" \
             .

@@ -1,4 +1,7 @@
-FROM node:24.15.0-bookworm-slim
+# Docker Hub's library namespace. The internal Gitea CI passes its mirror
+# (scripts/docker-hub-build-args.sh).
+ARG DOCKER_HUB=docker.io/library
+FROM ${DOCKER_HUB}/node:24.15.0-bookworm-slim
 
 ENV CI=1 \
     DISABLE_AUTOUPDATER=1 \

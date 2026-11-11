@@ -3,7 +3,10 @@
 # dependencies, Electron and Playwright Chromium. Its tag is a hash of exactly
 # the files it copies (scripts/e2e-base-image-key.mjs), so it is rebuilt only
 # when dependencies change and its layers are reused by every per-commit image.
-FROM node:24.15.0-bookworm-slim
+# Docker Hub's library namespace. The internal Gitea CI passes its mirror
+# (scripts/docker-hub-build-args.sh).
+ARG DOCKER_HUB=docker.io/library
+FROM ${DOCKER_HUB}/node:24.15.0-bookworm-slim
 
 # The runner fleet's age-based prune skips images with this label: a base can
 # stay current for weeks, and the CI cleanup step already removes superseded

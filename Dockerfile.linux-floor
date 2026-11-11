@@ -5,7 +5,10 @@
 # LINUX_FLOOR_BUILD_IMAGE in scripts/linux-glibc-floor.mjs. Its buildpack-deps
 # layers already carry the compiler, Python, git, curl, and xz that node-gyp,
 # electron-builder, and the archive builder use.
-FROM node:24.15.0-bullseye@sha256:44aeb8a19d0a201cdcb18ea3b25de9249454e6fc3cd05731584659859022fefb
+# Docker Hub's library namespace. The internal Gitea CI passes its mirror
+# (scripts/docker-hub-build-args.sh).
+ARG DOCKER_HUB=docker.io/library
+FROM ${DOCKER_HUB}/node:24.15.0-bullseye@sha256:44aeb8a19d0a201cdcb18ea3b25de9249454e6fc3cd05731584659859022fefb
 
 ENV CI=1
 

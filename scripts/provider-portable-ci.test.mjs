@@ -47,7 +47,16 @@ test("Gitea is the only provider that runs verification CI", async () => {
   // Every case runs: a job that named cases with --only could drop the control.
   assert.doesNotMatch(job(giteaCi, "container-image-smoke"), /--only/u);
   assert.match(job(giteaCi, "container-image-smoke"), /prune-ci-docker-images\.sh/u);
-  assert.doesNotMatch(job(giteaCi, "container-image-smoke"), /docker push|docker login/u);
+  assert.doesNotMatch(job(giteaCi, "container-image-smoke"), /docker push/u);
+  // Docker Hub rate-limits the Gitea runners: every job that builds an image
+  // logs in to the internal registry and takes Docker Hub images from its mirror.
+  assert.match(giteaCi, /^env:\n {2}TERMINAY_DOCKER_HUB_MIRROR: git\.i\.wylde\.net\/docker$/mu);
+  for (const name of ["linux-glibc-floor", "container-image-smoke", "bot-mcp-runtime", "mcp-cli-compatibility", "e2e-image"]) {
+    assert.match(job(giteaCi, name), /docker login git\.i\.wylde\.net --username "\$GITHUB_ACTOR" --password-stdin/u, name);
+    assert.doesNotMatch(job(giteaCi, name), /docker login (?!git\.i\.wylde\.net)/u, name);
+  }
+  for (const name of ["container-image-smoke", "e2e-image"])
+    assert.match(job(giteaCi, name), /docker build \\\n(?: {12}--[a-z]+(?: \S+)? \\\n)*? {12}\$\(sh scripts\/docker-hub-build-args\.sh\) \\/u, name);
   // Real-peer tests skip wherever the selected runtime is not staged, which is
   // everywhere but this job; it must keep staging it and running them.
   assert.match(job(giteaCi, "real-webrtc"), /npm run test:real-webrtc/u);

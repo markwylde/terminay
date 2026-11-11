@@ -76,8 +76,10 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+# shellcheck disable=SC2046 # one docker build argument per line
 DOCKER_BUILDKIT=1 docker build \
   --platform "$platform" \
+  $(sh "$repo_dir/scripts/docker-hub-build-args.sh") \
   --file "$repo_dir/Dockerfile.linux-floor" \
   --tag "$image" \
   "$repo_dir"

@@ -47,7 +47,9 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 # The image needs nothing from the repository, so it is built without context.
-docker build --platform "$platform" --tag "$image" - < "$repo_dir/Dockerfile.linux-floor-runtime"
+# shellcheck disable=SC2046 # one docker build argument per line
+docker build --platform "$platform" $(sh "$repo_dir/scripts/docker-hub-build-args.sh") \
+  --tag "$image" - < "$repo_dir/Dockerfile.linux-floor-runtime"
 
 # Everything after the extraction runs on the artifact's own files.
 case "$kind" in
