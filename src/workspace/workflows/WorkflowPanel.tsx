@@ -13,7 +13,7 @@ import type {
 	WorkflowTarget,
 } from '@terminay/client-core';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { WorkflowStepMarker } from './workflowIcons';
 import {
 	canRestore,
@@ -24,9 +24,16 @@ import {
 	PANEL_SKIP_NOTE,
 	statusLabel,
 	stepTime,
+	WORKFLOW_PANEL_MAX_WIDTH,
+	WORKFLOW_PANEL_MIN_WIDTH,
+	WORKFLOW_PANEL_RESIZE_STEP,
+	WORKFLOW_PANEL_WIDTH,
 	type WorkflowPanelMode,
 } from './workflowPanelModel';
-import { setWorkflowPanelSetting } from './workflowPanelSetting';
+import {
+	setWorkflowPanelSetting,
+	setWorkflowPanelWidth,
+} from './workflowPanelSetting';
 import './WorkflowPanel.css';
 
 export interface WorkflowPanelProps {
@@ -36,6 +43,14 @@ export interface WorkflowPanelProps {
 	readonly client?: WorkflowClient;
 	/** Give the keyboard back to the terminal. */
 	readonly focusTerminal: () => void;
+	/** The width the expanded panel is drawn at in this pane. */
+	readonly width?: number;
+	/** The widest the expanded panel may be in this pane. */
+	readonly maxWidth?: number;
+	/** The narrow-pane overlay's width. */
+	readonly overlayWidth?: number;
+	/** The width under a dragging pointer, or null when no drag is live. */
+	readonly onPreviewWidth?: (width: number | null) => void;
 }
 
 export function WorkflowPanel(props: WorkflowPanelProps) {
@@ -57,6 +72,12 @@ export function WorkflowPanel(props: WorkflowPanelProps) {
 		} else setWorkflowPanelSetting('collapsed');
 	};
 
+	const width = props.width ?? WORKFLOW_PANEL_WIDTH;
+	const style = {
+		'--workflow-panel-width': `${width}px`,
+		'--workflow-overlay-width': `${props.overlayWidth ?? WORKFLOW_PANEL_WIDTH}px`,
+	} as CSSProperties;
+
 	return (
 		<aside
 			className={`workflow-panel workflow-panel--${
@@ -64,9 +85,20 @@ export function WorkflowPanel(props: WorkflowPanelProps) {
 			}`}
 			aria-label="Workflow"
 			data-workflow-mode={props.mode}
+			style={style}
 		>
 			{props.mode === 'expanded' ? (
-				<ExpandedWorkflow {...props} onCollapse={collapse} />
+				<>
+					<WorkflowPanelSeparator
+						width={width}
+						maxWidth={Math.max(
+							WORKFLOW_PANEL_MIN_WIDTH,
+							Math.min(props.maxWidth ?? WORKFLOW_PANEL_MAX_WIDTH, WORKFLOW_PANEL_MAX_WIDTH),
+						)}
+						onPreview={props.onPreviewWidth}
+					/>
+					<ExpandedWorkflow {...props} onCollapse={collapse} />
+				</>
 			) : overlay ? null : (
 				// The overlay replaces the rail; the aside keeps the rail's strip so
 				// the terminal does not refit.
@@ -76,6 +108,120 @@ export function WorkflowPanel(props: WorkflowPanelProps) {
 				<WorkflowOverlay {...props} onClose={collapse} />
 			) : null}
 		</aside>
+	);
+}
+
+/**
+ * The expanded panel's left edge. It follows the workspace separators'
+ * gesture rules: a drag starts from the drawn width and previews live, so the
+ * pane narrows the terminal with it and never covers it; releasing commits
+ * once, and only if the pointer moved; a cancelled drag commits nothing.
+ */
+function WorkflowPanelSeparator({
+	width,
+	maxWidth,
+	onPreview,
+}: {
+	readonly width: number;
+	readonly maxWidth: number;
+	readonly onPreview: ((width: number | null) => void) | undefined;
+}) {
+	const dragRef = useRef<{
+		pointerId: number;
+		startX: number;
+		startWidth: number;
+		latest: number;
+		moved: boolean;
+		removeListeners: () => void;
+	} | null>(null);
+	const onPreviewRef = useRef(onPreview);
+	onPreviewRef.current = onPreview;
+	const clamp = (next: number) =>
+		Math.min(maxWidth, Math.max(WORKFLOW_PANEL_MIN_WIDTH, Math.round(next)));
+	const clampRef = useRef(clamp);
+	clampRef.current = clamp;
+
+	const end = (commit: boolean) => {
+		const drag = dragRef.current;
+		if (drag === null) return;
+		dragRef.current = null;
+		drag.removeListeners();
+		if (commit && drag.moved) setWorkflowPanelWidth(drag.latest);
+		onPreviewRef.current?.(null);
+	};
+	const endRef = useRef(end);
+	endRef.current = end;
+
+	// Unmounting mid-drag, say because the panel collapsed, commits nothing.
+	useEffect(() => () => endRef.current(false), []);
+
+	return (
+		<hr
+			className="workflow-panel-separator"
+			aria-label="Resize workflow panel"
+			aria-orientation="vertical"
+			aria-valuemin={WORKFLOW_PANEL_MIN_WIDTH}
+			aria-valuemax={maxWidth}
+			aria-valuenow={width}
+			aria-valuetext={`${width} pixels`}
+			tabIndex={0}
+			onKeyDown={(event) => {
+				// The panel sits on the right, so moving its edge left widens it.
+				const step =
+					event.key === 'ArrowLeft'
+						? WORKFLOW_PANEL_RESIZE_STEP
+						: event.key === 'ArrowRight'
+							? -WORKFLOW_PANEL_RESIZE_STEP
+							: 0;
+				if (step === 0) return;
+				event.preventDefault();
+				event.stopPropagation();
+				setWorkflowPanelWidth(clamp(width + step));
+			}}
+			onPointerDown={(event) => {
+				if (event.button !== 0 || dragRef.current !== null) return;
+				event.preventDefault();
+				event.currentTarget.setPointerCapture?.(event.pointerId);
+				const ownerWindow = event.currentTarget.ownerDocument.defaultView;
+				const pointerId = event.pointerId;
+				const onMove = (moveEvent: PointerEvent) => {
+					const drag = dragRef.current;
+					if (drag === null || moveEvent.pointerId !== pointerId) return;
+					moveEvent.preventDefault();
+					const next = clampRef.current(
+						drag.startWidth - (moveEvent.clientX - drag.startX),
+					);
+					if (moveEvent.clientX !== drag.startX) drag.moved = true;
+					if (next === drag.latest) return;
+					drag.latest = next;
+					onPreviewRef.current?.(next);
+				};
+				const onUp = (upEvent: PointerEvent) => {
+					if (upEvent.pointerId !== pointerId) return;
+					endRef.current(upEvent.type === 'pointerup');
+				};
+				const onBlur = () => endRef.current(false);
+				// Losing pointer capture does not end the drag: the handle is thin
+				// and a quick pointer leaves it while the button is still held.
+				ownerWindow?.addEventListener('pointermove', onMove);
+				ownerWindow?.addEventListener('pointerup', onUp);
+				ownerWindow?.addEventListener('pointercancel', onUp);
+				ownerWindow?.addEventListener('blur', onBlur);
+				dragRef.current = {
+					pointerId,
+					startX: event.clientX,
+					startWidth: width,
+					latest: width,
+					moved: false,
+					removeListeners: () => {
+						ownerWindow?.removeEventListener('pointermove', onMove);
+						ownerWindow?.removeEventListener('pointerup', onUp);
+						ownerWindow?.removeEventListener('pointercancel', onUp);
+						ownerWindow?.removeEventListener('blur', onBlur);
+					},
+				};
+			}}
+		/>
 	);
 }
 

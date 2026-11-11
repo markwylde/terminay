@@ -12,8 +12,13 @@ import type {
 
 /** Width the collapsed rail reserves at the pane's right edge. */
 export const WORKFLOW_RAIL_WIDTH = 36;
-/** Width the expanded panel reserves. */
+/** Width the expanded panel takes until the user resizes it. */
 export const WORKFLOW_PANEL_WIDTH = 264;
+/** Bounds of the width the user may give the expanded panel. */
+export const WORKFLOW_PANEL_MIN_WIDTH = 200;
+export const WORKFLOW_PANEL_MAX_WIDTH = 640;
+/** How far one arrow key moves the panel's separator. */
+export const WORKFLOW_PANEL_RESIZE_STEP = 16;
 /** A terminal narrower than this beside the expanded panel keeps the rail. */
 export const WORKFLOW_MIN_TERMINAL_COLUMNS = 60;
 
@@ -227,27 +232,81 @@ export function elapsed(workflow: Workflow, now: number): string | undefined {
 /**
  * How the panel shows. `columnsBesideRail` is how wide the terminal is with
  * only the rail beside it; the terminal must keep at least the minimum
- * beside the expanded panel, or the panel stays a rail and expands as an
- * overlay that does not resize the terminal.
+ * beside the expanded panel. The panel narrows toward its minimum width to
+ * keep it, and below that stays a rail and expands as an overlay that does
+ * not resize the terminal.
  */
 export type WorkflowPanelMode = 'collapsed' | 'expanded' | 'forced-collapsed';
 
-export function panelMode(
-	setting: 'collapsed' | 'expanded',
+export interface WorkflowPanelLayout {
+	readonly mode: WorkflowPanelMode;
+	/** The width the expanded panel is drawn at in this pane. */
+	readonly width: number;
+	/** The widest the expanded panel may be in this pane. */
+	readonly maxWidth: number;
+}
+
+/** A width the user chose, made one the panel can take. */
+export function clampPanelWidth(width: number): number {
+	if (!Number.isFinite(width)) return WORKFLOW_PANEL_WIDTH;
+	return Math.min(
+		WORKFLOW_PANEL_MAX_WIDTH,
+		Math.max(WORKFLOW_PANEL_MIN_WIDTH, Math.round(width)),
+	);
+}
+
+/** The widest panel that keeps the terminal at the minimum columns. */
+export function widestPanelWidth(
 	columnsBesideRail: number | undefined,
 	cellWidth: number | undefined,
-): WorkflowPanelMode {
+): number {
+	if (
+		columnsBesideRail === undefined ||
+		cellWidth === undefined ||
+		cellWidth <= 0
+	)
+		return WORKFLOW_PANEL_MAX_WIDTH;
+	const spare = columnsBesideRail - WORKFLOW_MIN_TERMINAL_COLUMNS;
+	return Math.min(
+		WORKFLOW_PANEL_MAX_WIDTH,
+		Math.floor(WORKFLOW_RAIL_WIDTH + spare * cellWidth),
+	);
+}
+
+export function panelLayout(
+	setting: 'collapsed' | 'expanded',
+	chosenWidth: number,
+	columnsBesideRail: number | undefined,
+	cellWidth: number | undefined,
+): WorkflowPanelLayout {
+	const maxWidth = widestPanelWidth(columnsBesideRail, cellWidth);
 	// Narrowness is the pane's, whatever the setting: expanding a narrow pane
 	// always opens the overlay and never changes the setting.
-	if (columnsBesideRail !== undefined && cellWidth !== undefined && cellWidth > 0) {
-		const lost = Math.ceil((WORKFLOW_PANEL_WIDTH - WORKFLOW_RAIL_WIDTH) / cellWidth);
-		if (columnsBesideRail - lost < WORKFLOW_MIN_TERMINAL_COLUMNS) return 'forced-collapsed';
-	}
-	return setting;
+	if (maxWidth < WORKFLOW_PANEL_MIN_WIDTH)
+		return {
+			mode: 'forced-collapsed',
+			width: WORKFLOW_PANEL_MIN_WIDTH,
+			maxWidth,
+		};
+	return {
+		mode: setting,
+		width: Math.min(clampPanelWidth(chosenWidth), maxWidth),
+		maxWidth,
+	};
 }
 
 /** Pixels the pane reserves at its right edge for the panel. */
-export function reservedWidth(mode: WorkflowPanelMode | undefined): number {
-	if (mode === undefined) return 0;
-	return mode === 'expanded' ? WORKFLOW_PANEL_WIDTH : WORKFLOW_RAIL_WIDTH;
+export function reservedWidth(layout: WorkflowPanelLayout | undefined): number {
+	if (layout === undefined) return 0;
+	return layout.mode === 'expanded' ? layout.width : WORKFLOW_RAIL_WIDTH;
+}
+
+/** The narrow-pane overlay: the chosen width, or most of the pane. */
+export function overlayWidth(
+	chosenWidth: number,
+	paneWidth: number | undefined,
+): number {
+	const chosen = clampPanelWidth(chosenWidth);
+	if (paneWidth === undefined || !(paneWidth > 0)) return chosen;
+	return Math.min(chosen, Math.floor(paneWidth * 0.85));
 }

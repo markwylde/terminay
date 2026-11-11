@@ -76,12 +76,16 @@ import { appWindowPaneKey } from '../workspace/appWindows/useServerAppWindows';
 import { useTerminalWorkflow } from '../workspace/workflows/useServerWorkflows';
 import { WorkflowPanel } from '../workspace/workflows/WorkflowPanel';
 import {
-	panelMode,
+	overlayWidth,
+	panelLayout,
 	reservedWidth,
 	tabSummary,
 	WORKFLOW_RAIL_WIDTH,
 } from '../workspace/workflows/workflowPanelModel';
-import { useWorkflowPanelSetting } from '../workspace/workflows/workflowPanelSetting';
+import {
+	useWorkflowPanelSetting,
+	useWorkflowPanelWidth,
+} from '../workspace/workflows/workflowPanelSetting';
 import { useMarkWorkflowSeen } from '../workspace/workflows/workflowSeen';
 import type { TerminalPanelParams } from './TerminalTab';
 import {
@@ -320,6 +324,29 @@ function mobileTerminalModifierKeyClassName(
 
 /** The text an xterm link range covers, joining soft-wrapped rows. Ranges are
  * 1-based and their end column is inclusive. */
+/** xterm's scrollbar width when its options do not set one. */
+const XTERM_DEFAULT_SCROLLBAR_WIDTH = 14;
+
+/**
+ * The pixels of the terminal's root that hold no cell: the element's padding
+ * and the scrollbar, exactly as the fit addon subtracts them.
+ */
+function terminalFitOverhead(terminal: Terminal): number {
+	const showScrollbar = terminal.options.scrollbar?.showScrollbar ?? true;
+	const scrollbar =
+		terminal.options.scrollback === 0 || !showScrollbar
+			? 0
+			: (terminal.options.scrollbar?.width ?? XTERM_DEFAULT_SCROLLBAR_WIDTH);
+	const element = terminal.element;
+	if (element === undefined) return scrollbar;
+	const style = getComputedStyle(element);
+	return (
+		scrollbar +
+		(Number.parseInt(style.paddingLeft, 10) || 0) +
+		(Number.parseInt(style.paddingRight, 10) || 0)
+	);
+}
+
 function readBufferRangeText(terminal: Terminal, range: IBufferRange): string {
 	const buffer = terminal.buffer.active;
 	let text = '';
@@ -595,18 +622,30 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		props.params.isFocused === true,
 	);
 	const workflowSetting = useWorkflowPanelSetting();
+	const workflowChosenWidth = useWorkflowPanelWidth();
+	// While the user drags the panel's separator, this pane draws the width
+	// under the pointer; the chosen width changes only when the drag ends.
+	const [workflowPreviewWidth, setWorkflowPreviewWidth] = useState<
+		number | null
+	>(null);
 	const [workflowGeometry, setWorkflowGeometry] = useState<
-		{ readonly columnsBesideRail: number; readonly cellWidth: number } | undefined
+		| {
+				readonly columnsBesideRail: number;
+				readonly cellWidth: number;
+				readonly paneWidth: number;
+		  }
+		| undefined
 	>(undefined);
-	const workflowMode =
+	const workflowLayout =
 		terminalWorkflow.view === undefined
 			? undefined
-			: panelMode(
+			: panelLayout(
 					workflowSetting,
+					workflowPreviewWidth ?? workflowChosenWidth,
 					workflowGeometry?.columnsBesideRail,
 					workflowGeometry?.cellWidth,
 				);
-	const workflowReserved = reservedWidth(workflowMode);
+	const workflowReserved = reservedWidth(workflowLayout);
 	const workflowReservedRef = useRef(workflowReserved);
 	workflowReservedRef.current = workflowReserved;
 	// An attach or renewal that failed on the dying transport is the reconnect's
@@ -1656,18 +1695,22 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			fitAddon.fit();
 			updateTerminalGridMetadata(root, terminal.cols, terminal.rows);
 			// How wide the terminal would be with only the workflow rail beside
-			// it, which decides whether the expanded panel fits.
-			const cellWidth = terminal.cols > 0 ? root.clientWidth / terminal.cols : 0;
+			// it, which decides how wide the expanded panel may be. Measured with
+			// the renderer's own cell width and the fit's own overhead, so the
+			// answer does not drift as the panel's width changes the fit.
+			const cellWidth = terminal.dimensions?.css.cell.width ?? 0;
 			if (cellWidth > 0) {
+				const paneWidth = root.clientWidth + workflowReservedRef.current;
 				const columnsBesideRail = Math.floor(
-					(root.clientWidth + workflowReservedRef.current - WORKFLOW_RAIL_WIDTH) /
+					(paneWidth - WORKFLOW_RAIL_WIDTH - terminalFitOverhead(terminal)) /
 						cellWidth,
 				);
 				setWorkflowGeometry((previous) =>
 					previous?.columnsBesideRail === columnsBesideRail &&
+					previous.paneWidth === paneWidth &&
 					Math.abs(previous.cellWidth - cellWidth) < 0.01
 						? previous
-						: { columnsBesideRail, cellWidth },
+						: { columnsBesideRail, cellWidth, paneWidth },
 				);
 			}
 			if (
@@ -3399,11 +3442,18 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			{/* Reserved for minimised app-window tabs; zero height without one. */}
 			<div className="terminal-app-window-rail" aria-hidden="true" />
 			{terminalWorkflow.view === undefined ||
-			workflowMode === undefined ||
+			workflowLayout === undefined ||
 			!terminalClientContext ? null : (
 				<WorkflowPanel
 					view={terminalWorkflow.view}
-					mode={workflowMode}
+					mode={workflowLayout.mode}
+					width={workflowLayout.width}
+					maxWidth={workflowLayout.maxWidth}
+					overlayWidth={overlayWidth(
+						workflowChosenWidth,
+						workflowGeometry?.paneWidth,
+					)}
+					onPreviewWidth={setWorkflowPreviewWidth}
 					target={{
 						serverId: terminalClientContext.serverId,
 						projectId: terminalClientContext.projectId,
