@@ -335,7 +335,7 @@ export function createGitHubForgeSource(options: GitHubForgeOptions): ForgeSourc
 					.map((comment) => ({
 						author: typeof comment?.author?.login === 'string' ? comment.author.login : 'ghost',
 						createdAt: comment?.createdAt as string,
-						body: (comment?.body as string).slice(0, 8_192),
+						body: String(comment?.body ?? '').slice(0, 8_192),
 					}))
 					.slice(-10);
 				return { summary, body: typeof node.body === 'string' ? node.body.slice(0, 65_536) : '', comments };
@@ -387,7 +387,7 @@ function toSummary(node: GitHubItem, kind: ForgeItemKind, origin: string): Forge
 	const labels: ForgeLabel[] = (Array.isArray(node.labels?.nodes) ? node.labels.nodes : [])
 		.map((label) => label as { name?: unknown; color?: unknown } | null)
 		.filter((label) => typeof label?.name === 'string' && typeof label?.color === 'string' && /^[0-9a-fA-F]{6}$/u.test(label.color))
-		.map((label) => ({ name: (label?.name as string).slice(0, 64), color: (label?.color as string).toLowerCase() }))
+		.map((label) => ({ name: String(label?.name ?? '').slice(0, 64), color: String(label?.color ?? '').toLowerCase() }))
 		.slice(0, 20);
 	const summary: ForgeItemSummary = {
 		reference: { kind, origin, owner, name, number: node.number as number },
