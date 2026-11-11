@@ -606,21 +606,36 @@ test('a terminal created in a folder starts in its worktree and its panel joins 
 });
 
 test('MCP open and split create the terminal in the folder of the terminal they act for', async () => {
+	// The tools live in the MCP host every server composes (ADR-0108); each
+	// host opens the terminal its own way and must honour the folder.
+	const host = await readFile(
+		new URL('../apps/terminay-server/src/mcp/host.ts', import.meta.url),
+		'utf8',
+	);
 	const main = await readFile(
 		new URL('../electron/main.ts', import.meta.url),
 		'utf8',
 	);
-	assert.match(
-		main,
-		/openTerminal: async[\s\S]*?const callerPanel =\s*projectId === context\.projectId\s*\? mcpPanelFor\(context\.terminalSessionId, context\.projectId\)\s*: undefined;[\s\S]*?createServerOwnedTerminalSession\(\s*projectId,\s*params\.cwd,\s*undefined,\s*callerPanel\?\.id,\s*callerPanel\?\.folderId,\s*params\.shellProfile,\s*\)/u,
+	const standalone = await readFile(
+		new URL('../apps/terminay-server/src/mcp/openTerminal.ts', import.meta.url),
+		'utf8',
 	);
 	assert.match(
-		main,
-		/splitTerminal: async[\s\S]*?const targetPanel = mcpPanelFor\(target\.id, target\.projectId\);[\s\S]*?createServerOwnedTerminalSession\(\s*target\.projectId,\s*undefined,\s*undefined,\s*targetPanel\?\.id,\s*targetPanel\?\.folderId,\s*\)/u,
+		host,
+		/openTerminal: async[\s\S]*?const callerPanel =\s*projectId === context\.projectId\s*\? mcpPanelFor\(context\.terminalSessionId, context\.projectId\)\s*: undefined;[\s\S]*?options\.openTerminal\(\s*projectId,\s*params\.cwd,\s*undefined,\s*callerPanel\?\.id,\s*callerPanel\?\.folderId,\s*params\.shellProfile,\s*\)/u,
 	);
+	assert.match(
+		host,
+		/splitTerminal: async[\s\S]*?const targetPanel = mcpPanelFor\(target\.id, target\.projectId\);[\s\S]*?options\.openTerminal\(\s*target\.projectId,\s*undefined,\s*undefined,\s*targetPanel\?\.id,\s*targetPanel\?\.folderId,\s*\)/u,
+	);
+	assert.match(main, /openTerminal: createServerOwnedTerminalSession,/u);
 	assert.match(
 		main,
 		/async function createServerOwnedTerminalSession\([\s\S]*?folderId\?: string,[\s\S]*?\.\.\.\(folderId === undefined \? \{\} : \{ folderId \}\),/u,
+	);
+	assert.match(
+		standalone,
+		/\.\.\.\(folder === undefined \? \{\} : \{ folderId: folder \}\),/u,
 	);
 });
 
