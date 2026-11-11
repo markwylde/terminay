@@ -55,5 +55,5 @@
 
 - [ ] 9.1 Confirm `pairing-install-instructions-and-beta-image`, `official-container-image` and `remote-server-in-app-upgrade` are archived before this change is, since they own requirements modified here. Verified by `openspec list` and the requirement headers existing in `openspec/specs/`.
 - [x] 9.2 Update `docs/operations/docker-image-release.md` and the release runbooks for the three tracks. Verified by the documentation test suite.
-- [ ] 9.3 Run `openspec validate --all`, `npm run smoke`, the CLI and server workspace tests, and `npm run test:e2e`. Verified by their output.
-- [ ] 9.4 Open the pull request on `origin` and read back every Gitea commit status as `success` or `skipped`. Verified by the status listing.
+- [x] 9.3 Run `openspec validate --all`, `npm run smoke`, the CLI and server workspace tests, and `npm run test:e2e`. Verified by their output.
+- [x] 9.4 Open the pull request on `origin` and read back every Gitea commit status as `success` or `skipped`. Verified by the status listing.
