@@ -70,7 +70,8 @@ and a VPS sit side by side in one tab strip.
   repository, with each item's checks, the worktree its branch is checked out
   in, and actions to open that worktree, check a pull request out in a new
   one, review it with an agent, or start work on an issue. A project whose
-  remote a forge claims gets Pull Requests and Issues tabs in its left column.
+  remote a forge claims gets a Git tab in its left column, with collapsible,
+  reorderable Issues and Pull Requests panes.
 - The first application menu is **Terminay**: New Terminal Tab, New Project,
   and Settings. There is no File menu.
 

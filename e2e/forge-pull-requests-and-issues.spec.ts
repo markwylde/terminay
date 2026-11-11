@@ -260,17 +260,31 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		await shot(mainWindow, testInfo, '02-checked-out-folder');
 	});
 
-	await test.step('the project Pull Requests tab shows This worktree, and a row opens Home', async () => {
-		const tab = mainWindow
-			.locator('.project-workspace--active')
-			.getByRole('tab', { name: /^Pull Requests/u });
-		await expect(tab).toHaveAccessibleName('Pull Requests, 2', { timeout: 30_000 });
+	await test.step('the project Git tab shows Issues and Pull Requests panes, and a row opens Home', async () => {
+		const project = mainWindow.locator('.project-workspace--active');
+		const tab = project.getByRole('tab', { name: 'Git', exact: true });
+		await expect(tab).toBeVisible({ timeout: 30_000 });
 		await tab.click();
-		const pane = mainWindow.locator('.project-workspace--active [data-forge-project-tab="pullRequest"]');
+		const gitTab = project.locator('[data-forge-git-tab]');
+		const paneTitles = gitTab.locator('[data-sidebar-pane-title]');
+		await expect(paneTitles).toHaveCount(2);
+		await expect(paneTitles.nth(0)).toHaveAttribute('data-sidebar-pane-title', 'Issues');
+		await expect(paneTitles.nth(1)).toHaveAttribute('data-sidebar-pane-title', 'Pull Requests');
+		await expect(paneTitles.nth(1).locator('.sidebar-pane__count')).toHaveText('2', { timeout: 30_000 });
+		const pane = project.locator('[data-forge-project-tab="pullRequest"]');
 		await expect(pane.locator('[data-forge-tab-group="thisWorktree"] [data-forge-row="88"]')).toBeVisible({ timeout: 30_000 });
 		await expect(pane.locator('[data-forge-tab-group="open"] [data-forge-row="90"]')).toBeVisible();
-		await expect(pane.locator('[data-forge-show-all="pullRequest"]')).toBeVisible();
-		await shot(mainWindow, testInfo, '03-project-pull-requests-tab');
+		await expect(project.locator('[data-forge-project-tab="issue"] [data-forge-row="541"]')).toBeVisible();
+		await expect(gitTab.locator('[data-forge-show-all="pullRequest"]')).toBeVisible();
+		await shot(mainWindow, testInfo, '03-project-git-tab');
+		// Collapsing Issues leaves its title row, and the device remembers it.
+		await paneTitles.nth(0).locator('.sidebar-pane__header').click();
+		await expect(project.locator('[data-forge-project-tab="issue"]')).toHaveCount(0);
+		await expect
+			.poll(() => mainWindow.evaluate(() => JSON.parse(localStorage.getItem('terminay.forge.gitPanes') ?? '{}').collapsed?.issues))
+			.toBe(true);
+		await paneTitles.nth(0).locator('.sidebar-pane__header').click();
+		await expect(project.locator('[data-forge-project-tab="issue"]')).toHaveCount(1);
 		await pane.locator('[data-forge-row="88"]').click();
 		await expectHomeSection(mainWindow, 'pullRequests');
 		await expect(detail(88)).toBeVisible();
@@ -308,7 +322,7 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		await panel.locator('[data-forge-launcher]').selectOption({ label: 'Shell only' });
 		await shot(mainWindow, testInfo, '05-start-work');
 		await panel.getByRole('button', { name: 'Start work' }).click();
-		// The left column still shows Pull Requests from before; back to the tree.
+		// The left column still shows the Git tab from before; back to the tree.
 		await mainWindow.locator('.project-workspace--active').getByRole('tab', { name: 'Tabs', exact: true }).click();
 		await expect(folderRow(mainWindow, ISSUE_541_BRANCH)).toBeVisible({ timeout: 30_000 });
 		await expect(folderTerminals(mainWindow, ISSUE_541_BRANCH)).toHaveCount(1, { timeout: 30_000 });

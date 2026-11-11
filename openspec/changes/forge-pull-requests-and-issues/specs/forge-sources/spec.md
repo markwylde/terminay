@@ -331,7 +331,7 @@ Each extension with a forge source SHALL have, in its Settings, a
 **Repositories** choice of **Everything I can access** (the default), **Repos
 of open projects**, or **Chosen owners** with a switch per owner its accounts
 can act for, and switches for **Pull requests on Home**, **Issues on Home**,
-and **Project tabs**, each on by default. When the source's `all` reach is
+and **Project Git tab**, each on by default. When the source's `all` reach is
 `owners`, the Settings SHALL say that the All scope covers the account's own
 and its organisations' repositories. The settings SHALL be server-scoped and
 stored by Terminay, not by the extension. Terminay SHALL apply them by

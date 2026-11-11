@@ -47,6 +47,8 @@
 - [x] 6.7 Add Accounts, Repositories (with the owner catalogue from `forge.owners` and the `owners` reach note), and "Pull requests and issues" sections to Settings › Extensions for extensions with forge sources, plus the `forge-source` permission chip. Verify: component tests for detected accounts, rejected account sign-in, add-account flow, chosen owners, and settings writes.
 - [x] 6.8 Empty, no-account, and partial-failure states. Verify: component tests for each.
 
+- [x] 6.9 Replace the Pull Requests and Issues left-column tabs with one Git tab holding Issues and Pull Requests sidebar panes (title row with count, collapse, reorder, resize; order, collapse, and heights remembered on the device; Show all on Home as a pane action; single-line rows and group headers in the sidebar pane style). Verify: component tests for the tab, pane presence per kind, the remembered layout, and the project-bound detail in place of a pane's list; E2E updated.
+
 ## 7. End to end and docs
 
 - [x] 7.1 Add a fake forge source extension fixture for E2E, and E2E specs for Home Pull Requests, Home Issues with Start work (Shell only, and with a fake prompt-accepting launcher whose argv is checked), Review with agent on a checked-out pull request, project tabs, and Settings. Verify: `npm run test:e2e` passes for the new specs.

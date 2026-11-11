@@ -66,8 +66,7 @@ export type SidebarGroupId = (typeof SIDEBAR_GROUP_IDS)[number];
 export const FOLDERS_COLUMN_TAB_IDS = [
 	'tabs',
 	'agents',
-	'pullRequests',
-	'issues',
+	'git',
 ] as const;
 export type FoldersColumnTabId = (typeof FOLDERS_COLUMN_TAB_IDS)[number];
 

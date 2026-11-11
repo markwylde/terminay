@@ -26,10 +26,11 @@ searchable, paged list.
 - The issue detail ends in **Start work**. It creates a worktree on a branch
   named after the issue and opens a terminal there, either running a chosen
   agent with an editable prompt built from the issue or with only a shell.
-- A project's left column gains **Pull Requests** and **Issues** icon tabs,
-  shown only when a forge extension claims the project's remote. Each lists
-  that repository's items, with the current worktree's pull request first.
-  Activating a row opens the Home section with that item selected.
+- A project's left column gains a **Git** icon tab, shown only when a forge
+  extension claims the project's remote. It holds collapsible, reorderable,
+  resizable **Issues** and **Pull Requests** panes listing that repository's
+  items, with the current worktree's pull request first. Activating a row
+  opens the Home section with that item selected.
 - A new extension contribution, `forgeSources`, with a `forge-source`
   permission. It is pull-based: Terminay asks a source for accounts, for
   whether it claims a remote, for a page of items matching a query, and for
@@ -41,7 +42,7 @@ searchable, paged list.
   go over HTTPS.
 - Settings › Extensions › Gitea and GitHub gain **Accounts**, **Repositories**
   (Everything I can access, Repos of open projects, Chosen owners), and per-feature
-  switches (Pull requests on Home, Issues on Home, Project tabs).
+  switches (Pull requests on Home, Issues on Home, Project Git tab).
 - The server gains a server-owned worktree creation operation, used by
   **Check out in new worktree** and **Start work**.
 - Terminal launchers may declare that their program accepts an initial prompt
@@ -70,8 +71,8 @@ searchable, paged list.
   declare an initial-prompt argument.
 - `workspace-dashboard`: the Home sidebar lists Pull Requests and Issues after
   Recordings, each shown only while an enabled forge source provides it.
-- `project-sidebar-layout`: the left column tab bar gains Pull Requests and
-  Issues tabs when a forge source claims the project's repository.
+- `project-sidebar-layout`: the left column tab bar gains a Git tab when a
+  forge source claims the project's repository.
 - `built-in-extensions`: the Gitea and GitHub extensions contribute forge
   sources, account discovery and query mapping. The built-in agents
   extension's launchers declare initial-prompt support.

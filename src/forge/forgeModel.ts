@@ -413,3 +413,56 @@ export type ForgeHomeFocus = Readonly<{
 	/** Changes on every request, so the same one twice still applies. */
 	nonce: number;
 }>;
+
+// ── The project Git tab's panes ────────────────────────────────────────
+
+export type ForgeGitPaneId = 'issues' | 'pullRequests';
+
+/** The Git tab's pane order, collapse state, and heights, remembered on the device. */
+export type ForgeGitPaneLayout = Readonly<{
+	order: readonly ForgeGitPaneId[];
+	collapsed: Readonly<Record<ForgeGitPaneId, boolean>>;
+	heights: Readonly<Record<ForgeGitPaneId, number>>;
+}>;
+
+export const FORGE_GIT_PANES_KEY = 'terminay.forge.gitPanes';
+const GIT_PANE_IDS: readonly ForgeGitPaneId[] = ['issues', 'pullRequests'];
+const DEFAULT_GIT_PANE_HEIGHT = 320;
+
+export const DEFAULT_FORGE_GIT_PANE_LAYOUT: ForgeGitPaneLayout = Object.freeze({
+	order: GIT_PANE_IDS,
+	collapsed: { issues: false, pullRequests: false },
+	heights: { issues: DEFAULT_GIT_PANE_HEIGHT, pullRequests: DEFAULT_GIT_PANE_HEIGHT },
+});
+
+/** A stored layout, or the default for anything missing or malformed. */
+export function readGitPaneLayout(raw: string | null | undefined): ForgeGitPaneLayout {
+	let value: unknown;
+	try {
+		value = raw === null || raw === undefined ? undefined : JSON.parse(raw);
+	} catch {
+		value = undefined;
+	}
+	const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+	const storedOrder = Array.isArray(record.order)
+		? record.order.filter((id): id is ForgeGitPaneId => GIT_PANE_IDS.includes(id as ForgeGitPaneId))
+		: [];
+	const order = [...new Set([...storedOrder, ...GIT_PANE_IDS])];
+	const flags = (typeof record.collapsed === 'object' && record.collapsed !== null ? record.collapsed : {}) as Record<
+		string,
+		unknown
+	>;
+	const sizes = (typeof record.heights === 'object' && record.heights !== null ? record.heights : {}) as Record<
+		string,
+		unknown
+	>;
+	const height = (id: ForgeGitPaneId) => {
+		const stored = sizes[id];
+		return typeof stored === 'number' && Number.isFinite(stored) && stored > 0 ? stored : DEFAULT_GIT_PANE_HEIGHT;
+	};
+	return {
+		order,
+		collapsed: { issues: flags.issues === true, pullRequests: flags.pullRequests === true },
+		heights: { issues: height('issues'), pullRequests: height('pullRequests') },
+	};
+}

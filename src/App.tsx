@@ -81,7 +81,7 @@ import {
 	useForgeClaims,
 	useForgeHomeAvailability,
 	useForgeSources,
-	useProjectForgeTabs,
+	useProjectGitTab,
 } from './forge/ForgeHome';
 import { openInWorktree as openForgeWorktree } from './forge/forgeActions';
 import type { ForgeEnvironment, ForgeWorktreePlan } from './forge/ForgeViews';
@@ -1747,7 +1747,7 @@ const ProjectWorkspace = memo(forwardRef<
 			resolveFeatureProjectRoot(featureAvailability, project.rootFolder)
 				.state === 'no-root';
 		const rootScopedAuthority = rootScopedFeatureAuthority(featureAvailability);
-		const forgeTabs = useProjectForgeTabs({
+		const forgeGitTab = useProjectGitTab({
 			client: forge?.client,
 			projectId: project.id,
 			claims: forge?.claims ?? NO_FORGE_CLAIMS,
@@ -5985,12 +5985,7 @@ const ProjectWorkspace = memo(forwardRef<
 										? renderAgentsPane()
 										: undefined
 								}
-								{...(forgeTabs.pullRequests === undefined
-									? {}
-									: { pullRequests: forgeTabs.pullRequests })}
-								{...(forgeTabs.issues === undefined
-									? {}
-									: { issues: forgeTabs.issues })}
+								{...(forgeGitTab === undefined ? {} : { git: forgeGitTab })}
 								acceptsTerminalDrop={acceptsFolderTerminalDrop}
 								isMenuOpen={foldersMenuPosition !== null}
 								onOpenMenu={setFoldersMenuPosition}

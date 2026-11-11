@@ -1,5 +1,5 @@
 /**
- * Home's Pull Requests and Issues sections, and a project's forge tabs
+ * Home's Pull Requests and Issues sections, and a project's Git tab
  * (ADR-0105). These fetch on demand through the forge client and draw with
  * `ForgeViews`.
  */
@@ -7,25 +7,33 @@
 import type { ForgeClientListRequest, TerminayForgeClient } from '@terminay/client-core';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
+	DEFAULT_FORGE_GIT_PANE_LAYOUT,
+	FORGE_GIT_PANES_KEY,
 	type ForgeClaimView,
+	type ForgeGitPaneId,
+	type ForgeGitPaneLayout,
 	type ForgeHomeFocus,
 	type ForgeKind,
 	type ForgeListItemView,
 	type ForgeReference,
 	type ForgeRepositoryFocus,
 	type ForgeViewPreferences,
-	forgeName,
 	itemKey,
 	preferencesKey,
 	projectPullRequestGroups,
+	readGitPaneLayout,
 	readPreferences,
-	repositoryKey,
 } from './forgeModel.ts';
+import { House, RefreshCw } from 'lucide-react';
+import {
+	SidebarPanelStack,
+	type SidebarPanelStackItem,
+} from '../components/sidebar/SidebarPanelStack.tsx';
 import {
 	type ForgeEnvironment,
 	ForgeDetailPane,
 	ForgeListPane,
-	ForgeRow,
+	ForgeSidebarRow,
 } from './ForgeViews.tsx';
 import { useForgeChanges, useForgeDetail, useForgeList } from './useForge.ts';
 
@@ -277,7 +285,7 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 	);
 }
 
-// ── A project's tabs ───────────────────────────────────────────────────
+// ── A project's Git tab ────────────────────────────────────────────────
 
 export type ProjectForgeTabsOptions = Readonly<{
 	client: TerminayForgeClient | undefined;
@@ -293,8 +301,6 @@ export type ProjectForgeTabsOptions = Readonly<{
 	environment: ForgeEnvironment;
 	openInHome: (focus: Omit<ForgeHomeFocus, 'nonce'>) => void;
 }>;
-
-export type ProjectForgeTab = Readonly<{ pane: ReactNode; count: number | undefined }>;
 
 /**
  * What activating a project tab's row does: for a client bound to the
@@ -320,11 +326,45 @@ export function projectRowActivation(
 	};
 }
 
-/** The Pull Requests and Issues tabs a project shows, when a source claims its remote. */
-export function useProjectForgeTabs(options: ProjectForgeTabsOptions): Readonly<{
-	pullRequests?: ProjectForgeTab;
-	issues?: ProjectForgeTab;
-}> {
+function recallGitPaneLayout(): ForgeGitPaneLayout {
+	try {
+		return readGitPaneLayout(globalThis.localStorage?.getItem(FORGE_GIT_PANES_KEY));
+	} catch {
+		return DEFAULT_FORGE_GIT_PANE_LAYOUT;
+	}
+}
+
+function rememberGitPaneLayout(layout: ForgeGitPaneLayout): void {
+	try {
+		globalThis.localStorage?.setItem(FORGE_GIT_PANES_KEY, JSON.stringify(layout));
+	} catch {
+		/* a device that cannot remember starts from the default next time */
+	}
+}
+
+export type ProjectGitPanes = Readonly<{
+	items: readonly SidebarPanelStackItem[];
+	onHeightsCommit: (heights: Readonly<Record<string, number>>) => void;
+	onReorder: (orderedIds: string[]) => void;
+}>;
+
+/**
+ * A project's Git tab, when a source claims its remote: Issues and Pull
+ * Requests sidebar panes that collapse, reorder, and resize like the right
+ * sidebar's, laid out the same way on every project of this device.
+ */
+export function useProjectGitTab(options: ProjectForgeTabsOptions): ReactNode | undefined {
+	const panes = useProjectGitPanes(options);
+	if (panes === undefined) return undefined;
+	return (
+		<div className="forge-git-tab" data-forge-git-tab="true">
+			<SidebarPanelStack items={panes.items} onHeightsCommit={panes.onHeightsCommit} onReorder={panes.onReorder} />
+		</div>
+	);
+}
+
+/** The Git tab's panes, in the device's order, or undefined when nothing is claimed. */
+export function useProjectGitPanes(options: ProjectForgeTabsOptions): ProjectGitPanes | undefined {
 	const { client, projectId, claims, visible } = options;
 	const shown = claims.filter((claim) => claim.projectTabs);
 	const pullRequestClaims = shown.filter((claim) => claim.kinds.includes('pullRequest'));
@@ -349,7 +389,16 @@ export function useProjectForgeTabs(options: ProjectForgeTabsOptions): Readonly<
 	);
 	const openIssues = useForgeList(client, issueClaims.length === 0 ? undefined : base('issue', 'open', 50), visible);
 	const [detail, setDetail] = useState<Readonly<{ sourceId: string; reference: ForgeReference }>>();
-	const now = Date.now();
+	const [layout, setLayout] = useState<ForgeGitPaneLayout>(recallGitPaneLayout);
+	const changeLayout = useCallback((next: (current: ForgeGitPaneLayout) => ForgeGitPaneLayout) => {
+		setLayout((current) => {
+			const value = next(current);
+			rememberGitPaneLayout(value);
+			return value;
+		});
+	}, []);
+	if (pullRequestClaims.length === 0 && issueClaims.length === 0) return undefined;
+
 	const selectedWorktreeId =
 		options.selectedWorktreePath === undefined
 			? undefined
@@ -364,123 +413,158 @@ export function useProjectForgeTabs(options: ProjectForgeTabsOptions): Readonly<
 			setDetail({ sourceId: activation.sourceId, reference: activation.reference });
 		else options.openInHome(activation.focus);
 	};
-	const footer = (kind: ForgeKind, relevant: readonly ForgeClaimView[]) =>
-		options.bound ? null : (
-			<div className="forge-tab__footer">
-				{relevant.map((claim) => (
-					<div key={repositoryKey(claim)} className="forge-tab__repo">
-						<span className="forge-faint">
-							{forgeName(claim.sourceId, options.environment.displayNames)} · {claim.owner}/{claim.name}
-						</span>
-						<button
-							type="button"
-							className="forge-link"
-							data-forge-show-all={kind}
-							onClick={() =>
-								options.openInHome({
-									kind,
-									repository: { origin: claim.origin, owner: claim.owner, name: claim.name },
-								})
-							}
-						>
-							Show all on Home
-						</button>
-					</div>
-				))}
+	const detailFor = (kind: ForgeKind) =>
+		detail === undefined || detail.reference.kind !== kind ? null : (
+			<div className="forge-tab">
+				<ProjectForgeDetail
+					client={client}
+					sourceId={detail.sourceId}
+					reference={detail.reference}
+					environment={options.environment}
+					onClose={() => setDetail(undefined)}
+				/>
 			</div>
 		);
-	const detailPane = (kind: ForgeKind) =>
-		detail === undefined || detail.reference.kind !== kind ? null : (
-			<ProjectForgeDetail
-				client={client}
-				sourceId={detail.sourceId}
-				reference={detail.reference}
-				environment={options.environment}
-				onClose={() => setDetail(undefined)}
-			/>
-		);
 	const rows = (entries: readonly ForgeListItemView[]) => (
-		<ul className="forge-rows">
+		<ul className="forge-side-rows">
 			{entries.map((entry) => (
-				<ForgeRow
+				<ForgeSidebarRow
 					key={itemKey(entry.item.reference)}
 					entry={entry}
 					showRepository={shown.length > 1}
 					selected={detail !== undefined && itemKey(detail.reference) === itemKey(entry.item.reference)}
-					now={now}
 					onSelect={activate}
 					projectTitle={projectTitle}
 					projectOrder={projectOrder}
-					compact
 				/>
 			))}
 		</ul>
 	);
+	const message = (text: ReactNode) => <div className="git-panel__message forge-side-message">{text}</div>;
 	const status = (list: { loading: boolean; settled: boolean; error?: string; refresh: () => void }, noun: string) =>
-		list.error !== undefined ? (
-			<div className="forge-failure" role="alert">
-				Could not load {noun}: {list.error}{' '}
-				<button type="button" className="forge-link" onClick={list.refresh}>
-					Retry
+		list.error !== undefined
+			? message(
+					<span role="alert">
+						Could not load {noun}.{' '}
+						<button type="button" className="forge-link" onClick={list.refresh}>
+							Retry
+						</button>
+					</span>,
+				)
+			: !list.settled && list.loading
+				? message('Loading…')
+				: null;
+	const actions = (kind: ForgeKind, relevant: readonly ForgeClaimView[], refresh: () => void, loading: boolean) => (
+		<>
+			<button
+				type="button"
+				className="sidebar-pane__action-button"
+				aria-label={`Refresh ${kind === 'issue' ? 'issues' : 'pull requests'}`}
+				title="Refresh"
+				onClick={refresh}
+			>
+				<RefreshCw size={14} aria-hidden="true" className={loading ? 'forge-spin' : undefined} />
+			</button>
+			{options.bound || relevant.length === 0 ? null : (
+				<button
+					type="button"
+					className="sidebar-pane__action-button"
+					aria-label="Show all on Home"
+					title={`Show all on Home · ${relevant.map((claim) => `${claim.owner}/${claim.name}`).join(', ')}`}
+					data-forge-show-all={kind}
+					onClick={() => {
+						const claim = relevant[0] as ForgeClaimView;
+						options.openInHome({
+							kind,
+							repository: { origin: claim.origin, owner: claim.owner, name: claim.name },
+						});
+					}}
+				>
+					<House size={14} aria-hidden="true" />
 				</button>
-			</div>
-		) : !list.settled && list.loading ? (
-			<p className="forge-faint forge-tab__note">Loading…</p>
-		) : null;
-	const result: { pullRequests?: ProjectForgeTab; issues?: ProjectForgeTab } = {};
-	if (pullRequestClaims.length > 0) {
-		const groups = projectPullRequestGroups(openPulls.items, mergedPulls.items, selectedWorktreeId);
-		result.pullRequests = {
-			count: openPulls.settled ? openPulls.items.length : undefined,
-			pane: (
-				<div className="forge-tab" data-forge-project-tab="pullRequest">
-					{detailPane('pullRequest') ?? (
-						<>
-							<div className="forge-tab__body">
-								{status(openPulls, 'pull requests')}
-								{groups.map((group) =>
-									group.items.length === 0 && group.id !== 'open' ? null : (
-										<section key={group.id} className="forge-tab__group" data-forge-tab-group={group.id}>
-											<div className="forge-tab__label">{group.label}</div>
-											{group.items.length === 0 ? (
-												openPulls.settled ? <p className="forge-faint forge-tab__note">No open pull requests.</p> : null
-											) : (
-												rows(group.items)
-											)}
-										</section>
-									),
-								)}
-							</div>
-							{footer('pullRequest', pullRequestClaims)}
-						</>
-					)}
-				</div>
-			),
-		};
+			)}
+		</>
+	);
+	const toggle = (id: ForgeGitPaneId) => () =>
+		changeLayout((current) => ({ ...current, collapsed: { ...current.collapsed, [id]: !current.collapsed[id] } }));
+
+	const items: SidebarPanelStackItem[] = [];
+	for (const id of layout.order) {
+		if (id === 'pullRequests' && pullRequestClaims.length > 0) {
+			const groups = projectPullRequestGroups(openPulls.items, mergedPulls.items, selectedWorktreeId);
+			const refresh = () => {
+				openPulls.refresh();
+				mergedPulls.refresh();
+			};
+			items.push({
+				id,
+				title: 'Pull Requests',
+				height: layout.heights.pullRequests,
+				collapsed: layout.collapsed.pullRequests,
+				onToggleCollapsed: toggle(id),
+				...(openPulls.settled ? { count: openPulls.items.length } : {}),
+				actions: actions('pullRequest', pullRequestClaims, refresh, openPulls.loading),
+				children: detailFor('pullRequest') ?? (
+					<div className="forge-side-list" data-forge-project-tab="pullRequest">
+						{status(openPulls, 'pull requests')}
+						{groups.map((group) =>
+							group.items.length === 0 && group.id !== 'open' ? null : (
+								<section key={group.id} className="git-panel__group" data-forge-tab-group={group.id}>
+									<div className="git-panel__group-header">
+										<span>{group.label}</span>
+										{group.items.length === 0 ? null : (
+											<span className="git-panel__group-count">{group.items.length}</span>
+										)}
+									</div>
+									{group.items.length === 0
+										? openPulls.settled && openPulls.error === undefined
+											? message('No open pull requests.')
+											: null
+										: rows(group.items)}
+								</section>
+							),
+						)}
+					</div>
+				),
+			});
+		}
+		if (id === 'issues' && issueClaims.length > 0) {
+			items.push({
+				id,
+				title: 'Issues',
+				height: layout.heights.issues,
+				collapsed: layout.collapsed.issues,
+				onToggleCollapsed: toggle(id),
+				...(openIssues.settled ? { count: openIssues.items.length } : {}),
+				actions: actions('issue', issueClaims, openIssues.refresh, openIssues.loading),
+				children: detailFor('issue') ?? (
+					<div className="forge-side-list" data-forge-project-tab="issue">
+						{status(openIssues, 'issues')}
+						{openIssues.settled && openIssues.items.length === 0 && openIssues.error === undefined
+							? message('No open issues.')
+							: rows(openIssues.items)}
+					</div>
+				),
+			});
+		}
 	}
-	if (issueClaims.length > 0) {
-		result.issues = {
-			count: openIssues.settled ? openIssues.items.length : undefined,
-			pane: (
-				<div className="forge-tab" data-forge-project-tab="issue">
-					{detailPane('issue') ?? (
-						<>
-							<div className="forge-tab__body">
-								{status(openIssues, 'issues')}
-								{openIssues.settled && openIssues.items.length === 0 && openIssues.error === undefined ? (
-									<p className="forge-faint forge-tab__note">No open issues.</p>
-								) : (
-									rows(openIssues.items)
-								)}
-							</div>
-							{footer('issue', issueClaims)}
-						</>
-					)}
-				</div>
-			),
-		};
-	}
-	return result;
+	return {
+		items,
+		onHeightsCommit: (heights) =>
+			changeLayout((current) => ({
+				...current,
+				heights: {
+					issues: heights.issues ?? current.heights.issues,
+					pullRequests: heights.pullRequests ?? current.heights.pullRequests,
+				},
+			})),
+		onReorder: (orderedIds) =>
+			changeLayout((current) => {
+				const shownIds = orderedIds.filter((id): id is ForgeGitPaneId => id === 'issues' || id === 'pullRequests');
+				const rest = current.order.filter((id) => !shownIds.includes(id));
+				return { ...current, order: [...shownIds, ...rest] };
+			}),
+	};
 }
 
 function ProjectForgeDetail({
@@ -499,9 +583,9 @@ function ProjectForgeDetail({
 	const detail = useForgeDetail(client, sourceId, reference, 0);
 	if (detail.detail === undefined)
 		return (
-			<div className="forge-tab__body">
+			<div className="forge-side-list">
 				{detail.error === undefined ? (
-					<p className="forge-faint forge-tab__note">Loading…</p>
+					<div className="git-panel__message">Loading…</div>
 				) : (
 					<div className="forge-failure" role="alert">
 						{detail.error}

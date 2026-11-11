@@ -314,7 +314,7 @@ test('Review with agent suggests a prompt naming the pull request', () => {
 	assert.match(markup, /<option value="codex"[^>]*>Codex<\/option>/u);
 });
 
-// ── Project tabs (6.5) ──────────────────────────────────────────────────
+// ── Project Git tab (6.5, 6.9) ──────────────────────────────────────────────────
 
 const column = (props) =>
 	html(
@@ -331,20 +331,19 @@ const column = (props) =>
 		}),
 	);
 
-test('the left column shows Pull Requests and Issues tabs only when claimed, after Agents, with counts', () => {
+test('the left column shows one Git tab only when claimed, after Agents, with no count', () => {
 	const tabs = (markup) => [...markup.matchAll(/id="col-tab-([a-zA-Z]+)"/gu)].map((match) => match[1]);
 	assert.deepEqual(tabs(column({})), [], 'one list: no tabs');
 	assert.deepEqual(tabs(column({ agents: h('div') })), ['tabs', 'agents']);
-	const forge = { pullRequests: { pane: h('div', null, 'prs'), count: 3 }, issues: { pane: h('div'), count: 0 } };
-	const withAgents = column({ agents: h('div'), ...forge });
-	assert.deepEqual(tabs(withAgents), ['tabs', 'agents', 'pullRequests', 'issues']);
-	assert.match(withAgents, /aria-label="Pull Requests, 3"/u);
-	assert.match(withAgents, /data-sidebar-tab-badge="pullRequests">3</u);
-	assert.doesNotMatch(withAgents, /data-sidebar-tab-badge="issues"/u);
-	assert.deepEqual(tabs(column({ ...forge })), ['tabs', 'pullRequests', 'issues']);
-	const selected = column({ ...forge, selectedTab: 'pullRequests' });
-	assert.match(selected, /data-folders-column-panel="pullRequests" aria-hidden="false"/u);
-	const gone = column({ selectedTab: 'pullRequests', agents: h('div') });
+	const git = h('div', null, 'panes');
+	const withAgents = column({ agents: h('div'), git });
+	assert.deepEqual(tabs(withAgents), ['tabs', 'agents', 'git']);
+	assert.match(withAgents, /aria-label="Git"/u);
+	assert.doesNotMatch(withAgents, /data-sidebar-tab-badge=/u);
+	assert.deepEqual(tabs(column({ git })), ['tabs', 'git']);
+	const selected = column({ git, selectedTab: 'git' });
+	assert.match(selected, /data-folders-column-panel="git" aria-hidden="false"/u);
+	const gone = column({ selectedTab: 'git', agents: h('div') });
 	assert.match(gone, /data-folders-column-panel="tabs" aria-hidden="false"/u);
 });
 
@@ -366,30 +365,80 @@ test('a project row goes to Home with its repository and item, or opens here whe
 	});
 });
 
-function projectTabs(options) {
+function gitPanes(options) {
 	let captured;
 	function Probe() {
-		captured = homeModule.useProjectForgeTabs(options);
+		captured = homeModule.useProjectGitPanes(options);
 		return null;
 	}
 	html(h(Probe));
 	return captured;
 }
 
-test('project tabs follow the claims, and Show all on Home is absent when bound', () => {
+/** A pane's title row and body, as the stack would draw them. */
+const paneMarkup = (pane) => html(h('div', null, pane.actions, pane.children));
+
+function withStorage(values, run) {
+	const previous = globalThis.localStorage;
+	const store = new Map(Object.entries(values));
+	globalThis.localStorage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
+	try {
+		return run();
+	} finally {
+		globalThis.localStorage = previous;
+	}
+}
+
+test('the Git tab holds Issues then Pull Requests panes per claim, with Show all on Home unless bound', () => {
 	const claim = (kinds, projectTabs = true) => ({ sourceId: 'com.terminay.gitea/forge', origin: ORIGIN, owner: 'acme', name: 'app', kinds, projectTabs });
 	const base = { client: undefined, projectId: 'forum', visible: true, bound: false, environment: environment(), openInHome() {} };
-	const both = projectTabs({ ...base, claims: [claim(['pullRequest', 'issue'])] });
-	assert.ok(both.pullRequests !== undefined && both.issues !== undefined);
-	const pane = html(h('div', null, both.pullRequests.pane));
-	assert.match(pane, /data-forge-show-all="pullRequest">Show all on Home/u);
-	assert.match(pane, /Gitea · acme\/app/u);
-	const issuesOnly = projectTabs({ ...base, claims: [claim(['issue'])] });
-	assert.equal(issuesOnly.pullRequests, undefined);
-	assert.equal(projectTabs({ ...base, claims: [claim(['pullRequest'], false)] }).pullRequests, undefined, 'switched off in Settings');
-	assert.equal(projectTabs({ ...base, claims: [] }).issues, undefined);
-	const bound = projectTabs({ ...base, bound: true, claims: [claim(['pullRequest'])] });
-	assert.doesNotMatch(html(h('div', null, bound.pullRequests.pane)), /Show all on Home/u);
+	const both = gitPanes({ ...base, claims: [claim(['pullRequest', 'issue'])] });
+	assert.deepEqual(both.items.map((pane) => pane.title), ['Issues', 'Pull Requests']);
+	assert.deepEqual(both.items.map((pane) => pane.collapsed), [false, false]);
+	assert.match(paneMarkup(both.items[1]), /data-forge-show-all="pullRequest"/u);
+	assert.match(paneMarkup(both.items[0]), /data-forge-show-all="issue"/u);
+	assert.match(paneMarkup(both.items[1]), /data-forge-project-tab="pullRequest"/u);
+	assert.deepEqual(gitPanes({ ...base, claims: [claim(['issue'])] }).items.map((pane) => pane.title), ['Issues']);
+	assert.equal(gitPanes({ ...base, claims: [claim(['pullRequest'], false)] }), undefined, 'switched off in Settings');
+	assert.equal(gitPanes({ ...base, claims: [] }), undefined);
+	const bound = gitPanes({ ...base, bound: true, claims: [claim(['pullRequest'])] });
+	assert.doesNotMatch(paneMarkup(bound.items[0]), /data-forge-show-all/u);
+});
+
+test('the Git tab lays its panes out as this device remembers', () => {
+	const claim = { sourceId: 'com.terminay.gitea/forge', origin: ORIGIN, owner: 'acme', name: 'app', kinds: ['pullRequest', 'issue'], projectTabs: true };
+	const base = { client: undefined, projectId: 'forum', visible: true, bound: false, environment: environment(), openInHome() {}, claims: [claim] };
+	const stored = { 'terminay.forge.gitPanes': JSON.stringify({ order: ['pullRequests', 'issues'], collapsed: { issues: true }, heights: { issues: 120 } }) };
+	const panes = withStorage(stored, () => gitPanes(base));
+	assert.deepEqual(panes.items.map((pane) => pane.title), ['Pull Requests', 'Issues']);
+	assert.deepEqual(panes.items.map((pane) => pane.collapsed), [false, true]);
+	assert.equal(panes.items[1].height, 120);
+});
+
+test('a Git tab row is one line with its state, title, number, and checks', () => {
+	const pr = entry(88, {
+		pullRequest: {
+			headBranch: 'change/13-events',
+			baseBranch: 'main',
+			headOwner: 'acme',
+			headName: 'app',
+			checks: { passed: 1, failed: 2, pending: 0, skipped: 0, total: 3, items: [] },
+		},
+	});
+	const markup = html(
+		h(views.ForgeSidebarRow, {
+			entry: pr,
+			showRepository: false,
+			selected: false,
+			onSelect() {},
+			projectTitle: () => undefined,
+			projectOrder: [],
+		}),
+	);
+	assert.match(markup, /class="forge-side-row"/u);
+	assert.match(markup, /class="forge-side-row__number">#88</u);
+	assert.match(markup, /data-forge-checks="bad"/u);
+	assert.match(markup, /title="#88 [^"]*change\/13-events → main/u);
 });
 
 // ── Settings (6.7) ──────────────────────────────────────────────────────

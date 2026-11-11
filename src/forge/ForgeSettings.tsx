@@ -359,7 +359,7 @@ export function ForgeSettingsView({
 			<div className="settings-group">
 				{switchRow('pullRequestsOnHome', 'Pull Requests on Home', 'List pull requests in Home’s sidebar.')}
 				{switchRow('issuesOnHome', 'Issues on Home', 'List issues in Home’s sidebar.')}
-				{switchRow('projectTabs', 'Project tabs', 'Show Pull Requests and Issues tabs in a project whose remote this extension claims.')}
+				{switchRow('projectTabs', 'Project Git tab', 'Show issues and pull requests in a Git tab of a project whose remote this extension claims.')}
 			</div>
 		</div>
 	);

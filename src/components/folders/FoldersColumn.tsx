@@ -6,16 +6,10 @@ import { FOLDERS_COLUMN_TABS } from './foldersColumnTabs';
 import { FoldersTree, type FoldersTreeProps } from './FoldersTree';
 import './foldersTree.css';
 
-export type FoldersColumnForgeTab = Readonly<{
-	pane: ReactNode;
-	/** Open items it lists, drawn on its tab; undefined until known. */
-	count: number | undefined;
-}>;
-
 /**
  * A project's left column: the Folders tree, the project's agents, and, when
- * a forge source claims its remote, its pull requests and issues, one at a
- * time, chosen from icon tabs.
+ * a forge source claims its remote, its Git tab of issues and pull requests,
+ * one at a time, chosen from icon tabs.
  *
  * The band that holds the tabs is the project chrome, the same band the panel
  * tab strip and the sidebar's group tabs draw, so the colour runs unbroken
@@ -24,8 +18,7 @@ export type FoldersColumnForgeTab = Readonly<{
  */
 export function FoldersColumn({
 	agents,
-	pullRequests,
-	issues,
+	git,
 	footer,
 	idPrefix,
 	isMenuOpen = false,
@@ -36,10 +29,8 @@ export function FoldersColumn({
 }: FoldersTreeProps & {
 	/** The Agents list, or undefined when the project presents no agents. */
 	agents?: ReactNode;
-	/** The Pull Requests tab, when a forge source claims the project's remote. */
-	pullRequests?: FoldersColumnForgeTab;
-	/** The Issues tab, likewise. */
-	issues?: FoldersColumnForgeTab;
+	/** The Git tab's panes, when a forge source claims the project's remote. */
+	git?: ReactNode;
 	/** Pinned beneath the lists. */
 	footer?: ReactNode;
 	/** Distinguishes this column's tab and panel ids from another project's. */
@@ -56,20 +47,9 @@ export function FoldersColumn({
 	const present: Readonly<Record<FoldersColumnTabId, boolean>> = {
 		tabs: true,
 		agents: agents !== undefined,
-		pullRequests: pullRequests !== undefined,
-		issues: issues !== undefined,
+		git: git !== undefined,
 	};
-	const tabs = FOLDERS_COLUMN_TABS.filter((tab) => present[tab.id]).map(
-		(tab) => {
-			const count =
-				tab.id === 'pullRequests'
-					? pullRequests?.count
-					: tab.id === 'issues'
-						? issues?.count
-						: undefined;
-			return count === undefined ? tab : { ...tab, badge: count };
-		},
-	);
+	const tabs = FOLDERS_COLUMN_TABS.filter((tab) => present[tab.id]);
 	const hasTabs = tabs.length > 1;
 	const shownTab: FoldersColumnTabId = present[selectedTab]
 		? selectedTab
@@ -126,12 +106,7 @@ export function FoldersColumn({
 				{agents === undefined ? null : (
 					<div {...panelProps('agents')}>{agents}</div>
 				)}
-				{pullRequests === undefined ? null : (
-					<div {...panelProps('pullRequests')}>{pullRequests.pane}</div>
-				)}
-				{issues === undefined ? null : (
-					<div {...panelProps('issues')}>{issues.pane}</div>
-				)}
+				{git === undefined ? null : <div {...panelProps('git')}>{git}</div>}
 			</div>
 			{footer}
 		</div>

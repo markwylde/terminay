@@ -28,7 +28,7 @@ roots), 0057 (session recordings), 0063 (forge CLI only for a token, once),
 
 - Home Pull Requests and Issues sections across every forge account, with the
   scopes, grouping, detail, and actions shown in the mockups.
-- Project left-column Pull Requests and Issues tabs for claimed repositories.
+- A project left-column Git tab with Issues and Pull Requests panes for claimed repositories.
 - A pull-based `forgeSources` extension contribution, implemented by both
   built-in forge extensions, with Terminay owning presentation, joins, and
   caching.

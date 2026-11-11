@@ -1,7 +1,7 @@
 /**
  * Pull request and issue views (ADR-0105): the list, the detail pane, and
  * the Start work and Review with agent panels. These draw what they are given;
- * `ForgeHome` and `ProjectForgeTab` fetch and act.
+ * `ForgeHome` fetches and acts.
  */
 
 import {
@@ -450,7 +450,6 @@ export function ForgeRow({
 	onSelect,
 	projectTitle,
 	projectOrder,
-	compact = false,
 }: Readonly<{
 	entry: ForgeListItemView;
 	showRepository: boolean;
@@ -459,7 +458,6 @@ export function ForgeRow({
 	onSelect: (entry: ForgeListItemView) => void;
 	projectTitle: (projectId: string) => string | undefined;
 	projectOrder: readonly string[];
-	compact?: boolean;
 }>) {
 	const { item } = entry;
 	const chip = worktreeChipLabel(entry.worktrees, projectTitle, projectOrder);
@@ -467,7 +465,7 @@ export function ForgeRow({
 		<li>
 			<button
 				type="button"
-				className={`forge-row${selected ? ' forge-row--selected' : ''}${compact ? ' forge-row--compact' : ''}`}
+				className={`forge-row${selected ? ' forge-row--selected' : ''}`}
 				aria-current={selected ? 'true' : undefined}
 				data-forge-row={item.reference.number}
 				onClick={() => onSelect(entry)}
@@ -482,24 +480,98 @@ export function ForgeRow({
 								{item.reference.owner}/{item.reference.name}
 							</span>
 						) : null}
-						{compact && item.pullRequest !== undefined ? (
-							<span className="forge-mono forge-row__branch">{item.pullRequest.headBranch}</span>
-						) : (
-							<span>{item.author}</span>
-						)}
+						<span>{item.author}</span>
 						{chip === undefined ? null : (
 							<span className="forge-chip forge-chip--worktree" data-forge-worktree-chip="true">
 								<GitBranch size={11} aria-hidden="true" />
 								{chip}
 							</span>
 						)}
-						{compact && item.pullRequest !== undefined ? null : <Labels labels={item.labels} />}
+						<Labels labels={item.labels} />
 					</span>
 				</span>
 				<span className="forge-row__end">
 					<ChecksChip checks={item.pullRequest?.checks} />
-					{compact ? null : <span>{relativeTime(item.updatedAt, now)}</span>}
+					<span>{relativeTime(item.updatedAt, now)}</span>
 				</span>
+			</button>
+		</li>
+	);
+}
+
+/** A checks summary as one icon, for a sidebar row. */
+function ChecksMark({ checks }: Readonly<{ checks: ForgeChecksView | undefined }>) {
+	if (checks === undefined || checks.total === 0) return null;
+	const tone = checks.failed > 0 ? 'bad' : checks.pending > 0 ? 'run' : 'ok';
+	const label =
+		checks.failed > 0
+			? `${checks.failed} of ${checks.total} checks failed`
+			: checks.pending > 0
+				? `${checks.pending} of ${checks.total} checks running`
+				: `${checks.passed} of ${checks.total} checks passed`;
+	return (
+		<span className={`forge-side-row__checks forge-side-row__checks--${tone}`} title={label} data-forge-checks={tone}>
+			{tone === 'bad' ? (
+				<CircleX size={12} aria-hidden="true" />
+			) : tone === 'run' ? (
+				<Loader size={12} aria-hidden="true" />
+			) : (
+				<CircleCheck size={12} aria-hidden="true" />
+			)}
+			{tone === 'bad' ? <span>{checks.failed}</span> : null}
+		</span>
+	);
+}
+
+/**
+ * A row in a project's Git tab: one line, in the style of the sidebar's other
+ * panes. The head branch and where it is checked out are in its tooltip.
+ */
+export function ForgeSidebarRow({
+	entry,
+	showRepository,
+	selected,
+	onSelect,
+	projectTitle,
+	projectOrder,
+}: Readonly<{
+	entry: ForgeListItemView;
+	showRepository: boolean;
+	selected: boolean;
+	onSelect: (entry: ForgeListItemView) => void;
+	projectTitle: (projectId: string) => string | undefined;
+	projectOrder: readonly string[];
+}>) {
+	const { item } = entry;
+	const chip = worktreeChipLabel(entry.worktrees, projectTitle, projectOrder);
+	const tooltip = [
+		`#${item.reference.number} ${item.title}`,
+		showRepository ? `${item.reference.owner}/${item.reference.name}` : undefined,
+		item.pullRequest === undefined ? undefined : `${item.pullRequest.headBranch} → ${item.pullRequest.baseBranch}`,
+		chip === undefined ? undefined : `Checked out in ${chip}`,
+		`by ${item.author}`,
+	]
+		.filter((part) => part !== undefined)
+		.join('\n');
+	return (
+		<li>
+			<button
+				type="button"
+				className={`forge-side-row${selected ? ' forge-side-row--selected' : ''}`}
+				aria-current={selected ? 'true' : undefined}
+				title={tooltip}
+				data-forge-row={item.reference.number}
+				onClick={() => onSelect(entry)}
+			>
+				<StateMark kind={item.reference.kind} state={item.state} />
+				<span className="forge-side-row__title">{item.title}</span>
+				<span className="forge-side-row__number">#{item.reference.number}</span>
+				{chip === undefined ? null : (
+					<span className="forge-side-row__worktree" data-forge-worktree-chip="true" role="img" aria-label={`Checked out in ${chip}`}>
+						<GitBranch size={12} aria-hidden="true" />
+					</span>
+				)}
+				<ChecksMark checks={item.pullRequest?.checks} />
 			</button>
 		</li>
 	);

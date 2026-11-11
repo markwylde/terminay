@@ -8,6 +8,7 @@ import {
 	orderedChecks,
 	projectPullRequestGroups,
 	pullRequestActions,
+	readGitPaneLayout,
 	readPreferences,
 	reviewPrompt,
 	startWorkAvailability,
@@ -138,4 +139,22 @@ test('the project tab lists this worktree first and at most five merged', () => 
 	const groups = projectPullRequestGroups([entry(1, '2026-11-05T00:00:00Z'), mine], merged, 'w');
 	assert.deepEqual(groups.map((group) => [group.id, group.items.length]), [['thisWorktree', 1], ['open', 1], ['merged', 5]]);
 	assert.equal(groups[0]?.items[0]?.item.reference.number, 535);
+});
+
+test('the Git tab layout defaults to Issues then Pull Requests, and keeps what it can of a stored one', () => {
+	const fresh = readGitPaneLayout(null);
+	assert.deepEqual(fresh.order, ['issues', 'pullRequests']);
+	assert.deepEqual(fresh.collapsed, { issues: false, pullRequests: false });
+	assert.deepEqual(readGitPaneLayout('not json').order, ['issues', 'pullRequests']);
+	const stored = readGitPaneLayout(
+		JSON.stringify({
+			order: ['pullRequests', 'bogus'],
+			collapsed: { pullRequests: true },
+			heights: { issues: 90, pullRequests: -1 },
+		}),
+	);
+	assert.deepEqual(stored.order, ['pullRequests', 'issues']);
+	assert.deepEqual(stored.collapsed, { issues: false, pullRequests: true });
+	assert.equal(stored.heights.issues, 90);
+	assert.equal(stored.heights.pullRequests, fresh.heights.pullRequests);
 });

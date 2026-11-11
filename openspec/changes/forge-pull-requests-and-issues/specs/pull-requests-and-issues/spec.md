@@ -186,42 +186,55 @@ open for a retry.
   created, and the user confirms again
 - **THEN** no second worktree is created and the terminal opens in the first
 
-### Requirement: Project Pull Requests and Issues tabs
+### Requirement: Project Git tab
 
-A project's Pull Requests left-column tab SHALL list that repository's open
-pull requests, with a **This worktree** group first holding the pull request
-matched to the selected folder's worktree, then **Open**, then **Recently
-merged** with at most five merged pull requests. The Issues tab SHALL list the
-repository's open issues. Rows SHALL show the state mark, title truncated with
-an ellipsis, number, checks or labels, and for pull requests the head branch.
-Each tab icon SHALL carry the count of open items it lists.
+A project's Git left-column tab SHALL hold two sidebar panes, **Issues** and
+**Pull Requests**, in that order by default, each present only while a claiming
+source serves that kind. Each pane SHALL have a title row with its count of
+open items, a collapse control, a reorder grip, and a resize separator between
+expanded panes, presented as the project's right sidebar panes are. The panes'
+order, collapse state, and heights SHALL be remembered on the device. The
+Pull Requests pane SHALL list the repository's open pull requests, with a
+**This worktree** group first holding the pull request matched to the selected
+folder's worktree, then **Open**, then **Recently merged** with at most five
+merged pull requests. The Issues pane SHALL list the repository's open issues.
+Rows SHALL be single-line list rows in the style of the sidebar's other panes:
+the state mark, the title truncated with an ellipsis, the number, a mark when
+the head branch is checked out in a worktree, and the checks summary as an
+icon; the row's tooltip SHALL name the head and base branches and where the
+branch is checked out. Group labels SHALL be drawn as the sidebar's group
+headers are.
 
-For a client whose authorization is not bound to a project, each list SHALL
-end with the repository's forge and `owner/repo` and a **Show all on Home**
-link. Activating a row SHALL select Home and open its Pull Requests or Issues
-section filtered to that repository with the item selected, and activating
-Show all on Home SHALL do the same with no item selected. For a client bound
-to the project, which has no Home sections, there SHALL be no Show all on Home
-link, and activating a row SHALL open the item's detail, with its actions, in
-place of the list in that project's Pull Requests or Issues tab, with a way
-back to the list.
+For a client whose authorization is not bound to a project, each pane's title
+row SHALL offer **Show all on Home**. Activating a row SHALL select Home and
+open its Pull Requests or Issues section filtered to that repository with the
+item selected, and activating Show all on Home SHALL do the same with no item
+selected. For a client bound to the project, which has no Home sections, there
+SHALL be no Show all on Home action, and activating a row SHALL open the item's
+detail, with its actions, in place of that pane's list, with a way back to the
+list.
 
 #### Scenario: Selecting a project pull request
 
-- **WHEN** a user activates pull request #535 in a project's Pull Requests tab
+- **WHEN** a user activates pull request #535 in a project's Pull Requests pane
 - **THEN** Home is selected, its Pull Requests section shows that repository's
   pull requests, and #535 is selected
 
 #### Scenario: Project-bound client selects a pull request
 
 - **WHEN** a remote client bound to the project activates pull request #535
-- **THEN** the project's Pull Requests tab shows #535's detail and Home is not
-  selected
+- **THEN** the Pull Requests pane shows #535's detail and Home is not selected
 
 #### Scenario: Current worktree first
 
 - **WHEN** the selected folder's worktree branch has open pull request #535
 - **THEN** #535 appears under This worktree above every other pull request
+
+#### Scenario: Rearranging the panes
+
+- **WHEN** a user collapses Issues and moves Pull Requests above it
+- **THEN** Pull Requests is first, Issues shows only its title row, and both
+  stay that way when the project is opened again on that device
 
 ### Requirement: Empty, signed-out, and failure states
 
