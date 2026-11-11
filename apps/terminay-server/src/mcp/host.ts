@@ -2278,8 +2278,10 @@ export function createMcpHost(options: McpHostOptions): McpHost {
 		};
 		return {
 			...server,
+			// A host's own write and kill are methods of its authority, so they
+			// keep it as `this`.
 			write:
-				server.write ??
+				server.write?.bind(server) ??
 				(async (id, data, authorization) => {
 					await server.composition.terminalInputSources.write({
 						identity: {
@@ -2294,7 +2296,8 @@ export function createMcpHost(options: McpHostOptions): McpHost {
 					});
 				}),
 			kill:
-				server.kill ?? ((id, authorization) => service.kill(id, authorization)),
+				server.kill?.bind(server) ??
+				((id, authorization) => service.kill(id, authorization)),
 			composition: server.composition,
 			workspace: server.workspace,
 			activity: server.activity,
