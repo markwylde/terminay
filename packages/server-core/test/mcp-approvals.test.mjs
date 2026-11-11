@@ -233,7 +233,6 @@ async function composed(settingsValue) {
       ? { clientId: hello.clientId, authScope: "write", claims: { projectId: "p", sessionId: "s" } }
       : { clientId: hello.clientId, authScope: hello.clientId === "reader" ? "read" : "write" },
     settings,
-    mcpApprovals: true,
   });
   const cleanups = [];
   const connect = async (clientId) => {

@@ -427,10 +427,6 @@ export interface ServerCoreCompositionOptions
 	 * Record connection timings setting is on. `file` is where they live;
 	 * absent, they are kept in memory only. */
 	readonly connectionMetrics?: { readonly file?: string };
-	/** Compose the MCP permission approval service (ADR-0031). Only a host
-	 * that serves the MCP control socket asks for it; its policy is read from
-	 * `settings` when present. */
-	readonly mcpApprovals?: boolean;
 	/**
 	 * The terminal launchers this server offers (ADR-0073). Clients list them
 	 * with `terminal.launchers`, hear `terminal.launchers.changed`, and name
@@ -466,8 +462,9 @@ export interface ServerCoreCompositionOptions
 	};
 	/** A host supplies the bot runtime and its engine/vault/helper seams. */
 	readonly bots?: BotService;
-	/** Compose server-owned app windows (ADR-0037). Needs `mcpApprovals`, whose
-	 * Window Messages policy gates what a view types into its terminal. */
+	/** Configure server-owned app windows (ADR-0037, ADR-0108). App windows are
+	 * always composed; the MCP permission policy's Window Messages group gates
+	 * what a view types into its terminal. */
 	readonly appWindows?: {
 		/** The display title of a terminal, for an approval prompt. */
 		readonly terminalTitle?: (terminalSessionId: string) => string | undefined;
@@ -600,22 +597,23 @@ export interface ServerCoreComposition {
 	readonly automationOperations?: AutomationOperationRegistry;
 	/** MCP's route to automations, behind the MCP permission gate. */
 	readonly automationMcp?: AutomationMcpOperations;
-	/** Pending MCP approvals and session grants, when composed. */
-	readonly mcpApprovals?: McpApprovalService;
+	/** Pending MCP approvals and session grants. Every server composes them
+	 * (ADR-0108). */
+	readonly mcpApprovals: McpApprovalService;
 	/** Server-owned agent chats, when composed. */
 	readonly agentChat?: AgentChatService;
 	/** Pixel, composed with agent chats. */
 	readonly pixel?: PixelService;
 	/** Connection timing samples, when composed. */
 	readonly connectionMetrics?: ConnectionMetricsService;
-	/** Server-owned app windows, when composed. */
-	readonly appWindows?: AppWindowService;
+	/** Server-owned app windows. Every server composes them (ADR-0108). */
+	readonly appWindows: AppWindowService;
 	/**
 	 * The relay to the client an MCP caller is talking from (ADR-0070), and
 	 * how that client is found: the calling terminal's presentation-lease
 	 * holder, or the connection that sent a chat's latest message.
 	 */
-	readonly workspaceView?: {
+	readonly workspaceView: {
 		readonly relay: WorkspaceViewRelay;
 		readonly targetFor: (caller: {
 			readonly terminalSessionId: string;
@@ -1108,15 +1106,14 @@ export function createServerCoreComposition(
 			return DEFAULT_MCP_PERMISSIONS;
 		}
 	};
-	const mcpApprovals =
-		options.mcpApprovals === true
-			? new McpApprovalService({
-					eventJournal,
-					policies: storedMcpPermissions(),
-				})
-			: undefined;
+	// Every server composes approvals (ADR-0108): no host serves MCP without
+	// the user's permission policy.
+	const mcpApprovals = new McpApprovalService({
+		eventJournal,
+		policies: storedMcpPermissions(),
+	});
 	const removeMcpPolicyObserver =
-		mcpApprovals === undefined || options.settings === undefined
+		options.settings === undefined
 			? undefined
 			: options.settings.onChange((state) =>
 					mcpApprovals.setPolicies(mcpPermissionsFromSettings(state.settings)),
@@ -1151,7 +1148,7 @@ export function createServerCoreComposition(
 						: { onDiagnostic: options.agentChat.onDiagnostic }),
 				});
 	const unbindAgentChatApprovals =
-		agentChat === undefined || mcpApprovals === undefined
+		agentChat === undefined
 			? undefined
 			: bindAgentChatApprovals(agentChat, mcpApprovals);
 	const agentChatOperations =
@@ -1159,7 +1156,7 @@ export function createServerCoreComposition(
 			? undefined
 			: createAgentChatOperationHandlers({
 					service: agentChat,
-					...(mcpApprovals === undefined ? {} : { approvals: mcpApprovals }),
+					approvals: mcpApprovals,
 					...(options.agentChat?.projectExists === undefined
 						? {}
 						: { projectExists: options.agentChat.projectExists }),
@@ -1214,8 +1211,6 @@ export function createServerCoreComposition(
 		attachments: readonly AppWindowAttachment[],
 		signal: AbortSignal,
 	): Promise<void> => {
-		if (mcpApprovals === undefined)
-			throw protocolError('unavailable', 'window messages are unavailable');
 		const outcome = await mcpApprovals.authorize({
 			terminalSessionId: window.terminalSessionId,
 			projectId: window.projectId,
@@ -1361,60 +1356,56 @@ export function createServerCoreComposition(
 			: terminal.onEvent((event) => {
 					if (event.type === 'exit') workflowStore.endSession(event.sessionId);
 				});
-	const appWindows =
-		options.appWindows === undefined || mcpApprovals === undefined
-			? undefined
-			: new AppWindowService({
-					eventJournal,
-					// Resolved at request time: the terminal registry is composed below.
-					// The lease belongs to one attachment, made on one connection. A
-					// second connection that only names the same client is not the
-					// controller: a client id is what a client says it is.
-					isPresentationHolder: (window, context) => {
-						const holder = terminalOperations.presentationHolder({
-							projectId: window.projectId,
-							sessionId: window.terminalSessionId,
-						});
-						return (
-							holder !== undefined &&
-							holder.clientId === context.clientId &&
-							(holder.connectionId === undefined ||
-								holder.connectionId === context.connectionId)
-						);
-					},
-					presentationHolder: (window) =>
-						terminalOperations.presentationHolder({
-							projectId: window.projectId,
-							sessionId: window.terminalSessionId,
-						})?.clientId,
-					deliverMessage: async (window, text, signal) => {
-						await authorizeWindowMessage(window, text, [], signal);
-						await typeWindowMessage(window, text);
-					},
-					...(options.appWindows.storeDirectory === undefined
-						? {}
-						: {
-								store: {
-									directory: options.appWindows.storeDirectory,
-									...(options.appWindows.onStoreError === undefined
-										? {}
-										: { onError: options.appWindows.onStoreError }),
-								},
-							}),
-					attachments: {
-						authorize: authorizeWindowMessage,
-						type: (window, text) => typeWindowMessage(window, text),
-						...(options.appWindows.attachmentDirectory === undefined
+	const appWindowOptions = options.appWindows ?? {};
+	const appWindows = new AppWindowService({
+		eventJournal,
+		// Resolved at request time: the terminal registry is composed below.
+		// The lease belongs to one attachment, made on one connection. A
+		// second connection that only names the same client is not the
+		// controller: a client id is what a client says it is.
+		isPresentationHolder: (window, context) => {
+			const holder = terminalOperations.presentationHolder({
+				projectId: window.projectId,
+				sessionId: window.terminalSessionId,
+			});
+			return (
+				holder !== undefined &&
+				holder.clientId === context.clientId &&
+				(holder.connectionId === undefined ||
+					holder.connectionId === context.connectionId)
+			);
+		},
+		presentationHolder: (window) =>
+			terminalOperations.presentationHolder({
+				projectId: window.projectId,
+				sessionId: window.terminalSessionId,
+			})?.clientId,
+		deliverMessage: async (window, text, signal) => {
+			await authorizeWindowMessage(window, text, [], signal);
+			await typeWindowMessage(window, text);
+		},
+		...(appWindowOptions.storeDirectory === undefined
+			? {}
+			: {
+					store: {
+						directory: appWindowOptions.storeDirectory,
+						...(appWindowOptions.onStoreError === undefined
 							? {}
-							: { directory: options.appWindows.attachmentDirectory }),
+							: { onError: appWindowOptions.onStoreError }),
 					},
-				});
-	// Only a server that serves MCP has agents to ask a window anything.
-	const workspaceViewRelay =
-		mcpApprovals === undefined
-			? undefined
-			: new WorkspaceViewRelay({ eventJournal });
-	const workspaceView = workspaceViewRelay && {
+				}),
+		attachments: {
+			authorize: authorizeWindowMessage,
+			type: (window, text) => typeWindowMessage(window, text),
+			...(appWindowOptions.attachmentDirectory === undefined
+				? {}
+				: { directory: appWindowOptions.attachmentDirectory }),
+		},
+	});
+	// Every server serves MCP, so every server has agents that may ask a
+	// window to change its view (ADR-0108).
+	const workspaceViewRelay = new WorkspaceViewRelay({ eventJournal });
+	const workspaceView = {
 		relay: workspaceViewRelay,
 		targetFor: (caller: {
 			readonly terminalSessionId: string;
@@ -1447,12 +1438,9 @@ export function createServerCoreComposition(
 					};
 		},
 	};
-	const removeAppWindowExitObserver =
-		appWindows === undefined
-			? undefined
-			: terminal.onEvent((event) => {
-					if (event.type === 'exit') appWindows.endSession(event.sessionId);
-				});
+	const removeAppWindowExitObserver = terminal.onEvent((event) => {
+		if (event.type === 'exit') appWindows.endSession(event.sessionId);
+	});
 	const connectedServers =
 		options.connectedServers === undefined
 			? undefined
@@ -2483,12 +2471,12 @@ export function createServerCoreComposition(
 		...(automationOperations === undefined ? {} : { automationOperations }),
 		...(automationExecutor === undefined ? {} : { automationExecutor }),
 		...(automationMcp === undefined ? {} : { automationMcp }),
-		...(mcpApprovals === undefined ? {} : { mcpApprovals }),
+		mcpApprovals,
 		...(agentChat === undefined ? {} : { agentChat }),
 		...(pixel === undefined ? {} : { pixel }),
 		...(connectionMetrics === undefined ? {} : { connectionMetrics }),
-		...(appWindows === undefined ? {} : { appWindows }),
-		...(workspaceView === undefined ? {} : { workspaceView }),
+		appWindows,
+		workspaceView,
 		...(connectedServers === undefined ? {} : { connectedServers }),
 		...(automationAudit === undefined ? {} : { automationAudit }),
 		scheduleEngine,
@@ -2788,19 +2776,13 @@ function uniqueCapabilities(
 			...(options.automations === undefined
 				? []
 				: [FEATURE_CAPABILITIES.automations]),
-			...(options.mcpApprovals === true
-				? [
-						FEATURE_CAPABILITIES.mcpApprovals,
-						FEATURE_CAPABILITIES.workspaceView,
-					]
-				: []),
-			...(options.appWindows !== undefined && options.mcpApprovals === true
-				? [
-						FEATURE_CAPABILITIES.appWindows,
-						FEATURE_CAPABILITIES.appWindowMirror,
-						FEATURE_CAPABILITIES.appWindowAttachments,
-					]
-				: []),
+			// Every server composes these (ADR-0108); negotiation remains only
+			// for peers of another release.
+			FEATURE_CAPABILITIES.mcpApprovals,
+			FEATURE_CAPABILITIES.workspaceView,
+			FEATURE_CAPABILITIES.appWindows,
+			FEATURE_CAPABILITIES.appWindowMirror,
+			FEATURE_CAPABILITIES.appWindowAttachments,
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
 			...(options.forge === undefined ? [] : [FEATURE_CAPABILITIES.forge]),

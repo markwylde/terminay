@@ -122,6 +122,7 @@ import {
 	type WorktreeCaptureReport,
 } from '../packages/server-core/src/worktreeCapture';
 import { gitCommandSocketHostOptions } from '../apps/terminay-server/src/gitCommandSocket';
+import { withoutInheritedControlEnvironment } from '../apps/terminay-server/src/mcp/host';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import {
@@ -380,8 +381,6 @@ export interface ServerTerminalAuthorityOptions {
 	readonly macros?: ServerCoreCompositionOptions['macros'];
 	readonly workflows?: ServerCoreCompositionOptions['workflows'];
 	readonly automations?: ServerCoreCompositionOptions['automations'];
-	/** Compose MCP permission approvals; set by the host that serves MCP. */
-	readonly mcpApprovals?: boolean;
 	/**
 	 * How a chat's MCP capability is minted and revoked, set by the host that
 	 * serves the control socket. Only the agent chat service receives it
@@ -400,7 +399,7 @@ export interface ServerTerminalAuthorityOptions {
 	readonly onAgentChatDiagnostic?: NonNullable<
 		ServerCoreCompositionOptions['agentChat']
 	>['onDiagnostic'];
-	/** Compose server-owned app windows; needs `mcpApprovals`. */
+	/** Configure server-owned app windows, which every server composes. */
 	readonly appWindows?: ServerCoreCompositionOptions['appWindows'];
 	/** Compose the registry of user-connected MCP servers. */
 	readonly connectedServers?: ServerCoreCompositionOptions['connectedServers'];
@@ -1166,16 +1165,10 @@ export class ServerTerminalAuthority {
 				'settings.v1',
 				'macros.v1',
 				...(options.automations === undefined ? [] : ['automations.v1']),
-				...(options.mcpApprovals === true ? ['mcp-approvals.v1'] : []),
 				// Agent chats and Pixel run wherever extensions run.
 				...(extensionManagement === undefined ? [] : ['agent-chat.v1']),
-				...(options.mcpApprovals === true && options.appWindows !== undefined
-					? [
-							'app-windows.v1',
-							'app-window-mirror.v1',
-							'app-window-attachments.v1',
-						]
-					: []),
+				// MCP approvals, workspace view and app windows are composed and
+				// advertised by Server Core on every server (ADR-0108).
 				'recording.v1',
 				'extensions.v1',
 				...(dictationAi === undefined ? [] : ['dictation.v1']),
@@ -1263,7 +1256,6 @@ export class ServerTerminalAuthority {
 				? {}
 				: { recordings: options.recordings }),
 			...(options.settings === undefined ? {} : { settings: options.settings }),
-			...(options.mcpApprovals === true ? { mcpApprovals: true } : {}),
 			...(extensionManagement === undefined
 				? {}
 				: {
@@ -1310,7 +1302,7 @@ export class ServerTerminalAuthority {
 						terminalProfiles: options.shellProfiles,
 						terminalLaunchEnvironment: {
 							FORCE_HYPERLINK: '1',
-							...process.env,
+							...withoutInheritedControlEnvironment(process.env),
 							COLORTERM: 'truecolor',
 						},
 						...(options.terminalLaunchEnvironmentFor === undefined

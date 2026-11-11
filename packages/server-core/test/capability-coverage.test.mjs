@@ -127,8 +127,12 @@ test("a composed server advertises the versioned capability of every service it 
       [...composition.coreOptions.capabilities].sort(),
       [
         FEATURE_CAPABILITIES.agents,
+        FEATURE_CAPABILITIES.appWindowAttachments,
+        FEATURE_CAPABILITIES.appWindowMirror,
+        FEATURE_CAPABILITIES.appWindows,
         FEATURE_CAPABILITIES.health,
         FEATURE_CAPABILITIES.macros,
+        FEATURE_CAPABILITIES.mcpApprovals,
         FEATURE_CAPABILITIES.notifications,
         FEATURE_CAPABILITIES.projectStartChoice,
         FEATURE_CAPABILITIES.serverUpgrade,
@@ -137,6 +141,7 @@ test("a composed server advertises the versioned capability of every service it 
         FEATURE_CAPABILITIES.terminalTitles,
         FEATURE_CAPABILITIES.workspace,
         FEATURE_CAPABILITIES.workspaceChanges,
+        FEATURE_CAPABILITIES.workspaceView,
       ].sort(),
     );
   } finally {

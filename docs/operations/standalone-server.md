@@ -847,6 +847,47 @@ it for you. If the server binary is gone, `kill <pid>` (SIGTERM) on the pid in
 `session-holder/<generation>.json` does the same: the holder saves each
 session's last output, ends its shells, and exits.
 
+## Terminay MCP
+
+The server gives agents in its terminals Terminay MCP, the same tools, approvals,
+app windows, and connected MCP servers as Desktop. It is on by default. Turn it
+off from a connected client in **Settings > AI > Terminay MCP**; turning it off
+ends every agent's access at once, cancels its waiting approval requests, and
+closes its app windows. The permission groups on that page decide what is
+allowed, asked first, or never allowed.
+
+Every terminal the server starts gets two variables: `TERMINAY_CONTROL_SOCKET`,
+the server's local control socket, and `TERMINAY_CONTROL_TOKEN`, a credential
+for that terminal alone. A token the server process itself inherited, for
+example because it was started from a Terminay terminal, is never passed on.
+With Terminay MCP off, terminals get neither.
+
+To register Terminay MCP with an agent CLI, use **Install** for that agent on
+the same Settings page. The registered command is the Node binary running this
+server followed by the absolute path of `dist/mcpEntry.js` in the server's
+release. Nothing has to be on `PATH`, so the command works inside the container
+too. An in-place upgrade runs the new release from its own directory under
+`<data-root>/releases/`, so install again after one.
+
+What it keeps in the data root, all owner-only:
+
+| Path | Contents |
+| --- | --- |
+| `terminay-mcp-control.sock` | The control socket, unless it is placed in `$XDG_RUNTIME_DIR` or the temporary directory because the data root's path is too long for a socket. Never a network listener. |
+| `mcp-capabilities.v1.json` | Digests of the terminal tokens, so terminals kept across a restart keep working. No token can be read back from it. |
+| `mcp-connected-servers.v1.json` | The MCP servers connected for agents. Their credentials are in the vault. |
+| `app-windows/` | App windows, kept as long as their terminals. |
+
+If the socket has nowhere to go, the server does not start. It prints why, for
+example:
+
+```text
+Terminay's data directory is at a path too long for a local socket. … Start Terminay with a shorter data directory.
+```
+
+Use a shorter `--data-root`, or set `XDG_RUNTIME_DIR` to a short directory only
+the server's user can write.
+
 ## Backup, restore, upgrades, and incidents
 
 Before an upgrade, stop the server, copy the complete data root to a separate

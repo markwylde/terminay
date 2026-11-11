@@ -6,6 +6,11 @@ const main = await readFile(
 	new URL('../electron/main.ts', import.meta.url),
 	'utf8',
 );
+// The MCP tool adapters live in the host every server composes (ADR-0108).
+const mcpHost = await readFile(
+	new URL('../apps/terminay-server/src/mcp/host.ts', import.meta.url),
+	'utf8',
+);
 const preload = await readFile(
 	new URL('../electron/serverUiPreload.ts', import.meta.url),
 	'utf8',
@@ -115,10 +120,10 @@ test('MCP install commands name an extension install target, not a hardcoded cli
 		);
 });
 
-test('Desktop MCP terminal listing tolerates restored sessions without live activity records', () => {
+test('MCP terminal listing tolerates restored sessions without live activity records', () => {
 	assert.match(
-		main,
+		mcpHost,
 		/const activityBySession = authority\.activity\.snapshot\(\)\.sessions;/u,
 	);
-	assert.match(main, /const activity = activityBySession\[entry\.id\];/u);
+	assert.match(mcpHost, /const activity = activityBySession\[entry\.id\];/u);
 });

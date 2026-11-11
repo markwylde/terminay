@@ -13,6 +13,23 @@ import {
   createInitialWorkspace,
 } from "../dist/index.js";
 
+/** Every server composes MCP approvals, workspace view and app windows
+ * (ADR-0108), so every server advertises them. */
+const ALWAYS_COMPOSED_CAPABILITIES = [
+  "mcp-approvals.v1", "workspace-view.v1", "app-windows.v1", "app-window-mirror.v1", "app-window-attachments.v1",
+];
+const ALWAYS_COMPOSED_QUERIES = [
+  "app-windows.content", "app-windows.list", "app-windows.mirror.status", "app-windows.view-response", "mcp.approvals.get",
+];
+const ALWAYS_COMPOSED_COMMANDS = [
+  "app-windows.close", "app-windows.context", "app-windows.message", "app-windows.message-begin",
+  "app-windows.message-cancel", "app-windows.message-finish", "app-windows.message-part",
+  "app-windows.mirror.publish", "app-windows.mirror.resync", "app-windows.mirror.unwatch",
+  "app-windows.mirror.watch", "app-windows.set-state", "app-windows.view-request",
+  "mcp.approvals.decide", "workspace-view.attach", "workspace-view.respond",
+];
+
+
 /**
  * Publish reduced entries as the session-source bridge would: one revision per
  * step, bound to the terminal `identity` names.
@@ -129,7 +146,7 @@ test("composition owns TerminalService and exposes a complete merged registry", 
   assert.equal(composition.operations.queries.get("terminal.presentation-checkpoint") !== undefined, true);
   assert.equal(composition.operations.commands.get("terminal.attach") !== undefined, true);
   assert.equal(composition.operations.queries.get("workspace.ping") !== undefined, true);
-  assert.deepEqual(composition.coreOptions.capabilities, ["workspace", "terminal.v1", "server.upgrade"]);
+  assert.deepEqual(composition.coreOptions.capabilities, ["workspace", "terminal.v1", "server.upgrade", ...ALWAYS_COMPOSED_CAPABILITIES]);
   assert.equal(composition.coreOptions.commands.get("terminal.input") !== undefined, true);
 
   const identity = {
@@ -214,6 +231,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       "settings.get",
       "server.upgrade.status",
       "terminal.cwd", "terminal.launchers", "terminal.list", "terminal.presentation-checkpoint", "terminal.wait-inactivity",
+      ...ALWAYS_COMPOSED_QUERIES,
     ];
     const expectedCommands = [
       "ai.dictation.credential.clear", "ai.dictation.credential.set",
@@ -226,6 +244,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       "terminal.create", "terminal.attach", "terminal.resume", "terminal.ack",
       "terminal.input", "terminal.presentation", "terminal.resize", "terminal.kill", "terminal.detach",
       "terminal.materialize-clipboard-image",
+      ...ALWAYS_COMPOSED_COMMANDS,
     ];
     assert.deepEqual([...composition.operations.queries.keys()].sort(), expectedQueries.sort());
     assert.deepEqual([...composition.operations.commands.keys()].sort(), expectedCommands.sort());
@@ -234,7 +253,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
     }
     assert.deepEqual(
       composition.coreOptions.capabilities,
-      ["terminal.v1", "server.upgrade", "dictation.v1", "git.v1", "recording.v1", "settings.v1"],
+      ["terminal.v1", "server.upgrade", ...ALWAYS_COMPOSED_CAPABILITIES, "dictation.v1", "git.v1", "recording.v1", "settings.v1"],
     );
   } finally {
     await composition.shutdown();
@@ -251,7 +270,7 @@ test("composition does not advertise optional authorities that are absent", asyn
   });
   try {
     // Every server says whether it has an upgrade to offer; this one has none.
-    assert.deepEqual(composition.coreOptions.capabilities, ["terminal.v1", "server.upgrade"]);
+    assert.deepEqual(composition.coreOptions.capabilities, ["terminal.v1", "server.upgrade", ...ALWAYS_COMPOSED_CAPABILITIES]);
     for (const prefix of ["ai.", "git.", "recordings.", "settings.", "macros."]) {
       assert.equal(
         [...composition.operations.queries.keys(), ...composition.operations.commands.keys()]
@@ -304,7 +323,7 @@ test("the composed core serves terminal operations through its transport-neutral
     await pair.open();
     const hello = await client.connect();
     assert.equal(hello.serverId, identity.serverId);
-    assert.deepEqual(hello.capabilities, ["desktop", "terminal.v1", "server.upgrade"]);
+    assert.deepEqual(hello.capabilities, ["desktop", "terminal.v1", "server.upgrade", ...ALWAYS_COMPOSED_CAPABILITIES]);
 
     const listed = await client.query("terminal.list", { projectId: identity.projectId });
     assert.equal(listed.result.sessions[0].sessionId, identity.sessionId);

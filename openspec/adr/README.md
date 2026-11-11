@@ -126,3 +126,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0104](./0104-a-notification-is-acknowledged-only-by-what-the-user-does.md) | A notification is acknowledged only by what the user does | accepted | 2026-11-11 |
 | [0105](./0105-a-launcher-may-start-an-agent-with-a-user-confirmed-initial-prompt.md) | A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents | accepted, supersedes 0081 | 2026-11-11 |
 | [0106](./0106-forge-pull-requests-and-issues-come-from-pull-based-on-demand-forge-sources.md) | Forge pull requests and issues come from pull-based, on-demand forge sources; Terminay renders and joins them | accepted | 2026-11-11 |
+| [0108](./0108-every-server-host-composes-one-mcp-host-with-no-opt-outs.md) | Every server host composes one MCP host, and no host can opt out of approvals, app windows or workspace view | accepted | 2026-11-11 |

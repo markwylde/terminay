@@ -656,7 +656,6 @@ test("a window lasts as long as its terminal: a restart keeps it, ending the ter
   const storeDirectory = join(dataRoot, "app-windows");
   const windowed = () => ({
     settings: new ServerSettingsRepository({ load: async () => undefined, commit: async () => {} }),
-    mcpApprovals: true,
     appWindows: { storeDirectory },
   });
   const firstWorkspace = seededWorkspace([]);
