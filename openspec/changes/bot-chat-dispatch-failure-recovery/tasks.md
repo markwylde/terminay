@@ -38,5 +38,5 @@
 
 ## 4. End to end
 
-- [ ] 4.1 Add Electron E2E coverage in `e2e/bots.spec.ts` for a failed message's warning with Retry and Dismiss, and capture screenshots of the warning and of the result after each action. Verified by `npm run test:e2e` for that spec passing in Docker.
-- [ ] 4.2 Run `openspec validate bot-chat-dispatch-failure-recovery` and the affected server-core, client-core and UI suites. Confirm that `openspec validate --all` reports no failures beyond the 7 pre-existing ones in other changes. Verified by those results.
+- [x] 4.1 Add Electron E2E coverage in `e2e/bots.spec.ts` for a failed message's warning with Retry and Dismiss, and capture screenshots of the warning and of the result after each action. Verified by `npm run test:e2e` for that spec passing in Docker.
+- [x] 4.2 Run `openspec validate bot-chat-dispatch-failure-recovery` and the affected server-core, client-core and UI suites. Confirm that `openspec validate --all` reports no failures beyond the 7 pre-existing ones in other changes. Verified by those results.
