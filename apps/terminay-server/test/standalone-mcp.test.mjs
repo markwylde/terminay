@@ -200,6 +200,9 @@ test('a standalone server whose control socket has nowhere to go stops with the 
 				stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
 			},
 		);
+		// A server that stops before reading the passphrase closes the pipe; that
+		// is not this test's failure.
+		child.stdio[3].on('error', () => undefined);
 		child.stdio[3].end('test-vault-passphrase\n');
 		let stdout = '';
 		let stderr = '';
@@ -295,6 +298,9 @@ async function startServer(settings = {}) {
 			stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
 		},
 	);
+	// A server that stops before reading the passphrase closes the pipe; that
+	// is not this test's failure.
+	child.stdio[3].on('error', () => undefined);
 	child.stdio[3].end('test-vault-passphrase\n');
 	const ready = await readiness(child);
 	assert.equal(ready.ready, true);
