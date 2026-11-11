@@ -31,6 +31,13 @@ export interface BotAgentContribution {
 export interface BotAgentDeviceSignIn {
 	command: { executable: string; args: string[] };
 	signOutCommand: { executable: string; args: string[] };
+	/**
+	 * Optional offline check, run as the bot user before each session while
+	 * the bot is device-signed-in. Exit 0 means the login is still in the
+	 * bot's home; any other exit means it is gone, and the bot is set to
+	 * Not signed in.
+	 */
+	statusCommand?: { executable: string; args: string[] };
 	configFiles?: { path: string; contents: string }[];
 	label: string;
 	help: string;
@@ -270,6 +277,7 @@ export function validateBotAgentContribution(
 				closed(device, [
 					'command',
 					'signOutCommand',
+					'statusCommand',
 					'configFiles',
 					'label',
 					'help',
@@ -287,6 +295,11 @@ export function validateBotAgentContribution(
 				command(device.signOutCommand),
 				'$.deviceSignIn.signOutCommand',
 				'Expected a sign-out executable and arguments',
+			);
+			check(
+				device.statusCommand === undefined || command(device.statusCommand),
+				'$.deviceSignIn.statusCommand',
+				'Expected a status executable and arguments',
 			);
 			check(
 				text(device.label, EXTENSION_LIMITS.displayNameLength),
