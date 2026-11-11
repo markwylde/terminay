@@ -7,16 +7,16 @@ on:
   # The release workflow creates its tag with the workflow token, and GitHub
   # starts no workflow for a push made with that token. It dispatches this one
   # at the tag instead, which is the only event that token may raise. The
-  # rolling prerelease dispatches it on the default branch with the beta
-  # version it published.
+  # rolling prerelease (main-prerelease.yml, for a Nightly or a Canary)
+  # dispatches it on the default branch with the version it published.
   workflow_dispatch:
     inputs:
       version:
-        description: Beta version to publish from the default branch (X.Y.Z-beta.N). Leave empty at a release tag.
+        description: Nightly or Canary version to publish from the default branch (X.Y.Z-main.N.nightly or X.Y.Z-main.N.canary). Leave empty at a release tag.
         type: string
         default: ""
       revision:
-        description: Commit that beta version was built from. Required with a version.
+        description: Commit that version was built from. Required with a version.
         type: string
         default: ""
 
@@ -25,8 +25,9 @@ defaults:
     shell: bash -euo pipefail {0}
 
 concurrency:
-  # One run per published version: a later beta never cancels the image an
-  # installed earlier beta names.
+  # One run per published version: a later build never cancels the image an
+  # installed earlier build names. Versions differ by track, so a Nightly and
+  # a Canary of one commit never share a group.
   group: terminay-server-image-${{ github.ref }}-${{ inputs.version }}
   cancel-in-progress: true
 
@@ -41,6 +42,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       revision: ${{ steps.plan.outputs.revision }}
       channel: ${{ steps.plan.outputs.channel }}
+      legacy_beta: ${{ steps.plan.outputs.legacy_beta }}
 
     steps:
       - name: Check out code
@@ -49,9 +51,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Nothing is built until the request is known to be one of the two
-      # versions the project publishes: a release tag, or a beta of a commit
-      # on the default branch.
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+
+      # Nothing is built until the request is known to be one of the versions
+      # the project publishes: a release tag, or a Nightly or Canary of a
+      # commit on the default branch.
       - name: Validate the requested version
         id: plan
         env:
@@ -70,26 +77,42 @@ jobs:
               echo "version=$RELEASE"
               echo "revision=$GITHUB_SHA"
               echo "channel=tag"
+              echo "legacy_beta=false"
             } >> "$GITHUB_OUTPUT"
           elif [ -n "$VERSION" ]; then
             if [ "$GITHUB_REF" != refs/heads/main ]; then
-              echo "A beta image is published from the default branch only." >&2
+              echo "A Nightly or Canary image is published from the default branch only." >&2
               exit 1
             fi
-            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]; then
-              echo "Not a beta version: $VERSION" >&2
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-main\.[1-9][0-9]*\.(nightly|canary)$ ]]; then
+              echo "Not a Nightly or Canary version: $VERSION" >&2
               exit 1
             fi
             if ! [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "A beta version needs the full commit it was built from." >&2
+              echo "A Nightly or Canary version needs the full commit it was built from." >&2
               exit 1
             fi
             git merge-base --is-ancestor "$REVISION" "$GITHUB_SHA"
+            # The version names its track, and the track its server channel:
+            # a Nightly image follows `main`, a Canary image `canary`.
+            TRACK="${VERSION##*.}"
+            if [ "$TRACK" = nightly ]; then
+              CHANNEL=main
+              # For 90 days the Nightly image is also tagged `beta`, so
+              # installations that followed `beta` move to Nightly
+              # (scripts/legacy-beta-feed.mjs holds the end date).
+              LEGACY_BETA="$(node scripts/legacy-beta-feed.mjs)"
+            else
+              CHANNEL=canary
+              LEGACY_BETA=false
+            fi
+            [[ "$LEGACY_BETA" =~ ^(true|false)$ ]]
             {
-              echo "mode=beta"
+              echo "mode=$TRACK"
               echo "version=$VERSION"
               echo "revision=$REVISION"
-              echo "channel=main"
+              echo "channel=$CHANNEL"
+              echo "legacy_beta=$LEGACY_BETA"
             } >> "$GITHUB_OUTPUT"
           else
             # A dispatch at a branch with no version builds and smokes the
@@ -99,6 +122,7 @@ jobs:
               echo "version=ci"
               echo "revision=$GITHUB_SHA"
               echo "channel=main"
+              echo "legacy_beta=false"
             } >> "$GITHUB_OUTPUT"
           fi
 
@@ -144,7 +168,7 @@ jobs:
   build:
     name: Build server image (${{ matrix.arch }})
     needs: [plan, smoke]
-    # Only for a release tag or a validated beta version.
+    # Only for a release tag or a validated Nightly or Canary version.
     if: ${{ needs.plan.outputs.mode != 'none' }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -255,9 +279,10 @@ jobs:
             echo "dockerhub=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # A release publishes X.Y.Z, X.Y, and `latest`. A beta publishes its beta
-      # version and `beta`. `latest` only ever names a release and `beta` only
-      # ever names a beta, so the bare image name is always a release.
+      # A release publishes X.Y.Z, X.Y, and `latest`. A Nightly publishes its
+      # version and `nightly`; a Canary its version and `canary`. Each moving
+      # tag only ever names its own track, so the bare image name is always a
+      # release. While the legacy Beta feed lasts, a Nightly is also `beta`.
       - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -270,9 +295,11 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},enable=${{ needs.plan.outputs.mode == 'release' }}
             type=sha,format=long,prefix=sha-,enable=${{ needs.plan.outputs.mode == 'release' }}
             type=raw,value=latest,enable=${{ needs.plan.outputs.mode == 'release' }}
-            type=raw,value=${{ needs.plan.outputs.version }},enable=${{ needs.plan.outputs.mode == 'beta' }}
-            type=raw,value=sha-${{ needs.plan.outputs.revision }},enable=${{ needs.plan.outputs.mode == 'beta' }}
-            type=raw,value=beta,enable=${{ needs.plan.outputs.mode == 'beta' }}
+            type=raw,value=${{ needs.plan.outputs.version }},enable=${{ needs.plan.outputs.mode == 'nightly' || needs.plan.outputs.mode == 'canary' }}
+            type=raw,value=sha-${{ needs.plan.outputs.revision }},enable=${{ needs.plan.outputs.mode == 'nightly' || needs.plan.outputs.mode == 'canary' }}
+            type=raw,value=nightly,enable=${{ needs.plan.outputs.mode == 'nightly' }}
+            type=raw,value=canary,enable=${{ needs.plan.outputs.mode == 'canary' }}
+            type=raw,value=beta,enable=${{ needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.legacy_beta == 'true' }}
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

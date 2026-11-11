@@ -273,7 +273,7 @@ test('every Linux lane builds in the floor image and is checked and probed befor
 			if (/build-standalone-server-artifact\.mjs/u.test(line))
 				assert.fail(`${name}: the archive builder runs only inside build-linux-standalone-archive.sh`);
 			const linuxBuild =
-				/npm run build:linux|build-linux-standalone-archive\.sh|electron-builder[^\n]*--linux|build-main-beta-desktop\.sh[^\n]*(?:linux|beta-release-notes\.md\b(?!"))/u;
+				/npm run build:linux|build-linux-standalone-archive\.sh|electron-builder[^\n]*--linux|build-prerelease-desktop\.sh[^\n]*(?:linux|prerelease-notes\.md\b(?!"))/u;
 			if (!linuxBuild.test(line)) continue;
 			assert.match(line, /run-in-linux-floor\.sh/u, `${name}: ${line.trim()}`);
 		}
@@ -304,15 +304,15 @@ test('every Linux lane builds in the floor image and is checked and probed befor
 	);
 	gated(
 		workflows.main,
-		'Check the main channel archive against the glibc floor and run terminals from it there',
+		'Check the rolling channel archive against the glibc floor and run terminals from it there',
 		'server-archive',
-		'Probe the extracted main channel archive',
+		'Probe the extracted rolling channel archive',
 	);
 	gated(
 		workflows.main,
-		'Check the Linux beta AppImage against the glibc floor and run terminals from it there',
+		'Check the Linux prerelease AppImage against the glibc floor and run terminals from it there',
 		'appimage',
-		'Write and verify beta checksum',
+		'Write and verify prerelease checksum',
 	);
 });
 

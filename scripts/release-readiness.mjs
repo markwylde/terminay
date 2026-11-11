@@ -144,17 +144,19 @@ export function createReleaseManifest(inputs, sbom) {
 /**
  * The published install and upgrade unit for a standalone server: one
  * self-contained archive per architecture with its checksum sidecar and
- * detached signature, on either the tagged or the rolling channel. The
+ * detached signature, on the tagged channel or one of the two rolling ones:
+ * `main` for the Nightly and `canary` for the Canary (ADR-0109). The
  * `npm pack` tarball is not an install unit; the server's workspace
  * dependencies are private, so it never resolved on a target.
  */
 export const STANDALONE_SERVER_DISTRIBUTION = Object.freeze({
   unit: 'self-contained-archive',
   architectures: Object.freeze(['x64', 'arm64']),
-  channels: Object.freeze(['tag', 'main']),
+  channels: Object.freeze(['tag', 'main', 'canary']),
   archiveNames: Object.freeze({
     tag: 'terminay-server-<version>-linux-<arch>.tar.gz',
     main: 'terminay-server-main-linux-<arch>.tar.gz',
+    canary: 'terminay-server-canary-linux-<arch>.tar.gz',
   }),
   checksumSuffix: '.sha256',
   signatureSuffix: '.sig',

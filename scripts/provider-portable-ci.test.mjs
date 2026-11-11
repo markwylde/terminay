@@ -24,7 +24,7 @@ function job(workflow, name) {
 test("Gitea is the only provider that runs verification CI", async () => {
   const { readdir } = await import("node:fs/promises");
   const githubWorkflows = (await readdir(new URL("../.github/workflows/", import.meta.url))).sort();
-  assert.deepEqual(githubWorkflows, ["main-prerelease.yml", "server-image.yml", "trigger-release.yml"],
+  assert.deepEqual(githubWorkflows, ["canary.yml", "main-prerelease.yml", "nightly.yml", "server-image.yml", "trigger-release.yml"],
     "GitHub mirrors the repository and runs only release workflows; verification runs on Gitea");
   // The rolling prerelease publishes the same signed archives a tag does. It
   // must stay a publication path: nothing here may become a second, weaker
@@ -32,6 +32,12 @@ test("Gitea is the only provider that runs verification CI", async () => {
   const mainPrerelease = await read(".github/workflows/main-prerelease.yml");
   assert.doesNotMatch(mainPrerelease, /npm run test:ci|npm run test:workspaces|npm run smoke\b/u);
   assert.match(mainPrerelease, /release-signature\.mjs sign/u);
+  // Its callers only schedule it: neither runs a check of its own.
+  for (const caller of [".github/workflows/canary.yml", ".github/workflows/nightly.yml"]) {
+    const text = await read(caller);
+    assert.doesNotMatch(text, /npm run test|npm run smoke\b|node --test/u, caller);
+    assert.match(text, /uses: \.\/\.github\/workflows\/main-prerelease\.yml/u, caller);
+  }
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
     ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "bot-mcp-runtime", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
@@ -251,15 +257,15 @@ test("benchmarks that measure the machine run apart from every gate", async () =
   for (const text of gatingText) assert.doesNotMatch(text, /node --test[^&\n]*scripts\/\*/u);
 });
 
-test("the server image is published only for a release tag or a dispatched beta, never from a pull request", async () => {
+test("the server image is published only for a release tag or a dispatched nightly or canary, never from a pull request", async () => {
   assert.doesNotMatch(serverImage, /^ {2}pull_request/mu);
   assert.doesNotMatch(serverImage, /^ {4}branches:/mu);
   assert.match(serverImage, /^ {4}tags:/mu);
-  // A beta image exists only for a default-branch commit whose prerelease
+  // A Nightly or Canary image exists only for a default-branch commit whose prerelease
   // assets published: the prerelease dispatches it last, and the image
   // workflow refuses any other branch, version shape, or foreign commit.
   const mainPrerelease = await read(".github/workflows/main-prerelease.yml");
-  assert.match(job(mainPrerelease, "publish-beta-image"), /needs: \[build-main-desktop, publish-main-prerelease\]/u);
+  assert.match(job(mainPrerelease, "publish-image"), /needs: \[plan, build-desktop, publish\]/u);
   assert.match(job(serverImage, "plan"), /"\$GITHUB_REF" != refs\/heads\/main/u);
   assert.match(job(serverImage, "plan"), /git merge-base --is-ancestor "\$REVISION" "\$GITHUB_SHA"/u);
   assert.match(job(serverImage, "build"), /^ {4}if: \$\{\{ needs\.plan\.outputs\.mode != 'none' \}\}$/mu);

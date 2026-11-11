@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Verifies an electron-updater metadata file (latest-mac.yml, beta-linux.yml,
+// Verifies an electron-updater metadata file (latest-mac.yml, nightly-linux.yml,
 // ...) against the payload bytes it points at, before that file is allowed to
 // become visible to installed clients.
 //

@@ -1,15 +1,45 @@
-name: Rolling Main Prerelease
+name: Rolling Prerelease
 
+# One Nightly or Canary build of `main` (ADR-0109). canary.yml calls this on
+# every push to `main`; nightly.yml calls it once a night when `main` has moved.
+# The callers own the triggers and the concurrency group. The track decides the
+# rolling release, the asset names, the metadata channel, the server channel,
+# notarization and the image tag; every probe and every check is shared, so a
+# probe added here guards both tracks.
+#
+# | | Nightly | Canary |
+# | --- | --- | --- |
+# | Rolling release | `main-latest` | `canary-latest` |
+# | Desktop payloads | `terminay-desktop-main-*` | `terminay-desktop-canary-*` |
+# | Update metadata | `nightly-mac.yml`, `nightly-linux.yml`, `nightly.yml` | `canary-*.yml` |
+# | Server archives | `terminay-server-main-linux-<arch>.tar.gz` | `terminay-server-canary-linux-<arch>.tar.gz` |
+# | Manifest channel | `main` | `canary` |
+# | macOS | signed, notarized, stapled | signed only |
+#
+# Nightly keeps every `main` name of the old rolling channel, so installed
+# servers, published CLIs and installed Beta builds follow it unchanged.
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call:
     inputs:
+      track:
+        description: nightly or canary
+        type: string
+        required: true
       dry_run:
-        description: Build and sign the archives without touching the main prerelease
+        description: Build, sign and verify without touching any release or image
         type: boolean
-        default: true
+        default: false
+    secrets:
+      TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64:
+        required: false
+      MACOS_CERTIFICATE_P12:
+        required: false
+      MACOS_CERTIFICATE_PASSWORD:
+        required: false
+      # Only the nightly caller passes it. A Canary is never submitted to
+      # Apple, and its jobs never hold the credential that would submit it.
+      APPLE_APP_SPECIFIC_PASSWORD:
+        required: false
 
 permissions:
   # Building proves nothing about the release; only the publishing job may
@@ -20,14 +50,108 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
-concurrency:
-  # Two swaps must never interleave over the same asset names.
-  group: main-prerelease
-  cancel-in-progress: false
-
 jobs:
-  build-main-archives:
-    name: Build Main Archive (${{ matrix.target }})
+  plan:
+    name: Plan the ${{ inputs.track }} build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_tag: ${{ steps.names.outputs.release_tag }}
+      asset: ${{ steps.names.outputs.asset }}
+      channel: ${{ steps.names.outputs.channel }}
+      notarize: ${{ steps.names.outputs.notarize }}
+      legacy_beta: ${{ steps.names.outputs.legacy_beta }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The version is derived from the commits since the latest release
+          # tag and the commit count, so the full history and tags are needed.
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+
+      - name: Verify the build commit
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          test -n "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Name the track's release, assets and channel
+        id: names
+        env:
+          TRACK: ${{ inputs.track }}
+        run: |
+          case "$TRACK" in
+            nightly)
+              # The tag must not be named for a branch. A release tagged `main`
+              # makes `main` an ambiguous ref in every clone, so `git fetch main`
+              # resolves the tag instead of the branch.
+              RELEASE_TAG=main-latest
+              ASSET=main
+              NOTARIZE=true
+              # For 90 days the Nightly is also published under the Beta feed's
+              # names and image tag, so installed Beta builds move to it. The
+              # end date is LEGACY_BETA_FEED_UNTIL in this script (2027-02-09);
+              # the follow-up change retire-beta-feed removes the copies.
+              LEGACY_BETA="$(node scripts/legacy-beta-feed.mjs)"
+              ;;
+            canary)
+              RELEASE_TAG=canary-latest
+              ASSET=canary
+              NOTARIZE=false
+              LEGACY_BETA=false
+              ;;
+            *)
+              echo "Unknown track: $TRACK" >&2
+              exit 1
+              ;;
+          esac
+          [[ "$LEGACY_BETA" =~ ^(true|false)$ ]]
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "asset=$ASSET"
+            # The archive manifest records the same name as the assets.
+            echo "channel=$ASSET"
+            echo "notarize=$NOTARIZE"
+            echo "legacy_beta=$LEGACY_BETA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Read the track's published build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.names.outputs.release_tag }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/published"
+          # Before the first build of a track there is nothing to compare with.
+          gh release download "$RELEASE_TAG" --repo "$GH_REPO" --pattern build.json --dir "$RUNNER_TEMP/published" \
+            || echo "No published build.json on $RELEASE_TAG"
+
+      - name: Derive the prerelease version
+        id: version
+        env:
+          TRACK: ${{ inputs.track }}
+        run: |
+          # `<next stable version>-main.<commit count>.<track>`: builds order by
+          # commit across both tracks, and below the release they lead to. The
+          # script refuses a count below the track's published build.
+          VERSION="$(node scripts/prerelease-version.mjs --track "$TRACK" --notes-out "$RUNNER_TEMP/plan-release-notes.md" --published-build "$RUNNER_TEMP/published/build.json")"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-main\.[1-9][0-9]*\.(nightly|canary)$ ]]
+          test "${VERSION##*.}" = "$TRACK"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build-archives:
+    name: Build ${{ inputs.track }} Server Archive (${{ matrix.target }})
+    needs: plan
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -76,112 +200,115 @@ jobs:
         run: |
           node scripts/prove-secure-werift-offline-rebuild.mjs --prove-mirror "$RUNNER_TEMP/secure-werift-source-mirror"
 
-      - name: Build self-contained main channel archive
+      - name: Build self-contained rolling channel archive
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
           TARGET: ${{ matrix.target }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
         run: |
-          OUTPUT="release/main"
-          # `main` is a channel, not a version: the manifest records the commit
-          # so an installer can tell whether the channel actually moved. Built
-          # in the GNU/Linux floor image on this runner's architecture
-          # (ADR-0077).
-          sh scripts/run-in-linux-floor.sh --output "$OUTPUT" -- sh scripts/build-linux-standalone-archive.sh "$TARGET" main "$EXPECTED_COMMIT" "$OUTPUT/terminay-server-main-$TARGET.tar.gz"
+          OUTPUT="release/server"
+          # `main` and `canary` are channels, not versions: the manifest records
+          # the commit so an installer can tell whether the channel actually
+          # moved. Built in the GNU/Linux floor image on this runner's
+          # architecture (ADR-0077).
+          sh scripts/run-in-linux-floor.sh --output "$OUTPUT" -- sh scripts/build-linux-standalone-archive.sh "$TARGET" "$CHANNEL" "$EXPECTED_COMMIT" "$OUTPUT/terminay-server-$CHANNEL-$TARGET.tar.gz"
 
-      - name: Check the main channel archive against the glibc floor and run terminals from it there
+      - name: Check the rolling channel archive against the glibc floor and run terminals from it there
         env:
           TARGET: ${{ matrix.target }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
         run: |
-          ARCHIVE="release/main/terminay-server-main-$TARGET.tar.gz"
+          ARCHIVE="release/server/terminay-server-$CHANNEL-$TARGET.tar.gz"
           node scripts/linux-glibc-floor.mjs check --target "$TARGET" "$ARCHIVE"
           sh scripts/probe-linux-glibc-floor.sh server-archive "$ARCHIVE"
 
-      - name: Probe the extracted main channel archive
+      - name: Probe the extracted rolling channel archive
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
           TARGET: ${{ matrix.target }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
         run: |
           node scripts/probe-standalone-server-archive.mjs \
-            --archive "release/main/terminay-server-main-$TARGET.tar.gz" \
+            --archive "release/server/terminay-server-$CHANNEL-$TARGET.tar.gz" \
             --target "$TARGET" \
-            --channel main \
+            --channel "$CHANNEL" \
             --revision "$EXPECTED_COMMIT" > "$RUNNER_TEMP/standalone-probe.json"
 
-      - name: Write and verify main channel checksum
+      - name: Write and verify rolling channel checksum
         env:
           TARGET: ${{ matrix.target }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
         run: |
-          ARCHIVE="release/main/terminay-server-main-$TARGET.tar.gz"
+          ARCHIVE="release/server/terminay-server-$CHANNEL-$TARGET.tar.gz"
           node scripts/release-checksum.mjs write "$ARCHIVE" "$ARCHIVE.sha256"
           node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
 
-      - name: Sign and verify main channel archive
+      - name: Sign and verify rolling channel archive
         env:
           TARGET: ${{ matrix.target }}
+          CHANNEL: ${{ needs.plan.outputs.channel }}
           TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
           TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
-          ARCHIVE="release/main/terminay-server-main-$TARGET.tar.gz"
+          ARCHIVE="release/server/terminay-server-$CHANNEL-$TARGET.tar.gz"
           test -n "$TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64"
           test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
           node scripts/release-signature.mjs sign "$ARCHIVE" "$ARCHIVE.sig"
           node scripts/release-signature.mjs verify "$ARCHIVE" "$ARCHIVE.sig"
 
-      - name: Upload main channel workflow artifact
+      - name: Upload rolling channel workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: main-prerelease-${{ matrix.target }}
+          name: prerelease-server-${{ matrix.target }}
           path: |
-            release/main/terminay-server-main-${{ matrix.target }}.tar.gz
-            release/main/terminay-server-main-${{ matrix.target }}.tar.gz.sha256
-            release/main/terminay-server-main-${{ matrix.target }}.tar.gz.sig
+            release/server/terminay-server-${{ needs.plan.outputs.channel }}-${{ matrix.target }}.tar.gz
+            release/server/terminay-server-${{ needs.plan.outputs.channel }}-${{ matrix.target }}.tar.gz.sha256
+            release/server/terminay-server-${{ needs.plan.outputs.channel }}-${{ matrix.target }}.tar.gz.sig
           if-no-files-found: error
           include-hidden-files: false
 
-  build-main-desktop:
-    name: Build Main Desktop Beta (${{ matrix.label }})
+  build-desktop:
+    name: Build ${{ inputs.track }} Desktop (${{ matrix.label }})
+    needs: plan
     runs-on: ${{ matrix.os }}
     # Its own job, so a signing or notarization outage never holds back the
     # server archives: the channel then keeps its previous desktop set.
     timeout-minutes: 60
-    outputs:
-      # Every platform derives the same version from this commit and run number.
-      version: ${{ steps.beta_version.outputs.version }}
     strategy:
       # No platform is published unless every one was built from this commit.
       fail-fast: true
       matrix:
         include:
           # The asset names are fixed so each run replaces the last rather
-          # than accumulating; the beta metadata names them exactly.
+          # than accumulating; the track's metadata names them exactly.
           - os: macos-latest
             label: macOS
             platform: mac
             target: zip
-            asset: terminay-desktop-main-mac.zip
-            metadata: beta-mac.yml
+            asset: terminay-desktop-${{ needs.plan.outputs.asset }}-mac.zip
+            metadata: ${{ inputs.track }}-mac.yml
             # Darwin 22 is macOS 13, Electron's floor; see ADR-0079.
             minimum_system_version: 22.0.0
           - os: ubuntu-latest
             label: Linux
             platform: linux
             target: AppImage
-            asset: terminay-desktop-main-linux-x86_64.AppImage
-            metadata: beta-linux.yml
+            asset: terminay-desktop-${{ needs.plan.outputs.asset }}-linux-x86_64.AppImage
+            metadata: ${{ inputs.track }}-linux.yml
             minimum_system_version: ''
           - os: windows-latest
             label: Windows
             platform: win
             target: nsis
-            asset: terminay-desktop-main-windows-x64-Setup.exe
-            metadata: beta.yml
+            asset: terminay-desktop-${{ needs.plan.outputs.asset }}-windows-x64-Setup.exe
+            metadata: ${{ inputs.track }}.yml
             minimum_system_version: ''
 
     steps:
       - name: Check out code
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # The beta version and notes are derived from the commits since the
+          # The version and notes are derived from the commits since the
           # latest release tag, so the full history and tags are needed.
           fetch-depth: 0
           fetch-tags: true
@@ -208,20 +335,27 @@ jobs:
       - name: Check macOS signing secrets
         if: matrix.os == 'macos-latest'
         env:
+          NOTARIZE: ${{ needs.plan.outputs.notarize }}
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ vars.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ needs.plan.outputs.notarize == 'true' && vars.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ needs.plan.outputs.notarize == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
         run: |
+          # Every track is signed; the team id is what the signature is checked
+          # against. Only a notarized track needs Apple's notary credentials.
+          required="MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_TEAM_ID"
+          if [ "$NOTARIZE" = true ]; then
+            required="$required APPLE_ID APPLE_APP_SPECIFIC_PASSWORD"
+          fi
           missing=""
-          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          for name in $required; do
             if [ -z "$(printenv "$name")" ]; then
               missing="$missing $name"
             fi
           done
           if [ -n "$missing" ]; then
-            echo "Refusing to publish an unsigned or unnotarized macOS beta; missing:$missing" >&2
+            echo "Refusing to publish an unsigned or unnotarized macOS prerelease; missing:$missing" >&2
             exit 1
           fi
 
@@ -232,29 +366,32 @@ jobs:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
-      - name: Derive the beta version and release notes
-        id: beta_version
+      - name: Derive the prerelease version and release notes
+        id: prerelease_version
         env:
-          RUN_NUMBER: ${{ github.run_number }}
+          TRACK: ${{ inputs.track }}
+          PLANNED_VERSION: ${{ needs.plan.outputs.version }}
         run: |
-          # `<next stable version>-beta.<run number>`: run numbers only grow, so
-          # every beta sorts above the last one and below the release it leads to.
-          VERSION="$(node scripts/main-beta-version.mjs --run-number "$RUN_NUMBER" --notes-out "$RUNNER_TEMP/beta-release-notes.md")"
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]
-          test "${VERSION##*-beta.}" = "$RUN_NUMBER"
+          # Every platform derives the same version from this commit, and it
+          # is the one the plan checked against the published build.
+          VERSION="$(node scripts/prerelease-version.mjs --track "$TRACK" --notes-out "$RUNNER_TEMP/prerelease-notes.md")"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-main\.[1-9][0-9]*\.(nightly|canary)$ ]]
+          test "$VERSION" = "$PLANNED_VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Sync package version to the beta version
+      - name: Sync package version to the prerelease version
         env:
-          VERSION: ${{ steps.beta_version.outputs.version }}
+          VERSION: ${{ steps.prerelease_version.outputs.version }}
         run: node scripts/sync-package-version.mjs "$VERSION"
 
-      - name: Build packaged beta app
+      - name: Build packaged prerelease app
         env:
-          APPLE_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_ID || '' }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_TEAM_ID || '' }}
+          # A Canary build is given no notarization credential at all.
+          APPLE_ID: ${{ matrix.os == 'macos-latest' && needs.plan.outputs.notarize == 'true' && vars.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && needs.plan.outputs.notarize == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && needs.plan.outputs.notarize == 'true' && vars.APPLE_TEAM_ID || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
+          TRACK: ${{ inputs.track }}
           PLATFORM: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
           ASSET: ${{ matrix.asset }}
@@ -263,17 +400,17 @@ jobs:
           if [ "$PLATFORM" = linux ]; then
             # Built in the GNU/Linux floor image, so the AppImage's native code
             # never needs a newer glibc than the oldest supported host (ADR-0077).
-            sh scripts/run-in-linux-floor.sh --output release/main-desktop --input "$RUNNER_TEMP/beta-release-notes.md:beta-release-notes.md" -- sh scripts/build-main-beta-desktop.sh "$PLATFORM" "$TARGET" "$ASSET" beta-release-notes.md
+            sh scripts/run-in-linux-floor.sh --output release/main-desktop --input "$RUNNER_TEMP/prerelease-notes.md:prerelease-notes.md" -- sh scripts/build-prerelease-desktop.sh "$TRACK" "$PLATFORM" "$TARGET" "$ASSET" prerelease-notes.md
           else
-            sh scripts/build-main-beta-desktop.sh "$PLATFORM" "$TARGET" "$ASSET" "$RUNNER_TEMP/beta-release-notes.md"
+            sh scripts/build-prerelease-desktop.sh "$TRACK" "$PLATFORM" "$TARGET" "$ASSET" "$RUNNER_TEMP/prerelease-notes.md"
           fi
 
-      - name: Check every native file in the Windows beta is x64
+      - name: Check every native file in the Windows prerelease is x64
         if: matrix.platform == 'win'
         run: node scripts/check-windows-pe-architecture.mjs release/main-desktop/win-unpacked
 
-      # Build N+1 for the update step: this run's app one patch version higher,
-      # with its beta.yml, outside release/ so nothing publishes it.
+      # Build N+1 for the update step: this run's app one commit later on its
+      # track, with its nightly.yml, outside release/ so nothing publishes it.
       - name: Build the Windows update probe's next version
         id: update_probe
         if: matrix.platform == 'win'
@@ -282,7 +419,7 @@ jobs:
           next="$(sh scripts/build-windows-update-probe.sh "$(node -p "require('./package.json').version")" "$RUNNER_TEMP/update-probe")"
           echo "version=$next" >> "$GITHUB_OUTPUT"
 
-      - name: Install the Windows beta installer, run terminals from it, and update it in place
+      - name: Install the Windows prerelease installer, run terminals from it, and update it in place
         if: matrix.platform == 'win'
         shell: pwsh
         env:
@@ -294,13 +431,13 @@ jobs:
         if: ${{ always() && matrix.platform == 'win' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: windows-probe-main
+          name: windows-probe-${{ inputs.track }}
           path: |
             ${{ runner.temp }}/windows-probe.json
             ${{ runner.temp }}/windows-probe-*.png
           if-no-files-found: ignore
 
-      - name: Check the Linux beta AppImage against the glibc floor and run terminals from it there
+      - name: Check the Linux prerelease AppImage against the glibc floor and run terminals from it there
         if: matrix.platform == 'linux'
         env:
           ASSET: ${{ matrix.asset }}
@@ -308,7 +445,7 @@ jobs:
           node scripts/linux-glibc-floor.mjs check --target linux-x64 "release/main-desktop/$ASSET"
           sh scripts/probe-linux-glibc-floor.sh appimage "release/main-desktop/$ASSET"
 
-      - name: Verify exact beta asset selection
+      - name: Verify exact prerelease asset selection
         env:
           ASSET: ${{ matrix.asset }}
           METADATA: ${{ matrix.metadata }}
@@ -316,21 +453,24 @@ jobs:
           OUTPUT="release/main-desktop"
           test -f "$OUTPUT/$ASSET"
           test ! -L "$OUTPUT/$ASSET"
-          # The macOS zip and the Windows installer also get a blockmap. Beta
-          # clients never download differentially (the previous blockmap is
-          # overwritten every run), so it is expected here but never published.
+          # The macOS zip and the Windows installer also get a blockmap.
+          # Prerelease clients never download differentially (the previous
+          # blockmap is overwritten every run), so it is expected here but
+          # never published.
           EXPECTED_FILES="$OUTPUT/$ASSET"
-          if [ "$ASSET" = terminay-desktop-main-mac.zip ] || [ "$ASSET" = terminay-desktop-main-windows-x64-Setup.exe ]; then
-            EXPECTED_FILES="$(printf '%s\n' "$OUTPUT/$ASSET" "$OUTPUT/$ASSET.blockmap" | LC_ALL=C sort)"
-          fi
+          case "$ASSET" in
+            *-mac.zip|*-windows-x64-Setup.exe)
+              EXPECTED_FILES="$(printf '%s\n' "$OUTPUT/$ASSET" "$OUTPUT/$ASSET.blockmap" | LC_ALL=C sort)"
+              ;;
+          esac
           ACTUAL_FILES="$(find release \( -type d \( -name '*.app' -o -name '*-unpacked' \) -prune \) -o -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name '*.AppImage' -o -name '*.exe' \) -print | LC_ALL=C sort)"
           test "$ACTUAL_FILES" = "$EXPECTED_FILES"
           test -f "$OUTPUT/$METADATA"
           test ! -L "$OUTPUT/$METADATA"
-          ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
+          ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'nightly*.yml' -o -name 'canary*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
           test "$ACTUAL_METADATA" = "$OUTPUT/$METADATA"
 
-      - name: Declare the macOS floor in the beta update metadata
+      - name: Declare the macOS floor in the prerelease update metadata
         if: matrix.minimum_system_version != ''
         env:
           METADATA: ${{ matrix.metadata }}
@@ -340,18 +480,17 @@ jobs:
           # updating to one it cannot launch.
           node scripts/declare-update-minimum-system-version.mjs "release/main-desktop/$METADATA" "$MINIMUM_SYSTEM_VERSION"
 
-      - name: Verify macOS signed and notarized beta zip
+      - name: Verify the macOS prerelease zip is signed by the team under the hardened runtime
         if: matrix.os == 'macos-latest'
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          NOTARIZE: ${{ needs.plan.outputs.notarize }}
           ASSET: ${{ matrix.asset }}
         run: |
           ZIP="release/main-desktop/$ASSET"
           test -f "$ZIP"
           test ! -L "$ZIP"
-          # electron-builder notarizes and staples the app before archiving it,
-          # so the app that comes out of these bytes must pass Gatekeeper.
-          EXTRACTED="$RUNNER_TEMP/terminay-beta-zip"
+          EXTRACTED="$RUNNER_TEMP/terminay-prerelease-zip"
           test ! -e "$EXTRACTED"
           mkdir -p "$EXTRACTED"
           ditto -x -k "$ZIP" "$EXTRACTED"
@@ -363,14 +502,30 @@ jobs:
           APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Terminay"
           test -f "$APP_EXECUTABLE"
           test ! -L "$APP_EXECUTABLE"
+          # Every track: a valid Developer ID signature from the project's team,
+          # under the hardened runtime. That is what Squirrel.Mac checks an
+          # update against (ADR-0027); notarization never was.
           codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
-          codesign -dvv "$APP_BUNDLE" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
-          spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
-          xcrun stapler validate "$APP_BUNDLE"
+          SIGNATURE="$(codesign -dvv "$APP_BUNDLE" 2>&1)"
+          grep -F "TeamIdentifier=$APPLE_TEAM_ID" <<< "$SIGNATURE"
+          grep -E 'flags=0x[0-9a-f]+\([^)]*runtime[^)]*\)' <<< "$SIGNATURE"
+          if [ "$NOTARIZE" = true ]; then
+            # electron-builder notarizes and staples the app before archiving
+            # it, so the app that comes out of these bytes must pass Gatekeeper.
+            spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
+            xcrun stapler validate "$APP_BUNDLE"
+          else
+            # A Canary is never submitted to Apple, so it carries no ticket.
+            # spctl and stapler pass only for a notarized app.
+            if xcrun stapler validate "$APP_BUNDLE" >/dev/null 2>&1; then
+              echo "A Canary app must not carry a notarization ticket" >&2
+              exit 1
+            fi
+          fi
 
-      - name: Verify generated beta update metadata
+      - name: Verify generated prerelease update metadata
         env:
-          VERSION: ${{ steps.beta_version.outputs.version }}
+          VERSION: ${{ steps.prerelease_version.outputs.version }}
           ASSET: ${{ matrix.asset }}
           METADATA: ${{ matrix.metadata }}
           MINIMUM_SYSTEM_VERSION: ${{ matrix.minimum_system_version }}
@@ -387,7 +542,7 @@ jobs:
             --require-release-notes \
             ${FLOOR_ARGS[@]+"${FLOOR_ARGS[@]}"}
 
-      - name: Write and verify beta checksum
+      - name: Write and verify prerelease checksum
         env:
           ASSET: ${{ matrix.asset }}
         run: |
@@ -395,10 +550,10 @@ jobs:
           node scripts/release-checksum.mjs write "$PAYLOAD" "$PAYLOAD.sha256"
           node scripts/release-checksum.mjs verify "$PAYLOAD" "$PAYLOAD.sha256"
 
-      - name: Upload beta workflow artifact
+      - name: Upload prerelease workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: main-desktop-${{ matrix.platform }}
+          name: prerelease-desktop-${{ matrix.platform }}
           path: |
             release/main-desktop/${{ matrix.asset }}
             release/main-desktop/${{ matrix.asset }}.sha256
@@ -406,21 +561,27 @@ jobs:
           if-no-files-found: error
           include-hidden-files: false
 
-  publish-main-prerelease:
-    name: Replace Main Prerelease Assets
+  publish:
+    name: Replace ${{ inputs.track }} Prerelease Assets
     runs-on: ubuntu-latest
     # The desktop payloads are large; the swap and its re-verification still
     # must not hold a write-capable token without a bound.
     timeout-minutes: 30
-    needs: [build-main-archives, build-main-desktop]
-    # A dry run proves the build and signature path on a branch without ever
-    # touching the published channel. The server archives publish whenever
-    # they were built; the desktop beta joins them only when it was built too.
-    if: ${{ !cancelled() && needs.build-main-archives.result == 'success' && (github.event_name == 'push' || inputs.dry_run != true) }}
+    needs: [plan, build-archives, build-desktop]
+    # A dry run proves the build and signature path without ever touching a
+    # published track, and no track is published from any branch but `main`.
+    # The server archives publish whenever they were built; the desktop set
+    # joins them only when it was built too.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.build-archives.result == 'success' && inputs.dry_run != true && github.ref == 'refs/heads/main' }}
     permissions:
       contents: write
     env:
-      DESKTOP_BETA: ${{ needs.build-main-desktop.result }}
+      TRACK: ${{ inputs.track }}
+      RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+      ASSET: ${{ needs.plan.outputs.asset }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      LEGACY_BETA: ${{ needs.plan.outputs.legacy_beta }}
+      DESKTOP: ${{ needs.build-desktop.result }}
 
     steps:
       - name: Check out verification code
@@ -433,29 +594,58 @@ jobs:
         with:
           node-version: 24.15.0
 
-      - name: Download built main channel assets
+      - name: Download built rolling channel assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: main-prerelease-*
+          pattern: prerelease-server-*
           merge-multiple: true
-          path: release/main
+          path: release/server
 
-      - name: Download built desktop beta assets
-        if: needs.build-main-desktop.result == 'success'
+      - name: Download built desktop prerelease assets
+        if: needs.build-desktop.result == 'success'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: main-desktop-*
+          pattern: prerelease-desktop-*
           merge-multiple: true
           path: release/main-desktop
 
-      - name: Verify every downloaded asset before publication
+      - name: Name the track's published set
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          # One list of every asset name this track publishes, in the order
+          # they are promoted: archives, payloads, metadata, then build.json.
+          SERVER_NAMES=""
+          for target in linux-x64 linux-arm64; do
+            for suffix in "" ".sha256" ".sig"; do
+              SERVER_NAMES="$SERVER_NAMES terminay-server-$ASSET-$target.tar.gz$suffix"
+            done
+          done
+          PAYLOADS="terminay-desktop-$ASSET-mac.zip terminay-desktop-$ASSET-linux-x86_64.AppImage terminay-desktop-$ASSET-windows-x64-Setup.exe"
+          PAYLOAD_NAMES=""
+          for payload in $PAYLOADS; do
+            PAYLOAD_NAMES="$PAYLOAD_NAMES $payload $payload.sha256"
+          done
+          METADATA_NAMES="$TRACK-mac.yml $TRACK-linux.yml $TRACK.yml"
+          LEGACY_NAMES=""
+          if [ "$LEGACY_BETA" = true ]; then
+            LEGACY_NAMES="beta-mac.yml beta-linux.yml beta.yml"
+          fi
+          {
+            echo "SERVER_NAMES=${SERVER_NAMES# }"
+            echo "PAYLOADS=$PAYLOADS"
+            echo "PAYLOAD_NAMES=${PAYLOAD_NAMES# }"
+            echo "METADATA_NAMES=$METADATA_NAMES"
+            echo "LEGACY_NAMES=$LEGACY_NAMES"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify every downloaded asset before publication
+        env:
           TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
           test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
           for target in linux-x64 linux-arm64; do
-            ARCHIVE="release/main/terminay-server-main-$target.tar.gz"
+            ARCHIVE="release/server/terminay-server-$ASSET-$target.tar.gz"
             test -f "$ARCHIVE"
             test ! -L "$ARCHIVE"
             test ! -L "$ARCHIVE.sha256"
@@ -463,57 +653,93 @@ jobs:
             node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
             node scripts/release-signature.mjs verify "$ARCHIVE" "$ARCHIVE.sig"
           done
+          test "$(find release/server -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$(for name in $SERVER_NAMES; do echo "release/server/$name"; done | LC_ALL=C sort | tr '\n' ' ')"
 
-      - name: Verify every downloaded desktop beta asset before publication
-        if: needs.build-main-desktop.result == 'success'
-        env:
-          RUN_NUMBER: ${{ github.run_number }}
+      - name: Verify every downloaded desktop prerelease asset before publication
+        if: needs.build-desktop.result == 'success'
         run: |
           OUTPUT="release/main-desktop"
-          test "$(find "$OUTPUT" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$OUTPUT/beta-linux.yml $OUTPUT/beta-mac.yml $OUTPUT/beta.yml $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage $OUTPUT/terminay-desktop-main-linux-x86_64.AppImage.sha256 $OUTPUT/terminay-desktop-main-mac.zip $OUTPUT/terminay-desktop-main-mac.zip.sha256 $OUTPUT/terminay-desktop-main-windows-x64-Setup.exe $OUTPUT/terminay-desktop-main-windows-x64-Setup.exe.sha256 "
-          for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage terminay-desktop-main-windows-x64-Setup.exe; do
+          EXPECTED="$(for name in $PAYLOAD_NAMES $METADATA_NAMES; do echo "$OUTPUT/$name"; done | LC_ALL=C sort | tr '\n' ' ')"
+          test "$(find "$OUTPUT" -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" = "$EXPECTED"
+          for payload in $PAYLOADS; do
             test -f "$OUTPUT/$payload"
             test ! -L "$OUTPUT/$payload"
             test ! -L "$OUTPUT/$payload.sha256"
             node scripts/release-checksum.mjs verify "$OUTPUT/$payload" "$OUTPUT/$payload.sha256"
           done
           MAC_VERSION="$(node scripts/verify-update-metadata.mjs \
-            --metadata "$OUTPUT/beta-mac.yml" \
+            --metadata "$OUTPUT/$TRACK-mac.yml" \
             --assets-dir "$OUTPUT" \
-            --expect-file terminay-desktop-main-mac.zip \
+            --expect-file "terminay-desktop-$ASSET-mac.zip" \
             --require-release-notes \
             --minimum-system-version 22.0.0)"
           LINUX_VERSION="$(node scripts/verify-update-metadata.mjs \
-            --metadata "$OUTPUT/beta-linux.yml" \
+            --metadata "$OUTPUT/$TRACK-linux.yml" \
             --assets-dir "$OUTPUT" \
-            --expect-file terminay-desktop-main-linux-x86_64.AppImage \
+            --expect-file "terminay-desktop-$ASSET-linux-x86_64.AppImage" \
             --require-release-notes)"
           WINDOWS_VERSION="$(node scripts/verify-update-metadata.mjs \
-            --metadata "$OUTPUT/beta.yml" \
+            --metadata "$OUTPUT/$TRACK.yml" \
             --assets-dir "$OUTPUT" \
-            --expect-file terminay-desktop-main-windows-x64-Setup.exe \
+            --expect-file "terminay-desktop-$ASSET-windows-x64-Setup.exe" \
             --require-release-notes)"
-          # Every platform is one beta of this run, never a mixed set.
+          # Every platform is one build of this commit on this track, never a
+          # mixed set.
           test "$MAC_VERSION" = "$LINUX_VERSION"
           test "$MAC_VERSION" = "$WINDOWS_VERSION"
-          [[ "$MAC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]
-          test "${MAC_VERSION##*-beta.}" = "$RUN_NUMBER"
+          test "$MAC_VERSION" = "$VERSION"
+          [[ "$MAC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-main\.[1-9][0-9]*\.(nightly|canary)$ ]]
+          test "${MAC_VERSION##*.}" = "$TRACK"
 
-      - name: Ensure the main prerelease exists
+      - name: Copy the nightly metadata under the legacy Beta names
+        if: needs.build-desktop.result == 'success' && needs.plan.outputs.legacy_beta == 'true'
+        run: |
+          # Installed Beta builds read beta*.yml on this release. Byte copies of
+          # the nightly metadata name the same payloads, so a Beta build
+          # installs the Nightly and becomes Nightly on first launch. Published
+          # until LEGACY_BETA_FEED_UNTIL in scripts/legacy-beta-feed.mjs.
+          test "$TRACK" = nightly
+          OUTPUT="release/main-desktop"
+          cp "$OUTPUT/nightly-mac.yml" "$OUTPUT/beta-mac.yml"
+          cp "$OUTPUT/nightly-linux.yml" "$OUTPUT/beta-linux.yml"
+          cp "$OUTPUT/nightly.yml" "$OUTPUT/beta.yml"
+          test "$(node scripts/verify-update-metadata.mjs --metadata "$OUTPUT/beta-mac.yml" --assets-dir "$OUTPUT" --expect-file terminay-desktop-main-mac.zip --require-release-notes --minimum-system-version 22.0.0)" = "$VERSION"
+          test "$(node scripts/verify-update-metadata.mjs --metadata "$OUTPUT/beta-linux.yml" --assets-dir "$OUTPUT" --expect-file terminay-desktop-main-linux-x86_64.AppImage --require-release-notes)" = "$VERSION"
+          test "$(node scripts/verify-update-metadata.mjs --metadata "$OUTPUT/beta.yml" --assets-dir "$OUTPUT" --expect-file terminay-desktop-main-windows-x64-Setup.exe --require-release-notes)" = "$VERSION"
+
+      - name: Write the build record
+        if: needs.build-desktop.result == 'success'
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          # Moved last. Until it does, the nightly schedule still sees the older
+          # commit and builds again, and the version check compares with the
+          # older count. A run whose desktop set did not build leaves it alone.
+          node -e 'process.stdout.write(JSON.stringify({ commit: process.argv[1], version: process.argv[2] }) + "\n")' "$EXPECTED_COMMIT" "$VERSION" > release/main-desktop/build.json
+          test "$(node -p 'require("./release/main-desktop/build.json").commit')" = "$EXPECTED_COMMIT"
+
+      - name: Ensure the rolling prerelease exists
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # The tag must not be named for a branch. A release tagged `main`
-          # makes `main` an ambiguous ref in every clone, so `git fetch main`
-          # resolves the tag instead of the branch.
-          if ! gh release view main-latest --repo "$GH_REPO" >/dev/null 2>&1; then
-            gh release create main-latest \
+          if ! gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            if [ "$TRACK" = canary ]; then
+              # No canary payload is ever linked for download: Gatekeeper
+              # blocks an un-notarized app fetched in a browser. Canary is
+              # chosen as the update channel inside an installed Terminay.
+              TITLE="canary (rolling)"
+              NOTES="Rolling Canary build of every push to main. Not a supported release, and not a download: Canary builds are not notarized, so they are reached only by choosing the Canary update channel in Terminay's settings."
+            else
+              TITLE="nightly (rolling)"
+              NOTES="Rolling Nightly build of the main branch. Not a supported release."
+            fi
+            gh release create "$RELEASE_TAG" \
               --repo "$GH_REPO" \
               --target main \
               --prerelease \
-              --title "main (rolling)" \
-              --notes "Rolling build of the main branch. Not a supported release."
+              --title "$TITLE" \
+              --notes "$NOTES"
           fi
 
       - name: Upload replacement assets under temporary names
@@ -523,171 +749,137 @@ jobs:
         run: |
           # Every replacement lands beside the published set first, so a reader
           # that fetches during the upload still sees the previous complete set.
-          for target in linux-x64 linux-arm64; do
-            for suffix in "" ".sha256" ".sig"; do
-              NAME="terminay-server-main-$target.tar.gz$suffix"
-              cp "release/main/$NAME" "release/main/$NAME.incoming"
-              gh release upload main-latest "release/main/$NAME.incoming" --repo "$GH_REPO" --clobber
-            done
+          for NAME in $SERVER_NAMES; do
+            cp "release/server/$NAME" "release/server/$NAME.incoming"
+            gh release upload "$RELEASE_TAG" "release/server/$NAME.incoming" --repo "$GH_REPO" --clobber
           done
-          if [ "$DESKTOP_BETA" = success ]; then
-            for NAME in \
-              terminay-desktop-main-mac.zip \
-              terminay-desktop-main-mac.zip.sha256 \
-              terminay-desktop-main-linux-x86_64.AppImage \
-              terminay-desktop-main-linux-x86_64.AppImage.sha256 \
-              terminay-desktop-main-windows-x64-Setup.exe \
-              terminay-desktop-main-windows-x64-Setup.exe.sha256 \
-              beta-mac.yml \
-              beta-linux.yml \
-              beta.yml; do
+          if [ "$DESKTOP" = success ]; then
+            for NAME in $PAYLOAD_NAMES $METADATA_NAMES $LEGACY_NAMES build.json; do
               cp "release/main-desktop/$NAME" "release/main-desktop/$NAME.incoming"
-              gh release upload main-latest "release/main-desktop/$NAME.incoming" --repo "$GH_REPO" --clobber
+              gh release upload "$RELEASE_TAG" "release/main-desktop/$NAME.incoming" --repo "$GH_REPO" --clobber
             done
           fi
 
-      - name: Rename temporary assets over the published main channel
+      - name: Rename temporary assets over the published rolling release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           # Only after every replacement is fully uploaded does the published
           # name move, one asset at a time, so no half-written body is ever
-          # served under a channel name.
-          RELEASE_ID="$(gh release view main-latest --repo "$GH_REPO" --json databaseId --jq '.databaseId')"
+          # served under a track's name.
+          RELEASE_ID="$(gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json databaseId --jq '.databaseId')"
           test -n "$RELEASE_ID"
+          asset_id() {
+            gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$1\") | .id"
+          }
           promote() {
             NAME="$1"
-            INCOMING_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME.incoming\") | .id")"
+            INCOMING_ID="$(asset_id "$NAME.incoming")"
             test -n "$INCOMING_ID"
-            PUBLISHED_ID="$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets" --paginate --jq ".[] | select(.name == \"$NAME\") | .id")"
+            PUBLISHED_ID="$(asset_id "$NAME")"
             if [ -n "$PUBLISHED_ID" ]; then
               gh api -X DELETE "repos/$GH_REPO/releases/assets/$PUBLISHED_ID"
             fi
             gh api -X PATCH "repos/$GH_REPO/releases/assets/$INCOMING_ID" -f "name=$NAME"
           }
-          for target in linux-x64 linux-arm64; do
-            for suffix in "" ".sha256" ".sig"; do
-              promote "terminay-server-main-$target.tar.gz$suffix"
-            done
+          for NAME in $SERVER_NAMES; do
+            promote "$NAME"
           done
-          if [ "$DESKTOP_BETA" = success ]; then
-            for NAME in \
-              terminay-desktop-main-mac.zip \
-              terminay-desktop-main-mac.zip.sha256 \
-              terminay-desktop-main-linux-x86_64.AppImage \
-              terminay-desktop-main-linux-x86_64.AppImage.sha256 \
-              terminay-desktop-main-windows-x64-Setup.exe \
-              terminay-desktop-main-windows-x64-Setup.exe.sha256; do
+          if [ "$DESKTOP" = success ]; then
+            for NAME in $PAYLOAD_NAMES; do
               promote "$NAME"
             done
-            # The beta metadata moves last. Until it does, clients keep reading
-            # the previous metadata; one that fetches a payload mid-swap gets
-            # bytes that fail its digest check and retries at the next check.
-            promote beta-mac.yml
-            promote beta-linux.yml
-            promote beta.yml
+            # The update metadata moves after every payload. Until it does,
+            # clients keep reading the previous metadata; one that fetches a
+            # payload mid-swap gets bytes that fail its digest check and
+            # retries at the next check.
+            for NAME in $METADATA_NAMES $LEGACY_NAMES; do
+              promote "$NAME"
+            done
+            if [ "$TRACK" = nightly ] && [ "$LEGACY_BETA" != true ]; then
+              # The legacy Beta feed has ended: an installed Beta build now
+              # finds no beta metadata and falls back to its stable source.
+              for NAME in beta-mac.yml beta-linux.yml beta.yml; do
+                STALE_ID="$(asset_id "$NAME")"
+                if [ -n "$STALE_ID" ]; then
+                  gh api -X DELETE "repos/$GH_REPO/releases/assets/$STALE_ID"
+                fi
+              done
+            fi
+            # The build record moves last of all: it is what says this commit
+            # is published on this track.
+            promote build.json
           fi
 
-      - name: Verify the published main channel set
+      - name: Verify the published rolling release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           EXPECTED_COMMIT: ${{ github.sha }}
           TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
-          ASSET_NAMES="$(gh release view main-latest --repo "$GH_REPO" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
-          EXPECTED_ASSET_NAMES="$(cat <<EOF
-          beta-linux.yml
-          beta-mac.yml
-          beta.yml
-          terminay-desktop-main-linux-x86_64.AppImage
-          terminay-desktop-main-linux-x86_64.AppImage.sha256
-          terminay-desktop-main-mac.zip
-          terminay-desktop-main-mac.zip.sha256
-          terminay-desktop-main-windows-x64-Setup.exe
-          terminay-desktop-main-windows-x64-Setup.exe.sha256
-          terminay-server-main-linux-arm64.tar.gz
-          terminay-server-main-linux-arm64.tar.gz.sha256
-          terminay-server-main-linux-arm64.tar.gz.sig
-          terminay-server-main-linux-x64.tar.gz
-          terminay-server-main-linux-x64.tar.gz.sha256
-          terminay-server-main-linux-x64.tar.gz.sig
-          EOF
-          )"
-          # When the desktop beta did not build, the channel keeps its previous
-          # complete desktop set; before the first desktop beta there is none.
-          SERVER_ASSET_NAMES="$(printf '%s\n' "$EXPECTED_ASSET_NAMES" | grep '^terminay-server-main-')"
-          if [ "$DESKTOP_BETA" = success ] || [ "$ASSET_NAMES" != "$SERVER_ASSET_NAMES" ]; then
-            test "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES"
-          fi
+          ASSET_NAMES="$(gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+          printf '%s\n' "$ASSET_NAMES" > "$RUNNER_TEMP/release-asset-names"
           PUBLISHED="$RUNNER_TEMP/published"
           mkdir -p "$PUBLISHED"
           for target in linux-x64 linux-arm64; do
             for suffix in "" ".sha256" ".sig"; do
-              gh release download main-latest --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "terminay-server-main-$target.tar.gz$suffix"
+              NAME="terminay-server-$ASSET-$target.tar.gz$suffix"
+              grep -Fx "$NAME" "$RUNNER_TEMP/release-asset-names"
+              gh release download "$RELEASE_TAG" --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$NAME"
             done
             node scripts/release-checksum.mjs verify \
-              "$PUBLISHED/terminay-server-main-$target.tar.gz" \
-              "$PUBLISHED/terminay-server-main-$target.tar.gz.sha256"
+              "$PUBLISHED/terminay-server-$ASSET-$target.tar.gz" \
+              "$PUBLISHED/terminay-server-$ASSET-$target.tar.gz.sha256"
             node scripts/release-signature.mjs verify \
-              "$PUBLISHED/terminay-server-main-$target.tar.gz" \
-              "$PUBLISHED/terminay-server-main-$target.tar.gz.sig"
+              "$PUBLISHED/terminay-server-$ASSET-$target.tar.gz" \
+              "$PUBLISHED/terminay-server-$ASSET-$target.tar.gz.sig"
           done
-          if [ "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES" ]; then
-            printf '%s\n' "$ASSET_NAMES" > "$RUNNER_TEMP/main-latest-asset-names"
-            for NAME in \
-              terminay-desktop-main-mac.zip \
-              terminay-desktop-main-mac.zip.sha256 \
-              terminay-desktop-main-linux-x86_64.AppImage \
-              terminay-desktop-main-linux-x86_64.AppImage.sha256 \
-              terminay-desktop-main-windows-x64-Setup.exe \
-              terminay-desktop-main-windows-x64-Setup.exe.sha256 \
-              beta-mac.yml \
-              beta-linux.yml \
-              beta.yml; do
-              gh release download main-latest --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$NAME"
-            done
-            for payload in terminay-desktop-main-mac.zip terminay-desktop-main-linux-x86_64.AppImage terminay-desktop-main-windows-x64-Setup.exe; do
-              node scripts/release-checksum.mjs verify "$PUBLISHED/$payload" "$PUBLISHED/$payload.sha256"
-            done
-            # Every file the published beta metadata sends a client to must be
-            # on the release, with the bytes the metadata's digest names.
-            node scripts/verify-update-metadata.mjs \
-              --metadata "$PUBLISHED/beta-mac.yml" \
-              --assets-dir "$PUBLISHED" \
-              --expect-file terminay-desktop-main-mac.zip \
-              --release-assets "$RUNNER_TEMP/main-latest-asset-names" \
-              --require-release-notes
-            node scripts/verify-update-metadata.mjs \
-              --metadata "$PUBLISHED/beta-linux.yml" \
-              --assets-dir "$PUBLISHED" \
-              --expect-file terminay-desktop-main-linux-x86_64.AppImage \
-              --release-assets "$RUNNER_TEMP/main-latest-asset-names" \
-              --require-release-notes
-            node scripts/verify-update-metadata.mjs \
-              --metadata "$PUBLISHED/beta.yml" \
-              --assets-dir "$PUBLISHED" \
-              --expect-file terminay-desktop-main-windows-x64-Setup.exe \
-              --release-assets "$RUNNER_TEMP/main-latest-asset-names" \
-              --require-release-notes
-            if [ "$DESKTOP_BETA" = success ]; then
-              # The published metadata is this run's, not a survivor.
-              cmp "$PUBLISHED/beta-mac.yml" release/main-desktop/beta-mac.yml
-              cmp "$PUBLISHED/beta-linux.yml" release/main-desktop/beta-linux.yml
-              cmp "$PUBLISHED/beta.yml" release/main-desktop/beta.yml
-            fi
+          # When the desktop set did not build, the track keeps its previous
+          # desktop set, whatever it was; there is nothing of this run's to
+          # compare it with.
+          if [ "$DESKTOP" != success ]; then
+            exit 0
           fi
+          EXPECTED_ASSET_NAMES="$(for name in $SERVER_NAMES $PAYLOAD_NAMES $METADATA_NAMES $LEGACY_NAMES build.json; do echo "$name"; done | LC_ALL=C sort)"
+          test "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES"
+          for NAME in $PAYLOAD_NAMES $METADATA_NAMES $LEGACY_NAMES build.json; do
+            gh release download "$RELEASE_TAG" --repo "$GH_REPO" --dir "$PUBLISHED" --pattern "$NAME"
+          done
+          for payload in $PAYLOADS; do
+            node scripts/release-checksum.mjs verify "$PUBLISHED/$payload" "$PUBLISHED/$payload.sha256"
+          done
+          # Every file the published metadata sends a client to must be on the
+          # release, with the bytes the metadata's digest names, and the
+          # published metadata is this run's, not a survivor.
+          verify_metadata() {
+            node scripts/verify-update-metadata.mjs \
+              --metadata "$PUBLISHED/$1" \
+              --assets-dir "$PUBLISHED" \
+              --expect-file "$2" \
+              --release-assets "$RUNNER_TEMP/release-asset-names" \
+              --require-release-notes
+            cmp "$PUBLISHED/$1" "release/main-desktop/$1"
+          }
+          for prefix in "$TRACK" ${LEGACY_NAMES:+beta}; do
+            verify_metadata "$prefix-mac.yml" "terminay-desktop-$ASSET-mac.zip"
+            verify_metadata "$prefix-linux.yml" "terminay-desktop-$ASSET-linux-x86_64.AppImage"
+            verify_metadata "$prefix.yml" "terminay-desktop-$ASSET-windows-x64-Setup.exe"
+          done
+          cmp "$PUBLISHED/build.json" release/main-desktop/build.json
+          test "$(node -p 'require(process.argv[1]).commit' "$PUBLISHED/build.json")" = "$EXPECTED_COMMIT"
 
-  publish-beta-image:
-    name: Publish Beta Server Image
+  publish-image:
+    name: Publish ${{ inputs.track }} Server Image
     runs-on: ubuntu-latest
     # One dispatch call.
     timeout-minutes: 5
-    # Last, and only for a beta whose desktop and archives were published, so
-    # a beta image tag never names a build whose other artifacts failed.
-    needs: [build-main-desktop, publish-main-prerelease]
-    if: ${{ !cancelled() && needs.publish-main-prerelease.result == 'success' && needs.build-main-desktop.result == 'success' && github.ref == 'refs/heads/main' }}
+    # Last, and only for a build whose desktop set and archives were
+    # published, so an image tag never names a build whose other artifacts
+    # failed.
+    needs: [plan, build-desktop, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.build-desktop.result == 'success' && github.ref == 'refs/heads/main' }}
     permissions:
       contents: read
       # The image workflow holds the registry credentials. Dispatching it is
@@ -695,14 +887,14 @@ jobs:
       actions: write
 
     steps:
-      - name: Dispatch the image workflow with the beta version
+      - name: Dispatch the image workflow with the prerelease version
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.build-main-desktop.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
           REVISION: ${{ github.sha }}
         run: |
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-main\.[1-9][0-9]*\.(nightly|canary)$ ]]
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
           gh workflow run server-image.yml --repo "$GH_REPO" --ref main \
             -f "version=$VERSION" -f "revision=$REVISION"

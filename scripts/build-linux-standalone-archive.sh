@@ -3,11 +3,11 @@
 # run this inside the GNU/Linux floor image through run-in-linux-floor.sh
 # (ADR-0077), so the native code it stages is linked against the floor.
 #
-#   build-linux-standalone-archive.sh <linux-x64|linux-arm64> <tag|main> <revision> <output-file>
+#   build-linux-standalone-archive.sh <linux-x64|linux-arm64> <tag|main|canary> <revision> <output-file>
 set -eu
 
 if [ "$#" -ne 4 ]; then
-  echo "Usage: $0 <linux-x64|linux-arm64> <tag|main> <revision> <output-file>" >&2
+  echo "Usage: $0 <linux-x64|linux-arm64> <tag|main|canary> <revision> <output-file>" >&2
   exit 64
 fi
 target=$1

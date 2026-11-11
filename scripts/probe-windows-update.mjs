@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The Windows Desktop probe's update step (native-windows-desktop, task 6.3),
 // run by scripts/probe-windows-desktop.ps1 against build N installed where the
-// per-user installer puts it, with build N+1's installer and `beta.yml` in a
+// per-user installer puts it, with build N+1's installer and `nightly.yml` in a
 // feed directory:
 //
 //   1. serve the feed directory on loopback and launch build N against it;

@@ -239,8 +239,8 @@ test('the release workflow publishes the CLI only after the key check passes', (
   assert.match(job, /--access public/)
 })
 
-test('version sync accepts the rolling beta version and nothing looser', async () => {
-  const fixture = await mkdtemp(join(tmpdir(), 'terminay-version-sync-beta-'))
+test('version sync accepts the nightly and canary versions and nothing looser', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'terminay-version-sync-prerelease-'))
   try {
     await mkdir(join(fixture, 'apps/terminay-server'), { recursive: true })
     await mkdir(join(fixture, 'apps/terminay-cli'), { recursive: true })
@@ -248,9 +248,22 @@ test('version sync accepts the rolling beta version and nothing looser', async (
       await writeFile(join(fixture, path), JSON.stringify({ name: 'terminay', version: '0.0.0' }))
     }
     const sync = resolve('scripts/sync-package-version.mjs')
-    await execFileAsync(process.execPath, [sync, '4.3.0-beta.118'], { cwd: fixture })
-    assert.equal(JSON.parse(await readFile(join(fixture, 'package.json'), 'utf8')).version, '4.3.0-beta.118')
-    for (const invalid of ['4.3.0-beta', '4.3.0-beta.0', '4.3.0-rc.1', '4.3.0-beta.1.2', 'v4.3.0']) {
+    for (const version of ['4.3.0-main.3300.nightly', '4.3.0-main.3312.canary']) {
+      await execFileAsync(process.execPath, [sync, version], { cwd: fixture })
+      assert.equal(JSON.parse(await readFile(join(fixture, 'package.json'), 'utf8')).version, version)
+      assert.equal(JSON.parse(await readFile(join(fixture, 'apps/terminay-cli/package.json'), 'utf8')).version, version)
+    }
+    for (const invalid of [
+      '4.3.0-beta.118',
+      '4.3.0-main',
+      '4.3.0-main.0.nightly',
+      '4.3.0-main.01.canary',
+      '4.3.0-main.12',
+      '4.3.0-main.12.beta',
+      '4.3.0-main.12.nightly.1',
+      '4.3.0-rc.1',
+      'v4.3.0',
+    ]) {
       await assert.rejects(execFileAsync(process.execPath, [sync, invalid], { cwd: fixture }), /Invalid semantic version/)
     }
   } finally {

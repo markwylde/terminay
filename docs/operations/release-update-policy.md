@@ -26,23 +26,31 @@ compiler.
 
 ## Release channels
 
-Two channels publish the same three files per architecture:
+Three channels publish the same three files per architecture, one for each
+release track
+([ADR-0109](../../openspec/adr/0109-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md)):
 
-- **`tag`** — a tagged release. Assets are named for the version and are
-  immutable: a published name is never replaced.
-- **`main`** — a rolling prerelease tagged `main-latest`, rebuilt on every
-  merge to the default branch, whose assets keep the stable names
-  `terminay-server-main-linux-<arch>.tar.gz`. Replacement uploads land under
-  temporary names first and only then take the published names, so a reader
-  sees either the previous complete set or the new one.
+- **`tag`** — a tagged Stable release. Assets are named for the version and
+  are immutable: a published name is never replaced.
+- **`main`** — the Nightly: a rolling prerelease tagged `main-latest`, rebuilt
+  once a night when the default branch has moved, whose assets keep the stable
+  names `terminay-server-main-linux-<arch>.tar.gz`.
+- **`canary`** — the Canary: a rolling prerelease tagged `canary-latest`,
+  rebuilt on every push to the default branch, whose assets keep the stable
+  names `terminay-server-canary-linux-<arch>.tar.gz`.
 
-The rolling tag is deliberately not named for the branch: a release tagged
+On both rolling channels, replacement uploads land under temporary names first
+and only then take the published names, so a reader sees either the previous
+complete set or the new one. A build of one track never touches the other
+track's release.
+
+The rolling tags are deliberately not named for the branch: a release tagged
 `main` would make `main` an ambiguous ref in every clone, so `git fetch main`
 would resolve the tag rather than the branch.
 
 Every archive's `artifact-manifest.json` records its `channel`, the built
 `revision` (commit), its `architecture`, and its `version`, and the installed
-launcher reports that same version. On the rolling channel an installer
+launcher reports that same version. On a rolling channel an installer
 compares `revision`, not `version`, to decide whether the channel moved.
 Verification rejects a manifest missing any of the three, and rejects an
 archive whose launcher and manifest disagree about the version.
