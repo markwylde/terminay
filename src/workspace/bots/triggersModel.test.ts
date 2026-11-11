@@ -9,7 +9,61 @@ import {
 	groupByDay,
 	lastFirings,
 	nextFirings,
+	statusOf,
 } from './triggersModel.ts';
+
+const withHealth = (state: string | undefined, enabled = true) => ({
+	enabled,
+	health: state ? ({ state } as never) : undefined,
+});
+
+test('a trigger that is off shows a neutral Disabled whatever its health', () => {
+	assert.deepEqual(statusOf(withHealth('healthy', false), true), {
+		label: 'Disabled',
+		tone: 'idle',
+	});
+});
+
+test('a switched-on trigger on a disabled bot shows a neutral Disabled', () => {
+	assert.deepEqual(statusOf(withHealth('healthy'), false), {
+		label: 'Disabled',
+		tone: 'idle',
+	});
+});
+
+test('an active trigger never shows Disabled, even if health says so', () => {
+	assert.deepEqual(statusOf(withHealth('disabled'), true), {
+		label: 'Waiting',
+		tone: 'done',
+	});
+	assert.deepEqual(statusOf(withHealth(undefined), true), {
+		label: 'Ready',
+		tone: 'done',
+	});
+});
+
+test('other states keep their labels and tones', () => {
+	assert.deepEqual(statusOf(withHealth('failed'), true), {
+		label: 'Failed',
+		tone: 'need',
+	});
+	assert.deepEqual(statusOf(withHealth('blocked'), true), {
+		label: 'Blocked',
+		tone: 'need',
+	});
+	assert.deepEqual(statusOf(withHealth('retrying'), true), {
+		label: 'Retrying',
+		tone: 'work',
+	});
+	assert.deepEqual(statusOf(withHealth('healthy'), true), {
+		label: 'Healthy',
+		tone: 'done',
+	});
+	assert.deepEqual(
+		statusOf({ ...withHealth('healthy'), unsupported: 'Unknown source' }, true),
+		{ label: 'Unsupported', tone: 'need' },
+	);
+});
 
 const NOW = new Date(2026, 10, 2, 8, 0).getTime();
 

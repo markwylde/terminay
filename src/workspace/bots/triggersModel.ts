@@ -487,3 +487,34 @@ export function sourceGroup(kind: TriggerKind): SourceGroup {
 				? 'Commands'
 				: 'Time';
 }
+const HEALTH_LABELS: Readonly<Record<string, string>> = {
+	disabled: 'Disabled',
+	watching: 'Watching',
+	connected: 'Connected',
+	waiting: 'Waiting',
+	checking: 'Checking',
+	healthy: 'Healthy',
+	retrying: 'Retrying',
+	blocked: 'Blocked',
+	failed: 'Failed',
+};
+export type TriggerStatusTone = 'need' | 'idle' | 'work' | 'done';
+/**
+ * A trigger's status pill. Disabled comes only from the trigger's and its
+ * bot's switches, never from health, so the pill cannot contradict them.
+ */
+export function statusOf(
+	t: Pick<BotTrigger, 'enabled' | 'unsupported' | 'health'>,
+	botEnabled: boolean,
+): { label: string; tone: TriggerStatusTone } {
+	if (t.unsupported) return { label: 'Unsupported', tone: 'need' };
+	if (!t.enabled || !botEnabled) return { label: 'Disabled', tone: 'idle' };
+	const state = t.health?.state === 'disabled' ? 'waiting' : t.health?.state;
+	if (state === 'failed' || state === 'blocked')
+		return { label: HEALTH_LABELS[state] ?? state, tone: 'need' };
+	if (state === 'retrying') return { label: 'Retrying', tone: 'work' };
+	return {
+		label: state ? (HEALTH_LABELS[state] ?? state) : 'Ready',
+		tone: 'done',
+	};
+}

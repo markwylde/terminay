@@ -886,16 +886,25 @@ export class BotTriggers {
 		this.store.get(botId);
 		return {
 			revision: this.store.revision,
-			triggers: this.store.triggers(botId).map((t) => ({
-				...t,
-				health: {
-					...this.observations.checkpoint(t).health,
-					nextCheck: asSchedule(t.condition)
-						? (this.preview(t.condition)[0] ?? null)
-						: null,
-					...(!this.active(t) ? { state: 'disabled' as const } : {}),
-				},
-			})),
+			triggers: this.store.triggers(botId).map((t) => {
+				const health = this.observations.checkpoint(t).health;
+				return {
+					...t,
+					health: {
+						...health,
+						nextCheck: asSchedule(t.condition)
+							? (this.preview(t.condition)[0] ?? null)
+							: null,
+						// `disabled` means the trigger or its bot is off, nothing else.
+						// An active trigger with nothing newer to report is `waiting`.
+						state: !this.active(t)
+							? 'disabled'
+							: health.state === 'disabled'
+								? 'waiting'
+								: health.state,
+					},
+				};
+			}),
 		};
 	}
 	preview(condition: unknown): number[] {
@@ -1034,7 +1043,7 @@ export class BotTriggers {
 				c.resumeBaseline = t.condition.kind !== 'sse';
 				if (t.condition.kind === 'sse') delete c.cursor;
 				delete c.recovery;
-				c.health = { ...c.health, state: 'disabled' };
+				c.health = { ...c.health, state: 'waiting' };
 			});
 		this.changed(botId, id);
 		this.reconcileSources();
@@ -1281,7 +1290,7 @@ export class BotTriggers {
 		this.service.assertEnabled(botId);
 		const t = this.store.trigger(botId, triggerId(id));
 		this.attempts.delete(id);
-		this.health(t, { state: 'disabled', error: null, nextRetry: null });
+		this.health(t, { state: 'waiting', error: null, nextRetry: null });
 		this.stopSource(id);
 		this.reconcileSources();
 		void this.check(t);
