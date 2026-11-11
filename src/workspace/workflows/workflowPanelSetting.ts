@@ -9,7 +9,9 @@ import {
 	clampPanelWidth,
 	WORKFLOW_PANEL_MAX_WIDTH,
 	WORKFLOW_PANEL_MIN_WIDTH,
+	WORKFLOW_PANEL_NOTES,
 	WORKFLOW_PANEL_WIDTH,
+	type WorkflowPanelNotes,
 } from './workflowPanelModel';
 
 export type WorkflowPanelSetting = 'collapsed' | 'expanded';
@@ -144,5 +146,73 @@ export function useWorkflowPanelWidth(): number {
 		subscribeWorkflowPanelWidth,
 		workflowPanelWidth,
 		() => WORKFLOW_PANEL_WIDTH,
+	);
+}
+
+/**
+ * How the expanded panel shows step notes, kept exactly as the collapse
+ * choice is: one device-local choice for every terminal, never sent to a
+ * server, never part of a template, and separate from Home's Workflows view.
+ */
+export const WORKFLOW_PANEL_NOTES_STORAGE_KEY = 'terminay.workflowPanelNotes.v1';
+
+const notesListeners = new Set<() => void>();
+let currentNotes: WorkflowPanelNotes | undefined;
+
+/** A stored density is used only when it is one of the three. */
+function parseStoredNotes(raw: string | null | undefined): WorkflowPanelNotes {
+	return (WORKFLOW_PANEL_NOTES as readonly (string | null | undefined)[]).includes(raw)
+		? (raw as WorkflowPanelNotes)
+		: 'full';
+}
+
+function readNotes(): WorkflowPanelNotes {
+	if (currentNotes !== undefined) return currentNotes;
+	try {
+		currentNotes = parseStoredNotes(
+			globalThis.localStorage?.getItem(WORKFLOW_PANEL_NOTES_STORAGE_KEY),
+		);
+	} catch {
+		currentNotes = 'full';
+	}
+	return currentNotes;
+}
+
+export function workflowPanelNotes(): WorkflowPanelNotes {
+	return readNotes();
+}
+
+export function setWorkflowPanelNotes(next: WorkflowPanelNotes): void {
+	const notes = parseStoredNotes(next);
+	if (readNotes() === notes) return;
+	currentNotes = notes;
+	try {
+		globalThis.localStorage?.setItem(WORKFLOW_PANEL_NOTES_STORAGE_KEY, notes);
+	} catch {
+		// Storage may be unavailable; the choice still holds for this session.
+	}
+	for (const listener of [...notesListeners]) listener();
+}
+
+export function subscribeWorkflowPanelNotes(listener: () => void): () => void {
+	notesListeners.add(listener);
+	// Another window of this device changing it changes it here too.
+	const onStorage = (event: StorageEvent) => {
+		if (event.key !== WORKFLOW_PANEL_NOTES_STORAGE_KEY) return;
+		currentNotes = undefined;
+		listener();
+	};
+	globalThis.addEventListener?.('storage', onStorage);
+	return () => {
+		notesListeners.delete(listener);
+		globalThis.removeEventListener?.('storage', onStorage);
+	};
+}
+
+export function useWorkflowPanelNotes(): WorkflowPanelNotes {
+	return useSyncExternalStore(
+		subscribeWorkflowPanelNotes,
+		workflowPanelNotes,
+		() => 'full',
 	);
 }

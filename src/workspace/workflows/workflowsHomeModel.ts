@@ -11,7 +11,7 @@
 import type { SessionWorkflow, WorkflowStepStatus } from '@terminay/client-core';
 import type { DashboardServerSource } from '../crossServerRows.ts';
 import { buildDashboardGroups, type DashboardPanelRow } from '../dashboardRows.ts';
-import { doneCount, isFinished } from './workflowPanelModel.ts';
+import { doneCount, isCurrentStep, isFinished } from './workflowPanelModel.ts';
 import type {
 	WorkflowsHomeSort,
 	WorkflowsHomeStatus,
@@ -51,9 +51,9 @@ export type WorkflowsByServer = ReadonlyMap<
 	Readonly<{ workflows: ReadonlyMap<string, SessionWorkflow> }>
 >;
 
-/** Highlighted in a column, and kept by Current only. */
+/** Highlighted in a column, and kept by Current only: the panel's rule. */
 export function isHighlighted(status: WorkflowStepStatus): boolean {
-	return status === 'running' || status === 'needs_input' || status === 'failed';
+	return isCurrentStep(status);
 }
 
 export function workflowTone(view: SessionWorkflow): WorkflowsHomeTone {

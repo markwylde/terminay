@@ -83,6 +83,7 @@ import {
 	WORKFLOW_RAIL_WIDTH,
 } from '../workspace/workflows/workflowPanelModel';
 import {
+	useWorkflowPanelNotes,
 	useWorkflowPanelSetting,
 	useWorkflowPanelWidth,
 } from '../workspace/workflows/workflowPanelSetting';
@@ -623,6 +624,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	);
 	const workflowSetting = useWorkflowPanelSetting();
 	const workflowChosenWidth = useWorkflowPanelWidth();
+	const workflowNotes = useWorkflowPanelNotes();
 	// While the user drags the panel's separator, this pane draws the width
 	// under the pointer; the chosen width changes only when the drag ends.
 	const [workflowPreviewWidth, setWorkflowPreviewWidth] = useState<
@@ -3447,6 +3449,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				<WorkflowPanel
 					view={terminalWorkflow.view}
 					mode={workflowLayout.mode}
+					notes={workflowNotes}
 					width={workflowLayout.width}
 					maxWidth={workflowLayout.maxWidth}
 					overlayWidth={overlayWidth(

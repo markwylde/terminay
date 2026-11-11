@@ -22,6 +22,7 @@ import {
 	elapsed,
 	isActive,
 	PANEL_SKIP_NOTE,
+	showsStepNote,
 	statusLabel,
 	stepTime,
 	WORKFLOW_PANEL_MAX_WIDTH,
@@ -29,8 +30,10 @@ import {
 	WORKFLOW_PANEL_RESIZE_STEP,
 	WORKFLOW_PANEL_WIDTH,
 	type WorkflowPanelMode,
+	type WorkflowPanelNotes,
 } from './workflowPanelModel';
 import {
+	setWorkflowPanelNotes,
 	setWorkflowPanelSetting,
 	setWorkflowPanelWidth,
 } from './workflowPanelSetting';
@@ -51,7 +54,15 @@ export interface WorkflowPanelProps {
 	readonly overlayWidth?: number;
 	/** The width under a dragging pointer, or null when no drag is live. */
 	readonly onPreviewWidth?: (width: number | null) => void;
+	/** How step notes are shown; the device's choice. Full when not given. */
+	readonly notes?: WorkflowPanelNotes;
 }
+
+const NOTES_OPTIONS: readonly [WorkflowPanelNotes, string][] = [
+	['full', 'Full'],
+	['short', '2 lines'],
+	['current', 'Current only'],
+];
 
 export function WorkflowPanel(props: WorkflowPanelProps) {
 	const [overlay, setOverlay] = useState(false);
@@ -82,7 +93,7 @@ export function WorkflowPanel(props: WorkflowPanelProps) {
 		<aside
 			className={`workflow-panel workflow-panel--${
 				props.mode === 'expanded' ? 'expanded' : 'collapsed'
-			}`}
+			} workflow-panel--notes-${props.notes ?? 'full'}`}
 			aria-label="Workflow"
 			data-workflow-mode={props.mode}
 			style={style}
@@ -284,7 +295,10 @@ function ExpandedWorkflow(
 						<span className="workflow-eyebrow">Workflow</span>
 					</div>
 				) : (
-					<WorkflowSummary workflow={props.view.workflow} />
+					<WorkflowSummary
+						workflow={props.view.workflow}
+						notes={props.notes ?? 'full'}
+					/>
 				)}
 				<button
 					type="button"
@@ -305,6 +319,7 @@ function ExpandedWorkflow(
 					workflow={props.view.workflow}
 					client={props.client}
 					target={props.target}
+					notes={props.notes ?? 'full'}
 				/>
 			)}
 			<RemoveWorkflow {...props} />
@@ -312,7 +327,13 @@ function ExpandedWorkflow(
 	);
 }
 
-function WorkflowSummary({ workflow }: { readonly workflow: Workflow }) {
+function WorkflowSummary({
+	workflow,
+	notes,
+}: {
+	readonly workflow: Workflow;
+	readonly notes: WorkflowPanelNotes;
+}) {
 	const now = useNow(workflow);
 	const since = elapsed(workflow, now);
 	return (
@@ -325,6 +346,26 @@ function WorkflowSummary({ workflow }: { readonly workflow: Workflow }) {
 				{doneCount(workflow)} of {workflow.steps.length} done
 				{since === undefined ? null : ` · ${since} elapsed`}
 			</span>
+			<label className="workflow-notes-field">
+				<span className="workflow-notes-label" aria-hidden="true">
+					Notes
+				</span>
+				<select
+					className="workflow-notes-select"
+					aria-label="Step notes"
+					title="Step notes"
+					value={notes}
+					onChange={(event) =>
+						setWorkflowPanelNotes(event.target.value as WorkflowPanelNotes)
+					}
+				>
+					{NOTES_OPTIONS.map(([value, text]) => (
+						<option key={value} value={value}>
+							{text}
+						</option>
+					))}
+				</select>
+			</label>
 		</div>
 	);
 }
@@ -333,10 +374,12 @@ function WorkflowSteps({
 	workflow,
 	client,
 	target,
+	notes,
 }: {
 	readonly workflow: Workflow;
 	readonly client: WorkflowClient | undefined;
 	readonly target: WorkflowTarget;
+	readonly notes: WorkflowPanelNotes;
 }) {
 	const now = useNow(workflow);
 	return (
@@ -365,11 +408,14 @@ function WorkflowSteps({
 										{`, ${statusLabel(step.status)}`}
 									</span>
 								</span>
-								{step.note === '' ? null : (
-									<span className="workflow-step-note workflow-text">
+								{showsStepNote(step, notes) ? (
+									<span
+										className="workflow-step-note workflow-text"
+										title={notes === 'short' ? step.note : undefined}
+									>
 										{step.note}
 									</span>
-								)}
+								) : null}
 							</div>
 							{time === undefined ? null : (
 								<span className="workflow-step-time">{time}</span>
