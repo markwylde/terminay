@@ -41,6 +41,7 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
 	['mdx', FEATURE_CAPABILITIES.files],
 	['git', FEATURE_CAPABILITIES.git],
 	['worktree', FEATURE_CAPABILITIES.git],
+	['forge', FEATURE_CAPABILITIES.forge],
 	['agent', FEATURE_CAPABILITIES.agents],
 	['agents', FEATURE_CAPABILITIES.agents],
 	['activity', FEATURE_CAPABILITIES.agents],

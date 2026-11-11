@@ -36,6 +36,7 @@ export const GIT_OPERATIONS = Object.freeze({
 	removeWorktree: 'git.worktree.remove',
 	removeCleanWorktree: 'git.worktree.remove-clean',
 	moveWorktree: 'git.worktree.move',
+	createWorktree: 'git.worktree.create',
 	quickPushPropose: 'git.quick-push.propose',
 	quickPushApprove: 'git.quick-push.approve',
 	worktreeProperties: 'git.worktree.properties',
@@ -180,6 +181,14 @@ export interface GitProtocolAdapterOptions {
 		readonly repositoryId: string;
 		readonly fromPath: string | null;
 	}) => (toPath: string | null) => void;
+	/**
+	 * The project's remote names claimed for a forge repository (ADR-0106).
+	 * Worktree creation chooses among these; without it, creation is unavailable.
+	 */
+	readonly forgeRemotes?: (
+		projectId: string,
+		repository: Readonly<{ origin: string; owner: string; name: string }>,
+	) => Promise<readonly string[]>;
 }
 
 export interface GitOperationHandlers {
@@ -209,6 +218,7 @@ export class ServerGitAdapter {
 	readonly serverId: string;
 	private readonly git: GitService;
 	private readonly quickPush: GitQuickPushService | undefined;
+	private readonly forgeRemotes: GitProtocolAdapterOptions['forgeRemotes'];
 	private readonly actions: GitWorktreeActionHandlers;
 	private readonly hostCapabilities: ReadonlySet<GitHostCapability>;
 	private readonly resolveProjectRoot: GitProtocolAdapterOptions['resolveProjectRoot'];
@@ -231,6 +241,7 @@ export class ServerGitAdapter {
 		this.canRevealOnHost = options.canRevealOnHost;
 		this.insights = options.insights;
 		this.onWorktreeMove = options.onWorktreeMove;
+		this.forgeRemotes = options.forgeRemotes;
 		this.hostCapabilities = new Set(
 			options.hostCapabilities ?? inferHostCapabilities(this.actions),
 		);
@@ -756,6 +767,8 @@ export class ServerGitAdapter {
 					this.removeClean(this.removeRequest(request)),
 				[GIT_OPERATIONS.moveWorktree]: (request) =>
 					this.move(this.moveRequest(request)),
+				[GIT_OPERATIONS.createWorktree]: (request) =>
+					this.commandResult(this.createWorktree(request)),
 				[GIT_OPERATIONS.quickPushPropose]: (request) =>
 					this.commandResult(
 						this.proposeQuickPush(this.quickPushProposalRequest(request)),
@@ -967,6 +980,62 @@ export class ServerGitAdapter {
 			...(expectedHead === undefined ? {} : { expectedHead }),
 			signal: request.context.signal,
 		};
+	}
+
+	/** Create (or plan) a worktree for a forge item; write scope, project authority. */
+	async createWorktree(request: CommandRequest): Promise<JsonValue> {
+		const authorization = this.authorization(request);
+		this.requireScope(authorization, 'write');
+		const payload = objectPayload(request);
+		const projectId = this.requireProject(
+			authorization,
+			stringValue(payload.projectId),
+		);
+		const repository = payload.repository;
+		if (
+			typeof repository !== 'object' ||
+			repository === null ||
+			Array.isArray(repository)
+		)
+			throw new GitServiceError('invalid-project', 'repository is required');
+		const { origin, owner, name } = repository as Record<string, unknown>;
+		const forgeRepository = {
+			origin: boundedString(origin, 'repository.origin', 2_048),
+			owner: boundedString(owner, 'repository.owner', 256),
+			name: boundedString(name, 'repository.name', 256),
+		};
+		const branch = boundedString(payload.branch, 'branch', 200);
+		const base =
+			payload.base === 'track'
+				? {
+						kind: 'track' as const,
+						remoteBranch:
+							payload.remoteBranch === undefined
+								? branch
+								: boundedString(payload.remoteBranch, 'remoteBranch', 200),
+					}
+				: { kind: 'default' as const };
+		if (payload.base !== undefined && payload.base !== 'track' && payload.base !== 'default')
+			throw new GitServiceError('invalid-project', 'base is invalid');
+		if (this.forgeRemotes === undefined)
+			throw new GitServiceError(
+				'invalid-operation',
+				'worktree creation is unavailable in this server host',
+			);
+		await this.ensureProjectBound(projectId);
+		const remotes = await this.forgeRemotes(projectId, forgeRepository);
+		const result = await this.git.createWorktree({
+			projectId,
+			branch,
+			base,
+			remotes,
+			reuseExisting: payload.reuseExisting === true,
+			plan: payload.plan === true,
+			...(request.context.signal === undefined
+				? {}
+				: { signal: request.context.signal }),
+		});
+		return result as unknown as JsonValue;
 	}
 
 	private moveRequest(request: CommandRequest): GitMoveRequest {

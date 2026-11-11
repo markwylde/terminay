@@ -17,6 +17,7 @@ import {
 	workingTreeWatchRoots,
 } from './observation.js';
 import {
+	basename,
 	dirname,
 	isAbsolute,
 	join,
@@ -38,6 +39,9 @@ import {
 	type GitBranchStatus,
 	type GitCommandResult,
 	type GitCommandRunner,
+	type GitWorktreeCreateErrorCode,
+	type GitWorktreeCreateRequest,
+	type GitWorktreeCreateResult,
 	type GitDiffResult,
 	type GitDiscoveryState,
 	type GitErrorInfo,
@@ -1051,6 +1055,286 @@ export class GitService {
 		signal?: AbortSignal,
 	): Promise<GitWorktreeListResult> {
 		return this.worktrees(request, signal);
+	}
+
+	/**
+	 * Create a worktree for a forge item (ADR-0106). The server chooses the
+	 * remote from those claimed for the repository and the path as a sibling of
+	 * the repository root; the client names only a branch. Creations for one
+	 * repository run one at a time and re-check everything when they run.
+	 */
+	async createWorktree(
+		request: GitWorktreeCreateRequest,
+	): Promise<GitWorktreeCreateResult> {
+		validateProjectId(request.projectId);
+		const binding = this.getBinding(request.projectId);
+		const repositoryId = binding?.repositoryId;
+		if (repositoryId === null || repositoryId === undefined)
+			throw new GitServiceError(
+				'invalid-project',
+				'project has no Git repository',
+			);
+		if (request.plan === true) return this.executeCreateWorktree(request, true);
+		return this.enqueueRepositoryMutation(
+			repositoryId,
+			`create:${request.branch}`,
+			() => this.executeCreateWorktree(request, false),
+		);
+	}
+
+	private async executeCreateWorktree(
+		request: GitWorktreeCreateRequest,
+		plan: boolean,
+	): Promise<GitWorktreeCreateResult> {
+		const { signal } = request;
+		const branch = request.branch;
+		let result: {
+			-readonly [K in keyof GitWorktreeCreateResult]: GitWorktreeCreateResult[K];
+		} = {
+			operation: 'worktree.create',
+			projectId: request.projectId,
+			plan,
+			applied: false,
+			branch,
+			path: null,
+			remote: null,
+			branchValid: false,
+			branchExists: false,
+			checkedOutAt: null,
+			worktreeId: null,
+		};
+		const fail = (
+			code: GitWorktreeCreateErrorCode,
+			message: string,
+			path?: string,
+		): GitWorktreeCreateResult => ({
+			...result,
+			applied: false,
+			error: { code, message, ...(path === undefined ? {} : { path }) },
+		});
+		const listing = await this.listWorktreeIdentities({
+			projectId: request.projectId,
+			...(signal === undefined ? {} : { signal }),
+		});
+		const cwd = listing.repositoryRoot;
+		if (listing.state !== 'ready' || cwd === null)
+			throw new GitServiceError(
+				'invalid-project',
+				'project repository is not available',
+			);
+		// The branch name: Git's own rules, and never something that reads as a flag.
+		const formatted =
+			typeof branch === 'string' &&
+			branch.length > 0 &&
+			branch.length <= 200 &&
+			!branch.startsWith('-')
+				? await this.runGit(
+						['check-ref-format', '--branch', branch],
+						cwd,
+						signal,
+					)
+				: undefined;
+		result.branchValid = formatted?.exitCode === 0;
+		if (!result.branchValid)
+			return fail('invalidBranch', `"${branch}" is not a valid branch name`);
+		const trackBranch =
+			request.base.kind === 'track' ? request.base.remoteBranch : undefined;
+		if (trackBranch !== undefined) {
+			const tracked =
+				trackBranch.length > 0 && !trackBranch.startsWith('-')
+					? await this.runGit(
+							['check-ref-format', '--branch', trackBranch],
+							cwd,
+							signal,
+						)
+					: undefined;
+			if (tracked?.exitCode !== 0)
+				return fail(
+					'invalidBranch',
+					`"${trackBranch}" is not a valid branch name`,
+				);
+		}
+		const main = listing.worktrees.find((worktree) => worktree.isMain);
+		const repositoryRoot = main?.path ?? cwd;
+		const checkedOut = listing.worktrees.find(
+			(worktree) => worktree.branch === branch,
+		);
+		const exists = await this.runGit(
+			['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+			cwd,
+			signal,
+		);
+		result.branchExists = exists.exitCode === 0;
+		result.checkedOutAt = checkedOut?.path ?? null;
+		result.remote = await this.chooseRemote(request.remotes, cwd, signal);
+		result.path = await this.siblingWorktreePath(
+			repositoryRoot,
+			branch,
+			listing.worktrees.map((worktree) => worktree.path),
+		);
+		if (checkedOut !== undefined)
+			return fail(
+				'checkedOut',
+				`"${branch}" is already checked out at ${checkedOut.path}`,
+				checkedOut.path,
+			);
+		if (result.branchExists && request.reuseExisting !== true)
+			return fail('branchExists', `a local branch "${branch}" already exists`);
+		const reuse = result.branchExists && request.reuseExisting === true;
+		if (result.remote === null && !reuse)
+			return fail(
+				'remoteMissing',
+				'no remote of this project belongs to the repository',
+			);
+		if (plan) return result;
+		const path = result.path;
+		const remote = result.remote;
+		let args: string[];
+		if (reuse) {
+			args = ['worktree', 'add', '--', path, branch];
+		} else {
+			if (remote === null)
+				return fail('remoteMissing', 'no remote of this project belongs to the repository');
+			const base =
+				trackBranch ?? (await this.remoteDefaultBranch(remote, cwd, signal));
+			if (base === null)
+				return fail(
+					'fetchFailed',
+					`could not find the default branch of ${remote}`,
+				);
+			const fetched = await this.runGit(
+				[
+					'fetch',
+					'--no-tags',
+					'--',
+					remote,
+					`+refs/heads/${base}:refs/remotes/${remote}/${base}`,
+				],
+				cwd,
+				signal,
+			);
+			if (fetched.exitCode !== 0)
+				return fail(
+					'fetchFailed',
+					`fetching ${base} from ${remote} failed: ${fetched.stderr.trim().slice(0, 500)}`,
+				);
+			args =
+				trackBranch === undefined
+					? ['worktree', 'add', '--no-track', '-b', branch, '--', path, `${remote}/${base}`]
+					: ['worktree', 'add', '--track', '-b', branch, '--', path, `${remote}/${base}`];
+		}
+		const pathExisted = await filesystemPathExists(path);
+		if (pathExisted) return fail('addFailed', `${path} already exists`);
+		const added = await this.runGit(args, cwd, signal);
+		if (added.exitCode !== 0 || added.truncated) {
+			// Undo only what this operation created.
+			if (await filesystemPathExists(path)) {
+				await this.runGit(['worktree', 'remove', '--force', '--', path], cwd);
+				await rm(path, { recursive: true, force: true }).catch(() => undefined);
+				await this.runGit(['worktree', 'prune'], cwd);
+			}
+			if (!result.branchExists) {
+				const created = await this.runGit(
+					['show-ref', '--verify', '--quiet', `refs/heads/${branch}`],
+					cwd,
+				);
+				if (created.exitCode === 0)
+					await this.runGit(['branch', '-D', '--', branch], cwd);
+			}
+			return fail(
+				'addFailed',
+				`git worktree add failed: ${added.stderr.trim().slice(0, 500)}`,
+			);
+		}
+		const after = await this.listWorktreeIdentities({
+			projectId: request.projectId,
+			...(signal === undefined ? {} : { signal }),
+		});
+		const canonical = await this.canonicalWorktreePath(path);
+		const created = after.worktrees.find((worktree) =>
+			samePath(worktree.path, canonical),
+		);
+		result = {
+			...result,
+			applied: true,
+			path: created?.path ?? path,
+			worktreeId: created?.id ?? null,
+		};
+		return result;
+	}
+
+	/** `origin` first, then the main worktree's upstream remote, then the first claimed. */
+	private async chooseRemote(
+		claimed: readonly string[],
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<string | null> {
+		if (claimed.length === 0) return null;
+		const listed = await this.runGit(['remote'], cwd, signal);
+		const present = new Set(
+			listed.exitCode === 0
+				? listed.stdout.split('\n').map((line) => line.trim()).filter(Boolean)
+				: [],
+		);
+		const candidates = claimed.filter((name) => present.has(name));
+		if (candidates.length === 0) return null;
+		if (candidates.includes('origin')) return 'origin';
+		const upstream = await this.runGit(
+			['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
+			cwd,
+			signal,
+		);
+		if (upstream.exitCode === 0) {
+			const name = upstream.stdout.trim().split('/', 1)[0];
+			if (name !== undefined && candidates.includes(name)) return name;
+		}
+		return candidates[0] ?? null;
+	}
+
+	/** The remote's default branch: `<remote>/HEAD`, else what the remote says. */
+	private async remoteDefaultBranch(
+		remote: string,
+		cwd: string,
+		signal?: AbortSignal,
+	): Promise<string | null> {
+		const local = await this.runGit(
+			['symbolic-ref', '--quiet', `refs/remotes/${remote}/HEAD`],
+			cwd,
+			signal,
+		);
+		const prefix = `refs/remotes/${remote}/`;
+		if (local.exitCode === 0 && local.stdout.trim().startsWith(prefix))
+			return local.stdout.trim().slice(prefix.length);
+		const symref = await this.runGit(
+			['ls-remote', '--symref', '--', remote, 'HEAD'],
+			cwd,
+			signal,
+		);
+		if (symref.exitCode !== 0) return null;
+		const match = /^ref: refs\/heads\/(\S+)\s+HEAD$/mu.exec(symref.stdout);
+		return match?.[1] ?? null;
+	}
+
+	/** `<repository directory>-<branch with / as ->`, with a numeric suffix when taken. */
+	private async siblingWorktreePath(
+		repositoryRoot: string,
+		branch: string,
+		registered: readonly string[],
+	): Promise<string> {
+		const stem = `${basename(repositoryRoot)}-${branch.replace(/\//gu, '-')}`;
+		const parent = dirname(repositoryRoot);
+		for (let suffix = 1; suffix < 1000; suffix += 1) {
+			const candidate = resolve(
+				parent,
+				suffix === 1 ? stem : `${stem}-${suffix}`,
+			);
+			if (
+				!registered.some((path) => samePath(path, candidate)) &&
+				!(await filesystemPathExists(candidate))
+			)
+				return candidate;
+		}
+		throw new GitServiceError('mutation-failed', 'no free worktree path');
 	}
 
 	async moveWorktree(

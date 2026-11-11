@@ -395,6 +395,12 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* A count to know about, such as pull requests awaiting review. */
+.home-sidebar__badge--neutral {
+	color: rgba(220, 226, 240, 0.95);
+	background: rgb(255 255 255 / 0.14);
+}
+
 /* --- Sections ------------------------------------------------------------ */
 
 .home-section {

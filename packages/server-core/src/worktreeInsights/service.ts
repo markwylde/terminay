@@ -72,6 +72,7 @@ export interface WorktreeInsightServiceOptions {
 }
 
 interface ProjectContext {
+	readonly repositoryId?: string;
 	readonly projectId: string;
 	readonly context: RepositoryContext;
 	readonly fingerprint: string;
@@ -110,6 +111,7 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 	/** The context push scheduled for the next microtask, while it is. */
 	private scheduledPush: Promise<void> | undefined;
 	private readonly unsubscribe: Array<() => void> = [];
+	private readonly contextListeners = new Set<(projectId: string) => void>();
 	private disposed = false;
 
 	constructor(private readonly options: WorktreeInsightServiceOptions = {}) {}
@@ -177,6 +179,7 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		if (previous?.fingerprint === fingerprint) return;
 		this.contexts.set(listing.projectId, {
 			projectId: listing.projectId,
+			repositoryId: listing.repositoryId,
 			context,
 			fingerprint,
 			hosts: remoteHosts(context.remotes),
@@ -185,6 +188,12 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		if (previous !== undefined && previous.context.id !== contextId)
 			this.contextProjects.delete(previous.context.id);
 		this.dropDepartedWorktrees(listing.projectId, context);
+		if (
+			previous === undefined ||
+			JSON.stringify({ ...previous.context, active: false }) !==
+				JSON.stringify({ ...context, active: false })
+		)
+			this.notifyContexts(listing.projectId);
 		await this.schedulePush();
 	}
 
@@ -221,7 +230,78 @@ export class WorktreeInsightService implements ExtensionWorktreeBroker {
 		this.contextProjects.delete(previous.context.id);
 		if (this.properties.delete(projectId))
 			this.options.onProjectChanged?.(projectId, null);
+		this.notifyContexts(projectId);
 		void this.schedulePush();
+	}
+
+	/** Every open project's repository context, as last issued. */
+	repositoryContexts(): ReadonlyArray<{
+		readonly projectId: string;
+		readonly repositoryId?: string;
+		readonly context: RepositoryContext;
+	}> {
+		return [...this.contexts.values()].map((project) => ({
+			projectId: project.projectId,
+			...(project.repositoryId === undefined
+				? {}
+				: { repositoryId: project.repositoryId }),
+			context: project.context,
+		}));
+	}
+
+	/** Called with a project id when its repository context is issued, re-issued, or cancelled. */
+	onContextsChanged(listener: (projectId: string) => void): () => void {
+		this.contextListeners.add(listener);
+		return () => this.contextListeners.delete(listener);
+	}
+
+	private notifyContexts(projectId: string): void {
+		for (const listener of [...this.contextListeners])
+			try {
+				listener(projectId);
+			} catch {
+				/* observers cannot affect contexts */
+			}
+	}
+
+	/** Whether a token is stored for one extension and origin. */
+	hasToken(extensionId: string, origin: string): boolean {
+		return this.options.vault?.has(credentialId(extensionId, origin)) === true;
+	}
+
+	/**
+	 * Store a token for one extension and origin, as the sign-in prompt does,
+	 * and tell the extension's running sources.
+	 */
+	async storeToken(
+		extensionId: string,
+		origin: string,
+		provider: string,
+		token: string,
+	): Promise<void> {
+		const value = token.trim();
+		if (value.length === 0 || value.length > 4_096 || /\s/.test(value))
+			throw new Error('the token is invalid');
+		const vault = this.options.vault;
+		if (vault === undefined) throw new Error('the server vault is unavailable');
+		await vault.put(
+			credentialId(extensionId, origin),
+			`${provider} token for ${new URL(origin).host}`,
+			new TextEncoder().encode(value),
+		);
+		this.later.delete(origin);
+		const prompt = this.pending.get(origin);
+		if (prompt?.extensionId === extensionId) {
+			this.pending.delete(origin);
+			this.notifyPromptChanged(origin, prompt);
+		}
+	}
+
+	/** Remove a token stored for one extension and origin. */
+	async removeToken(extensionId: string, origin: string): Promise<void> {
+		const vault = this.options.vault;
+		const id = credentialId(extensionId, origin);
+		if (vault?.has(id) === true) await vault.remove(id);
 	}
 
 	/** Keep only the listed projects' contexts. */

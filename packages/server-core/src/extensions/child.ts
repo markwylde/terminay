@@ -18,6 +18,7 @@ import {
 	isHostFrame,
 	jsonIpcValue,
 } from './protocol.js';
+import { ForgeSourceChild } from './forgeSourceChild.js';
 import { TerminalLauncherChild } from './terminalLauncherChild.js';
 import { WorktreeInsightChild } from './worktreeInsightChild.js';
 
@@ -113,6 +114,24 @@ const terminalLaunchers = new TerminalLauncherChild({
 	failure: (id, error) => failure(id, error),
 });
 
+const forgeSources = new ForgeSourceChild({
+	send: (frame) => {
+		send(frame);
+	},
+	nextId: (prefix) => `${prefix}:${++sequence}`,
+	broker: (operation, payload, signal) =>
+		brokerRequest(operation, payload, signal),
+	result: (id, payload) => {
+		send({
+			protocolVersion: 1,
+			kind: 'result',
+			id,
+			...(payload === undefined ? {} : { payload }),
+		});
+	},
+	failure: (id, error) => failure(id, error),
+});
+
 process.on('message', (message: unknown) => {
 	void receive(message);
 });
@@ -193,6 +212,7 @@ async function receive(message: unknown): Promise<void> {
 	if (!isHostFrame(message) || frameByteLength(message) > MAX_MESSAGE_BYTES)
 		process.exit(72);
 	if (message.kind === 'cancel') {
+		forgeSources.cancel(message.id);
 		invocations.get(message.id)?.abort();
 		return;
 	}
@@ -229,6 +249,7 @@ async function receive(message: unknown): Promise<void> {
 	}
 	if (message.kind === 'deactivate') {
 		botAgents.deactivate();
+		forgeSources.stopAll();
 		for (const controller of invocations.values()) controller.abort();
 		await languageRuntime?.stopAll().catch(() => undefined);
 		await agentChats.closeAll().catch(() => undefined);
@@ -258,6 +279,8 @@ async function receive(message: unknown): Promise<void> {
 	if (agentChats.handles(message.kind)) void agentChats.receive(message);
 	if (terminalLaunchers.handles(message.kind))
 		void terminalLaunchers.receive(message);
+	// Forge calls run concurrently; a slow forge must not hold up another.
+	if (forgeSources.handles(message.kind)) void forgeSources.receive(message);
 }
 
 async function activateExtension(frame: HostFrame): Promise<void> {
@@ -280,6 +303,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 		const agentChatProviders: string[] = [];
 		const registeredLaunchers: string[] = [];
 		const registeredCommandDefaults: string[] = [];
+		const registeredForgeSources: string[] = [];
 		stopAllSources();
 		sessionSources.clear();
 		mcpTargets.clear();
@@ -336,6 +360,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 			[...declaredIds(payload.terminalLaunchers)],
 			[...declaredIds(payload.terminalCommandDefaults)],
 		);
+		forgeSources.reset([...declaredIds(payload.forgeSources)]);
 		const result = await activate(
 			Object.freeze({
 				extensionId: payload.extensionId,
@@ -429,6 +454,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 					registeredLaunchers,
 					registeredCommandDefaults,
 				),
+				forges: forgeSources.registry(registeredForgeSources),
 				registerLanguageServerProvider(registration: unknown) {
 					const value = object(registration);
 					const id = typeof value?.id === 'string' ? value.id : '';
@@ -515,6 +541,7 @@ async function activateExtension(frame: HostFrame): Promise<void> {
 				botAgents: botAgents.ids(),
 				terminalLaunchers: registeredLaunchers,
 				terminalCommandDefaults: registeredCommandDefaults,
+				forgeSources: registeredForgeSources,
 			},
 		});
 	} catch (error) {
@@ -869,12 +896,16 @@ type BrokerOperation =
 	| 'log'
 	| 'secret.resolve'
 	| 'worktree.token'
-	| 'worktree.token.reject';
+	| 'worktree.token.reject'
+	| 'forge.token'
+	| 'forge.token.reject';
 const BROKER_OPERATIONS: readonly BrokerOperation[] = [
 	'log',
 	'secret.resolve',
 	'worktree.token',
 	'worktree.token.reject',
+	'forge.token',
+	'forge.token.reject',
 ];
 
 function brokerRequest(

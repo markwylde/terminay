@@ -123,6 +123,10 @@ export interface CliTokenStore {
 	token(origin: string): Promise<string | undefined>;
 	/** The origin refused the token last returned for it; stop offering it. */
 	reject(origin: string): void;
+	/** Origins with a `gh` login or an environment token, once each. */
+	origins(): Promise<string[]>;
+	/** Where the token last returned for `origin` came from. */
+	sourceOf(origin: string): 'environment' | 'cli-config' | 'cli' | undefined;
 	dispose(): void;
 }
 
@@ -203,6 +207,29 @@ export function createCliTokenStore(options: {
 				return undefined;
 			lastSource.set(origin, 'gh');
 			return token;
+		},
+		async origins() {
+			const origins = new Set<string>();
+			if (environmentToken(GITHUB_DOT_COM, options.env) !== undefined)
+				origins.add(GITHUB_DOT_COM);
+			for (const host of (await load()).keys()) {
+				try {
+					origins.add(new URL(`https://${host}`).origin);
+				} catch {
+					/* not a host name */
+				}
+			}
+			return [...origins];
+		},
+		sourceOf(origin) {
+			const source = lastSource.get(origin);
+			return source === 'env'
+				? 'environment'
+				: source === 'file'
+					? 'cli-config'
+					: source === 'gh'
+						? 'cli'
+						: undefined;
 		},
 		reject(origin) {
 			const source = lastSource.get(origin);

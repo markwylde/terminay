@@ -28,6 +28,7 @@ export * from './serverUpgrade.js';
 export * from './agentStatus.js';
 export * from './git.js';
 export * from './gitClient.js';
+export * from './forgeClient.js';
 export * from './settings.js';
 export * from './macros.js';
 export * from './automations.js';

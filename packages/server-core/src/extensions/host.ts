@@ -14,6 +14,15 @@ import {
 	type AgentSessionSourceContribution,
 	EXTENSION_API_VERSION,
 	EXTENSION_LIMITS,
+	type ForgeAccount,
+	type ForgeItemDetail,
+	type ForgeItemReference,
+	type ForgePageValidation,
+	type ForgeQuery,
+	type ForgeRemote,
+	type ForgeRepository,
+	type ForgeSourceContribution,
+	isHttpsOrigin,
 	isNamespacedId,
 	type LanguageServerContribution,
 	type McpInstallTargetContribution,
@@ -25,6 +34,11 @@ import {
 	validateAgentChatAvailability,
 	validateAgentChatEvent,
 	validateAgentChatSessionRequest,
+	validateForgeAccounts,
+	validateForgeClaim,
+	validateForgeDetail,
+	validateForgePage,
+	validateForgeQuery,
 	validateMcpInstallTargetActionResult,
 	validateMcpInstallTargetStatus,
 	validateMcpServerCommand,
@@ -65,6 +79,7 @@ import type {
 	ExtensionInvocation,
 	ExtensionLaunchDescriptor,
 	ExtensionSecretAccessBroker,
+	ExtensionForgeBroker,
 	ExtensionWorktreeBroker,
 } from './types.js';
 
@@ -84,6 +99,7 @@ export interface ExtensionHostOptions {
 	readonly secrets?: ExtensionSecretAccessBroker;
 	readonly agents?: ExtensionAgentBroker;
 	readonly worktrees?: ExtensionWorktreeBroker;
+	readonly forges?: ExtensionForgeBroker;
 	/** Where lifecycle records go. Absent means they are not recorded. */
 	readonly onDiagnostic?: ExtensionHostDiagnosticListener;
 	/** Observed after every state transition, so a supervisor can act on a
@@ -128,6 +144,9 @@ const DEFAULTS = Object.freeze({
  * a few seconds of their own.
  */
 const LAUNCHER_RESOLVE_TIMEOUT_MS = 10_000;
+
+/** How long one forge source call may run (ADR-0106). */
+export const FORGE_CALL_TIMEOUT_MS = 15_000;
 
 /**
  * How long a command default may take to say whether it applies. The built-in
@@ -214,6 +233,7 @@ export class ExtensionHost {
 		Object.freeze([]);
 	private terminalCommandDefaults: readonly TerminalCommandDefaultContribution[] =
 		Object.freeze([]);
+	private forgeSources: readonly ForgeSourceContribution[] = Object.freeze([]);
 	/** Chat sessions the host opened and has not yet seen end. */
 	private readonly chatSessions = new Map<
 		string,
@@ -255,6 +275,7 @@ export class ExtensionHost {
 			botAgents: this.botAgents,
 			terminalLaunchers: this.terminalLaunchers,
 			terminalCommandDefaults: this.terminalCommandDefaults,
+			forgeSources: this.forgeSources,
 		});
 	}
 	launchDescriptor(): ExtensionLaunchDescriptor | undefined {
@@ -351,6 +372,7 @@ export class ExtensionHost {
 						this.descriptor.terminalCommandDefaults === undefined
 							? []
 							: structuredClone(this.descriptor.terminalCommandDefaults),
+					forgeSources: structuredClone(this.descriptor.forgeSources ?? []),
 				},
 				this.limits.startupTimeoutMs,
 				undefined,
@@ -394,6 +416,13 @@ export class ExtensionHost {
 				this.descriptor,
 				'agent-bots',
 				'bot agent',
+			);
+			this.forgeSources = validateRegistrations(
+				record(activated)?.forgeSources,
+				this.descriptor.forgeSources ?? [],
+				this.descriptor,
+				'forge-source',
+				'forge source',
 			);
 			this.botRuntime.deactivate();
 			this.botRuntime = new BotAgentRuntimeHost(
@@ -784,6 +813,105 @@ export class ExtensionHost {
 		return result.value;
 	}
 
+	forgeSourceContributions(): readonly ForgeSourceContribution[] {
+		return this.forgeSources;
+	}
+
+	private assertForgeSource(sourceId: string): void {
+		if (!this.forgeSources.some((source) => source.id === sourceId))
+			throw unavailable('forge source is unavailable');
+	}
+
+	/** The accounts a forge source can act as, validated again here. */
+	async forgeSourceAccounts(
+		sourceId: string,
+		signal?: AbortSignal,
+	): Promise<ForgeAccount[]> {
+		this.assertForgeSource(sourceId);
+		const result = validateForgeAccounts(
+			await this.call(
+				'forge.source.accounts',
+				{ sourceId },
+				Math.min(this.limits.invocationTimeoutMs, FORGE_CALL_TIMEOUT_MS),
+				signal,
+			),
+		);
+		if (!result.ok) throw new Error(`forge source accounts: ${result.reason}`);
+		return result.value;
+	}
+
+	/** Whether a forge source claims a remote; the claim must be on its host. */
+	async claimForgeRemote(
+		sourceId: string,
+		remote: ForgeRemote,
+		signal?: AbortSignal,
+	): Promise<ForgeRepository | null> {
+		this.assertForgeSource(sourceId);
+		const result = validateForgeClaim(
+			await this.call(
+				'forge.source.claim',
+				{ sourceId, remote: { name: remote.name, url: remote.url } },
+				Math.min(this.limits.invocationTimeoutMs, FORGE_CALL_TIMEOUT_MS),
+				signal,
+			),
+			remote,
+		);
+		if (!result.ok) throw new Error(`forge source claim: ${result.reason}`);
+		return result.value;
+	}
+
+	/** One page for one account's query; items outside the query are dropped. */
+	async queryForgeSource(
+		sourceId: string,
+		query: ForgeQuery,
+		signal?: AbortSignal,
+	): Promise<ForgePageValidation> {
+		this.assertForgeSource(sourceId);
+		const checked = validateForgeQuery(query);
+		if (!checked.ok) throw new TypeError(`forge query: ${checked.reason}`);
+		const result = validateForgePage(
+			await this.call(
+				'forge.source.query',
+				{ sourceId, query: checked.value },
+				Math.min(this.limits.invocationTimeoutMs, FORGE_CALL_TIMEOUT_MS),
+				signal,
+			),
+			checked.value,
+		);
+		if (!result.ok) throw new Error(`forge source page: ${result.reason}`);
+		return result.value;
+	}
+
+	/** One item's detail; a detail for another item is refused. */
+	async forgeSourceDetail(
+		sourceId: string,
+		reference: ForgeItemReference,
+		signal?: AbortSignal,
+	): Promise<ForgeItemDetail> {
+		this.assertForgeSource(sourceId);
+		const result = validateForgeDetail(
+			await this.call(
+				'forge.source.detail',
+				{ sourceId, reference },
+				Math.min(this.limits.invocationTimeoutMs, FORGE_CALL_TIMEOUT_MS),
+				signal,
+			),
+			reference,
+		);
+		if (!result.ok) throw new Error(`forge source detail: ${result.reason}`);
+		return result.value;
+	}
+
+	/** Tell the extension's forge sources a token was stored for an origin. */
+	async notifyForgeCredential(origin: string): Promise<void> {
+		if (this.forgeSources.length === 0) return;
+		await this.call(
+			'forge.source.credential',
+			{ origin },
+			this.limits.invocationTimeoutMs,
+		);
+	}
+
 	terminalCommandDefaultContributions(): readonly TerminalCommandDefaultContribution[] {
 		return this.terminalCommandDefaults;
 	}
@@ -1032,6 +1160,47 @@ export class ExtensionHost {
 		}
 	}
 
+	/**
+	 * A forge source's token for one of its own extension's origins. Tokens
+	 * are bound to (extension, origin) in the vault, so another extension's
+	 * binding is never reachable from here.
+	 */
+	private async handleForgeTokenRequest(
+		id: string,
+		operation: 'forge.token' | 'forge.token.reject',
+		input: unknown,
+	): Promise<void> {
+		const origin = record(input)?.origin;
+		const broker = this.options.worktrees;
+		const sourceId = this.forgeSources[0]?.id;
+		if (broker === undefined || sourceId === undefined || !isHttpsOrigin(origin)) {
+			this.sendBrokerResult(id, undefined, 'forge credentials are unavailable');
+			return;
+		}
+		const controller = new AbortController();
+		this.activeBrokerCalls.set(id, controller);
+		try {
+			const scoped = { extensionId: this.extensionId, sourceId, origin };
+			if (operation === 'forge.token')
+				this.sendBrokerResult(
+					id,
+					(await broker.token(scoped, controller.signal)) ?? null,
+				);
+			else {
+				await broker.rejectToken(scoped, controller.signal);
+				this.sendBrokerResult(id, null);
+			}
+		} catch (error) {
+			this.sendBrokerResult(
+				id,
+				undefined,
+				error instanceof Error ? error.message : 'forge credential request failed',
+			);
+		} finally {
+			this.activeBrokerCalls.delete(id);
+		}
+	}
+
 	private assertSource(sourceId: string): void {
 		if (!this.agentSessionSources.some((source) => source.id === sourceId))
 			throw unavailable('agent session source is unavailable');
@@ -1268,6 +1437,48 @@ export class ExtensionHost {
 			this.handleWorktreeInsightFrame(message);
 			return;
 		}
+		if (message.kind === 'forge.source.invalidate') {
+			const payload = record(message.payload);
+			const sourceId = boundedId(payload?.sourceId);
+			const origin = payload?.origin;
+			if (
+				sourceId !== undefined &&
+				this.forgeSources.some((source) => source.id === sourceId) &&
+				isHttpsOrigin(origin)
+			)
+				try {
+					this.options.forges?.invalidate({
+						extensionId: this.extensionId,
+						sourceId,
+						origin,
+					});
+				} catch {
+					/* a listener's failure cannot affect the extension */
+				}
+			return;
+		}
+		if (message.kind === 'forge.source.disposed') {
+			const sourceId = boundedId(record(message.payload)?.sourceId);
+			if (
+				sourceId === undefined ||
+				!this.forgeSources.some((source) => source.id === sourceId)
+			) {
+				this.protocolViolation('forge source disposal is invalid');
+				return;
+			}
+			this.forgeSources = Object.freeze(
+				this.forgeSources.filter((source) => source.id !== sourceId),
+			);
+			try {
+				this.options.forges?.sourceStopped({
+					extensionId: this.extensionId,
+					sourceId,
+				});
+			} catch {
+				/* the service's teardown cannot affect the host */
+			}
+			return;
+		}
 		if (message.kind === 'agent.bot.disposed') {
 			const agentId = boundedId(record(message.payload)?.agentId);
 			if (agentId !== undefined) {
@@ -1340,6 +1551,10 @@ export class ExtensionHost {
 		}
 		const payload = record(frame.payload);
 		const operation = payload?.operation;
+		if (operation === 'forge.token' || operation === 'forge.token.reject') {
+			await this.handleForgeTokenRequest(frame.id, operation, payload?.payload);
+			return;
+		}
 		if (
 			operation === 'worktree.token' ||
 			operation === 'worktree.token.reject'

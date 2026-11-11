@@ -11,6 +11,8 @@ export type SidebarGroupTab<Id extends string> = Readonly<{
 	id: Id;
 	label: string;
 	icon: ReactNode;
+	/** A count drawn on the icon, such as open pull requests. */
+	badge?: number;
 }>;
 
 /** The right sidebar's groups, in the order they are drawn. */
@@ -88,7 +90,9 @@ export function SidebarGroupTabs<Id extends string>({
 						type="button"
 						role="tab"
 						id={`${idPrefix}-tab-${tab.id}`}
-						aria-label={tab.label}
+						aria-label={
+							tab.badge === undefined ? tab.label : `${tab.label}, ${tab.badge}`
+						}
 						aria-selected={selected}
 						aria-controls={panelId?.(tab.id) ?? `${idPrefix}-panel`}
 						tabIndex={selected ? 0 : -1}
@@ -97,6 +101,15 @@ export function SidebarGroupTabs<Id extends string>({
 						onClick={() => onSelect(tab.id)}
 					>
 						{tab.icon}
+						{tab.badge === undefined || tab.badge === 0 ? null : (
+							<span
+								className="sidebar-group-tab__badge"
+								aria-hidden="true"
+								data-sidebar-tab-badge={tab.id}
+							>
+								{tab.badge > 99 ? '99+' : tab.badge}
+							</span>
+						)}
 						{showLabels ? (
 							<span className="sidebar-group-tab__label">{tab.label}</span>
 						) : null}

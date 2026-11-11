@@ -11,7 +11,16 @@
  * nothing typed into one of its tabs is lost by looking elsewhere.
  */
 
-import { Bot, Film, House, LayoutList, ListChecks, Workflow } from 'lucide-react';
+import {
+	Bot,
+	CircleDot,
+	Film,
+	GitPullRequest,
+	House,
+	LayoutList,
+	ListChecks,
+	Workflow,
+} from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useRef } from 'react';
 import {
 	NARROW_LAYOUT_MEDIA_QUERY,
@@ -28,6 +37,8 @@ export const HOME_SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
 	automations: <Workflow size={15} aria-hidden="true" />,
 	bots: <Bot size={15} aria-hidden="true" />,
 	home: <House size={15} aria-hidden="true" />,
+	issues: <CircleDot size={15} aria-hidden="true" />,
+	pullRequests: <GitPullRequest size={15} aria-hidden="true" />,
 	recordings: <Film size={15} aria-hidden="true" />,
 	tabs: <LayoutList size={15} aria-hidden="true" />,
 	workflows: <ListChecks size={15} aria-hidden="true" />,
@@ -59,12 +70,25 @@ export type HomeViewProps = Readonly<{
 	sidebarExtra?: ReactNode;
 	/** A count shown on a section's item, such as workflows that need you. */
 	sectionBadges?: Partial<Record<HomeSection, HomeSectionBadge>>;
+	/** Sections this window does not offer, such as Pull Requests with no forge source. */
+	hiddenSections?: ReadonlySet<HomeSection>;
 }>;
+
+/** The sections a sidebar lists, in order. */
+export function visibleHomeSections(
+	hidden: ReadonlySet<HomeSection> | undefined,
+): readonly HomeSection[] {
+	return hidden === undefined || hidden.size === 0
+		? HOME_SECTIONS
+		: HOME_SECTIONS.filter((section) => !hidden.has(section));
+}
 
 export type HomeSectionBadge = Readonly<{
 	count: number;
 	/** Said after the section's name, e.g. "2 workflows need you". */
 	label: string;
+	/** A count to know about rather than act on: drawn without the alert colour. */
+	tone?: 'alert' | 'neutral';
 }>;
 
 export function HomeView({
@@ -79,8 +103,10 @@ export function HomeView({
 	sidebarWidth,
 	sidebarExtra,
 	sectionBadges,
+	hiddenSections,
 }: HomeViewProps) {
 	const itemRefs = useRef(new Map<HomeSection, HTMLButtonElement | null>());
+	const sections = visibleHomeSections(hiddenSections);
 	const showsSidebar = isSidebarVisible && isActive;
 
 	const choose = (next: HomeSection) => {
@@ -98,34 +124,37 @@ export function HomeView({
 	// Arrow keys move through the list; opening a section is Enter or Space, as
 	// on any button, so moving through the list never rearranges Home's tabs.
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-		const focused = HOME_SECTIONS.findIndex(
+		const focused = sections.findIndex(
 			(candidate) => itemRefs.current.get(candidate) === document.activeElement,
 		);
 		const from = focused === -1 ? 0 : focused;
 		let nextIndex: number;
 		switch (event.key) {
 			case 'ArrowDown':
-				nextIndex = (from + 1) % HOME_SECTIONS.length;
+				nextIndex = (from + 1) % sections.length;
 				break;
 			case 'ArrowUp':
-				nextIndex = (from - 1 + HOME_SECTIONS.length) % HOME_SECTIONS.length;
+				nextIndex = (from - 1 + sections.length) % sections.length;
 				break;
 			case 'Home':
 				nextIndex = 0;
 				break;
 			case 'End':
-				nextIndex = HOME_SECTIONS.length - 1;
+				nextIndex = sections.length - 1;
 				break;
 			default:
 				return;
 		}
 		event.preventDefault();
-		const next = HOME_SECTIONS[nextIndex];
+		const next = sections[nextIndex];
 		if (next !== undefined) itemRefs.current.get(next)?.focus();
 	};
 
 	// One item is in the tab order: the current section, else the first.
-	const tabStop = currentSection ?? HOME_SECTIONS[0];
+	const tabStop =
+		currentSection !== undefined && sections.includes(currentSection)
+			? currentSection
+			: sections[0];
 
 	return (
 		<div
@@ -155,7 +184,7 @@ export function HomeView({
 								aria-orientation="vertical"
 								onKeyDown={handleKeyDown}
 							>
-								{HOME_SECTIONS.map((candidate) => {
+								{sections.map((candidate) => {
 									const current = candidate === currentSection;
 									const badge = sectionBadges?.[candidate];
 									const shownBadge =
@@ -186,7 +215,7 @@ export function HomeView({
 											</span>
 											{shownBadge === undefined ? null : (
 												<span
-													className="home-sidebar__badge"
+													className={`home-sidebar__badge${shownBadge.tone === 'neutral' ? ' home-sidebar__badge--neutral' : ''}`}
 													aria-hidden="true"
 													data-terminay-home-section-badge={candidate}
 												>

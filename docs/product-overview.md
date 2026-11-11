@@ -63,6 +63,15 @@ and a VPS sit side by side in one tab strip.
   detail. Remote Access holds this server's exposure and trusted devices and
   the saved servers this device connects to. Workspace content a user opens
   rather than configures, such as automations and recordings, lives in Home.
+- **Home** is the one place in a window that is not a project. Its sidebar
+  lists Home, Tabs, Bots, Automations, Workflows, Recordings, and, when a forge
+  extension serves them, **Pull Requests** and **Issues**: the pull requests and
+  issues of every forge account the server's extensions found, grouped by
+  repository, with each item's checks, the worktree its branch is checked out
+  in, and actions to open that worktree, check a pull request out in a new
+  one, review it with an agent, or start work on an issue. A project whose
+  remote a forge claims gets a Git tab in its left column, with collapsible,
+  reorderable Issues and Pull Requests panes.
 - The first application menu is **Terminay**: New Terminal Tab, New Project,
   and Settings. There is no File menu.
 
@@ -119,6 +128,22 @@ worktrees) and which terminal owns it (its process descends from that
 terminal's PTY). The same extension contributes the MCP install targets that
 Desktop's Install Terminay MCP dialog offers, and the Claude Code and Codex
 chat providers.
+
+Pull requests and issues are another. A **forge source** is an extension
+contribution (`contributes.forgeSources`, with the `forge-source` permission)
+that answers questions on demand: the accounts it can act for, whether it
+claims a project's Git remote, one page of pull requests or issues for a scope,
+and one item's detail. It keeps no lists and runs no timers, and may say that
+something changed so that clients ask again. The built-in Gitea and GitHub
+extensions are the two forge sources; they read the `tea` and `gh` logins for
+tokens and make every forge call over HTTPS themselves. The server owns
+everything else: per-caller authorization, the 60-second cache, merging pages
+from several accounts, joining items to the open projects' worktrees, the
+settings that choose which repositories count, and creating the worktree that
+Check out and Start work need. Start work and Review with agent open a
+terminal running a launcher, such as Claude Code or Codex, that declares it
+accepts a first message; the prompt is passed once as its argument and never
+stored (ADR-0105, ADR-0106).
 
 Agent chats are the one place Terminay runs a coding agent itself, an
 exception the repository owner approved (ADR-0067). A chat provider starts the

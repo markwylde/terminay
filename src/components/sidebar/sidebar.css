@@ -22,6 +22,28 @@
 	cursor: pointer;
 }
 
+.sidebar-group-tab:has(.sidebar-group-tab__badge) {
+	position: relative;
+}
+
+/* A count on a tab's icon, such as a project's open pull requests. */
+.sidebar-group-tab__badge {
+	position: absolute;
+	top: 2px;
+	right: 0;
+	min-width: 14px;
+	padding: 0 3px;
+	border-radius: 7px;
+	background: rgb(255 255 255 / 0.18);
+	color: #ffffff;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 9px;
+	font-weight: 600;
+	line-height: 13px;
+	text-align: center;
+	pointer-events: none;
+}
+
 .sidebar-group-tab:hover {
 	color: var(--tab-text-selected, #ffffff);
 	background: rgba(255, 255, 255, 0.1);

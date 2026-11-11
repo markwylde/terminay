@@ -3,8 +3,10 @@
  *
  * Home is the one place in a workspace that is not a project, so it is where
  * workspace-wide things live: an overview, the tab dashboard, bots,
- * automations, workflows, and recordings. The sidebar is a menu over exactly these six,
- * in this order.
+ * automations, workflows, recordings, and the pull requests and issues of the
+ * forges the server's extensions reach. The sidebar is a menu over these, in
+ * this order; Pull Requests and Issues are shown only where a forge source
+ * serves them (ADR-0106).
  */
 
 export const HOME_SECTIONS = [
@@ -14,6 +16,8 @@ export const HOME_SECTIONS = [
 	'automations',
 	'workflows',
 	'recordings',
+	'pullRequests',
+	'issues',
 ] as const;
 export type HomeSection = (typeof HOME_SECTIONS)[number];
 
@@ -31,6 +35,8 @@ export const HOME_SECTION_LABELS: Record<HomeSection, string> = {
 	automations: 'Automations',
 	bots: 'Bots',
 	home: 'Home',
+	issues: 'Issues',
+	pullRequests: 'Pull Requests',
 	recordings: 'Recordings',
 	tabs: 'Tabs',
 	workflows: 'Workflows',

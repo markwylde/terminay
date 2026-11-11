@@ -12,6 +12,9 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	terminal: 'terminal.v1',
 	files: 'files.v1',
 	git: 'git.v1',
+	/** Pull requests and issues read from forge sources that extensions
+	 * contribute, pulled on demand (ADR-0106). */
+	forge: 'forge.v1',
 	agents: 'agents.v1',
 	settings: 'settings.v1',
 	macros: 'macros.v1',
@@ -97,6 +100,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.serverUpgrade,
 			FEATURE_CAPABILITIES.agents,
 			FEATURE_CAPABILITIES.git,
+			FEATURE_CAPABILITIES.forge,
 			FEATURE_CAPABILITIES.settings,
 			FEATURE_CAPABILITIES.macros,
 			FEATURE_CAPABILITIES.automations,

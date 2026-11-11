@@ -80,6 +80,9 @@ import {
 	ServerFileContentAdapter,
 	ServerFileObservationAdapter,
 	ServerGitAdapter,
+	ForgeService,
+	ServerForgeAdapter,
+	fileForgeSettings,
 	ServerMdxRuntimeAdapter,
 	ServerParakeetDictationProvider,
 	ServerRecordingAdapter,
@@ -944,7 +947,20 @@ async function createServerComposition(
 		insights: worktreeInsights,
 		// A worktree renamed or moved through Terminay keeps its folder.
 		onWorktreeMove: folders.onWorktreeMove,
+		forgeRemotes: (projectId, repository) =>
+			forgeService.claimedRemotes(projectId, repository),
 	});
+	// Pull requests and issues, pulled from extension forge sources on demand.
+	const forgeService = new ForgeService({
+			hosts: extensions.hosts,
+			projects: worktreeInsights,
+			credentials: worktreeInsights,
+			settings: fileForgeSettings(join(options.dataRoot, 'forge-settings.v1.json')),
+			onError: (message) => {
+				process.stderr.write(`[terminay-server] ${message}\n`);
+			},
+	});
+	const forge = new ServerForgeAdapter(forgeService);
 	const parakeetRuntime = new ParakeetRuntime({
 		rootDirectory: join(options.dataRoot, 'dictation', 'parakeet'),
 	});
@@ -1069,6 +1085,7 @@ async function createServerComposition(
 			FEATURE_CAPABILITIES.recording,
 			FEATURE_CAPABILITIES.extensions,
 			FEATURE_CAPABILITIES.git,
+			FEATURE_CAPABILITIES.forge,
 			FEATURE_CAPABILITIES.dictation,
 			FEATURE_CAPABILITIES.health,
 			FEATURE_CAPABILITIES.heartbeat,
@@ -1192,6 +1209,7 @@ async function createServerComposition(
 		recordings,
 		extensions,
 		git,
+		forge,
 		folderRoots: folders.roots,
 		gitCommands: worktreeCapture.gitCommands,
 		ai,

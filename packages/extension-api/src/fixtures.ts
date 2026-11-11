@@ -1,4 +1,5 @@
 import { namespacedId } from './constants.js';
+import type { ForgeItemSummary, ForgeSourceContribution } from './forge.js';
 import type {
 	AgentSessionSourceContribution,
 	LanguageServerContribution,
@@ -166,3 +167,87 @@ export const hostileManifestFixtures: Readonly<Record<string, unknown>> =
 			},
 		},
 	});
+
+export const forgeFixtureExtensionId = 'dev.terminay.forge-fixture';
+export const forgeFixtureOrigin = 'https://forge.example.net';
+
+/** A provider-neutral forge source contribution. */
+export const validForgeSourceContributionFixture: ForgeSourceContribution =
+	Object.freeze({
+		id: namespacedId(forgeFixtureExtensionId, 'forge'),
+		displayName: 'Fixture Forge',
+		kinds: ['pullRequest', 'issue'],
+		allReach: 'readable',
+	} satisfies ForgeSourceContribution);
+
+export const validForgeManifestFixture: TerminayExtensionManifest =
+	Object.freeze({
+		manifestVersion: 1,
+		id: forgeFixtureExtensionId,
+		displayName: 'Fixture Forge Extension',
+		api: '^3.7.0',
+		engines: { terminay: '>=1.0.0', node: '>=22' },
+		entrypoint: 'dist/extension.js',
+		permissions: ['forge-source', 'network'],
+		contributes: { forgeSources: [validForgeSourceContributionFixture] },
+	} satisfies TerminayExtensionManifest);
+
+/** A valid open pull request on the fixture origin, with a check hosted elsewhere. */
+export const validForgePullRequestFixture: ForgeItemSummary = Object.freeze({
+	reference: {
+		kind: 'pullRequest',
+		origin: forgeFixtureOrigin,
+		owner: 'acme',
+		name: 'app',
+		number: 88,
+	},
+	title: 'Add event stream',
+	url: `${forgeFixtureOrigin}/acme/app/pulls/88`,
+	state: 'open',
+	author: 'octo',
+	labels: [{ name: 'feature', color: '0e8a16' }],
+	comments: 2,
+	createdAt: '2026-11-01T10:00:00Z',
+	updatedAt: '2026-11-10T10:00:00Z',
+	pullRequest: {
+		headBranch: 'change/13-events',
+		baseBranch: 'main',
+		headOwner: 'acme',
+		headName: 'app',
+		headCommit: 'abcdef1',
+		checks: {
+			passed: 1,
+			failed: 1,
+			pending: 0,
+			skipped: 0,
+			total: 2,
+			items: [
+				{ name: 'build', state: 'passed' },
+				{
+					name: 'test',
+					state: 'failed',
+					url: 'https://ci.example.org/build/7',
+				},
+			],
+		},
+	},
+} satisfies ForgeItemSummary);
+
+/** A valid open issue on the fixture origin. */
+export const validForgeIssueFixture: ForgeItemSummary = Object.freeze({
+	reference: {
+		kind: 'issue',
+		origin: forgeFixtureOrigin,
+		owner: 'acme',
+		name: 'app',
+		number: 541,
+	},
+	title: 'Home sidebar: Pull Requests and Issues sections',
+	url: `${forgeFixtureOrigin}/acme/app/issues/541`,
+	state: 'open',
+	author: 'octo',
+	labels: [],
+	comments: 0,
+	createdAt: '2026-11-02T10:00:00Z',
+	updatedAt: '2026-11-09T10:00:00Z',
+} satisfies ForgeItemSummary);

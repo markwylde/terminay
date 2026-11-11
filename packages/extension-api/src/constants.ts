@@ -7,9 +7,10 @@ export const EXTENSION_MANIFEST_VERSION = 1 as const;
  * machine-wide agent session sources, and added MCP install targets, so every
  * extension declaring `^2.x` is incompatible with this host. 3.1 added
  * worktree insight sources. 3.2 added chat providers. 3.3 added terminal
- * launchers and the agent icon marks. 3.4 added terminal command defaults. 3.5 added bot agents.
+ * launchers and the agent icon marks. 3.4 added terminal command defaults. 3.5 added bot agents. 3.7 added forge
+ * sources, the forge-source permission, and launchers' `initialPrompt`.
  */
-export const EXTENSION_API_VERSION = '3.6.0' as const;
+export const EXTENSION_API_VERSION = '3.7.0' as const;
 
 export const EXTENSION_LIMITS = Object.freeze({
 	manifestBytes: 64 * 1024,
@@ -95,6 +96,26 @@ export const EXTENSION_LIMITS = Object.freeze({
 	commandDefaultArgs: 8,
 	commandDefaultArgLength: 256,
 	commandDefaultDetailLength: 1_024,
+	/** Forge sources and the pull requests and issues they may answer with. */
+	forgeSources: 8,
+	forgeAccounts: 32,
+	forgeOwnersPerAccount: 50,
+	forgeLoginLength: 128,
+	forgeRepositoryNameLength: 128,
+	forgeBranchLength: 256,
+	forgeCommitLength: 64,
+	forgeTitleLength: 512,
+	forgeBodyLength: 65_536,
+	forgeComments: 10,
+	forgeCommentLength: 8_192,
+	forgeLabels: 20,
+	forgeLabelNameLength: 128,
+	forgePageSize: 50,
+	forgeQueryRepositories: 50,
+	forgeQueryOwners: 50,
+	forgeTextLength: 256,
+	forgeCursorLength: 1_024,
+	forgeRemoteUrlLength: 2_048,
 } as const);
 
 /**

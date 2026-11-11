@@ -4,6 +4,7 @@ import type {
 	AgentChatProviderRegistry,
 } from './chat.js';
 import type { EXTENSION_ICONS } from './constants.js';
+import type { ForgeSourceContribution, ForgeSourceRegistry } from './forge.js';
 import type {
 	TerminalCommandDefaultContribution,
 	TerminalContributionRegistry,
@@ -34,7 +35,8 @@ export type ExtensionPermission =
 	| 'agent-chat'
 	| 'agent-bots'
 	| 'agent-launch'
-	| 'terminal-command-defaults';
+	| 'terminal-command-defaults'
+	| 'forge-source';
 
 export interface ExtensionDependency {
 	extensionId: string;
@@ -121,6 +123,7 @@ export interface TerminayExtensionManifest {
 		botAgents?: BotAgentContribution[];
 		terminalLaunchers?: TerminalLauncherContribution[];
 		terminalCommandDefaults?: TerminalCommandDefaultContribution[];
+		forgeSources?: ForgeSourceContribution[];
 	};
 }
 
@@ -259,6 +262,8 @@ export interface ExtensionContext {
 	 * and command defaults only to manifests granted terminal-command-defaults.
 	 */
 	terminals: TerminalContributionRegistry;
+	/** Forge sources are available only to manifests granted forge-source. */
+	forges: ForgeSourceRegistry;
 	/** Host-disposed registrations and observers owned by this activation. */
 	subscriptions: ExtensionSubscriptions;
 	/**

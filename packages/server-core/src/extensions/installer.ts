@@ -578,6 +578,7 @@ export class ExtensionInstaller {
 			agentChatProviders: readonly import('@terminay/extension-api').AgentChatProviderContribution[];
 			terminalLaunchers: readonly import('@terminay/extension-api').TerminalLauncherContribution[];
 			terminalCommandDefaults: readonly import('@terminay/extension-api').TerminalCommandDefaultContribution[];
+			forgeSources: readonly import('@terminay/extension-api').ForgeSourceContribution[];
 			manifest: ExtensionReceipt['manifest'];
 		}>
 	> {
@@ -628,6 +629,9 @@ export class ExtensionInstaller {
 				structuredClone(
 					slot.receipt.manifest.contributes.terminalCommandDefaults ?? [],
 				),
+			),
+			forgeSources: Object.freeze(
+				structuredClone(slot.receipt.manifest.contributes.forgeSources ?? []),
 			),
 			manifest: slot.receipt.manifest,
 		});

@@ -46,17 +46,24 @@ import {
 import type { AutomationForm } from './automations/automationsModel';
 import { requestBotFocus } from './bots/botFocus';
 import type { BotTabHost, BotTabTarget } from './bots/botTabHost';
-import { HOME_SECTION_ICONS, HomeView, type HomeViewProps } from './HomeView';
+import {
+	HOME_SECTION_ICONS,
+	HomeView,
+	type HomeViewProps,
+	visibleHomeSections,
+} from './HomeView';
+
+/** The sections whose content the window composes. */
+export type HomeComposedSection = Exclude<
+	HomeSection,
+	'automations' | 'bots' | 'recordings'
+>;
 import {
 	RecordingReplayPanel,
 	RecordingsListPanel,
 	type RecordingTabHost,
 } from './recordings/RecordingsPanels';
-import {
-	HOME_SECTION_LABELS,
-	HOME_SECTIONS,
-	type HomeSection,
-} from './homeSection.ts';
+import { HOME_SECTION_LABELS, type HomeSection } from './homeSection.ts';
 import {
 	defaultHomeTabTitle,
 	HOME_TAB_COMPONENT,
@@ -94,7 +101,8 @@ type HomeTabsContextValue = Readonly<{
 		from?: string,
 	) => void;
 	openBot: (target: BotTabTarget, from?: string) => void;
-	renderSection: (section: 'home' | 'tabs' | 'workflows') => ReactNode;
+	renderSection: (section: HomeComposedSection, isVisible: boolean) => ReactNode;
+	hiddenSections?: ReadonlySet<HomeSection>;
 	renderBots: (host: BotTabHost) => ReactNode;
 	renderBot: (
 		target: Readonly<{ serverId: string; botId: string }>,
@@ -208,7 +216,7 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 					);
 					break;
 				default:
-					content = home.renderSection(descriptor.section);
+					content = home.renderSection(descriptor.section, onScreen);
 			}
 			break;
 		case 'bot':
@@ -370,7 +378,7 @@ function HomeEmptyState() {
 			<h2 className="home-empty__title">Nothing open in Home</h2>
 			<p className="home-empty__text">Open a section to get started.</p>
 			<div className="home-empty__sections">
-				{HOME_SECTIONS.map((section) => (
+				{visibleHomeSections(home.hiddenSections).map((section) => (
 					<button
 						key={section}
 						type="button"
@@ -437,9 +445,11 @@ export type HomeWorkspaceProps = Readonly<{
 	/** The tab in front changed: its section, when it is one, and its title. */
 	onActiveTabChange?: (tab: HomeFrontTab | undefined) => void;
 	onSidebarWidthCommit: (width: number) => void;
-	/** The Home overview, the Tabs dashboard, and the Workflows section,
-	 * which the window composes. */
-	renderSection: (section: 'home' | 'tabs' | 'workflows') => ReactNode;
+	/** The Home overview, the Tabs dashboard, Workflows, Pull Requests, and
+	 * Issues, which the window composes; told whether the tab is on screen. */
+	renderSection: (section: HomeComposedSection, isVisible: boolean) => ReactNode;
+	/** Sections this window does not offer, such as Pull Requests with no forge source. */
+	hiddenSections?: ReadonlySet<HomeSection>;
 	/** The Bots section and each bot's tab, which the window composes. */
 	renderBots: (host: BotTabHost) => ReactNode;
 	renderBot: (
@@ -479,6 +489,7 @@ export const HomeWorkspace = forwardRef<
 		renderBot,
 		renderBots,
 		renderSection,
+		hiddenSections,
 		sidebarWidth,
 		renderSidebarBots,
 		renderBotIcon,
@@ -826,6 +837,7 @@ export const HomeWorkspace = forwardRef<
 			renderSection,
 			requestClose,
 			setDirty,
+			...(hiddenSections === undefined ? {} : { hiddenSections }),
 			...(commandBarShortcutLabel === undefined
 				? {}
 				: { commandBarShortcutLabel }),
@@ -846,6 +858,7 @@ export const HomeWorkspace = forwardRef<
 			renderBotIcon,
 			renderBots,
 			renderSection,
+			hiddenSections,
 			requestClose,
 			setDirty,
 		],
@@ -861,6 +874,7 @@ export const HomeWorkspace = forwardRef<
 			onSidebarWidthCommit={onSidebarWidthCommit}
 			sidebarWidth={sidebarWidth}
 			{...(sectionBadges === undefined ? {} : { sectionBadges })}
+			{...(hiddenSections === undefined ? {} : { hiddenSections })}
 			sidebarExtra={renderSidebarBots?.({
 				activeBot:
 					activeDescriptor?.kind === 'bot'

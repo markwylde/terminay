@@ -4,6 +4,8 @@ import { originOf } from './https.js';
 export interface TeaLogin {
 	url: string;
 	token: string;
+	/** The login's user name, when tea recorded it. */
+	user?: string;
 }
 
 /**
@@ -46,7 +48,13 @@ export function parseTeaLogins(text: string): TeaLogin[] {
 			typeof current.token === 'string' &&
 			current.token.length > 0
 		)
-			logins.push({ url: current.url, token: current.token });
+			logins.push({
+				url: current.url,
+				token: current.token,
+				...(typeof current.user === 'string' && current.user.length > 0
+					? { user: current.user }
+					: {}),
+			});
 		current = undefined;
 	};
 	for (const raw of text.split(/\r?\n/)) {
@@ -93,6 +101,10 @@ export interface TeaTokenStore {
 	token(origin: string): Promise<string | undefined>;
 	/** The origin refused this login's token; stop offering it. */
 	reject(origin: string): void;
+	/** Every origin with a tea login, once each. */
+	origins(): Promise<string[]>;
+	/** The user name of the tea login used for `origin`, if recorded. */
+	user(origin: string): Promise<string | undefined>;
 	dispose(): void;
 }
 
@@ -137,6 +149,17 @@ export function createTeaTokenStore(options: {
 		},
 		reject(origin) {
 			rejected.add(origin);
+		},
+		async origins() {
+			const origins = new Set<string>();
+			for (const login of await load()) {
+				const origin = originOf(login.url);
+				if (origin !== undefined && origin.startsWith('https:')) origins.add(origin);
+			}
+			return [...origins];
+		},
+		async user(origin) {
+			return (await load()).find((login) => originOf(login.url) === origin)?.user;
 		},
 		dispose() {
 			disposed = true;

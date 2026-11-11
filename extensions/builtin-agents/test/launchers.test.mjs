@@ -53,6 +53,13 @@ test('the manifest declares both launchers, Claude Code first, under agent-launc
 			[CODEX_LAUNCHER_ID, 'agent-codex', 'codex'],
 		],
 	);
+	// Exactly these two take an initial prompt as one positional argument (ADR-0105).
+	assert.deepEqual(
+		manifest.contributes.terminalLaunchers
+			.filter((launcher) => launcher.initialPrompt === 'positional')
+			.map((launcher) => launcher.id),
+		[CLAUDE_CODE_LAUNCHER_ID, CODEX_LAUNCHER_ID],
+	);
 });
 
 test('an installed agent resolves to its absolute path', async (t) => {

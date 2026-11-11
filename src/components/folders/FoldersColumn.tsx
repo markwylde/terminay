@@ -7,8 +7,9 @@ import { FoldersTree, type FoldersTreeProps } from './FoldersTree';
 import './foldersTree.css';
 
 /**
- * A project's left column: the Folders tree and the project's agents, one at a
- * time, chosen from icon tabs.
+ * A project's left column: the Folders tree, the project's agents, and, when
+ * a forge source claims its remote, its Git tab of issues and pull requests,
+ * one at a time, chosen from icon tabs.
  *
  * The band that holds the tabs is the project chrome, the same band the panel
  * tab strip and the sidebar's group tabs draw, so the colour runs unbroken
@@ -17,6 +18,7 @@ import './foldersTree.css';
  */
 export function FoldersColumn({
 	agents,
+	git,
 	footer,
 	idPrefix,
 	isMenuOpen = false,
@@ -27,6 +29,8 @@ export function FoldersColumn({
 }: FoldersTreeProps & {
 	/** The Agents list, or undefined when the project presents no agents. */
 	agents?: ReactNode;
+	/** The Git tab's panes, when a forge source claims the project's remote. */
+	git?: ReactNode;
 	/** Pinned beneath the lists. */
 	footer?: ReactNode;
 	/** Distinguishes this column's tab and panel ids from another project's. */
@@ -37,17 +41,26 @@ export function FoldersColumn({
 	onSelectTab: (tabId: FoldersColumnTabId) => void;
 	selectedTab: FoldersColumnTabId;
 }) {
-	// With no Agents list there is one list and nothing to choose between. The
-	// stored selection is left as it is for when agents come back.
-	const shownTab: FoldersColumnTabId =
-		agents === undefined ? 'tabs' : selectedTab;
+	// Only the lists this project has get a tab. With one list there is
+	// nothing to choose between. A stored selection whose list is gone is
+	// left as it is for when it comes back.
+	const present: Readonly<Record<FoldersColumnTabId, boolean>> = {
+		tabs: true,
+		agents: agents !== undefined,
+		git: git !== undefined,
+	};
+	const tabs = FOLDERS_COLUMN_TABS.filter((tab) => present[tab.id]);
+	const hasTabs = tabs.length > 1;
+	const shownTab: FoldersColumnTabId = present[selectedTab]
+		? selectedTab
+		: 'tabs';
 	const panelId = (tabId: FoldersColumnTabId) => `${idPrefix}-panel-${tabId}`;
 	const panelProps = (tabId: FoldersColumnTabId) => ({
 		id: panelId(tabId),
 		className: `folders-column__panel${shownTab === tabId ? '' : ' folders-column__panel--hidden'}`,
 		'data-folders-column-panel': tabId,
 		'aria-hidden': shownTab !== tabId,
-		...(agents === undefined
+		...(!hasTabs
 			? {}
 			: {
 					role: 'tabpanel',
@@ -58,11 +71,11 @@ export function FoldersColumn({
 	return (
 		<div className="folders-column" data-terminay-folders-column="true">
 			<div className="folders-column__header">
-				{agents === undefined ? null : (
+				{!hasTabs ? null : (
 					<SidebarGroupTabs
 						className="folders-column__tabs"
 						activeTab={shownTab}
-						tabs={FOLDERS_COLUMN_TABS}
+						tabs={tabs}
 						idPrefix={idPrefix}
 						label="Left column"
 						panelId={panelId}
@@ -93,6 +106,7 @@ export function FoldersColumn({
 				{agents === undefined ? null : (
 					<div {...panelProps('agents')}>{agents}</div>
 				)}
+				{git === undefined ? null : <div {...panelProps('git')}>{git}</div>}
 			</div>
 			{footer}
 		</div>

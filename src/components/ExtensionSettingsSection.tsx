@@ -17,6 +17,8 @@ import {
 	type ExtensionSummaryDto,
 	extensionListStatus,
 } from './ExtensionManager';
+import { ForgeExtensionSettings } from '../forge/ForgeSettings';
+import { createForgeClient } from '../forge/useForge';
 import './extensionManager.css';
 
 export function ExtensionSettingsSection({
@@ -56,6 +58,12 @@ export function ExtensionSettingsSection({
 		() => applicationClient === undefined
 			? undefined
 			: new TerminayGitClient(new TerminayClientFacade(applicationClient)),
+		[applicationClient],
+	);
+	// Pull requests and issues settings, for an extension with forge sources.
+	// Asked without a capability check: a server without them just answers no.
+	const forgeClient = useMemo(
+		() => createForgeClient(applicationClient, undefined),
 		[applicationClient],
 	);
 	const refreshSignInPrompts = useCallback(async () => {
@@ -189,6 +197,9 @@ export function ExtensionSettingsSection({
 				<div id="section-extensions" aria-busy={busy}>
 					{errorBanner}
 					{manager(selectedId)}
+					{selected === undefined ? null : (
+						<ForgeExtensionSettings client={forgeClient} extensionId={selected.id} />
+					)}
 					{statusLines}
 				</div>
 			),

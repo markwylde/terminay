@@ -18,6 +18,7 @@ import {
 	validateIdentity,
 } from './auth.js';
 import { FileServiceError } from './fileService/types.js';
+import { ForgeServiceError } from './forge/service.js';
 import { GitServiceError } from './gitService/types.js';
 import { TerminalServiceError } from './terminalService/errors.js';
 import type {
@@ -414,6 +415,19 @@ function dispatchError(error: unknown, fallback: string): ProtocolError {
 	if (error instanceof TerminalServiceError) return terminalServiceError(error);
 	if (error instanceof FileServiceError) return fileServiceError(error);
 	if (error instanceof GitServiceError) return gitServiceError(error);
+	if (error instanceof ForgeServiceError)
+		return {
+			code:
+				error.code === 'forbidden'
+					? 'forbidden'
+					: error.code === 'not-found'
+						? 'not_found'
+						: error.code === 'unavailable'
+							? 'unavailable'
+							: 'validation',
+			message: error.message.slice(0, 1_000),
+			retryable: error.code === 'unavailable',
+		};
 	// The client sees only the fallback; the operator needs the cause.
 	console.error(`[terminay] ${fallback}:`, error);
 	return { code: 'internal', message: fallback, retryable: false };

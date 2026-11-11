@@ -27,6 +27,12 @@ export interface TerminalLauncherContribution {
 	platforms?: ExtensionPlatform[];
 	/** While this harness is switched off the launcher is not offered. */
 	harness?: TerminalLauncherHarness;
+	/**
+	 * The program takes an initial prompt as its first positional argument
+	 * (ADR-0105). Terminay may then pass a user-confirmed prompt, quoted by
+	 * the host; the launcher never supplies or sees it.
+	 */
+	initialPrompt?: 'positional';
 }
 
 export type TerminalLauncherUnavailableReason =

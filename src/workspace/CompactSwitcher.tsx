@@ -1730,7 +1730,10 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 						<SidebarGroupTabs
 							className="compact-drawer__tabs"
 							activeTab={shownTab}
-							tabs={FOLDERS_COLUMN_TABS}
+							tabs={FOLDERS_COLUMN_TABS.filter(
+								(candidate) =>
+									candidate.id === 'tabs' || candidate.id === 'agents',
+							)}
 							idPrefix="compact-switcher"
 							label="Switcher"
 							showLabels

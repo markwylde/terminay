@@ -50,6 +50,13 @@ export const HOST_FRAME_KINDS = [
 	'agent.chat.close',
 	'terminal.launcher.resolve',
 	'terminal.commandDefault.resolve',
+	/** One accounts, claim, query, or detail call on a forge source. */
+	'forge.source.accounts',
+	'forge.source.claim',
+	'forge.source.query',
+	'forge.source.detail',
+	/** A token was stored for one of the extension's origins. */
+	'forge.source.credential',
 ] as const;
 export type HostFrameKind = (typeof HOST_FRAME_KINDS)[number];
 
@@ -72,6 +79,9 @@ export const CHILD_FRAME_KINDS = [
 	/** Text, tool activity, failure, or exit from one open chat session. */
 	'agent.chat.event',
 	'agent.bot.disposed',
+	/** A forge source's hint that one origin's results changed. */
+	'forge.source.invalidate',
+	'forge.source.disposed',
 	'fatal',
 ] as const;
 export type ChildFrameKind = (typeof CHILD_FRAME_KINDS)[number];

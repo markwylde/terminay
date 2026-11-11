@@ -75,6 +75,7 @@ import {
 	type ServerFileObservationAdapter,
 } from './fileService/observationAdapter.js';
 import type { ServerGitAdapter } from './gitService/adapter.js';
+import type { ServerForgeAdapter } from './forge/adapter.js';
 import {
 	type LanguageAdapterOptions,
 	ServerLanguageAdapter,
@@ -401,6 +402,8 @@ export interface ServerCoreCompositionOptions
 	readonly ai?: AiService;
 	/** Optional server-owned Git protocol authority. */
 	readonly git?: ServerGitAdapter;
+	/** Optional pull requests and issues from extension forge sources (ADR-0106). */
+	readonly forge?: ServerForgeAdapter;
 	/** The stream Git in Terminay's terminals reports its commands to. A host
 	 * that supplies one has every terminal it launches carry Git's Trace2
 	 * variables (ADR-0069). */
@@ -873,6 +876,9 @@ export function createServerCoreComposition(
 					eventJournal.append(event.type, event as unknown as JsonValue);
 				})
 			: undefined;
+	const unsubscribeForgeEvents = options.forge?.subscribeEvents((event) => {
+		eventJournal.append(event.type, event as unknown as JsonValue);
+	});
 	const workspaceOperations =
 		options.workspace === undefined
 			? undefined
@@ -1902,7 +1908,10 @@ export function createServerCoreComposition(
 		options.ai === undefined
 			? undefined
 			: createAiOperationHandlers(options.ai);
-	const gitOperations = options.git?.operations();
+	const gitOperations = mergeOperationRegistries(
+		options.git?.operations() ?? {},
+		options.forge?.operations() ?? {},
+	);
 	const recordingOperations = options.recordings?.operations();
 	if (options.recordings !== undefined) {
 		terminal.onEvent((event) => {
@@ -2030,7 +2039,7 @@ export function createServerCoreComposition(
 					),
 					agentOperations?.operations ?? {},
 				),
-				mergeOperationRegistries(aiOperations ?? {}, gitOperations ?? {}),
+				mergeOperationRegistries(aiOperations ?? {}, gitOperations),
 			),
 		),
 		mergeOperationRegistries(
@@ -2378,6 +2387,8 @@ export function createServerCoreComposition(
 			await attempt(() => options.recordings?.service.shutdown());
 			await attempt(() => options.serviceLifecycle?.stop?.());
 			await attempt(() => unsubscribeGitEvents?.());
+			await attempt(() => unsubscribeForgeEvents?.());
+			await attempt(() => options.forge?.close());
 			await attempt(() => unobserveTerminalLaunchers?.());
 			await attempt(() => unfollowLauncherHarnesses?.());
 			await attempt(() => unfollowCommandDefaultHarnesses?.());
@@ -2792,6 +2803,7 @@ function uniqueCapabilities(
 				: []),
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
+			...(options.forge === undefined ? [] : [FEATURE_CAPABILITIES.forge]),
 			...(options.recordings === undefined
 				? []
 				: [FEATURE_CAPABILITIES.recording]),
