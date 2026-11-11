@@ -41,6 +41,8 @@ type Scenario = {
 	settingsRefusal?: string;
 	deleteWarning?: string;
 	sendRefusal?: string;
+	/** Start outcomes for successive posts and retries: a reason fails that start, null starts it. */
+	starts?: (string | null)[];
 	postDelayMs?: number;
 	imageDelayMs?: number;
 	imageSize?: { width: number; height: number };
@@ -55,6 +57,8 @@ declare global {
 			setVisible: (visible: boolean) => void;
 		};
 		__scenario: Scenario;
+		/** Another client dismisses a start failure. */
+		__dismissElsewhere: (botId: string, messageId: string) => void;
 		__opened: unknown[];
 		__closed: unknown[];
 	}
@@ -125,6 +129,16 @@ const emitMessage = (
 		botId,
 	});
 	for (const listener of messageListeners) listener();
+};
+
+const starts = [...(scenario.starts ?? [])];
+const nextStart = (): string | null =>
+	starts.length ? (starts.shift() ?? null) : null;
+window.__dismissElsewhere = (botId, messageId) => {
+	const row = messageRows.get(botId)?.find((m) => m.id === messageId);
+	if (!row?.dispatch) return;
+	Object.assign(row, { dispatch: { ...row.dispatch, dismissed: true } });
+	emitMessage(botId, 'message.dispatch', row.id, row.revision);
 };
 
 const engineStatus = scenario.engine ?? {
@@ -223,14 +237,56 @@ const transport = {
 				text: a.text,
 				attachments: [],
 			};
+			const outcome = nextStart();
+			const executionId = outcome === null ? crypto.randomUUID() : null;
+			Object.assign(message, {
+				dispatch:
+					outcome === null
+						? { state: 'started', executionId }
+						: { state: 'failed', executionId: null, error: outcome },
+			});
 			messageRows.set(a.botId, [...rows, message]);
 			emitMessage(a.botId, 'message.posted', message.id, 1);
-			const result = { message, sessionId: crypto.randomUUID() };
+			const result =
+				outcome === null
+					? { message, sessionId: executionId }
+					: { message, error: outcome };
 			return scenario.postDelayMs
 				? new Promise((resolve) =>
 						setTimeout(() => resolve(result), scenario.postDelayMs),
 					)
 				: result;
+		}
+		if (op === 'bots.messages.retry' || op === 'bots.messages.dismiss') {
+			const p = payload as { attempt: number };
+			const row = rows.find((m) => m.id === a.messageId);
+			const dispatch = row?.dispatch;
+			if (
+				!row ||
+				row.revision !== a.revision ||
+				dispatch?.state !== 'failed' ||
+				dispatch.dismissed ||
+				(dispatch.attempt ?? 1) !== p.attempt
+			)
+				throw new Error('Message changed; reload before retrying');
+			if (op === 'bots.messages.dismiss') {
+				Object.assign(row, { dispatch: { ...dispatch, dismissed: true } });
+				emitMessage(a.botId, 'message.dispatch', row.id, row.revision);
+				return row;
+			}
+			const outcome = nextStart(),
+				attempt = p.attempt + 1;
+			const executionId = outcome === null ? crypto.randomUUID() : null;
+			Object.assign(row, {
+				dispatch:
+					outcome === null
+						? { state: 'started', executionId, attempt }
+						: { state: 'failed', executionId: null, error: outcome, attempt },
+			});
+			emitMessage(a.botId, 'message.dispatch', row.id, row.revision);
+			return outcome === null
+				? { message: row, sessionId: executionId }
+				: { message: row, error: outcome };
 		}
 		if (op === 'bots.messages.edit') {
 			const row = rows.find((m) => m.id === a.messageId);

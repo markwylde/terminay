@@ -603,6 +603,141 @@ test('Chat shows the not-signed-in refusal with a link to Sign-in', async () => 
 	}
 });
 
+const START_FAILED =
+	'The execution could not start. Check sign-in and the container engine, then retry.';
+const failedChat = (starts) =>
+	TAB({ bots: [bot(BIRD, 'Bird')], sessions: {}, starts });
+async function sendChat(page, text) {
+	await page.locator('[data-terminay-bot-composer]').fill(text);
+	await page.locator('[data-terminay-bot-send]').click();
+	await page.getByText(text, { exact: true }).waitFor();
+}
+const startFailures = (page) =>
+	page.locator('[data-terminay-bot-start-failure]');
+
+test('a start failure warning hides once a later message starts', async () => {
+	const page = await open(failedChat([START_FAILED, null]));
+	try {
+		await sendChat(page, 'first try');
+		await startFailures(page).first().waitFor();
+		assert.match(await startFailures(page).innerText(), /then retry\./);
+		await shot(page, 'start-failure-warning');
+		await sendChat(page, 'second try');
+		await startFailures(page).first().waitFor({ state: 'detached' });
+	} finally {
+		await page.close();
+	}
+});
+
+test('each unresolved start failure shows its own warning until deleted', async () => {
+	const page = await open(failedChat([START_FAILED, START_FAILED]));
+	try {
+		await sendChat(page, 'first try');
+		await sendChat(page, 'second try');
+		await page.waitForFunction(
+			() =>
+				document.querySelectorAll('[data-terminay-bot-start-failure]')
+					.length === 2,
+		);
+		await page
+			.getByText('first try', { exact: true })
+			.click({ button: 'right' });
+		await page.getByText('Delete message').click();
+		await page.waitForFunction(
+			() =>
+				document.querySelectorAll('[data-terminay-bot-start-failure]')
+					.length === 1,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('Dismiss hides a start failure through the server', async () => {
+	const page = await open(failedChat([START_FAILED]));
+	try {
+		await sendChat(page, 'first try');
+		await page.locator('[data-terminay-bot-start-failure-dismiss]').click();
+		await startFailures(page).first().waitFor({ state: 'detached' });
+		await shot(page, 'start-failure-dismissed');
+		const sent = (await calls(page, 'transport.command')).filter(
+			(c) => c.args[0] === 'bots.messages.dismiss',
+		);
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0].args[1].revision, 1);
+		assert.equal(sent[0].args[1].attempt, 1);
+	} finally {
+		await page.close();
+	}
+});
+
+test('Retry hides the warning when the execution starts', async () => {
+	const page = await open(failedChat([START_FAILED, null]));
+	try {
+		await sendChat(page, 'first try');
+		await page.locator('[data-terminay-bot-start-failure-retry]').click();
+		await startFailures(page).first().waitFor({ state: 'detached' });
+		await shot(page, 'start-failure-retried');
+		const commands = (await calls(page, 'transport.command')).map(
+			(c) => c.args[0],
+		);
+		assert.equal(
+			commands.filter((op) => op === 'bots.messages.retry').length,
+			1,
+		);
+		assert.equal(
+			commands.filter((op) => op === 'bots.messages.post').length,
+			1,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('Retry keeps the warning with the new reason when it fails again', async () => {
+	const page = await open(
+		failedChat([START_FAILED, 'This bot is not signed in.']),
+	);
+	try {
+		await sendChat(page, 'first try');
+		await page.locator('[data-terminay-bot-start-failure-retry]').click();
+		await page
+			.locator('[data-terminay-bot-start-failure]', {
+				hasText: 'This bot is not signed in.',
+			})
+			.waitFor();
+		assert.equal(await startFailures(page).count(), 1);
+		await shot(page, 'start-failure-retry-failed-again');
+		await page.locator('[data-terminay-bot-start-failure-retry]').click();
+		const retries = (await calls(page, 'transport.command')).filter(
+			(c) => c.args[0] === 'bots.messages.retry',
+		);
+		assert.deepEqual(
+			retries.map((c) => c.args[1].attempt),
+			[1, 2],
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('a dismissal from another client hides the warning', async () => {
+	const page = await open(failedChat([START_FAILED]));
+	try {
+		await sendChat(page, 'first try');
+		const id = await startFailures(page)
+			.first()
+			.getAttribute('data-terminay-bot-start-failure');
+		await page.evaluate(
+			([botId, messageId]) => window.__dismissElsewhere(botId, messageId),
+			[BIRD, id],
+		);
+		await startFailures(page).first().waitFor({ state: 'detached' });
+	} finally {
+		await page.close();
+	}
+});
+
 const CODEX_SIGN_IN = (signedIn) => ({
 	device: {
 		label: 'Sign in with ChatGPT',

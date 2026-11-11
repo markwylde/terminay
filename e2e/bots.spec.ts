@@ -1476,6 +1476,71 @@ test.describe('Home › Bots', () => {
 			'none',
 		);
 	});
+
+	test('a message that failed to start can be dismissed or retried in place', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Kestrel', 'none'));
+		const warnings = tab.locator('[data-terminay-bot-start-failure]');
+		const shot = async (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+
+		// A failed start leaves a warning with Retry and Dismiss.
+		await send(tab, 'first try');
+		await expect(warnings).toHaveCount(1);
+		await expect(warnings).toContainText('not signed in');
+		await shot('start-failure-warning');
+
+		// Dismiss hides it, and it stays hidden after reopening Chat.
+		await warnings
+			.locator('[data-terminay-bot-start-failure-dismiss]')
+			.click();
+		await expect(warnings).toHaveCount(0);
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await chat(tab);
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'first try',
+		);
+		await expect(warnings).toHaveCount(0);
+		await shot('start-failure-dismissed');
+
+		// Fail again, sign in, then Retry the same message.
+		await send(tab, 'hello again');
+		await expect(warnings).toHaveCount(1);
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		const token = tab.locator('[data-terminay-bot-token="ANTHROPIC_API_KEY"]');
+		await token
+			.locator('[data-terminay-bot-token-input="ANTHROPIC_API_KEY"]')
+			.fill(TOKEN);
+		await token.locator('button[type="submit"]').click();
+		await expect(token).toHaveAttribute(
+			'data-terminay-bot-token-configured',
+			'true',
+		);
+		await tab
+			.locator('[data-terminay-bot-signin-option="ANTHROPIC_API_KEY"]')
+			.click();
+		await expect(tab.locator('[data-terminay-bot-signin]')).toHaveAttribute(
+			'data-terminay-bot-signin',
+			'token',
+		);
+		await chat(tab);
+		await expect(warnings).toHaveCount(1);
+		await warnings.locator('[data-terminay-bot-start-failure-retry]').click();
+		await expect(warnings).toHaveCount(0);
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		// Retry posts no second copy of the message.
+		await expect(transcript.getByText('hello again')).toHaveCount(1);
+		await expect(tab.locator('[data-terminay-bot-typing]')).toHaveCount(0, {
+			timeout: 30_000,
+		});
+		await shot('start-failure-retried');
+	});
 });
 
 test('generic command source editor tests without sessions and Disable blocks manual wakes', async ({

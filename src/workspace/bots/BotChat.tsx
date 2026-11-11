@@ -76,7 +76,8 @@ export function BotChat({
 		[loading, setLoading] = useState(true),
 		[error, setError] = useState<string>(),
 		[sending, setSending] = useState(false),
-		[mutating, setMutating] = useState(false);
+		[mutating, setMutating] = useState(false),
+		[recovering, setRecovering] = useState<string>();
 	const [menu, setMenu] = useState<{
 		id: string;
 		text: string;
@@ -298,6 +299,24 @@ export function BotChat({
 	);
 	// Read position: snapshotted when Chat is entered so the divider stays put
 	// while the user reads; written back when they leave.
+	// A start failure stays visible until it is dismissed or a later user
+	// message has started an execution.
+	const startFailures = useMemo(() => {
+		let laterStarted = false;
+		const shown: BotMessage[] = [];
+		for (let i = ordered.length - 1; i >= 0; i--) {
+			const m = ordered[i]!;
+			if (m.author !== 'user') continue;
+			if (m.dispatch?.state === 'started') laterStarted = true;
+			else if (
+				m.dispatch?.state === 'failed' &&
+				!m.dispatch.dismissed &&
+				!laterStarted
+			)
+				shown.unshift(m);
+		}
+		return shown;
+	}, [ordered]);
 	const latest = ordered.at(-1)?.sequence;
 	const latestRef = useRef(latest);
 	latestRef.current = latest;
@@ -469,6 +488,28 @@ export function BotChat({
 			setMutating(false);
 		}
 	};
+	const recover = async (message: BotMessage, action: 'retry' | 'dismiss') => {
+		if (recovering) return;
+		const view = generation.current,
+			attempt = message.dispatch?.attempt ?? 1;
+		setRecovering(message.id);
+		setError(undefined);
+		try {
+			const updated =
+				action === 'retry'
+					? (
+							await client.retry(bot.id, message.id, message.revision, attempt)
+						).message
+					: await client.dismiss(bot.id, message.id, message.revision, attempt);
+			if (view === generation.current)
+				setMessages((current) => new Map(current).set(updated.id, updated));
+			if (action === 'retry') server.refreshBot(bot.id);
+		} catch (cause) {
+			if (view === generation.current) setError(refusalText(cause));
+		} finally {
+			setRecovering(undefined);
+		}
+	};
 	const send = async () => {
 		const images = pendingRef.current;
 		if (sending || (!draft.trim() && !images.length)) return;
@@ -508,7 +549,14 @@ export function BotChat({
 			// Replying means the user has caught up.
 			rememberBotChatRead(bot.id, result.message.sequence);
 			setReadThrough(result.message.sequence);
-			if (result.error) setError(result.error);
+			// A start failure shows as the message's warning with Retry and
+			// Dismiss; only a missing sign-in also needs the composer's link.
+			if (
+				result.error &&
+				(result.message.dispatch?.state !== 'failed' ||
+					/not signed in/.test(result.error))
+			)
+				setError(result.error);
 			server.refreshBot(bot.id);
 		} catch (cause) {
 			const message = refusalText(cause);
@@ -740,13 +788,35 @@ export function BotChat({
 								});
 						}}
 					/>
-					{ordered
-						.filter((m) => m.dispatch?.state === 'failed')
-						.map((m) => (
-							<p key={m.id} className="bots-note bots-note--warn">
-								{m.dispatch?.error}
-							</p>
-						))}
+					{startFailures.map((m) => (
+						<div
+							key={m.id}
+							className="bots-note bots-note--warn bots-start-failure"
+							data-terminay-bot-start-failure={m.id}
+						>
+							<span>{m.dispatch?.error}</span>
+							<span className="bots-start-failure__actions">
+								<button
+									type="button"
+									className="bots-btn bots-btn--sm"
+									disabled={recovering !== undefined}
+									data-terminay-bot-start-failure-retry="true"
+									onClick={() => void recover(m, 'retry')}
+								>
+									{recovering === m.id ? 'Retrying…' : 'Retry'}
+								</button>
+								<button
+									type="button"
+									className="bots-btn bots-btn--sm bots-btn--ghost"
+									disabled={recovering !== undefined}
+									data-terminay-bot-start-failure-dismiss="true"
+									onClick={() => void recover(m, 'dismiss')}
+								>
+									Dismiss
+								</button>
+							</span>
+						</div>
+					))}
 				</div>
 				<div className="bots-composer">
 					{error ? (

@@ -170,6 +170,18 @@
 	background: var(--bots-work-bg);
 	color: var(--bots-work);
 }
+.bots-start-failure {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+.bots-start-failure__actions {
+	display: flex;
+	gap: 6px;
+	flex-shrink: 0;
+}
 .bots-note--error {
 	background: var(--bots-need-bg);
 	color: var(--bots-need);

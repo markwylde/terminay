@@ -878,6 +878,77 @@ test('shared message APIs persist communication, enforce authority and preserve 
 	assert.ok(r.service.sessions.get(sent.sessionId));
 });
 
+test('retry and dismiss travel the message protocol with authority and act for the asking window', {
+	timeout: 30000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	await c.engine.build();
+	const bot = await c.bots.save({
+		name: 'Retried',
+		agentId: agent.id,
+		signIn: { kind: 'none' },
+	});
+	const first = await c.transport.command('bots.messages.post', {
+		botId: bot.id,
+		text: 'normal',
+		key: 'retry-1',
+	});
+	assert.equal(first.message.dispatch.state, 'failed');
+	const second = await c.transport.command('bots.messages.post', {
+		botId: bot.id,
+		text: 'normal',
+		key: 'retry-2',
+	});
+	const reader = await r.connect({ clientId: 'reader-retry', authScope: 'read' });
+	for (const op of ['bots.messages.retry', 'bots.messages.dismiss'])
+		await assert.rejects(
+			reader.transport.command(op, {
+				botId: bot.id,
+				messageId: first.message.id,
+				revision: 1,
+				attempt: 1,
+			}),
+		);
+	await assert.rejects(
+		c.transport.command('bots.messages.retry', {
+			botId: bot.id,
+			messageId: first.message.id,
+			revision: 1,
+			attempt: 0,
+		}),
+	);
+	const dismissed = await c.transport.command('bots.messages.dismiss', {
+		botId: bot.id,
+		messageId: second.message.id,
+		revision: 1,
+		attempt: 1,
+	});
+	assert.equal(dismissed.dispatch.dismissed, true);
+
+	await c.bots.save({
+		...bot,
+		signIn: { kind: 'token', environmentVariable: 'FAKE_KEY' },
+	});
+	await c.credentials.save(bot.id, 'FAKE_KEY', Buffer.from('secret'));
+	const other = await r.connect({ clientId: 'other-window', authScope: 'write' });
+	const retried = await other.transport.command('bots.messages.retry', {
+		botId: bot.id,
+		messageId: first.message.id,
+		revision: 1,
+		attempt: 1,
+	});
+	assert.ok(retried.sessionId);
+	assert.equal(retried.message.dispatch.state, 'started');
+	assert.equal(retried.message.dispatch.attempt, 2);
+	assert.equal(r.service.viewerOf(bot.id)?.clientId, 'other-window');
+	await until(r.service, 'changed', () =>
+		['completed', 'failed'].includes(
+			r.service.sessions.get(retried.sessionId).state,
+		),
+	);
+});
+
 test('wire errors explain engine identity changes and deletion remains usable with deferred owned resource removal', {
 	timeout: 30000,
 }, async (t) => {

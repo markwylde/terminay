@@ -108,6 +108,38 @@ export class BotMessagesClient {
 	): Promise<void> {
 		await this.transport.command(op.remove, { botId, messageId, revision });
 	}
+	/** Start a fresh execution for a user message whose start failed. */
+	async retry(
+		botId: string,
+		messageId: string,
+		revision: number,
+		attempt: number,
+	): Promise<{ message: BotMessage; sessionId?: string; error?: string }> {
+		return record(
+			await this.transport.command(op.retry, {
+				botId,
+				messageId,
+				revision,
+				attempt,
+			}),
+		) as unknown as { message: BotMessage; sessionId?: string; error?: string };
+	}
+	/** Hide a user message's start-failure warning on every client. */
+	async dismiss(
+		botId: string,
+		messageId: string,
+		revision: number,
+		attempt: number,
+	): Promise<BotMessage> {
+		return record(
+			await this.transport.command(op.dismiss, {
+				botId,
+				messageId,
+				revision,
+				attempt,
+			}),
+		) as unknown as BotMessage;
+	}
 	/** Acknowledge this bot's posts through the latest sequence this client has
 	 * observed; later posts keep their notification. */
 	async acknowledge(botId: string, throughSequence: number): Promise<void> {
