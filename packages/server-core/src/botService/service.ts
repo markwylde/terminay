@@ -36,6 +36,10 @@ import type {
 } from './environment.js';
 import { botFailure, botFailureCause } from './failure.js';
 import { BotFailureFollowUps } from './failureFollowUps.js';
+
+/** Shown while a blocked bot's earlier process cleanup is still unconfirmed. */
+const BOT_CLEANUP_UNCONFIRMED =
+	"An earlier execution's processes could not be cleaned up in the bot container. Check the container engine, then send a new message.";
 import {
 	BOT_IMAGE_BYTES,
 	botImageMime,
@@ -576,7 +580,7 @@ export class BotService extends EventEmitter {
 		if (previous && previous.enabled !== bot.enabled) {
 			this.triggers.availability(bot.id, bot.enabled !== false);
 			if (bot.enabled === false) this.queue.pause(bot.id);
-			else this.queue.unblock(bot.id);
+			else if (!this.queue.blocked(bot.id)) this.queue.unblock(bot.id);
 		}
 		return bot;
 	}
@@ -706,8 +710,9 @@ export class BotService extends EventEmitter {
 		this.bots.save({ ...bot, enabled }, revision);
 		if (!enabled) this.failureFollowUps.clear(botId);
 		this.triggers.availability(botId, enabled);
-		if (enabled) this.queue.unblock(botId);
-		else {
+		if (enabled) {
+			if (!this.queue.blocked(botId)) this.queue.unblock(botId);
+		} else {
 			this.queue.pause(botId);
 			this.hooks.activity(botId, this.queue.active(botId).length, 0);
 		}
@@ -806,11 +811,14 @@ export class BotService extends EventEmitter {
 				executionId: sent.sessionId,
 			});
 			return { message: this.messages.get(botId, message.id), ...sent };
-		} catch {
+		} catch (failure) {
 			const error =
-				this.bots.get(botId).signIn.kind === 'none'
-					? 'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.'
-					: 'The execution could not start. Check sign-in and the container engine, then send a new message.';
+				failure instanceof BotError &&
+				failure.message === BOT_CLEANUP_UNCONFIRMED
+					? BOT_CLEANUP_UNCONFIRMED
+					: this.bots.get(botId).signIn.kind === 'none'
+						? 'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.'
+						: 'The execution could not start. Check sign-in and the container engine, then send a new message.';
 			try {
 				this.messages.setDispatch(botId, message.id, {
 					state: 'failed',
@@ -936,6 +944,7 @@ export class BotService extends EventEmitter {
 			if (this.stoppingBots.has(botId))
 				throw new BotError('busy', 'bot is stopping');
 			this.assertEnabled(botId);
+			await this.retryCleanup(botId);
 			this.queue.unblock(botId);
 			const bot = this.bots.get(botId);
 			if (origin.kind === 'chat' && origin.messageId)
@@ -1125,6 +1134,27 @@ export class BotService extends EventEmitter {
 					await this.closeLive(record.id, 'bot-stop');
 		} finally {
 			this.stoppingBots.delete(botId);
+		}
+	}
+	/**
+	 * A bot blocked by unconfirmed process cleanup retries ending only those
+	 * sessions' process groups before new work, so it recovers without a
+	 * server restart. Other running executions are never ended.
+	 */
+	private async retryCleanup(botId: string): Promise<void> {
+		if (!this.queue.blocked(botId)) return;
+		for (const sessionId of this.queue.uncleaned(botId)) {
+			try {
+				await (await this.hooks.driver()).exec(
+					`terminay-bot-${botId}`,
+					['terminay-run', '--kill', sessionId],
+					{ user: 'root', deadlineMs: BOT_KILL_DEADLINE_MS },
+				);
+			} catch {
+				throw new BotBlockedError('engine', BOT_CLEANUP_UNCONFIRMED);
+			}
+			this.queue.cleaned(botId, sessionId);
+			this.sessions.runner(sessionId, 'Session cleanup confirmed on retry.\n');
 		}
 	}
 	private async suspend(id: string): Promise<void> {

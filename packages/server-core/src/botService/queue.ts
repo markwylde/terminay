@@ -17,6 +17,8 @@ interface Lane {
 	failed: boolean;
 	/** Consecutive finished executions whose cleanup failed, in finish order. */
 	cleanupFailures: number;
+	/** Sessions whose process-group cleanup is unconfirmed since the last confirmed one. */
+	uncleaned: Set<string>;
 	reservation?: { source: string; target: string };
 }
 /** How an execution ended its agent: `failed` means its process group was not confirmed gone. */
@@ -52,6 +54,7 @@ export class BotTurnQueue {
 				stopped: false,
 				failed: false,
 				cleanupFailures: 0,
+				uncleaned: new Set(),
 			};
 			this.lanes.set(id, lane);
 		}
@@ -150,8 +153,25 @@ export class BotTurnQueue {
 		if (reset) {
 			lane.failed = false;
 			lane.cleanupFailures = 0;
+			lane.uncleaned.clear();
 		}
 		this.dispatch(botId, lane);
+	}
+	/** Whether the bot is blocked until its unconfirmed cleanups are confirmed. */
+	blocked(botId: string): boolean {
+		return this.lane(botId).failed;
+	}
+	/** Sessions whose cleanup must be confirmed before a blocked bot runs again. */
+	uncleaned(botId: string): string[] {
+		return [...this.lane(botId).uncleaned];
+	}
+	/** A retried cleanup was confirmed; the last one lifts the block. */
+	cleaned(botId: string, sessionId: string): void {
+		const lane = this.lane(botId);
+		lane.uncleaned.delete(sessionId);
+		if (lane.uncleaned.size) return;
+		lane.failed = false;
+		lane.cleanupFailures = 0;
 	}
 	private fail(lane: Lane): void {
 		lane.failed = true;
@@ -197,10 +217,14 @@ export class BotTurnQueue {
 				.then(
 					(result) => {
 						if (result?.cleanup !== 'failed') {
-							if (!lane.failed) lane.cleanupFailures = 0;
+							if (!lane.failed) {
+								lane.cleanupFailures = 0;
+								lane.uncleaned.clear();
+							}
 							return;
 						}
 						lane.cleanupFailures++;
+						lane.uncleaned.add(item!.sessionId);
 						const blocked =
 							!lane.failed && lane.cleanupFailures >= BOT_CLEANUP_FAILURE_LIMIT;
 						if (blocked) this.fail(lane);
@@ -211,6 +235,7 @@ export class BotTurnQueue {
 						});
 					},
 					(error: unknown) => {
+						lane.uncleaned.add(item!.sessionId);
 						const blocked = !lane.failed;
 						this.fail(lane);
 						return this.report(item!, { error, cleanup: false, blocked });

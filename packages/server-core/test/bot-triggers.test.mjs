@@ -1629,11 +1629,24 @@ test('three consecutive cleanup failures block the bot without waking a failure 
 		'bot blocked after 3 consecutive cleanup failures',
 	);
 	assert.equal(investigations(r).length, 0);
+	// The engine still cannot end those process groups: work stays refused.
+	const exec = r.driver.exec;
+	r.driver.exec = async (container, args, options) => {
+		if (args[0] === 'terminay-run' && args[1] === '--kill')
+			throw new Error('container process failed');
+		return exec.call(r.driver, container, args, options);
+	};
 	await r.time.advance(start + 20 * MINUTE, r.engine);
 	await flush();
 	assert.equal(r.turns.length, 3, 'the fourth firing never reached the agent');
-	await assert.rejects(r.service.send(r.bot.id, 'hello?'));
+	await assert.rejects(r.service.send(r.bot.id, 'hello?'), /could not be cleaned up/);
 	assert.equal(r.turns.length, 3, 'a chat message never reached the agent');
+	// The engine recovers: the next message retries the cleanup and runs.
+	r.driver.exec = exec;
+	await r.service.send(r.bot.id, 'hello?');
+	await flush();
+	// The chat message runs; the trigger's missed firing may also recover.
+	assert.ok(r.turns.length >= 4, 'the bot recovered without a restart');
 });
 
 test('a cleanup error is redacted with the bot secrets in runner output and logs', async (t) => {
