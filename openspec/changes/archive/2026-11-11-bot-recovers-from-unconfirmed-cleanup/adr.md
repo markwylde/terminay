@@ -11,6 +11,7 @@
 - openspec/adr/0092-bots-use-the-local-docker-compatible-socket.md - Confirmed process-group cleanup stays mandatory. The bot still refuses work until cleanup is confirmed.
 - openspec/adr/0093-bots-communicate-through-a-durable-message-log.md - A refused message keeps its failed dispatch record, and the next message is a new post.
 - openspec/adr/0096-bots-use-terminay-owned-native-cli-drivers.md - Supervised cleanup through `terminay-run` is unchanged. The retry uses the same `--kill <sid>` command.
+- openspec/changes/archive/2026-11-11-bot-cleanup-failure-tolerance/adr.md - That change's ADR review covers the threshold and deadlines this change builds on. This change only adds a recovery path.
 - openspec/adr/0028-no-polling-without-owner-approval.md - The retry runs only when new work is requested. No timer or poll is added.
 
 ## Repository-Level ADRs Created

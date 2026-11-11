@@ -24,27 +24,42 @@ import type { OperationRegistries, RequestContext } from '../types.js';
 import {
 	BotAgentProcess,
 	type BotAgentProcessOptions,
+	BotCleanupError,
 } from './agentProcess.js';
 import { assertBotAuthority } from './authority.js';
 import { BotConnectionResources } from './connections.js';
 import type { BotCredentialLease } from './credentials.js';
-import type { EngineDriver } from './engine.js';
+import { BOT_KILL_DEADLINE_MS, type EngineDriver } from './engine.js';
 import type {
 	BotEnvironmentDefinition,
 	BotEnvironmentService,
 } from './environment.js';
 import { botFailure, botFailureCause } from './failure.js';
-import { botProcessCount, classifyProcessFailure } from './processExhaustion.js';
-import type { BotMemories } from './memories.js';
-import { BotMessageStore } from './messages.js';
+import { BotFailureFollowUps } from './failureFollowUps.js';
+
+/** Shown while a blocked bot's earlier process cleanup is still unconfirmed. */
+const BOT_CLEANUP_UNCONFIRMED =
+	"An earlier execution's processes could not be cleaned up in the bot container. Check the container engine, then send a new message.";
 import {
 	BOT_IMAGE_BYTES,
 	botImageMime,
 	removeExecutionImages,
 	writeExecutionImages,
 } from './images.js';
+import type { BotMemories } from './memories.js';
+import { BotMessageStore } from './messages.js';
 import type { BotNativeClient } from './native.js';
-import { type BotQueuedTurn, BotTurnQueue } from './queue.js';
+import {
+	botProcessCount,
+	classifyProcessFailure,
+} from './processExhaustion.js';
+import {
+	BOT_CLEANUP_FAILURE_LIMIT,
+	type BotQueuedTurn,
+	type BotQueueFailure,
+	type BotRunResult,
+	BotTurnQueue,
+} from './queue.js';
 import { BotExecutionRuntime } from './runtime.js';
 import {
 	type BotRuntimeBridge,
@@ -53,11 +68,6 @@ import {
 import { BotSessionStore } from './sessions.js';
 import { BotBlockedError, BotError, BotStore, text } from './store.js';
 import { BotTriggers } from './triggers.js';
-import { BotFailureFollowUps } from './failureFollowUps.js';
-
-/** Shown while an earlier execution's process cleanup is still unconfirmed. */
-const BOT_CLEANUP_UNCONFIRMED =
-	"An earlier execution's processes could not be cleaned up in the bot container. Check the container engine, then send a new message.";
 
 export interface BotAgents {
 	botAgentContributions(): readonly {
@@ -214,7 +224,7 @@ export class BotService extends EventEmitter {
 	private readonly live = new Map<string, Live>();
 	private readonly activeRuns = new Map<
 		string,
-		{ botId: string; task: Promise<void> }
+		{ botId: string; task: Promise<BotRunResult> }
 	>();
 	private readonly deleting = new Map<
 		string,
@@ -282,9 +292,10 @@ export class BotService extends EventEmitter {
 						const r = this.sessions.get(id);
 						if (
 							r.state === 'queued' &&
-							![...this.queue.list(r.botId), ...this.queue.active(r.botId)].some(
-								(i) => i.sessionId === id,
-							)
+							![
+								...this.queue.list(r.botId),
+								...this.queue.active(r.botId),
+							].some((i) => i.sessionId === id)
 						)
 							this.sessions.patch(id, {
 								state: 'stopped',
@@ -297,8 +308,9 @@ export class BotService extends EventEmitter {
 				firingFor: (botId, sessionId) => {
 					try {
 						return (
-							this.triggers.firings(botId).find((f) => f.sessionId === sessionId)
-								?.id ?? null
+							this.triggers
+								.firings(botId)
+								.find((f) => f.sessionId === sessionId)?.id ?? null
 						);
 					} catch {
 						return null;
@@ -348,23 +360,7 @@ export class BotService extends EventEmitter {
 				);
 				this.changed(id);
 			},
-			failure: (item, error) => {
-				this.sessions.patch(item.sessionId, {
-					state: 'failed',
-					reason: 'session cleanup failed; bot remains blocked',
-					cause: 'engine',
-				});
-				const detail = error instanceof Error ? error.message : String(error);
-				void this.redactMessage(item.botId, detail.slice(0, 8192))
-					.catch(() => 'cleanup error unavailable')
-					.then((safe) =>
-						this.sessions.runner(
-							item.sessionId,
-							`\nSession cleanup failed: ${safe}\nThe bot retries this cleanup before its next execution.\n`,
-						),
-					)
-					.catch(() => undefined);
-			},
+			failure: (item, failure) => this.recordFinishFailure(item, failure),
 		});
 		for (const bot of bots.list())
 			if (bot.enabled === false) this.queue.pause(bot.id);
@@ -817,7 +813,8 @@ export class BotService extends EventEmitter {
 			return { message: this.messages.get(botId, message.id), ...sent };
 		} catch (failure) {
 			const error =
-				failure instanceof BotError && failure.message === BOT_CLEANUP_UNCONFIRMED
+				failure instanceof BotError &&
+				failure.message === BOT_CLEANUP_UNCONFIRMED
 					? BOT_CLEANUP_UNCONFIRMED
 					: this.bots.get(botId).signIn.kind === 'none'
 						? 'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.'
@@ -954,14 +951,25 @@ export class BotService extends EventEmitter {
 				this.messages.get(botId, origin.messageId);
 			this.requireSignIn(bot.signIn);
 			if (id) this.ownedSession(botId, id);
-			let record:BotSessionRecord|undefined;
-   if(reservedId){
-    const existing=this.sessions.list(botId).find(r=>r.id===reservedId);
-    if(existing){
-     if(existing.state!=='queued'||[...this.queue.list(botId),...this.queue.active(botId)].some(i=>i.sessionId===reservedId))return {sessionId:existing.id,queueId:existing.queuedMessage?.id??existing.id};
-     record=existing;
-    }
-   }
+			let record: BotSessionRecord | undefined;
+			if (reservedId) {
+				const existing = this.sessions
+					.list(botId)
+					.find((r) => r.id === reservedId);
+				if (existing) {
+					if (
+						existing.state !== 'queued' ||
+						[...this.queue.list(botId), ...this.queue.active(botId)].some(
+							(i) => i.sessionId === reservedId,
+						)
+					)
+						return {
+							sessionId: existing.id,
+							queueId: existing.queuedMessage?.id ?? existing.id,
+						};
+					record = existing;
+				}
+			}
 			const waiting = this.queue.list(botId);
 			if (
 				waiting.length >= 20 ||
@@ -1116,7 +1124,8 @@ export class BotService extends EventEmitter {
 	async stopBot(botId: string): Promise<void> {
 		this.stoppingBots.add(botId);
 		try {
-			if(this.bots.get(botId).enabled===false)this.queue.pause(botId);else await this.queue.block(botId);
+			if (this.bots.get(botId).enabled === false) this.queue.pause(botId);
+			else await this.queue.block(botId);
 			for (const record of this.sessions.list(botId))
 				if (
 					this.live.has(record.id) ||
@@ -1128,25 +1137,19 @@ export class BotService extends EventEmitter {
 		}
 	}
 	/**
-	 * An execution whose process cleanup the engine did not confirm blocks the
-	 * bot. Retry that cleanup, so a transient engine failure does not leave the
-	 * bot refusing every message until the server restarts. Each retry ends
-	 * only that execution's process group, never other running executions.
+	 * A bot blocked by unconfirmed process cleanup retries ending only those
+	 * sessions' process groups before new work, so it recovers without a
+	 * server restart. Other running executions are never ended.
 	 */
 	private async retryCleanup(botId: string): Promise<void> {
+		if (!this.queue.blocked(botId)) return;
 		for (const sessionId of this.queue.uncleaned(botId)) {
 			try {
-				const live = this.live.get(sessionId);
-				if (live) {
-					await live.runner.close('end');
-					this.live.delete(sessionId);
-				} else
-					await (await this.hooks.driver()).exec(
-						`terminay-bot-${botId}`,
-						['terminay-run', '--kill', sessionId],
-						{ user: 'root', deadlineMs: 20_000 },
-					);
-				this.runtime.release(sessionId);
+				await (await this.hooks.driver()).exec(
+					`terminay-bot-${botId}`,
+					['terminay-run', '--kill', sessionId],
+					{ user: 'root', deadlineMs: BOT_KILL_DEADLINE_MS },
+				);
 			} catch {
 				throw new BotBlockedError('engine', BOT_CLEANUP_UNCONFIRMED);
 			}
@@ -1204,7 +1207,7 @@ export class BotService extends EventEmitter {
 			`This bot's ${agent.deviceSignIn?.label ?? 'device sign-in'} login is no longer in its home. Sign it in again under Configure › Profile › Sign-in.`,
 		);
 	}
-	private run(item: BotQueuedTurn): Promise<void> {
+	private run(item: BotQueuedTurn): Promise<BotRunResult> {
 		const task = this.runNow(item);
 		this.activeRuns.set(item.sessionId, { botId: item.botId, task });
 		void task
@@ -1212,7 +1215,7 @@ export class BotService extends EventEmitter {
 			.catch(() => undefined);
 		return task;
 	}
-	private async runNow(item: BotQueuedTurn): Promise<void> {
+	private async runNow(item: BotQueuedTurn): Promise<BotRunResult> {
 		const record = this.sessions.get(item.sessionId);
 		let live = this.live.get(record.id);
 		let bridge: BotRuntimeBridge | undefined;
@@ -1227,6 +1230,7 @@ export class BotService extends EventEmitter {
 		});
 		this.runtime.changed(record.id, 'execution.running');
 		let failureReason = 'agent not ready';
+		let cleanupFailure: BotCleanupError | undefined;
 		this.starting.add(record.id);
 		// The trigger message's images, as snapshotted at dispatch.
 		let images: { mime: string; bytes: Uint8Array }[] = [];
@@ -1252,7 +1256,7 @@ export class BotService extends EventEmitter {
 				const sessionEnvironment = await this.hooks.environment.prepareSession(
 					record.botId,
 				);
-				if (this.cancelledStarts.delete(record.id)) return;
+				if (this.cancelledStarts.delete(record.id)) return { cleanup: 'ok' };
 				driver ??= await this.hooks.driver();
 				failureReason = 'agent not ready';
 				const status = await this.hooks.agents.botAgentStatus(agent.id);
@@ -1301,7 +1305,7 @@ export class BotService extends EventEmitter {
 				if (this.cancelledStarts.delete(record.id)) {
 					credential.release();
 					pendingCredential = undefined;
-					return;
+					return { cleanup: 'ok' };
 				}
 				failureReason =
 					'The terminay_bot MCP relay could not start. See Runner output for details.';
@@ -1321,7 +1325,7 @@ export class BotService extends EventEmitter {
 					await bridge.close();
 					credential.release();
 					pendingCredential = undefined;
-					return;
+					return { cleanup: 'ok' };
 				}
 				failureReason =
 					'The agent process failed. See Runner output for details.';
@@ -1372,7 +1376,7 @@ export class BotService extends EventEmitter {
 			}
 			if (live.closing) {
 				await live.stop;
-				return;
+				return { cleanup: 'ok' };
 			}
 			live.turn = true;
 			live.timer = setTimeout(() => {
@@ -1428,9 +1432,7 @@ export class BotService extends EventEmitter {
 				this.sessions.patch(record.id, {
 					state: 'failed',
 					reason,
-					cause: processFailure
-						? processFailure.cause
-						: botFailureCause(error),
+					cause: processFailure ? processFailure.cause : botFailureCause(error),
 					endedAt: this.now(),
 					permission: null,
 					permissions: [],
@@ -1448,8 +1450,16 @@ export class BotService extends EventEmitter {
 			}
 			if (live?.timer) clearTimeout(live.timer);
 			if (live) live.turn = false;
-			if (live?.closing) await live.stop;
-			else if (live) await this.closeLive(record.id, 'end');
+			try {
+				if (live?.closing) await live.stop;
+				else if (live) await this.closeLive(record.id, 'end');
+			} catch (error) {
+				// Only an unconfirmed agent process group counts; anything else
+				// still escapes and blocks the bot at once.
+				// biome-ignore lint/correctness/noUnsafeFinally: an unexpected finish failure must reach the queue, as it did before.
+				if (!(error instanceof BotCleanupError)) throw error;
+				cleanupFailure = error;
+			}
 			if (imageDriver)
 				await removeExecutionImages(imageDriver, record.botId, record.id);
 			this.runtime.revoke(record.id);
@@ -1458,6 +1468,36 @@ export class BotService extends EventEmitter {
 			this.sessions.commit(record.id);
 			this.sessions.retain(record.botId);
 		}
+		return cleanupFailure === undefined
+			? { cleanup: 'ok' }
+			: { cleanup: 'failed', error: cleanupFailure };
+	}
+	/** Records a failure to finish an execution without rewriting the turn's outcome unless it blocks the bot. */
+	private async recordFinishFailure(
+		item: BotQueuedTurn,
+		failure: BotQueueFailure,
+	): Promise<void> {
+		const raw =
+			failure.error instanceof Error
+				? failure.error.message
+				: String(failure.error);
+		const detail = await this.redactMessage(
+			item.botId,
+			raw.slice(0, 8192),
+		).catch(() => 'cleanup error unavailable');
+		console.error(
+			`[terminay] bot cleanup failed: bot=${item.botId} session=${item.sessionId}: ${detail}`,
+		);
+		this.sessions.runner(item.sessionId, `\nCleanup failed: ${detail}\n`);
+		if (failure.blocked)
+			this.sessions.patch(item.sessionId, {
+				state: 'failed',
+				reason: failure.cleanup
+					? `bot blocked after ${BOT_CLEANUP_FAILURE_LIMIT} consecutive cleanup failures`
+					: 'session cleanup failed; bot remains blocked',
+				cause: 'engine',
+			});
+		this.sessions.commit(item.sessionId);
 	}
 	private bindClient(id: string, client: BotNativeClient): void {
 		client.on('update', (update: JsonValue) =>
@@ -1541,7 +1581,14 @@ export class BotService extends EventEmitter {
 		live.closing = true;
 		if (live.timer) clearTimeout(live.timer);
 		live.stop = (async () => {
-			await live.runner.close(reason === 'failure' ? 'end' : reason);
+			let cleanup: unknown;
+			try {
+				await live.runner.close(reason === 'failure' ? 'end' : reason);
+			} catch (error) {
+				// The session is still recorded and its work ownership released;
+				// the caller counts the failure.
+				cleanup = error;
+			}
 			this.runtime.release(id);
 			this.live.delete(id);
 			const record = this.sessions.get(id);
@@ -1564,6 +1611,7 @@ export class BotService extends EventEmitter {
 				endedAt: open ? null : this.now(),
 				durationMs: Math.max(0, this.now() - record.startedAt),
 			});
+			if (cleanup !== undefined) throw cleanup;
 		})();
 		return live.stop;
 	}
@@ -1595,7 +1643,14 @@ export class BotService extends EventEmitter {
 		let cleaned = !!driver;
 		for (const bot of this.bots.list()) {
 			for (const r of this.sessions.list(bot.id)) {
-				if(r.state==='queued'&&r.origin.kind!=='chat'&&this.triggers.observations.pending(bot.id).some(e=>e.sessionId===r.id))continue;
+				if (
+					r.state === 'queued' &&
+					r.origin.kind !== 'chat' &&
+					this.triggers.observations
+						.pending(bot.id)
+						.some((e) => e.sessionId === r.id)
+				)
+					continue;
 				const interrupted = ['running', 'suspended', 'needs-you'].includes(
 					r.state,
 				);
@@ -1622,11 +1677,11 @@ export class BotService extends EventEmitter {
 						await driver.exec(
 							`terminay-bot-${bot.id}`,
 							['terminay-run', '--kill-all'],
-							{ user: 'root', deadlineMs: 30_000 },
+							{ user: 'root', deadlineMs: BOT_KILL_DEADLINE_MS },
 						);
 					this.hooks.activity(bot.id, 0, 0);
 					this.queue.unblock(bot.id, true);
-					if(bot.enabled===false)this.queue.pause(bot.id);
+					if (bot.enabled === false) this.queue.pause(bot.id);
 				} catch {
 					cleaned = false;
 				}

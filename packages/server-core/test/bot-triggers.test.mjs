@@ -10,6 +10,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { BotCleanupError } from '../dist/botService/agentProcess.js';
 import { SourceRunError } from '../dist/botService/sourceRunner.js';
 import {
 	AutomationRepository,
@@ -150,8 +151,9 @@ async function setup(t, options = {}) {
 	);
 	const turns = [],
 		closed = [],
+		runtimeCleanups = [],
 		clients = new Map();
-	const failures = { engine: false, image: false, agent: false };
+	const failures = { engine: false, image: false, agent: false, kill: 0 };
 	const driver = relayDriver();
 	const service = new BotService(bots, sessions, memories, {
 		now: () => time.now,
@@ -220,7 +222,18 @@ async function setup(t, options = {}) {
 				async close(reason) {
 					closed.push({ id: o.sessionId, reason });
 					client.finish();
+					// BotAgentProcess.close: when the agent's `terminay-run --kill`
+					// exec fails, the relays are still closed and the close
+					// rejects with BotCleanupError.
+					if (failures.kill > 0) {
+						failures.kill--;
+						await o.cleanupRuntime?.();
+						throw new BotCleanupError(
+							new Error(failures.killMessage ?? 'container process failed'),
+						);
+					}
 					await o.cleanupRuntime?.();
+					runtimeCleanups.push(o.sessionId);
 				},
 			};
 		},
@@ -260,6 +273,7 @@ async function setup(t, options = {}) {
 		bot,
 		turns,
 		closed,
+		runtimeCleanups,
 		clients,
 		failures,
 		driver,
@@ -1507,6 +1521,181 @@ test('a failed trigger execution wakes the bot once, naming the execution and tr
 	assert.equal(listed[0].sessionId, run.id);
 	assert.equal(listed[0].triggerId, trigger.id);
 	assert.equal(listed[0].reason, 'script.sh: line 3: jq: not found');
+});
+
+const triggerRuns = (r) =>
+	r.sessions
+		.list(r.bot.id)
+		.filter((s) => s.origin.kind === 'trigger')
+		.sort((a, b) => a.startedAt - b.startedAt);
+const captureErrors = (t) => {
+	const logged = [];
+	t.mock.method(console, 'error', (...args) => logged.push(args.join(' ')));
+	return logged;
+};
+test('an engine error while ending a completed trigger turn does not block later firings', async (t) => {
+	const logged = captureErrors(t);
+	const r = await setup(t, { keepRoot: true });
+	t.after(() => rmSync(r.root, { recursive: true, force: true }));
+	r.triggers.create(r.bot.id, draft());
+	r.failures.kill = 1;
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	const [first] = triggerRuns(r);
+	assert.ok(first, 'the first firing started a session');
+	await finish(r, first.id);
+	await flush();
+	// The agent answered; only the post-turn kill exec failed.
+	assert.equal(r.sessions.get(first.id).state, 'completed');
+	const stored = new BotSessionStore(
+		join(r.root, 'sessions'),
+		r.time.clock,
+		() => r.time.now,
+	).get(first.id);
+	assert.match(stored.runnerOutput, /Cleanup failed: .*container process failed/);
+	assert.equal(stored.state, 'completed');
+	assert.ok(
+		logged.some(
+			(l) => l.includes('bot cleanup failed') && l.includes(first.id),
+		),
+	);
+	await r.time.advance(start + 10 * MINUTE, r.engine);
+	await flush();
+	assert.equal(triggerRuns(r).length, 2, 'the next firing started a session');
+	assert.equal(r.turns.length, 2, 'the next firing reached the agent');
+});
+
+test('a turn that fails cleanup releases its shared work ownership', async (t) => {
+	captureErrors(t);
+	const r = await setup(t);
+	r.triggers.create(r.bot.id, draft());
+	r.failures.kill = 1;
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	const [first] = triggerRuns(r);
+	assert.equal(
+		(await r.service.runtime.call(first.id, 'work_acquire', {})).acquired,
+		true,
+	);
+	await finish(r, first.id);
+	await flush();
+	await r.time.advance(start + 10 * MINUTE, r.engine);
+	await flush();
+	const second = triggerRuns(r)[1];
+	assert.equal(
+		(await r.service.runtime.call(second.id, 'work_acquire', {})).acquired,
+		true,
+	);
+});
+
+test('a stopped or timed-out turn keeps its outcome when cleanup fails', async (t) => {
+	captureErrors(t);
+	const r = await setup(t);
+	r.triggers.create(r.bot.id, draft());
+	r.failures.kill = 2;
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	const [first] = triggerRuns(r);
+	await assert.rejects(r.service.stop(r.bot.id, first.id), /cleanup failed/);
+	await flush();
+	assert.equal(r.sessions.get(first.id).state, 'stopped');
+	assert.match(r.sessions.get(first.id).runnerOutput, /Cleanup failed:/);
+	await r.time.advance(start + 10 * MINUTE, r.engine);
+	const second = triggerRuns(r)[1];
+	await assert.rejects(r.service.closeLive(second.id, 'timeout'));
+	await flush();
+	assert.equal(r.sessions.get(second.id).state, 'timed-out');
+	// Two failures: the bot still admits work.
+	await r.time.advance(start + 15 * MINUTE, r.engine);
+	assert.equal(triggerRuns(r).length, 3);
+});
+
+test('three consecutive cleanup failures block the bot without waking a failure investigation', async (t) => {
+	captureErrors(t);
+	const r = await setup(t);
+	r.triggers.create(r.bot.id, draft());
+	r.failures.kill = 3;
+	for (const n of [1, 2, 3]) {
+		await r.time.advance(start + n * 5 * MINUTE, r.engine);
+		await finish(r, triggerRuns(r).at(-1).id);
+		await flush();
+	}
+	await settle(r);
+	const [a, b, c] = triggerRuns(r);
+	assert.equal(r.sessions.get(a.id).state, 'completed');
+	assert.equal(r.sessions.get(b.id).state, 'completed');
+	const blocked = r.sessions.get(c.id);
+	assert.equal(blocked.state, 'failed');
+	assert.equal(blocked.cause, 'engine');
+	assert.equal(
+		blocked.reason,
+		'bot blocked after 3 consecutive cleanup failures',
+	);
+	assert.equal(investigations(r).length, 0);
+	// The engine still cannot end those process groups: work stays refused.
+	const exec = r.driver.exec;
+	r.driver.exec = async (container, args, options) => {
+		if (args[0] === 'terminay-run' && args[1] === '--kill')
+			throw new Error('container process failed');
+		return exec.call(r.driver, container, args, options);
+	};
+	await r.time.advance(start + 20 * MINUTE, r.engine);
+	await flush();
+	assert.equal(r.turns.length, 3, 'the fourth firing never reached the agent');
+	await assert.rejects(r.service.send(r.bot.id, 'hello?'), /could not be cleaned up/);
+	assert.equal(r.turns.length, 3, 'a chat message never reached the agent');
+	// The engine recovers: the next message retries the cleanup and runs.
+	r.driver.exec = exec;
+	await r.service.send(r.bot.id, 'hello?');
+	await flush();
+	// The chat message runs; the trigger's missed firing may also recover.
+	assert.ok(r.turns.length >= 4, 'the bot recovered without a restart');
+});
+
+test('a cleanup error is redacted with the bot secrets in runner output and logs', async (t) => {
+	const logged = captureErrors(t);
+	const r = await setup(t);
+	r.service.redactMessage = async (_bot, v) =>
+		v.split('s3cret').join('[redacted]');
+	r.triggers.create(r.bot.id, draft());
+	r.failures.kill = 1;
+	r.failures.killMessage = 'exec failed with token s3cret';
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	const [first] = triggerRuns(r);
+	await finish(r, first.id);
+	await flush();
+	const output = r.sessions.get(first.id).runnerOutput;
+	assert.match(output, /Cleanup failed: .*\[redacted\]/);
+	assert.doesNotMatch(output, /s3cret/);
+	assert.ok(logged.some((l) => l.includes('[redacted]')));
+	assert.ok(logged.every((l) => !l.includes('s3cret')));
+});
+
+test('reconciliation unblocks a blocked bot only after ending every session process group', async (t) => {
+	captureErrors(t);
+	const r = await setup(t);
+	r.triggers.create(r.bot.id, draft());
+	r.failures.kill = 3;
+	for (const n of [1, 2, 3]) {
+		await r.time.advance(start + n * 5 * MINUTE, r.engine);
+		await finish(r, triggerRuns(r).at(-1).id);
+		await flush();
+	}
+	r.service.hooks.environment.state = () => 'running';
+	const exec = r.driver.exec.bind(r.driver);
+	const killAll = [];
+	let failKillAll = true;
+	r.driver.exec = async (container, args, options) => {
+		if (args[1] === '--kill-all') {
+			killAll.push(options);
+			if (failKillAll) throw new Error('engine operation deadline exceeded');
+		}
+		return exec(container, args, options);
+	};
+	await r.service.reconcile();
+	await assert.rejects(r.service.send(r.bot.id, 'still blocked?'));
+	failKillAll = false;
+	await r.service.reconcile();
+	await r.service.send(r.bot.id, 'unblocked');
+	assert.ok(killAll.every((o) => o.deadlineMs === 5 * MINUTE));
+	assert.ok(killAll.length >= 2);
 });
 
 test('a condition check that cannot reach the engine records the engine cause and does not wake the bot', async (t) => {

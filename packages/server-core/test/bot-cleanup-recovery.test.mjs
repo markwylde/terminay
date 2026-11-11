@@ -3,11 +3,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { BOT_CLEANUP_FAILURE_LIMIT } from '../dist/botService/queue.js';
 import { runtime, until } from './fixtures/bot-test-runtime.mjs';
 
-async function setup(t, options) {
-	const root = mkdtempSync(join(tmpdir(), 'bots-cleanup-'));
-	const r = await runtime(root, options);
+// The engine fails the agent's kill while `failing.agentKills` > 0.
+async function setup(t, failing, execs = []) {
+	t.mock.method(console, 'error', () => {});
+	const root = mkdtempSync(join(tmpdir(), 'bots-cleanup-recovery-'));
+	const r = await runtime(root, {
+		execs,
+		execFailure: (args) => {
+			if (
+				failing.agentKills > 0 &&
+				args[1] === '--kill' &&
+				!args[2].startsWith('mcp-')
+			) {
+				failing.agentKills--;
+				return new Error('engine operation deadline exceeded');
+			}
+		},
+	});
 	t.after(async () => {
 		await r.service.shutdown();
 		await r.kill();
@@ -20,63 +35,68 @@ async function setup(t, options) {
 	});
 	return { ...r, bot };
 }
-const settled = (r, id, state) =>
-	until(r.service, 'changed', () => r.sessions.get(id).state === state);
-const blocked = 'session cleanup failed; bot remains blocked';
+const ended = (r, id) =>
+	until(
+		r.service,
+		'changed',
+		() =>
+			!['queued', 'running', 'needs-you'].includes(r.sessions.get(id).state) &&
+			r.service.queue.active(r.bot.id).length === 0,
+	);
+async function block(r) {
+	const ids = [];
+	for (let n = 0; n < BOT_CLEANUP_FAILURE_LIMIT; n++) {
+		const run = await r.service.send(r.bot.id, 'normal');
+		await ended(r, run.sessionId);
+		ids.push(run.sessionId);
+	}
+	assert.equal(r.service.queue.blocked(r.bot.id), true);
+	return ids;
+}
 
-test('a bot whose execution cleanup failed retries that cleanup on the next message and runs it', async (t) => {
-	const options = { killFailures: 1, execs: [] };
-	const r = await setup(t, options);
-	const first = await r.service.send(r.bot.id, 'normal');
-	await settled(r, first.sessionId, 'failed');
-	assert.equal(r.sessions.get(first.sessionId).reason, blocked);
+test('a bot blocked by unconfirmed cleanup retries it on the next message and runs it', async (t) => {
+	const failing = { agentKills: BOT_CLEANUP_FAILURE_LIMIT };
+	const execs = [];
+	const r = await setup(t, failing, execs);
+	const ids = await block(r);
 
 	const posted = await r.service.postUserMessage(r.bot.id, 'normal', 'next');
 	assert.equal(posted.error, undefined);
-	await settled(r, posted.sessionId, 'completed');
-	const kills = options.execs.filter(
-		(e) => e.args[1] === '--kill' && e.args[2] === first.sessionId,
-	);
-	assert.equal(kills.length, 2, 'the failed session is killed again');
-	assert.equal(r.service.messages.get(r.bot.id, posted.message.id).dispatch.state, 'started');
+	await ended(r, posted.sessionId);
+	assert.equal(r.sessions.get(posted.sessionId).state, 'completed');
+	assert.equal(r.service.queue.blocked(r.bot.id), false);
+	for (const id of ids) {
+		assert.equal(
+			execs.filter((e) => e.args[1] === '--kill' && e.args[2] === id).length,
+			2,
+			'each unconfirmed session is killed again',
+		);
+		assert.match(r.sessions.get(id).runnerOutput, /cleanup confirmed on retry/);
+	}
 });
 
-test('while cleanup still cannot be confirmed the message says so, not sign-in', async (t) => {
-	const options = { killFailures: 2 };
-	const r = await setup(t, options);
-	const first = await r.service.send(r.bot.id, 'normal');
-	await settled(r, first.sessionId, 'failed');
+test('while the retried cleanup fails the message names it, not sign-in, and a later message recovers', async (t) => {
+	const failing = { agentKills: BOT_CLEANUP_FAILURE_LIMIT + 1 };
+	const r = await setup(t, failing);
+	await block(r);
 
 	const posted = await r.service.postUserMessage(r.bot.id, 'normal', 'next');
 	assert.match(posted.error, /could not be cleaned up/);
 	assert.doesNotMatch(posted.error, /sign-in/i);
 
-	// The engine recovers: the retry message now runs.
 	const retry = await r.service.postUserMessage(r.bot.id, 'normal', 'again');
 	assert.equal(retry.error, undefined);
-	await settled(r, retry.sessionId, 'completed');
+	await ended(r, retry.sessionId);
+	assert.equal(r.sessions.get(retry.sessionId).state, 'completed');
 });
 
-test('a direct execution request retries the failed cleanup and then runs', async (t) => {
-	const options = { killFailures: 1 };
-	const r = await setup(t, options);
-	const first = await r.service.send(r.bot.id, 'normal');
-	await settled(r, first.sessionId, 'failed');
-	const next = await r.service.send(r.bot.id, 'normal');
-	await settled(r, next.sessionId, 'completed');
-});
-
-test('the cleanup error is kept in Runner output, and re-enabling a blocked bot does not fail', async (t) => {
-	const options = { killFailures: 1 };
-	const r = await setup(t, options);
-	const first = await r.service.send(r.bot.id, 'normal');
-	await settled(r, first.sessionId, 'failed');
-	await until(r.service, 'changed', () =>
-		r.sessions.get(first.sessionId).runnerOutput.includes('Session cleanup failed: engine exec failed'),
-	);
+test('re-enabling a blocked bot does not fail, and its next execution recovers', async (t) => {
+	const failing = { agentKills: BOT_CLEANUP_FAILURE_LIMIT };
+	const r = await setup(t, failing);
+	await block(r);
 	r.service.enableBot(r.bot.id, false);
 	r.service.enableBot(r.bot.id, true);
 	const next = await r.service.send(r.bot.id, 'normal');
-	await settled(r, next.sessionId, 'completed');
-	assert.match(r.sessions.get(first.sessionId).runnerOutput, /cleanup confirmed on retry/);
+	await ended(r, next.sessionId);
+	assert.equal(r.sessions.get(next.sessionId).state, 'completed');
 });

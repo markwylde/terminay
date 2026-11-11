@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import type { JsonValue } from '@terminay/protocol';
 import type { BotCredentialLease } from './credentials.js';
-import type { EngineDriver } from './engine.js';
+import { BOT_KILL_DEADLINE_MS, type EngineDriver } from './engine.js';
 import { BOT_RUNTIME_TOOLS, type BotExecutionRuntime } from './runtime.js';
 import type { BotTerminayMcpHandler } from './service.js';
 import { BotError, object } from './store.js';
@@ -266,7 +266,7 @@ export async function openBotRuntimeBridge(
 				await driver.exec(
 					`terminay-bot-${botId}`,
 					['terminay-run', '--kill', supervisor],
-					{ user: 'root', deadlineMs: 20000 },
+					{ user: 'root', deadlineMs: BOT_KILL_DEADLINE_MS },
 				);
 			} finally {
 				stream.kill();
@@ -347,7 +347,10 @@ export async function openBotRuntimeBridge(
 		}
 	}
 	const closeAll = async () => {
-		await Promise.allSettled([terminayRelay?.close(), close()]);
+		const results = await Promise.allSettled([terminayRelay?.close(), close()]);
+		for (const result of results)
+			if (result.status === 'rejected')
+				logRelayCleanupFailure(botId, sessionId, result.reason);
 	};
 	const secrets = [token, ...(terminayRelay ? [terminayRelay.secret] : [])];
 	const environment = {
@@ -543,10 +546,11 @@ async function openTerminayRelay(
 				await driver.exec(
 					`terminay-bot-${botId}`,
 					['terminay-run', '--kill', supervisor],
-					{ user: 'root', deadlineMs: 20000 },
+					{ user: 'root', deadlineMs: BOT_KILL_DEADLINE_MS },
 				);
-			} catch {
+			} catch (error) {
 				// The exec stream is killed below either way.
+				logRelayCleanupFailure(botId, `terminay-${sessionId}`, error);
 			} finally {
 				stream.kill();
 			}
@@ -623,4 +627,14 @@ async function openTerminayRelay(
 		},
 		close,
 	};
+}
+/** A relay that outlives its execution cannot act: the execution capability is revoked first. */
+function logRelayCleanupFailure(
+	botId: string,
+	sessionId: string,
+	error: unknown,
+): void {
+	console.error(
+		`[terminay] bot relay cleanup failed: bot=${botId} session=${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+	);
 }
