@@ -419,6 +419,27 @@
   margin-top: 1px;
 }
 
+/* A row with nowhere to go, such as how a server upgrade ended. */
+.terminal-activity-menu__item--static {
+  cursor: default;
+}
+
+.terminal-activity-menu__upgrade-icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 1px;
+  color: #4ade80;
+}
+
+.terminal-activity-menu__title--wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.terminal-activity-menu__upgrade-icon--failure {
+  color: #ff6a6a;
+}
+
 .terminal-activity-menu__text {
   min-width: 0;
   display: flex;
@@ -4989,62 +5010,4 @@ body.project-tabbar-reordering .project-tabbar {
 	.server-upgrade-dialog__primary:hover:not(:disabled) {
 	border-color: #2563eb;
 	background: #2563eb;
-}
-
-/* How a watched upgrade ended. Drawn over the workspace so being told never
- * resizes a terminal. */
-.server-upgrade-notices {
-	position: fixed;
-	top: 48px;
-	right: 12px;
-	z-index: 3000;
-	display: grid;
-	gap: 8px;
-	width: min(360px, calc(100vw - 24px));
-	-webkit-app-region: no-drag;
-}
-
-.server-upgrade-notice {
-	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-	padding: 10px 8px 10px 12px;
-	border: 1px solid rgba(255, 255, 255, 0.12);
-	border-radius: 8px;
-	background: #161b22;
-	color: #d6e3f0;
-	font-size: 12px;
-	line-height: 1.45;
-	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-
-.server-upgrade-notice > span {
-	flex: 1;
-	min-width: 0;
-	overflow-wrap: anywhere;
-}
-
-.server-upgrade-notice--failure {
-	border-color: rgba(255, 106, 106, 0.35);
-}
-
-.server-upgrade-notice__dismiss {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 24px;
-	height: 24px;
-	border: 0;
-	border-radius: 6px;
-	background: transparent;
-	color: inherit;
-	cursor: pointer;
-	opacity: 0.6;
-}
-
-.server-upgrade-notice__dismiss:hover,
-.server-upgrade-notice__dismiss:focus-visible {
-	background: color-mix(in srgb, currentColor 10%, transparent);
-	opacity: 1;
 }

@@ -1,19 +1,20 @@
-import { Bell, X } from 'lucide-react';
-import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
+import { Bell, CircleAlert, CircleCheck, X } from 'lucide-react';
 import { type RefObject, useEffect } from 'react';
 import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
+import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
 import { activityCountDigits, formatActivityCount } from './activityCountBadge';
 import {
 	type TerminalActivityOverviewItem,
 	type TerminalActivityOverviewState,
 	terminalOverviewStateToAgentState,
 } from './activityStates';
+import { BotAvatar } from './bots/BotAvatar';
 import {
 	formatNotificationAge,
 	notificationHeadline,
 } from './notificationText';
-import { BotAvatar } from './bots/BotAvatar';
 import { botNotificationHeadline } from './publishedNotifications';
+import { SERVER_UPGRADE_NOTIFICATION_SOURCE } from './serverUpgradeNotifications';
 import './bots/bots.css';
 
 export type {
@@ -78,6 +79,54 @@ function ActivityRows({
 				const state = terminalOverviewStateToAgentState(item.state);
 				if (state === 'working') return null;
 				const age = formatNotificationAge(item.since, now);
+				const upgrade = item.serverUpgrade;
+				if (upgrade !== undefined)
+					return (
+						<div
+							key={`server-upgrade:${upgrade.id}`}
+							className="terminal-activity-menu__row"
+							data-server-upgrade-notice={upgrade.tone}
+						>
+							{/* Nothing to go to: the row is the news, so it is not a button. */}
+							<div
+								className="terminal-activity-menu__item terminal-activity-menu__item--static"
+								role={upgrade.tone === 'failure' ? 'alert' : 'status'}
+							>
+								<span
+									className={`terminal-activity-menu__upgrade-icon terminal-activity-menu__upgrade-icon--${upgrade.tone}`}
+									aria-hidden="true"
+								>
+									{upgrade.tone === 'failure' ? (
+										<CircleAlert size={14} />
+									) : (
+										<CircleCheck size={14} />
+									)}
+								</span>
+								<span className="terminal-activity-menu__text">
+									<span className="terminal-activity-menu__title terminal-activity-menu__title--wrap">
+										{upgrade.text}
+									</span>
+									<span className="terminal-activity-menu__source">
+										<span className="terminal-activity-menu__terminal">
+											{SERVER_UPGRADE_NOTIFICATION_SOURCE}
+										</span>
+									</span>
+									{age === null ? null : (
+										<span className="terminal-activity-menu__age">{age}</span>
+									)}
+								</span>
+							</div>
+							<button
+								type="button"
+								className="terminal-activity-menu__dismiss"
+								onClick={() => onDismiss(item)}
+								aria-label="Dismiss"
+								title="Dismiss"
+							>
+								<X size={12} aria-hidden="true" />
+							</button>
+						</div>
+					);
 				const bot = item.bot;
 				if (bot !== undefined)
 					return (
@@ -92,7 +141,11 @@ function ActivityRows({
 								onClick={() => onActivate(item)}
 							>
 								<BotAvatar
-									bot={{ name: bot.name, avatar: bot.avatar, colour: bot.colour }}
+									bot={{
+										name: bot.name,
+										avatar: bot.avatar,
+										colour: bot.colour,
+									}}
 									size="sm"
 								/>
 								<span className="terminal-activity-menu__text">
@@ -151,7 +204,10 @@ function ActivityRows({
 								<span className="terminal-activity-menu__source">
 									<span className="terminal-activity-menu__terminal">
 										{item.emoji ? `${item.emoji} ` : ''}
-										<LiveTerminalTitle panelId={item.panelId} fallback={item.title} />
+										<LiveTerminalTitle
+											panelId={item.panelId}
+											fallback={item.title}
+										/>
 									</span>
 									<span className="terminal-activity-menu__project">
 										{item.projectEmoji ? `${item.projectEmoji} ` : ''}

@@ -238,6 +238,20 @@ const upgradeRow = (scope: ReturnType<typeof connectionMenu>) =>
 	scope.locator('[data-server-upgrade-profile-id]');
 const confirmationOf = (window: Page) =>
 	window.locator('[data-server-upgrade-dialog]');
+const notificationsBell = (window: Page) =>
+	window.getByRole('button', { name: /^Notifications/ });
+
+/** Opens the header Notifications list at the upgrade's outcome. */
+async function openUpgradeNotice(window: Page, tone?: 'success' | 'failure') {
+	await notificationsBell(window).click();
+	const menu = window.getByRole('menu', { name: 'Notifications' });
+	await expect(menu).toBeVisible();
+	return menu.locator(
+		tone === undefined
+			? '[data-server-upgrade-notice]'
+			: `[data-server-upgrade-notice="${tone}"]`,
+	);
+}
 
 test('a server with an upgrade is marked, confirmed, followed, and told once', async ({
 	appHarness,
@@ -300,7 +314,9 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 		);
 		menu = await openConnectionMenu(mainWindow);
 		await menu.getByRole('menuitem', { name: 'Upgrade server…' }).click();
-		await confirmation.getByRole('button', { name: 'Upgrade', exact: true }).click();
+		await confirmation
+			.getByRole('button', { name: 'Upgrade', exact: true })
+			.click();
 		await expect(confirmation).toHaveCount(0);
 		await expect
 			.poll(() => upgrader.upgrades(), { timeout: 15_000 })
@@ -314,19 +330,25 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 		).toHaveCount(0);
 		await mainWindow.keyboard.press('Escape');
 
-		// The outcome is told once, and the warning is gone.
-		const notice = mainWindow.locator('[data-server-upgrade-notice]');
-		await expect(notice).toHaveText(`${serverHost} is now on 5.2.0.`, {
-			timeout: 45_000,
-		});
+		// The outcome is told once, in Notifications, and the warning is gone.
+		// Nothing is drawn over the workspace.
+		await expect(notificationsBell(mainWindow)).toHaveAccessibleName(
+			/Notifications, \d+ notification/,
+			{ timeout: 45_000 },
+		);
+		const notice = await openUpgradeNotice(mainWindow);
+		await expect(notice.locator('.terminal-activity-menu__title')).toHaveText(
+			`${serverHost} is now on 5.2.0.`,
+		);
 		await expect(notice).toHaveCount(1);
+		await expect(mainWindow.locator('.server-upgrade-notices')).toHaveCount(0);
 		await expect(upgradeIndicator(mainWindow)).toHaveCount(0);
 		await expect(headerControl(mainWindow)).not.toHaveAccessibleName(/upgrade/);
 		await notice.getByRole('button', { name: 'Dismiss' }).click();
 		await expect(notice).toHaveCount(0);
+		await mainWindow.keyboard.press('Escape');
 		menu = await openConnectionMenu(mainWindow);
 		await expect(upgradeRow(menu)).toHaveCount(0);
-		await expect(notice).toHaveCount(0);
 	} finally {
 		await server.stop();
 	}
@@ -365,7 +387,9 @@ test('a server that cannot upgrade itself shows why and a command to copy, and L
 		await expect(row).toContainText(
 			'The upgrade helper is not installed on this server.',
 		);
-		await expect(row.locator('code')).toHaveText('sudo terminay daemon upgrade');
+		await expect(row.locator('code')).toHaveText(
+			'sudo terminay daemon upgrade',
+		);
 		await expect(
 			row.getByRole('button', { name: 'Copy upgrade command' }),
 		).toBeVisible();
@@ -374,7 +398,9 @@ test('a server that cannot upgrade itself shows why and a command to copy, and L
 		).toHaveCount(0);
 
 		// Local, in the same window: no icon, no row, no action.
-		await menu.getByRole('menuitemradio', { name: 'Local', exact: true }).click();
+		await menu
+			.getByRole('menuitemradio', { name: 'Local', exact: true })
+			.click();
 		await expectShowing(mainWindow, 'Local');
 		await expect(upgradeIndicator(mainWindow)).toHaveCount(0);
 		await expect(headerControl(mainWindow)).not.toHaveAccessibleName(/upgrade/);
@@ -432,12 +458,16 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 			.locator('.project-tabbar')
 			.waitFor({ state: 'visible', timeout: 120_000 });
 
-		const notice = mainWindow.locator('[data-server-upgrade-notice="failure"]');
-		await expect(notice).toHaveText(
-			`Upgrading ${serverHost} failed: the new release did not become ready. 5.1.1 is running again.`,
+		await expect(notificationsBell(mainWindow)).toHaveAccessibleName(
+			/Notifications, \d+ notification/,
 			{ timeout: 120_000 },
 		);
+		const notice = await openUpgradeNotice(mainWindow, 'failure');
+		await expect(notice.locator('.terminal-activity-menu__title')).toHaveText(
+			`Upgrading ${serverHost} failed: the new release did not become ready. 5.1.1 is running again.`,
+		);
 		await expect(notice).toHaveCount(1);
+		await mainWindow.keyboard.press('Escape');
 		await expect(upgradeIndicator(mainWindow)).toHaveAttribute(
 			'data-server-upgrade-indicator',
 			'5.2.0',
@@ -471,7 +501,9 @@ test.describe('server upgrade at phone width', () => {
 				timeout: 30_000,
 			});
 			await resize(mainWindow, electronApp, PHONE);
-			await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
+			await expect(
+				mainWindow.locator('[data-compact-chrome="true"]'),
+			).toBeVisible();
 
 			const glyph = mainWindow.locator('[data-compact-connection="true"]');
 			await expect(glyph).toHaveAccessibleName(

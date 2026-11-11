@@ -986,7 +986,7 @@ export function NotificationsWidget({
 								/>
 								<Text
 									title={headline}
-									sub={`${item.projectTitle} › ${item.title}${item.since === undefined ? '' : ` · ${formatTime(item.since, now)}`}`}
+									sub={`${item.serverUpgrade === undefined ? `${item.projectTitle} › ${item.title}` : item.title}${item.since === undefined ? '' : ` · ${formatTime(item.since, now)}`}`}
 								/>
 							</Row>
 							<button

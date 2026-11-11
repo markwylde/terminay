@@ -8,7 +8,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 const require = createRequire(import.meta.url);
-const testDirectory = await mkdtemp(join(process.cwd(), '.server-upgrade-ui-test-'));
+const testDirectory = await mkdtemp(
+	join(process.cwd(), '.server-upgrade-ui-test-'),
+);
 
 async function bundleComponent(entryPoint, outputName) {
 	const outputPath = join(testDirectory, outputName);
@@ -33,9 +35,13 @@ const { ServerUpgradeConfirmation } = await bundleComponent(
 	'src/workspace/ServerUpgradeDialog.tsx',
 	'server-upgrade-dialog.cjs',
 );
-const { ServerUpgradeNotices } = await bundleComponent(
-	'src/workspace/ServerUpgradeNotices.tsx',
-	'server-upgrade-notices.cjs',
+const { TerminalActivityOverview } = await bundleComponent(
+	'src/workspace/TerminalActivityOverview.tsx',
+	'terminal-activity-overview.cjs',
+);
+const { withServerUpgradeNotifications } = await bundleComponent(
+	'src/workspace/serverUpgradeNotifications.ts',
+	'server-upgrade-notifications.cjs',
 );
 const { RemoteAccessConnectionMenu } = await bundleComponent(
 	'src/workspace/RemoteAccessConnectionMenu.tsx',
@@ -118,7 +124,8 @@ test('a server that cannot upgrade itself shows the reason and a copyable comman
 	const markup = rows([
 		row({
 			action: 'manual',
-			reason: 'This server runs as a system service without the upgrade helper.',
+			reason:
+				'This server runs as a system service without the upgrade helper.',
 			command: 'sudo terminay daemon upgrade',
 		}),
 	]);
@@ -140,10 +147,14 @@ test('a rolled-back upgrade is read from the row, and the action waits for the c
 	const markup = rows([
 		row({
 			reachable: false,
-			failure: 'Upgrading VPS failed: readiness timed out. 5.1.1 is running again.',
+			failure:
+				'Upgrading VPS failed: readiness timed out. 5.1.1 is running again.',
 		}),
 	]);
-	assert.match(markup, /Upgrading VPS failed: readiness timed out\. 5\.1\.1 is running again\./);
+	assert.match(
+		markup,
+		/Upgrading VPS failed: readiness timed out\. 5\.1\.1 is running again\./,
+	);
 	assert.match(markup, /<button[^>]*disabled=""[^>]*>(<span>)?Upgrade server…/);
 });
 
@@ -246,7 +257,10 @@ test('a container with the socket offers both modes with in place preselected', 
 	radios[1].props.onChange();
 	assert.deepEqual(selected, ['recreate']);
 	const recreate = renderToStaticMarkup(
-		React.createElement(ServerUpgradeConfirmation, { ...props, mode: 'recreate' }),
+		React.createElement(ServerUpgradeConfirmation, {
+			...props,
+			mode: 'recreate',
+		}),
 	);
 	assert.match(recreate, /Every terminal on this server ends\./);
 	assert.doesNotMatch(recreate, /keep running/);
@@ -260,13 +274,20 @@ test('the confirmation cannot start what is already running, or what cannot be r
 		)[0];
 	assert.equal(primary({}).props.disabled, false);
 	assert.equal(primary({ isStarting: true }).props.disabled, true);
-	assert.equal(primary({ entry: entry({}, { reachable: false }) }).props.disabled, true);
+	assert.equal(
+		primary({ entry: entry({}, { reachable: false }) }).props.disabled,
+		true,
+	);
 	const running = confirmation({
-		entry: entry({ upgrade: { state: 'in-progress', mode: 'in-place', startedAt: 1 } }),
+		entry: entry({
+			upgrade: { state: 'in-progress', mode: 'in-place', startedAt: 1 },
+		}),
 	});
 	assert.equal(primary(running).props.disabled, true);
 	assert.match(
-		renderToStaticMarkup(React.createElement(ServerUpgradeConfirmation, running)),
+		renderToStaticMarkup(
+			React.createElement(ServerUpgradeConfirmation, running),
+		),
 		/role="alert"[^>]*>An upgrade is already running\./,
 	);
 	assert.match(
@@ -280,29 +301,82 @@ test('the confirmation cannot start what is already running, or what cannot be r
 	);
 });
 
-test('an outcome is announced and can be dismissed', () => {
+test('an outcome is listed and counted in Notifications, and can be dismissed', () => {
 	const dismissed = [];
 	const notices = [
-		{ id: 'vps:77', profileId: 'vps', tone: 'success', text: 'VPS is now on 5.2.0.' },
+		{
+			id: 'vps:77',
+			profileId: 'vps',
+			tone: 'success',
+			text: 'VPS is now on 5.2.0.',
+			raisedAt: 1_000,
+		},
 		{
 			id: 'build:80',
 			profileId: 'build',
 			tone: 'failure',
 			text: 'Upgrading Build box failed: readiness timed out. 5.1.1 is running again.',
+			raisedAt: 2_000,
 		},
 	];
-	const markup = renderToStaticMarkup(
-		React.createElement(ServerUpgradeNotices, { notices, onDismiss: noop }),
-	);
-	assert.match(markup, /role="status"[^>]*><span>VPS is now on 5\.2\.0\./);
-	assert.match(markup, /role="alert"[^>]*><span>Upgrading Build box failed/);
-	const tree = ServerUpgradeNotices({
+	const terminal = {
+		color: '',
+		emoji: '',
+		isAgentStatus: false,
+		panelId: 'p1',
+		projectEmoji: '',
+		projectId: 'project',
+		projectTitle: 'Project',
+		sessionId: 's1',
+		since: 3_000,
+		state: 'unviewed',
+		title: 'shell',
+	};
+	const empty = { items: [], notifications: [], notificationCount: 0 };
+	assert.equal(withServerUpgradeNotifications(empty, []), empty);
+	const overview = withServerUpgradeNotifications(
+		{ items: [terminal], notifications: [terminal], notificationCount: 1 },
 		notices,
-		onDismiss: (id) => dismissed.push(id),
-	});
-	find(tree, (props) => props['aria-label'] === 'Dismiss')[1].props.onClick();
+	);
+	assert.equal(overview.notificationCount, 3);
+	assert.deepEqual(
+		overview.notifications.map(
+			(item) => item.serverUpgrade?.id ?? item.panelId,
+		),
+		['build:80', 'vps:77', 'p1'],
+	);
+
+	const props = {
+		activityMenuRef: { current: null },
+		isOpen: true,
+		notifications: overview.notifications.slice(0, 2),
+		onActivate: noop,
+		onDismiss: (item) => dismissed.push(item.serverUpgrade?.id),
+		onDismissAll: noop,
+		onToggle: noop,
+	};
+	const markup = renderToStaticMarkup(
+		React.createElement(TerminalActivityOverview, props),
+	);
+	assert.match(markup, /aria-label="Notifications, 2 notifications"/);
+	assert.match(
+		markup,
+		/data-server-upgrade-notice="success"[\s\S]*?role="status"[\s\S]*?VPS is now on 5\.2\.0\./,
+	);
+	assert.match(
+		markup,
+		/data-server-upgrade-notice="failure"[\s\S]*?role="alert"[\s\S]*?Upgrading Build box failed/,
+	);
+	assert.doesNotMatch(markup, /server-upgrade-notices/);
+	// The list's rows are a hookless component inside the hookless control.
+	const rowsElement = find(TerminalActivityOverview(props), (candidate) =>
+		Array.isArray(candidate.items),
+	)[0];
+	find(
+		rowsElement.type(rowsElement.props),
+		(candidate) => candidate['aria-label'] === 'Dismiss',
+	)[0].props.onClick();
 	assert.deepEqual(dismissed, ['build:80']);
-	assert.equal(ServerUpgradeNotices({ notices: [], onDismiss: noop }), null);
 });
 
 const header = (overrides = {}) =>
@@ -390,7 +464,10 @@ test('at phone width the connection glyph carries the same warning and name', ()
 		warned,
 		/aria-label="Connections — VPS, Offline, upgrade to 5\.2\.0 available"/,
 	);
-	assert.match(warned, /compact-connection__upgrade[^>]*data-server-upgrade-indicator="5\.2\.0"/);
+	assert.match(
+		warned,
+		/compact-connection__upgrade[^>]*data-server-upgrade-indicator="5\.2\.0"/,
+	);
 });
 
 test('at phone width the drawer server menu lists the same server updates', async () => {
@@ -398,7 +475,10 @@ test('at phone width the drawer server menu lists the same server updates', asyn
 	// given are the sheet variant of the same server update rows.
 	const sheetRows = renderToStaticMarkup(
 		React.createElement(ServerUpgradeMenuRows, {
-			rows: [row({ action: 'upgrading' }), row({ profileId: 'remote:build', label: 'Build box' })],
+			rows: [
+				row({ action: 'upgrading' }),
+				row({ profileId: 'remote:build', label: 'Build box' }),
+			],
 			namesServers: true,
 			onUpgrade: noop,
 			variant: 'sheet',
