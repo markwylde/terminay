@@ -145,7 +145,7 @@ const DEFAULTS = Object.freeze({
  */
 const LAUNCHER_RESOLVE_TIMEOUT_MS = 10_000;
 
-/** How long one forge source call may run (ADR-0105). */
+/** How long one forge source call may run (ADR-0106). */
 export const FORGE_CALL_TIMEOUT_MS = 15_000;
 
 /**

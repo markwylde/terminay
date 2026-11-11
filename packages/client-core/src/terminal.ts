@@ -84,7 +84,7 @@ export interface TerminalClientCreateRequest {
 	 * what it starts; the client names it by id only (ADR-0073). */
 	readonly launcherId?: string;
 	/** Text for the launcher to start with, as one argument; only for a
-	 * launcher listed with `initialPrompt` (ADR-0104). */
+	 * launcher listed with `initialPrompt` (ADR-0105). */
 	readonly prompt?: string;
 	readonly cwd?: string;
 	readonly cols?: number;

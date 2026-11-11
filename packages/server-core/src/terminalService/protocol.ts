@@ -550,7 +550,7 @@ export function createTerminalOperationRegistry(
 				'terminal launcher is not available',
 			);
 		// An initial prompt is text for one quoted argument of a launcher that
-		// declares it takes one (ADR-0104); it is never kept with the terminal.
+		// declares it takes one (ADR-0105); it is never kept with the terminal.
 		let prompt: string | undefined;
 		if (payload.prompt !== undefined) {
 			if (launcher === undefined)

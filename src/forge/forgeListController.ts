@@ -1,5 +1,5 @@
 /**
- * When a forge list asks the server (ADR-0105), without React.
+ * When a forge list asks the server (ADR-0106), without React.
  *
  * A list asks when it is shown, when its query changes while shown, on
  * Refresh, on window focus once its answer is a minute old, and on a

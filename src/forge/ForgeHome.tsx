@@ -1,6 +1,6 @@
 /**
  * Home's Pull Requests and Issues sections, and a project's Git tab
- * (ADR-0105). These fetch on demand through the forge client and draw with
+ * (ADR-0106). These fetch on demand through the forge client and draw with
  * `ForgeViews`.
  */
 

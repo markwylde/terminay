@@ -32,7 +32,7 @@ export interface TerminalLauncherListing {
 	readonly id: string;
 	readonly displayName: string;
 	readonly icon: string;
-	/** Present when the launcher's program takes an initial prompt (ADR-0104). */
+	/** Present when the launcher's program takes an initial prompt (ADR-0105). */
 	readonly initialPrompt?: 'positional';
 }
 
@@ -290,7 +290,7 @@ function currentPlatform(): ExtensionPlatform {
 			: 'linux';
 }
 
-/** The longest initial prompt a launcher is started with (ADR-0104). */
+/** The longest initial prompt a launcher is started with (ADR-0105). */
 export const LAUNCHER_PROMPT_MAX_LENGTH = 4_000;
 
 const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'yash']);
@@ -340,7 +340,7 @@ export function normaliseLauncherPrompt(
 /**
  * The line typed into a new terminal's shell to start a launcher's program:
  * its absolute path, then a matching command default's flags (ADR-0081), then
- * an initial prompt as one argument (ADR-0104), each quoted for that shell,
+ * an initial prompt as one argument (ADR-0105), each quoted for that shell,
  * and nothing else. Callers check the prompt and shell first; a prompt this
  * cannot quote safely is dropped rather than sent.
  */

@@ -1,4 +1,4 @@
-// Pull Requests and Issues views (ADR-0105), drawn to markup.
+// Pull Requests and Issues views (ADR-0106), drawn to markup.
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';

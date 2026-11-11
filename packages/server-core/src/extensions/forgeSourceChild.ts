@@ -10,7 +10,7 @@ import {
 import type { ChildFrame, HostFrame } from './protocol.js';
 
 /**
- * The child side of forge sources (ADR-0105). Terminay asks; a source answers
+ * The child side of forge sources (ADR-0106). Terminay asks; a source answers
  * one call. Every answer is validated here and again in the host, so a source
  * can only ever return bounded, typed facts about the question it was asked.
  */

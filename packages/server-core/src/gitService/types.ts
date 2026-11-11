@@ -320,7 +320,7 @@ export interface GitWorktreePullResult {
 	readonly error?: GitErrorInfo;
 }
 
-/** Why a worktree could not be created (ADR-0105). */
+/** Why a worktree could not be created (ADR-0106). */
 export type GitWorktreeCreateErrorCode =
 	| 'invalidBranch'
 	| 'branchExists'

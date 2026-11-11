@@ -57,6 +57,11 @@ export function BotTab({
 	const [sessionsTrigger, setSessionsTrigger] = useState<SessionsTrigger>();
 	const [draft, setDraft] = useState('');
 	const [availabilityError, setAvailabilityError] = useState<string>();
+	// How many times the user has done something with this bot: asked for it,
+	// or pressed a pointer or key inside its tab. Only this acknowledges its
+	// posts; the tab being on screen does not.
+	const [interaction, setInteraction] = useState(0);
+	const interacted = () => setInteraction((count) => count + 1);
 	const bot = server?.bots.find((candidate) => candidate.id === botId);
 	useEffect(() => server?.wantAgents(), [server]);
 	const sessions = server?.sessions.get(botId) ?? [];
@@ -80,6 +85,7 @@ export function BotTab({
 	useEffect(() => {
 		if (server === undefined) return;
 		return subscribeBotFocus(server.serverId, botId, (target) => {
+			setInteraction((count) => count + 1);
 			if (target.mode !== undefined) setMode(target.mode);
 			if (target.sessionId !== undefined) {
 				setSessionsTrigger(undefined);
@@ -129,6 +135,8 @@ export function BotTab({
 			className="bots-ui bots-tab"
 			data-terminay-bot-tab={bot.id}
 			data-terminay-bot-mode={mode}
+			onPointerDownCapture={interacted}
+			onKeyDownCapture={interacted}
 		>
 			<header className="bots-ahead">
 				<BotAvatar bot={bot} activity={activity} size="md" />
@@ -202,6 +210,7 @@ export function BotTab({
 					draft={draft}
 					onDraftChange={setDraft}
 					visible={host.isVisible}
+					interaction={interaction}
 					onConfigure={(tab, sub) => {
 						if (tab === 'sessions') setSessionsTrigger(undefined);
 						setConfigTab(tab);

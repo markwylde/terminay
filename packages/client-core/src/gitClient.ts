@@ -35,7 +35,7 @@ export const GIT_CLIENT_OPERATIONS = Object.freeze({
 
 export type GitSignInChoice = "accept" | "later" | "never";
 
-/** A worktree for a forge item (ADR-0105). The server chooses the path and remote. */
+/** A worktree for a forge item (ADR-0106). The server chooses the path and remote. */
 export interface GitWorktreeCreateRequest {
   readonly projectId: string;
   readonly repository: { readonly origin: string; readonly owner: string; readonly name: string };

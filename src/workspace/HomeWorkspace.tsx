@@ -320,6 +320,16 @@ function HomeTabChip({ api, params }: IDockviewPanelHeaderProps<HomeTabParams>) 
 			data-terminay-home-tab={api.id}
 			data-terminay-home-tab-dirty={dirty ? 'true' : 'false'}
 			title={title}
+			onPointerDown={(event) => {
+				// Clicking a bot's tab is asking for it, as clicking a terminal's
+				// tab is; the tab coming forward on its own is not.
+				const descriptor = params.descriptor;
+				if (event.button === 0 && descriptor.kind === 'bot')
+					requestBotFocus({
+						serverId: descriptor.serverId,
+						botId: descriptor.botId,
+					});
+			}}
 			onAuxClick={(event) => {
 				if (event.button !== 1) return;
 				event.preventDefault();
@@ -639,8 +649,9 @@ export const HomeWorkspace = forwardRef<
 				{ kind: 'bot', serverId: target.serverId, botId: target.botId },
 				from === undefined ? {} : { from },
 			);
-			if (target.mode !== undefined || target.sessionId !== undefined)
-				requestBotFocus(target);
+			// Every open is the user asking for this bot, which the tab counts
+			// as interaction.
+			requestBotFocus(target);
 		},
 		[openDescriptor],
 	);

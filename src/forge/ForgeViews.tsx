@@ -1,5 +1,5 @@
 /**
- * Pull request and issue views (ADR-0105): the list, the detail pane, and
+ * Pull request and issue views (ADR-0106): the list, the detail pane, and
  * the Start work and Review with agent panels. These draw what they are given;
  * `ForgeHome` fetches and acts.
  */

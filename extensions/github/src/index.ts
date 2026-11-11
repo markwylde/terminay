@@ -83,7 +83,7 @@ export default defineExtension({
 				}),
 			),
 		);
-		// Pull requests and issues, asked for on demand (ADR-0105).
+		// Pull requests and issues, asked for on demand (ADR-0106).
 		const forges = context.forges;
 		const source = createGitHubForgeSource({
 			fetch: (input, init) => fetch(input, init),

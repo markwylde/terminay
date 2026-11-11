@@ -81,7 +81,7 @@ interface GiteaPull {
 type StreamCursor = { p: number; o: number } | null;
 
 /**
- * The Gitea forge source (ADR-0105). Accounts are the tea logins and tokens
+ * The Gitea forge source (ADR-0106). Accounts are the tea logins and tokens
  * stored through sign-in, one per origin, choosing the credential the insight
  * source uses: tea first, then sign-in. Every call is HTTPS to the origin;
  * nothing runs `tea`.

@@ -1,6 +1,6 @@
 /**
  * Pure presentation rules for Home's Pull Requests and Issues sections and a
- * project's forge tabs (ADR-0105). Nothing here fetches; the views ask the
+ * project's forge tabs (ADR-0106). Nothing here fetches; the views ask the
  * server through the forge client and render what these functions decide.
  */
 

@@ -1058,7 +1058,7 @@ export class GitService {
 	}
 
 	/**
-	 * Create a worktree for a forge item (ADR-0105). The server chooses the
+	 * Create a worktree for a forge item (ADR-0106). The server chooses the
 	 * remote from those claimed for the repository and the path as a sibling of
 	 * the repository root; the client names only a branch. Creations for one
 	 * repository run one at a time and re-check everything when they run.

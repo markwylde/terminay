@@ -22,7 +22,7 @@ import {
 import { randomUUID } from 'node:crypto';
 
 /**
- * The host forge service (ADR-0105). It asks forge sources for accounts,
+ * The host forge service (ADR-0106). It asks forge sources for accounts,
  * claims, pages, and details on demand; narrows every query by authority and
  * settings, failing closed; merges pages across accounts; joins pull requests
  * to open projects' worktrees; and keeps answers in memory for at most 60
@@ -571,7 +571,7 @@ export class ForgeService {
 		return this.projectClaims(projectId);
 	}
 
-	/** Pull request → worktrees of open projects (ADR-0105 §3). */
+	/** Pull request → worktrees of open projects (ADR-0106 §3). */
 	private async matchWorktrees(
 		item: ForgeItemSummary,
 		sourceId: string,
@@ -617,7 +617,7 @@ export class ForgeService {
 
 	// ── Queries ─────────────────────────────────────────────────────────
 
-	/** One merged page of items (ADR-0105 §1, §5). */
+	/** One merged page of items (ADR-0106 §1, §5). */
 	async list(caller: ForgeCaller, request: ForgeListRequest): Promise<ForgeListResult> {
 		requireScope(caller, 'read');
 		const checked = checkListRequest(request);

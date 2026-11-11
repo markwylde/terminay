@@ -1142,7 +1142,9 @@ Terminay SHALL expose three notification tools:
 - `list_notifications` SHALL return the published notifications of terminals the caller can address, each with an opaque handle, its kind, its title and body, and its terminal's handle. The result SHALL be bounded.
 - `dismiss_notification` SHALL remove one notification by handle. The handle is one the calling terminal received from `send_notification`, or one `list_notifications` returned to the caller.
 
-Dismissing a notification that came from terminal activity SHALL acknowledge its terminal exactly as a user's dismissal from the Notifications list does. Dismissing a sent notification SHALL remove it for every client. A handle SHALL resolve only for a notification of a terminal the caller can address. A workspace-reach caller can therefore dismiss any notification on its server, and a project-reach caller only those of its own project.
+The tools SHALL address only notifications that belong to a terminal. `list_notifications` SHALL NOT return a bot notification, whatever the caller's reach, and no handle SHALL resolve to one.
+
+Dismissing a notification that came from terminal activity SHALL acknowledge its terminal exactly as a user's dismissal from the Notifications list does. Dismissing a sent notification SHALL remove it for every client. A handle SHALL resolve only for a notification of a terminal the caller can address. A workspace-reach caller can therefore dismiss any terminal notification on its server, and a project-reach caller only those of its own project.
 
 `send_notification` SHALL need a calling terminal. `list_notifications` and `dismiss_notification` SHALL NOT need one. All three SHALL be operations of the local control endpoint, dispatched with the resolved scope of the capability that called, so that any process holding that capability can call them and the stdio adapter only presents them as tools. The owning terminal of a sent notification SHALL be resolved from the capability and SHALL NOT be a parameter. The tools' descriptions SHALL tell the agent the following:
 
@@ -1193,6 +1195,16 @@ Dismissing a notification that came from terminal activity SHALL acknowledge its
 
 - **WHEN** an agent calls `send_notification` with a body over 280 characters
 - **THEN** the call fails with a bounded error and no notification is added
+
+#### Scenario: Bot notifications are not listed
+
+- **WHEN** the bot Bird's notification is published and a workspace-reach caller calls `list_notifications`
+- **THEN** the result holds no entry for Bird
+
+#### Scenario: A bot notification's id is not a handle
+
+- **WHEN** a workspace-reach caller passes the id of Bird's notification to `dismiss_notification`
+- **THEN** the call fails as not found and Bird's notification remains
 
 ### Requirement: Terminal metadata and project moves
 

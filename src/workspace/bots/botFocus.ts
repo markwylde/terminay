@@ -4,6 +4,10 @@
  * Opening a bot from a card or a Needs you entry may ask its tab to show Chat,
  * Configure, or one session. The tab may not exist yet when the request is
  * made, so the latest request per bot waits here until the tab takes it.
+ *
+ * A request means the user asked for this bot: clicking its tab, its sidebar
+ * row, a card or a notification. The tab treats it as interaction, which is
+ * what acknowledges the bot's posts. Never send one on the user's behalf.
  */
 
 import type { BotTabTarget } from './botTabHost';

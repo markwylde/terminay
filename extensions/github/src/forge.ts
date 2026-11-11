@@ -141,7 +141,7 @@ export function searchString(query: Pick<ForgeQuery, 'kind' | 'scope' | 'state' 
 }
 
 /**
- * The GitHub forge source (ADR-0105). Accounts are the hosts `gh` is logged
+ * The GitHub forge source (ADR-0106). Accounts are the hosts `gh` is logged
  * in to, the environment's token, and tokens stored through sign-in, one per
  * origin. Every call is GraphQL over HTTPS; `gh` runs only to read a keychain
  * token, as for worktree insights (ADR-0063).

@@ -1,4 +1,4 @@
-# ADR-0105: Forge pull requests and issues come from pull-based, on-demand forge sources; Terminay renders and joins them
+# ADR-0106: Forge pull requests and issues come from pull-based, on-demand forge sources; Terminay renders and joins them
 
 Status: accepted
 Date: 2026-11-11

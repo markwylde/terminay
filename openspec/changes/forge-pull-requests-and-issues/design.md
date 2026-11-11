@@ -20,7 +20,7 @@ API. The owner approved them that day.
 Relevant in-force ADRs: 0021 (count spawns), 0028 (no polling without owner
 approval), 0029 (host-owned typed worktree facts), 0050 (server-resolved folder
 roots), 0057 (session recordings), 0063 (forge CLI only for a token, once),
-0081 (launcher typing rules, superseded here by ADR-0104).
+0081 (launcher typing rules, superseded here by ADR-0105).
 
 ## Goals / Non-Goals
 
@@ -223,7 +223,7 @@ path, `fetchFailed`, `remoteMissing`, `addFailed`) and shown.
 *Boundary:* Git execution safety. No shell, bounded execution, and the server
 resolves the project root.
 
-### 9. Initial prompts for launchers (supersedes ADR-0081; see ADR-0104)
+### 9. Initial prompts for launchers (supersedes ADR-0081; see ADR-0105)
 
 A launcher may declare `initialPrompt: "positional"`. Terminal creation then
 accepts a prompt, which the server validates (not empty, at most 4,000

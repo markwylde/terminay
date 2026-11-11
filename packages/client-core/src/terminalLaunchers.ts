@@ -19,7 +19,7 @@ export interface TerminalLauncher {
 	readonly displayName: string;
 	/** An id from Terminay's icon allowlist. */
 	readonly icon: string;
-	/** Present when the launcher takes an initial prompt (ADR-0104). */
+	/** Present when the launcher takes an initial prompt (ADR-0105). */
 	readonly initialPrompt?: 'positional';
 }
 

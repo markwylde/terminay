@@ -402,7 +402,7 @@ export interface ServerCoreCompositionOptions
 	readonly ai?: AiService;
 	/** Optional server-owned Git protocol authority. */
 	readonly git?: ServerGitAdapter;
-	/** Optional pull requests and issues from extension forge sources (ADR-0105). */
+	/** Optional pull requests and issues from extension forge sources (ADR-0106). */
 	readonly forge?: ServerForgeAdapter;
 	/** The stream Git in Terminay's terminals reports its commands to. A host
 	 * that supplies one has every terminal it launches carry Git's Trace2

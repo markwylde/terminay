@@ -1,5 +1,5 @@
 /**
- * Settings › Extensions for an extension with forge sources (ADR-0105):
+ * Settings › Extensions for an extension with forge sources (ADR-0106):
  * its accounts, which repositories it covers, and where pull requests and
  * issues appear. Every value lives on the server; this only asks and writes.
  */

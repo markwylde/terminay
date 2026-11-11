@@ -6,7 +6,7 @@
  * automations, workflows, recordings, and the pull requests and issues of the
  * forges the server's extensions reach. The sidebar is a menu over these, in
  * this order; Pull Requests and Issues are shown only where a forge source
- * serves them (ADR-0105).
+ * serves them (ADR-0106).
  */
 
 export const HOME_SECTIONS = [

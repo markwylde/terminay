@@ -10,7 +10,7 @@ import {
 
 /**
  * Forge sources answer Terminay's questions about pull requests and issues on
- * the forge accounts an extension can act as (ADR-0105). They are pull-based:
+ * the forge accounts an extension can act as (ADR-0106). They are pull-based:
  * Terminay asks, a source answers one page, and keeps no list state. Every
  * answer is a closed set of typed facts; Terminay owns presentation, joins,
  * caching, and every action that touches Git or terminals.

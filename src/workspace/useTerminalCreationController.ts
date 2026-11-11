@@ -18,7 +18,7 @@ export type AddTerminalOptions = {
 	 * new shell (ADR-0073). */
 	launcherId?: string;
 	/** For a launcher that accepts one: its first message, passed once as an
-	 * argument and never stored (ADR-0105). */
+	 * argument and never stored (ADR-0106). */
 	prompt?: string;
 	direction?: SplitDirection;
 	groupId?: string;

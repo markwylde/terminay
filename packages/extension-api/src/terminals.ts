@@ -29,7 +29,7 @@ export interface TerminalLauncherContribution {
 	harness?: TerminalLauncherHarness;
 	/**
 	 * The program takes an initial prompt as its first positional argument
-	 * (ADR-0104). Terminay may then pass a user-confirmed prompt, quoted by
+	 * (ADR-0105). Terminay may then pass a user-confirmed prompt, quoted by
 	 * the host; the launcher never supplies or sees it.
 	 */
 	initialPrompt?: 'positional';

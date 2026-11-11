@@ -1,7 +1,7 @@
 import { FEATURE_CAPABILITIES, type JsonValue } from "@terminay/protocol";
 import type { ClientEvent, CommandOptions, QueryOptions } from "./types.js";
 
-/** Application-protocol operations for pull requests and issues (ADR-0105). */
+/** Application-protocol operations for pull requests and issues (ADR-0106). */
 export const FORGE_CLIENT_OPERATIONS = Object.freeze({
   sources: "forge.sources",
   accounts: "forge.accounts",

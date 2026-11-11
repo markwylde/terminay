@@ -182,7 +182,7 @@ export interface GitProtocolAdapterOptions {
 		readonly fromPath: string | null;
 	}) => (toPath: string | null) => void;
 	/**
-	 * The project's remote names claimed for a forge repository (ADR-0105).
+	 * The project's remote names claimed for a forge repository (ADR-0106).
 	 * Worktree creation chooses among these; without it, creation is unavailable.
 	 */
 	readonly forgeRemotes?: (

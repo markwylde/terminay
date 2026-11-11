@@ -1,4 +1,4 @@
-# ADR-0104: A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents
+# ADR-0105: A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents
 
 Status: accepted, supersedes ADR-0081
 Date: 2026-11-11

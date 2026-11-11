@@ -123,5 +123,6 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0099](./0099-a-bot-is-woken-by-its-own-failures-never-by-a-failures-failure.md) | A bot is woken by its own failures, never by a failure's failure | accepted | 2026-11-06 |
 | [0100](./0100-a-notification-belongs-to-one-terminal-or-one-bot.md) | A notification belongs to one terminal or one bot | accepted, supersedes 0061 in part | 2026-11-06 |
 | [0101](./0101-the-home-overview-layout-is-a-server-setting.md) | The Home overview layout is a server setting | accepted | 2026-11-06 |
-| [0104](./0104-a-launcher-may-start-an-agent-with-a-user-confirmed-initial-prompt.md) | A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents | accepted, supersedes 0081 | 2026-11-11 |
-| [0105](./0105-forge-pull-requests-and-issues-come-from-pull-based-on-demand-forge-sources.md) | Forge pull requests and issues come from pull-based, on-demand forge sources; Terminay renders and joins them | accepted | 2026-11-11 |
+| [0104](./0104-a-notification-is-acknowledged-only-by-what-the-user-does.md) | A notification is acknowledged only by what the user does | accepted | 2026-11-11 |
+| [0105](./0105-a-launcher-may-start-an-agent-with-a-user-confirmed-initial-prompt.md) | A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents | accepted, supersedes 0081 | 2026-11-11 |
+| [0106](./0106-forge-pull-requests-and-issues-come-from-pull-based-on-demand-forge-sources.md) | Forge pull requests and issues come from pull-based, on-demand forge sources; Terminay renders and joins them | accepted | 2026-11-11 |

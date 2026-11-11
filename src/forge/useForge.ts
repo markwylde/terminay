@@ -1,5 +1,5 @@
 /**
- * How the renderer asks for pull requests and issues (ADR-0105).
+ * How the renderer asks for pull requests and issues (ADR-0106).
  *
  * Every request is on demand: when a view is shown, when its query changes,
  * on Refresh, on window focus once the last answer is a minute old, and on a

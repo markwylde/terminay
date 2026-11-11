@@ -1,5 +1,5 @@
 /**
- * The order the pull request and issue actions run in (ADR-0105), apart from
+ * The order the pull request and issue actions run in (ADR-0106), apart from
  * the window that supplies each step. Opening a worktree is: use the matched
  * one, or ask the server to create one (taking the worktree it names when the
  * branch is already out in that project, as after a retry); wait for its

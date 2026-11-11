@@ -912,7 +912,7 @@ type ProjectWorkspaceProps = {
 	onNewTerminalInFolder: (projectId: string, folderId: string) => void;
 	/** The launchers this project's server offers on a folder's New terminal row. */
 	terminalLaunchers: readonly TerminalLauncherView[];
-	/** Pull requests and issues for this project's left column (ADR-0105). */
+	/** Pull requests and issues for this project's left column (ADR-0106). */
 	forge?: ProjectForgeContext;
 	/** Create a terminal in a folder of this project that starts a launcher. */
 	onLaunchTerminalInFolder: (
@@ -9022,7 +9022,7 @@ function App({
 	);
 	const workflowsNeedingYou = needsYouCount(workflowRows);
 	// Pull requests and issues come from the server this window shows, asked
-	// for when a view needs them and never on a timer (ADR-0105).
+	// for when a view needs them and never on a timer (ADR-0106).
 	const forgeClient = useForgeClient(
 		terminalClientContext?.applicationClient,
 		terminalClientContext?.serverCapabilities,

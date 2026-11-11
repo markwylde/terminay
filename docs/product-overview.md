@@ -143,7 +143,7 @@ settings that choose which repositories count, and creating the worktree that
 Check out and Start work need. Start work and Review with agent open a
 terminal running a launcher, such as Claude Code or Codex, that declares it
 accepts a first message; the prompt is passed once as its argument and never
-stored (ADR-0104, ADR-0105).
+stored (ADR-0105, ADR-0106).
 
 Agent chats are the one place Terminay runs a coding agent itself, an
 exception the repository owner approved (ADR-0067). A chat provider starts the

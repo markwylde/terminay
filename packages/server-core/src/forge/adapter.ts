@@ -8,7 +8,7 @@ import {
 	ForgeServiceError,
 } from './service.js';
 
-/** Stable application-protocol operation names for forge sources (ADR-0105). */
+/** Stable application-protocol operation names for forge sources (ADR-0106). */
 export const FORGE_OPERATIONS = Object.freeze({
 	sources: 'forge.sources',
 	accounts: 'forge.accounts',
