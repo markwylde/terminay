@@ -29,7 +29,7 @@ async function setEngineDown(tempDir: string, down: boolean): Promise<void> {
 }
 
 async function openBots(page: Page): Promise<Locator> {
-	await page.getByRole('button', { name: 'Home', exact: true }).click();
+	await page.locator('[data-terminay-home-control="true"]').click();
 	await page.locator('[data-terminay-home-section-tab="bots"]').click();
 	await expect(activeHome(page)).toHaveAttribute(
 		'data-terminay-home-view',
@@ -240,7 +240,7 @@ test.describe('Home › Bots', () => {
 		await mainWindow.reload();
 		await openBots(mainWindow);
 		await expect(ready).toBeVisible();
-		await mainWindow.getByRole('button', { name: 'Home', exact: true }).click();
+		await mainWindow.locator('[data-terminay-home-control="true"]').click();
 		await mainWindow.locator('[data-terminay-home-section-tab="tabs"]').click();
 		await openBots(mainWindow);
 		await expect(ready).toHaveCount(0);
