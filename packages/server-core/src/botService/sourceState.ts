@@ -68,7 +68,7 @@ export function initialCheckpoint(generation: string): SourceCheckpoint {
 		ids: [],
 		sequence: 0,
 		health: {
-			state: 'disabled',
+			state: 'waiting',
 			lastAttempt: null,
 			lastSuccess: null,
 			lastFired: null,

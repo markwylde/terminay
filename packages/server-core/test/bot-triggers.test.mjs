@@ -1965,3 +1965,83 @@ test('during an open failure episode, a recovered interruption ends the episode 
 	await settle(r);
 	assert.equal(investigations(r).length, 2);
 });
+
+test('an enabled trigger never reports disabled health, before or after it is toggled', async (t) => {
+	const r = await setup(t, { sources: switchable().sources });
+	const interval = r.triggers.create(r.bot.id, draft());
+	const command = r.triggers.create(r.bot.id, commandDraft());
+	// Freshly created and enabled, before anything has been checked or fired.
+	assert.equal(healthOf(r, interval).state, 'waiting');
+	assert.equal(healthOf(r, command).state, 'waiting');
+	for (const trigger of [interval, command]) {
+		r.triggers.enable(r.bot.id, trigger.id, false);
+		assert.equal(healthOf(r, trigger).state, 'disabled');
+		r.triggers.enable(r.bot.id, trigger.id, true);
+		assert.equal(healthOf(r, trigger).state, 'waiting');
+	}
+	// Disabling the bot disables its triggers' health; enabling it restores it.
+	r.service.enableBot(r.bot.id, false);
+	assert.equal(healthOf(r, interval).state, 'disabled');
+	r.service.enableBot(r.bot.id, true);
+	assert.equal(healthOf(r, interval).state, 'waiting');
+	// An interval trigger that has fired is still not reported as disabled.
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	await settle(r);
+	assert.notEqual(healthOf(r, interval).state, 'disabled');
+});
+
+test('disabled health follows the trigger and bot switches, and specific states survive', async (t) => {
+	const s = switchable();
+	const r = await setup(t, { sources: s.sources });
+	// Created disabled.
+	const off = r.triggers.create(r.bot.id, draft(undefined, { enabled: false }));
+	assert.equal(healthOf(r, off).state, 'disabled');
+	// A checkpoint stored as `disabled` for an active trigger lists as waiting.
+	const interval = r.triggers.create(r.bot.id, draft());
+	r.triggers.observations.update(interval, (c) => {
+		c.health = { ...c.health, state: 'disabled' };
+	});
+	assert.equal(healthOf(r, interval).state, 'waiting');
+	// Retrying a schedule trigger, which runs no check, leaves it waiting.
+	r.triggers.retry(r.bot.id, interval.id);
+	assert.equal(healthOf(r, interval).state, 'waiting');
+	// A failed command trigger stays failed in listings and across a bot pause.
+	const failing = r.triggers.create(r.bot.id, commandDraft());
+	await r.time.advance(start + MINUTE, r.engine);
+	await settle(r);
+	assert.equal(healthOf(r, failing).state, 'failed');
+	r.service.enableBot(r.bot.id, false);
+	assert.equal(healthOf(r, failing).state, 'disabled');
+	// Enabling a trigger while its bot is off keeps it disabled.
+	r.triggers.enable(r.bot.id, off.id, true);
+	assert.equal(healthOf(r, off).state, 'disabled');
+	r.service.enableBot(r.bot.id, true);
+	assert.equal(healthOf(r, failing).state, 'failed');
+	assert.equal(healthOf(r, off).state, 'waiting');
+	// A healthy state likewise survives listing and a bot pause.
+	s.state.fail = false;
+	await r.time.advance(start + 3 * MINUTE, r.engine);
+	await settle(r);
+	assert.equal(healthOf(r, failing).state, 'healthy');
+	r.service.enableBot(r.bot.id, false);
+	r.service.enableBot(r.bot.id, true);
+	assert.equal(healthOf(r, failing).state, 'healthy');
+	// Retrying a source trigger never passes through disabled.
+	r.triggers.retry(r.bot.id, failing.id);
+	assert.notEqual(healthOf(r, failing).state, 'disabled');
+	await settle(r);
+	assert.notEqual(healthOf(r, failing).state, 'disabled');
+});
+
+test('a once trigger reports disabled health after it fires', async (t) => {
+	const r = await setup(t);
+	const once = r.triggers.create(
+		r.bot.id,
+		draft({ kind: 'once', at: start + MINUTE }),
+	);
+	assert.equal(healthOf(r, once).state, 'waiting');
+	await r.time.advance(start + MINUTE, r.engine);
+	await settle(r);
+	assert.equal(r.bots.trigger(r.bot.id, once.id).enabled, false);
+	assert.equal(healthOf(r, once).state, 'disabled');
+});

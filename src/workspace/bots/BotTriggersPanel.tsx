@@ -19,6 +19,7 @@ import {
 	lastFirings,
 	MAX_TRIGGERS,
 	SOURCE_GROUPS,
+	statusOf,
 	TRIGGER_KIND_LABELS,
 	type TriggerKind,
 	UPCOMING_DAYS,
@@ -26,17 +27,6 @@ import {
 import { useNow } from './useNow';
 import { refusalText, type ServerBots } from './useServerBots';
 
-const HEALTH_LABELS: Readonly<Record<string, string>> = {
-	disabled: 'Disabled',
-	watching: 'Watching',
-	connected: 'Connected',
-	waiting: 'Waiting',
-	checking: 'Checking',
-	healthy: 'Healthy',
-	retrying: 'Retrying',
-	blocked: 'Blocked',
-	failed: 'Failed',
-};
 const MISSED_POLICY: Readonly<Record<string, string>> = {
 	skip: 'skipped',
 	once: 'runs once',
@@ -44,18 +34,6 @@ const MISSED_POLICY: Readonly<Record<string, string>> = {
 	'recover-available': 'recovering',
 	'ignore-gap': 'gap ignored',
 };
-function statusOf(t: BotTrigger): { label: string; tone: string } {
-	if (t.unsupported) return { label: 'Unsupported', tone: 'need' };
-	if (!t.enabled) return { label: 'Disabled', tone: 'idle' };
-	const state = t.health?.state;
-	if (state === 'failed' || state === 'blocked')
-		return { label: HEALTH_LABELS[state]!, tone: 'need' };
-	if (state === 'retrying') return { label: 'Retrying', tone: 'work' };
-	return {
-		label: state ? (HEALTH_LABELS[state] ?? state) : 'Ready',
-		tone: 'done',
-	};
-}
 export function formatWhen(at: number): string {
 	return new Date(at).toLocaleString(undefined, {
 		weekday: 'short',
@@ -234,7 +212,7 @@ export function BotTriggersPanel({
 										{triggers.map((t) => {
 											const fired = last.get(t.id);
 											const health = t.health;
-											const status = statusOf(t);
+											const status = statusOf(t, bot.enabled !== false);
 											const next = nextFor.get(t.id) ?? health?.nextCheck;
 											const selected =
 												showEditor && editing !== 'new' && editing?.id === t.id;
@@ -305,6 +283,7 @@ export function BotTriggersPanel({
 													<td>
 														<span
 															className={`bots-trigstatus bots-trigstatus--${status.tone}`}
+															data-terminay-bot-trigger-status={status.tone}
 														>
 															{status.label}
 														</span>

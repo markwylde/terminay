@@ -811,6 +811,63 @@ test.describe('Home › Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('a trigger status says Disabled only when the trigger or its bot is off', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Kestrel');
+		const row = await newTrigger(tab, 'Every so often', 'check in');
+		const status = row.locator('[data-terminay-bot-trigger-status]');
+		const toggle = row.getByRole('switch');
+
+		// Enabled and armed, before it has ever fired.
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await expect(status).toHaveText('Waiting');
+		await expect(status).toHaveAttribute(
+			'data-terminay-bot-trigger-status',
+			'done',
+		);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-enabled-waiting.png'),
+		});
+
+		await toggle.click();
+		await expect(toggle).toHaveAttribute('aria-checked', 'false');
+		await expect(status).toHaveText('Disabled');
+		await expect(status).toHaveAttribute(
+			'data-terminay-bot-trigger-status',
+			'idle',
+		);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-disabled.png'),
+		});
+
+		// Re-enabling never leaves a Disabled status beside a switch that is on.
+		await toggle.click();
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await expect(status).toHaveText('Waiting');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-reenabled-waiting.png'),
+		});
+
+		// Disabling the bot shows its switched-on trigger as Disabled.
+		await tab.getByRole('button', { name: 'Disable bot' }).click();
+		await expect(status).toHaveText('Disabled');
+		await expect(status).toHaveAttribute(
+			'data-terminay-bot-trigger-status',
+			'idle',
+		);
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-bot-disabled.png'),
+		});
+		// The header button; a disabled bot also offers an inline Enable bot link.
+		await tab.locator('.bots-btn').getByText('Enable bot').click();
+		await expect(status).toHaveText('Waiting');
+	});
+
 	test('a bot post raises a notification until the user acts on its Chat, and the row opens that Chat', async ({
 		mainWindow,
 		tempDir,
