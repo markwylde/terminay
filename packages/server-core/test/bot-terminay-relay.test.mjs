@@ -65,7 +65,7 @@ function harness(t, options = {}) {
 				if (code !== 0) throw new Error(`probe exited ${code}`);
 				return '';
 			}
-			killed.push(command);
+			killed.push(Object.assign([...command], { deadlineMs: execOptions?.deadlineMs }));
 			const child = children.get(command[2]);
 			if (child && child.exitCode === null) {
 				const closed = once(child, 'close');
@@ -198,6 +198,7 @@ test('with access, a terminay server is relayed to the host handler, per connect
 	assert.equal(fake.closed(), 1, 'closing the bridge ends the handler');
 	assert.equal(h.secrets.has(`${h.sid}:terminay`), false);
 	assert.ok(h.killed.some((command) => command[1] === '--kill' && command[2].startsWith('mcp-terminay-')));
+	for (const command of h.killed.filter((c) => c[1] === '--kill')) assert.equal(command.deadlineMs, 5 * 60_000);
 });
 
 test('without access there is no terminay server and no second relay', { timeout: 15000 }, async (t) => {

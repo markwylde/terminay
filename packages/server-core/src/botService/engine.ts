@@ -411,6 +411,9 @@ export class BotEngine extends EventEmitter {
 		this.endEvents = undefined;
 	}
 }
+/** How long a `terminay-run --kill` exec may take. A busy Podman machine has
+ * taken 45 s just to create and start one, so this is generous. */
+export const BOT_KILL_DEADLINE_MS = 5 * 60_000;
 export const ENGINE_MARKER = 'terminay-engine-identity';
 export const ENGINE_ID_LABEL = 'terminay.engine.identity';
 function reason(error: unknown): EngineUnavailableReason {

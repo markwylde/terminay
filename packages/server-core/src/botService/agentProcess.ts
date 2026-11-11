@@ -4,7 +4,7 @@ import type {
 } from '@terminay/extension-api';
 import type { BotSessionSnapshot, JsonValue } from '@terminay/protocol';
 import { type BotAgentStream, type BotCredentialLease } from './credentials.js';
-import type { EngineDriver } from './engine.js';
+import { BOT_KILL_DEADLINE_MS, type EngineDriver } from './engine.js';
 import { BotNativeClient, nativeArguments } from './native.js';
 import { BotError } from './store.js';
 
@@ -46,6 +46,16 @@ async function deadline<T>(
 		]);
 	} finally {
 		if (timer) clearTimeout(timer);
+	}
+}
+/** Ending an agent's process group was not confirmed. */
+export class BotCleanupError extends Error {
+	constructor(cause: unknown) {
+		super(
+			`agent process cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+			{ cause },
+		);
+		this.name = 'BotCleanupError';
 	}
 }
 /** A lease is released only after the root supervisor confirms its group is empty. */
@@ -147,7 +157,14 @@ export class BotAgentProcess {
 					client.cancel().catch(() => undefined),
 					10_000,
 				);
-			await this.endProcess(reason !== 'stop' && reason !== 'timeout');
+			try {
+				await this.endProcess(reason !== 'stop' && reason !== 'timeout');
+			} catch (error) {
+				// The relays are still closed; the agent's lease stays held
+				// because its process group was not confirmed gone.
+				await this.options.cleanupRuntime?.().catch(() => undefined);
+				throw new BotCleanupError(error);
+			}
 			await this.options.cleanupRuntime?.();
 			if (!this.released) {
 				this.released = true;
@@ -170,7 +187,7 @@ export class BotAgentProcess {
 		await this.options.driver.exec(
 			`terminay-bot-${this.options.botId}`,
 			['terminay-run', '--kill', this.options.sessionId],
-			{ user: 'root', deadlineMs: 20_000 },
+			{ user: 'root', deadlineMs: BOT_KILL_DEADLINE_MS },
 		);
 		client?.dispose();
 		this.clientValue = undefined;
