@@ -20,7 +20,62 @@
 }
 
 .workflow-panel--expanded {
-  width: 264px;
+  width: var(--workflow-panel-width, 264px);
+}
+
+/* The expanded panel's left edge, drawn like the workspace separators. */
+.workflow-panel-separator {
+  box-sizing: border-box;
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  transform: translateX(-3px);
+  cursor: col-resize;
+  outline: none;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.workflow-panel-separator::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition:
+    background 120ms ease,
+    width 120ms ease;
+}
+
+.workflow-panel-separator:hover::before {
+  width: 4px;
+  background: var(--workspace-split-layout-separator-active-line, #ffffff);
+  transition-delay: 100ms;
+}
+
+.workflow-panel-separator:active::before,
+.workflow-panel-separator:focus-visible::before {
+  width: 4px;
+  background: var(--workspace-split-layout-separator-active-line, #ffffff);
+  transition-delay: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-panel-separator::before {
+    transition: none;
+  }
 }
 
 .workflow-toggle {
@@ -359,7 +414,7 @@
   right: 0;
   bottom: 0;
   z-index: 2;
-  width: min(264px, 85vw);
+  width: min(var(--workflow-overlay-width, 264px), 85vw);
   background: var(--terminal-panel-surface, #111316);
   border-left: 1px solid rgb(255 255 255 / 0.16);
   box-shadow: -8px 0 24px rgb(0 0 0 / 0.4);

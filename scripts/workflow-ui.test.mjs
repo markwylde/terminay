@@ -44,6 +44,9 @@ const serverCore = await bundle('packages/server-core/src/workflowService/types.
 // Every bundle is built before the first test is declared: a test declared
 // after a later top-level await never runs under --test-force-exit.
 const seenStore = await bundle('src/workspace/workflows/workflowSeen.ts', 'seen.cjs');
+// A second copy of the setting module, so its width is first read under the
+// test's own storage.
+const widthStore = await bundle('src/workspace/workflows/workflowPanelSetting.ts', 'setting-width.cjs');
 const library = await bundle('src/components/workflows/workflowLibraryModel.ts', 'library.cjs');
 const category = await bundle('src/components/settings/WorkflowsCategory.tsx', 'category.cjs');
 const settingsClient = await bundle('src/components/workflows/useWorkflowSettingsClient.ts', 'settings-client.cjs');
@@ -186,10 +189,15 @@ test('the collapse setting is one device-local choice every panel follows', () =
 	// Nothing in the setting module reaches a server: it takes no client at all.
 	assert.deepEqual(Object.keys(setting).sort(), [
 		'WORKFLOW_PANEL_STORAGE_KEY',
+		'WORKFLOW_PANEL_WIDTH_STORAGE_KEY',
 		'setWorkflowPanelSetting',
+		'setWorkflowPanelWidth',
 		'subscribeWorkflowPanelSetting',
+		'subscribeWorkflowPanelWidth',
 		'useWorkflowPanelSetting',
+		'useWorkflowPanelWidth',
 		'workflowPanelSetting',
+		'workflowPanelWidth',
 	]);
 });
 
@@ -206,21 +214,123 @@ test('a workflow that could not be restored says so and offers removal', () => {
 
 test('below 60 columns beside the expanded panel the panel stays a rail, and the setting is unchanged', () => {
 	const cell = 8;
-	const lost = Math.ceil((model.WORKFLOW_PANEL_WIDTH - model.WORKFLOW_RAIL_WIDTH) / cell);
-	assert.equal(model.panelMode('expanded', 60 + lost, cell), 'expanded');
-	assert.equal(model.panelMode('expanded', 59 + lost, cell), 'forced-collapsed');
-	assert.equal(model.panelMode('collapsed', 200, cell), 'collapsed');
+	const mode = (setting, columns, c) => model.panelLayout(setting, model.WORKFLOW_PANEL_WIDTH, columns, c).mode;
+	// The minimum width beside 60 columns decides narrowness.
+	const lost = Math.ceil((model.WORKFLOW_PANEL_MIN_WIDTH - model.WORKFLOW_RAIL_WIDTH) / cell);
+	assert.equal(mode('expanded', 60 + lost, cell), 'expanded');
+	assert.equal(mode('expanded', 59 + lost, cell), 'forced-collapsed');
+	assert.equal(mode('collapsed', 200, cell), 'collapsed');
 	// Narrowness is the pane's whatever the setting, so expanding opens the overlay.
-	assert.equal(model.panelMode('collapsed', 59 + lost, cell), 'forced-collapsed');
-	assert.equal(model.panelMode('collapsed', undefined, undefined), 'collapsed');
+	assert.equal(mode('collapsed', 59 + lost, cell), 'forced-collapsed');
+	assert.equal(mode('collapsed', undefined, undefined), 'collapsed');
 	// Forced collapsed reserves only the rail, so the overlay never resizes the terminal.
-	assert.equal(model.reservedWidth('forced-collapsed'), model.WORKFLOW_RAIL_WIDTH);
-	assert.equal(model.reservedWidth('expanded'), model.WORKFLOW_PANEL_WIDTH);
+	const forced = model.panelLayout('expanded', 264, 59 + lost, cell);
+	assert.equal(model.reservedWidth(forced), model.WORKFLOW_RAIL_WIDTH);
+	assert.equal(model.reservedWidth(model.panelLayout('expanded', 264, undefined, undefined)), 264);
+	assert.equal(model.reservedWidth(model.panelLayout('collapsed', 480, undefined, undefined)), model.WORKFLOW_RAIL_WIDTH);
 	assert.equal(model.reservedWidth(undefined), 0);
 	const markup = render({ mode: 'forced-collapsed', view: attached([step('a', 'running')]) });
 	assert.match(markup, /data-workflow-mode="forced-collapsed"/);
 	assert.match(markup, /workflow-panel--collapsed/);
 	assert.ok(!markup.includes('role="dialog"'));
+});
+
+// resizable-workflow-panel 1.1
+
+test('the panel is drawn at the chosen width, narrowed to keep 60 columns, and collapsed only below its minimum', () => {
+	const cell = 8;
+	// Without geometry the chosen width is drawn, up to the maximum.
+	assert.deepEqual(model.panelLayout('expanded', 480, undefined, undefined), { mode: 'expanded', width: 480, maxWidth: 640 });
+	assert.equal(model.panelLayout('expanded', 9000, undefined, undefined).width, 640);
+	assert.equal(model.panelLayout('expanded', 10, undefined, undefined).width, 200);
+	// Plenty of room: the chosen width.
+	assert.equal(model.panelLayout('expanded', 480, 200, cell).width, 480);
+	// 60 columns plus room for a 300px panel: narrowed, setting kept.
+	const columns = 60 + (300 - model.WORKFLOW_RAIL_WIDTH) / cell;
+	const narrowed = model.panelLayout('expanded', 480, columns, cell);
+	assert.equal(narrowed.mode, 'expanded');
+	assert.equal(narrowed.width, 300);
+	assert.equal(narrowed.maxWidth, 300);
+	// The pane grows back: the chosen width again.
+	assert.equal(model.panelLayout('expanded', 480, columns + 40, cell).width, 480);
+	// Exactly the minimum still fits; one column less does not.
+	const atMin = 60 + (200 - model.WORKFLOW_RAIL_WIDTH) / cell;
+	assert.equal(model.panelLayout('expanded', 480, atMin, cell).width, 200);
+	assert.equal(model.panelLayout('expanded', 480, atMin - 1, cell).mode, 'forced-collapsed');
+	// The overlay: the chosen width, or 85% of the pane.
+	assert.equal(model.overlayWidth(480, 400), 340);
+	assert.equal(model.overlayWidth(264, 2000), 264);
+	assert.equal(model.overlayWidth(480, undefined), 480);
+});
+
+// resizable-workflow-panel 1.2
+
+test('the chosen width is device-local, clamped when set, and an unusable stored width reads as the default', () => {
+	const stored = new Map();
+	const listeners = new Set();
+	globalThis.localStorage = {
+		getItem: (k) => (stored.has(k) ? stored.get(k) : null),
+		setItem: (k, v) => stored.set(k, String(v)),
+	};
+	globalThis.addEventListener = (type, fn) => type === 'storage' && listeners.add(fn);
+	globalThis.removeEventListener = (_type, fn) => listeners.delete(fn);
+	const key = widthStore.WORKFLOW_PANEL_WIDTH_STORAGE_KEY;
+	const otherWindowWrites = (value) => {
+		stored.set(key, value);
+		for (const fn of listeners) fn({ key });
+	};
+	try {
+		assert.equal(widthStore.workflowPanelWidth(), 264, 'the default on an empty store');
+		const heard = [];
+		const stop = widthStore.subscribeWorkflowPanelWidth(() => heard.push(widthStore.workflowPanelWidth()));
+		widthStore.setWorkflowPanelWidth(400.4);
+		widthStore.setWorkflowPanelWidth(400);
+		assert.equal(stored.get(key), '400');
+		widthStore.setWorkflowPanelWidth(9000);
+		widthStore.setWorkflowPanelWidth(-5);
+		assert.deepEqual(heard, [400, 640, 200], 'one notice per change, clamped');
+		// Another window's write is followed.
+		otherWindowWrites('512');
+		assert.equal(widthStore.workflowPanelWidth(), 512);
+		for (const unusable of ['900', '199', 'wide', '', '3.5e2', '-300']) {
+			otherWindowWrites(unusable);
+			assert.equal(widthStore.workflowPanelWidth(), 264, `stored ${JSON.stringify(unusable)}`);
+		}
+		stop();
+		// Storage that throws keeps the width for this window.
+		globalThis.localStorage = {
+			getItem: () => {
+				throw new Error('blocked');
+			},
+			setItem: () => {
+				throw new Error('blocked');
+			},
+		};
+		widthStore.setWorkflowPanelWidth(333);
+		assert.equal(widthStore.workflowPanelWidth(), 333);
+	} finally {
+		delete globalThis.localStorage;
+		delete globalThis.addEventListener;
+		delete globalThis.removeEventListener;
+	}
+});
+
+// resizable-workflow-panel 2.2
+
+test('only the expanded panel has a resize separator, keyboard-reachable and bounded by its pane', () => {
+	const view = attached([step('a', 'running')]);
+	const expanded = render({ mode: 'expanded', view, width: 300, maxWidth: 420 });
+	const separator = expanded.match(/<hr [^>]*class="workflow-panel-separator"[^>]*\/?>/)?.[0];
+	assert.ok(separator, 'the expanded panel has a separator');
+	assert.match(separator, /aria-label="Resize workflow panel"/);
+	assert.match(separator, /aria-orientation="vertical"/);
+	assert.match(separator, /tabindex="0"/i);
+	assert.match(separator, /aria-valuemin="200"/);
+	assert.match(separator, /aria-valuemax="420"/);
+	assert.match(separator, /aria-valuenow="300"/);
+	assert.match(expanded, /--workflow-panel-width:300px/);
+	assert.ok(!render({ view }).includes('workflow-panel-separator'), 'the rail has none');
+	assert.ok(!render({ mode: 'forced-collapsed', view }).includes('workflow-panel-separator'), 'a narrow pane has none');
 });
 
 // 5.5
