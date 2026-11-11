@@ -378,4 +378,26 @@ test.describe('recordings in Home', () => {
     await recordingsTab(mainWindow).getByRole('button', { name: 'Refresh recordings' }).click()
     await expect(timelineItems(mainWindow).first()).toBeVisible()
   })
+
+  test('deleting a recording from its replay removes it from the timeline', async ({
+    appHarness,
+    mainWindow,
+    tempDir,
+  }) => {
+    await recordTerminalOutput(appHarness, mainWindow, path.join(tempDir, 'delete-recordings'), 'delete-visible-output')
+    await sendAppCommand(mainWindow, 'open-recordings')
+    await expectHomeSection(mainWindow, 'recordings')
+    await expectListedRecording(mainWindow)
+    const rowsBefore = await timelineItems(mainWindow).count()
+
+    await timelineItems(mainWindow).first().click()
+    const replay = frontHomeTab(mainWindow)
+    await expect(replay).toHaveAttribute('data-terminay-home-tab-panel', /^recording:/)
+    mainWindow.once('dialog', (dialog) => void dialog.accept())
+    await replay.getByRole('button', { name: 'Delete' }).click()
+
+    // The replay closes and the timeline, read afresh, no longer lists it.
+    await expect(frontHomeTab(mainWindow)).toHaveAttribute('data-terminay-home-tab-panel', 'section:recordings')
+    await expect(timelineItems(mainWindow)).toHaveCount(rowsBefore - 1)
+  })
 })

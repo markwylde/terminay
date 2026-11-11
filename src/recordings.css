@@ -167,39 +167,18 @@
 
 .recordings-detail-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  min-width: 0;
-  padding: 42px 48px 18px;
-  border-bottom: 1px solid var(--settings-border);
-}
-
-.recordings-detail-header > div {
+  gap: 16px;
   min-width: 0;
 }
 
-.recordings-detail-header h2 {
-  margin: 0;
-  overflow: hidden;
-  color: var(--settings-text);
-  font-size: 28px;
-  font-weight: 600;
-  line-height: 1.2;
-  letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.recordings-detail-header__text {
+  min-width: 0;
 }
 
-.recordings-detail-header p {
-  margin: 6px 0 0;
-  color: var(--settings-text-muted);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.recordings-detail-path {
-  max-width: 100%;
+.recordings-detail-header .home-section__heading,
+.recordings-detail-header .home-section__subheading {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -208,10 +187,47 @@
 .recordings-actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  max-width: 260px;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The small bordered buttons the Bots and Automations pages use. */
+.recordings-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.04);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.recordings-button:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.recordings-button:focus-visible {
+  outline: 1px solid rgba(120, 170, 255, 0.75);
+  outline-offset: 1px;
+}
+
+.recordings-button--danger {
+  color: #ee6258;
+  border-color: rgba(238, 98, 88, 0.35);
+}
+
+.recordings-button--danger:hover {
+  border-color: rgba(238, 98, 88, 0.6);
+  background: rgba(238, 98, 88, 0.08);
 }
 
 .recordings-terminal-shell {
@@ -658,12 +674,54 @@
   min-height: 0;
 }
 
-.recordings-page .recordings-page__search {
-  max-width: 320px;
+.recordings-page__toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 12px;
 }
 
-.recordings-page .recordings-page__search .workspace-dashboard__filter-input {
-  width: 240px;
+.recordings-page__search {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 260px;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.5);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.recordings-page__search:focus-within {
+  border-color: rgba(120, 170, 255, 0.6);
+}
+
+.recordings-page__search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: #dce2f0;
+  background: transparent;
+  font: inherit;
+}
+
+.recordings-page__spacer {
+  flex: 1;
+}
+
+.recordings-page__updated {
+  color: rgba(220, 226, 240, 0.45);
+  white-space: nowrap;
 }
 
 .recordings-page__refresh {
@@ -676,28 +734,62 @@
   border: 0;
   border-radius: 6px;
   color: rgba(220, 226, 240, 0.6);
-  background: rgba(255, 255, 255, 0.06);
+  background: transparent;
   cursor: pointer;
 }
 
 .recordings-page__refresh:hover {
   color: #dce2f0;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.recordings-page__refresh:focus-visible {
+.recordings-page__refresh:focus-visible,
+.recordings-page__open:focus-visible,
+.recordings-page__row-action:focus-visible {
   outline: 1px solid rgba(120, 170, 255, 0.75);
   outline-offset: -1px;
 }
 
+.recordings-spin {
+  animation: recordings-spin 0.9s linear infinite;
+}
+
+@keyframes recordings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recordings-spin {
+    animation: none;
+  }
+}
+
+.recordings-page__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 20px;
+}
+
+.recordings-page__state {
+  margin: 0;
+  padding: 24px 8px;
+  color: rgba(220, 226, 240, 0.55);
+  font-size: 12.5px;
+}
+
 .recordings-page__group + .recordings-page__group {
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .recordings-page__group-head {
-  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
-  padding: 6px 10px 0;
+  padding: 8px 8px 4px;
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -705,12 +797,41 @@
   color: rgba(220, 226, 240, 0.5);
 }
 
-/* Colour, title, where it ran, then the fixed-width time, length and state.
-   Scoped under the page: the dashboard row it borrows starts with all: unset. */
-.recordings-page .recordings-page__row {
-  grid-template-columns: 3px minmax(0, auto) minmax(0, 1fr) auto auto auto;
+.recordings-page__group-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  color: rgba(220, 226, 240, 0.35);
+}
+
+.recordings-page__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.recordings-page__row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Colour, title, where and how it ran, then fixed-width time and length. */
+.recordings-page__open {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 3px minmax(0, max-content) minmax(0, 1fr) auto auto auto;
+  align-items: center;
   gap: 12px;
-  height: 36px;
+  height: 34px;
+  padding: 0 40px 0 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #dce2f0;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .recordings-page__swatch {
@@ -721,24 +842,53 @@
 }
 
 .recordings-page__title {
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recordings-page__detail {
+  overflow: hidden;
+  color: rgba(220, 226, 240, 0.5);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recordings-page__time {
-  font-size: 11.5px;
-  text-align: right;
+  min-width: 44px;
   color: rgba(220, 226, 240, 0.5);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
-  min-width: 48px;
+  text-align: right;
 }
 
-.recordings-page__state {
-  display: flex;
-  justify-content: flex-end;
+.recordings-page__row-action {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: rgba(220, 226, 240, 0.5);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
 }
 
-.recordings-page__state:empty {
-  display: none;
+.recordings-page__row:hover .recordings-page__row-action,
+.recordings-page__row-action:focus-visible {
+  opacity: 1;
+}
+
+.recordings-page__row-action:hover {
+  color: #ee6258;
+  background: rgba(238, 98, 88, 0.1);
 }
 
 .recordings-page__pill {
@@ -800,26 +950,26 @@
 }
 
 @media (max-width: 640px) {
-  .recordings-page .recordings-page__row {
+  .recordings-page__open {
     grid-template-columns: 3px minmax(0, 1fr) auto auto;
   }
 
-  .recordings-page__row .workspace-dashboard__row-detail,
-  .recordings-page__row .recordings-page__started {
+  .recordings-page__detail,
+  .recordings-page__pill {
     display: none;
   }
 }
 
 .recordings-replay {
   height: 100%;
-  color: var(--settings-text);
-  font-family: var(--settings-font);
+  color: #dce2f0;
+  background: var(--terminal-panel-surface, #0f1318);
 }
 
 .recordings-server-select {
   height: 26px;
   padding: 0 8px;
-  border: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   color: #dce2f0;
   background: rgba(255, 255, 255, 0.06);

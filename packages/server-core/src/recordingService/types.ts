@@ -2,7 +2,7 @@ import type { JsonValue } from '@terminay/protocol';
 import type {
 	CommandRequest,
 	OperationPolicy,
-	QueryRequest,
+	QueryHandler,
 } from '../types.js';
 
 /**
@@ -282,9 +282,7 @@ export interface RecordingAdapterOptions {
 }
 
 export interface RecordingOperationHandlers {
-	readonly queries: Readonly<
-		Record<string, (request: QueryRequest) => JsonValue | Promise<JsonValue>>
-	>;
+	readonly queries: Readonly<Record<string, QueryHandler>>;
 	readonly commands: Readonly<
 		Record<string, (request: CommandRequest) => JsonValue | Promise<JsonValue>>
 	>;
