@@ -50,6 +50,7 @@ export function BotChat({
 	onDraftChange,
 	onConfigure,
 	visible,
+	interaction,
 }: Readonly<{
 	server: ServerBots;
 	bot: BotProfile;
@@ -61,6 +62,8 @@ export function BotChat({
 	onDraftChange: (value: string) => void;
 	onConfigure: (tab: BotConfigTab, sub?: BotEnvironmentSubTab) => void;
 	visible: boolean;
+	/** Counts what the user has done with this bot; see `BotTab`. */
+	interaction: number;
 }>) {
 	const client = useMemo(
 		() => new BotMessagesClient(server.transport as never),
@@ -330,23 +333,29 @@ export function BotChat({
 				setReadThrough(latest);
 			}
 	}, [here, loading, readThrough, latest, bot.id]);
-	// Looking at Chat acknowledges the bot's posts for every client, so its
-	// notification clears everywhere. Only what this client has loaded is
-	// acknowledged: a post still on its way keeps its notification. The
-	// per-device read position above is separate and stays as it is.
+	// Something the user does in Chat acknowledges the bot's posts for every
+	// client, so its notification clears everywhere. Being on screen does not:
+	// a reply that lands while they are in another application, or while they
+	// sit watching, waits for their next action, as an agent's terminal does.
+	// Only what this client has loaded is acknowledged: a post still on its way
+	// keeps its notification. An action taken before history loads counts once
+	// it has. The per-device read position above is separate.
+	const handledInteraction = useRef(0);
 	const acknowledged = useRef<{ botId: string; through: number } | undefined>(
 		undefined,
 	);
 	useEffect(() => {
+		if (interaction <= handledInteraction.current) return;
 		if (!here || loading || latest === undefined) return;
+		handledInteraction.current = interaction;
 		const last = acknowledged.current;
 		if (last?.botId === bot.id && last.through >= latest) return;
 		acknowledged.current = { botId: bot.id, through: latest };
 		void client.acknowledge(bot.id, latest).catch(() => {
-			// Try again on the next change rather than leave it acknowledged here.
+			// The next action tries again rather than leave it acknowledged here.
 			if (acknowledged.current?.through === latest) acknowledged.current = last;
 		});
-	}, [here, loading, latest, bot.id, client]);
+	}, [interaction, here, loading, latest, bot.id, client]);
 	const seenLatest = useRef<number | undefined>(undefined);
 	useEffect(() => {
 		// A reply arriving while the user is reading at the bottom is seen, not
