@@ -197,6 +197,11 @@ export async function runtime(root, options = {}) {
 			calls.push(args);
 			if (options.execs) options.execs.push({ container, args, options: execOptions });
 			if (args[0] === 'terminay-run') {
+				// The engine failing to confirm one session's cleanup.
+				if (args[1] === '--kill' && options.killFailures > 0) {
+					options.killFailures--;
+					throw new Error('engine exec failed: premature close');
+				}
 				await kill(args[1] === '--kill' ? args[2] : undefined);
 			}
 			return '';

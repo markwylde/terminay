@@ -55,6 +55,10 @@ import { BotBlockedError, BotError, BotStore, text } from './store.js';
 import { BotTriggers } from './triggers.js';
 import { BotFailureFollowUps } from './failureFollowUps.js';
 
+/** Shown while an earlier execution's process cleanup is still unconfirmed. */
+const BOT_CLEANUP_UNCONFIRMED =
+	"An earlier execution's processes could not be cleaned up in the bot container. Check the container engine, then send a new message.";
+
 export interface BotAgents {
 	botAgentContributions(): readonly {
 		extensionId: string;
@@ -344,12 +348,22 @@ export class BotService extends EventEmitter {
 				);
 				this.changed(id);
 			},
-			failure: (item) => {
+			failure: (item, error) => {
 				this.sessions.patch(item.sessionId, {
 					state: 'failed',
 					reason: 'session cleanup failed; bot remains blocked',
 					cause: 'engine',
 				});
+				const detail = error instanceof Error ? error.message : String(error);
+				void this.redactMessage(item.botId, detail.slice(0, 8192))
+					.catch(() => 'cleanup error unavailable')
+					.then((safe) =>
+						this.sessions.runner(
+							item.sessionId,
+							`\nSession cleanup failed: ${safe}\nThe bot retries this cleanup before its next execution.\n`,
+						),
+					)
+					.catch(() => undefined);
 			},
 		});
 		for (const bot of bots.list())
@@ -570,7 +584,7 @@ export class BotService extends EventEmitter {
 		if (previous && previous.enabled !== bot.enabled) {
 			this.triggers.availability(bot.id, bot.enabled !== false);
 			if (bot.enabled === false) this.queue.pause(bot.id);
-			else this.queue.unblock(bot.id);
+			else if (!this.queue.blocked(bot.id)) this.queue.unblock(bot.id);
 		}
 		return bot;
 	}
@@ -700,8 +714,9 @@ export class BotService extends EventEmitter {
 		this.bots.save({ ...bot, enabled }, revision);
 		if (!enabled) this.failureFollowUps.clear(botId);
 		this.triggers.availability(botId, enabled);
-		if (enabled) this.queue.unblock(botId);
-		else {
+		if (enabled) {
+			if (!this.queue.blocked(botId)) this.queue.unblock(botId);
+		} else {
 			this.queue.pause(botId);
 			this.hooks.activity(botId, this.queue.active(botId).length, 0);
 		}
@@ -800,11 +815,13 @@ export class BotService extends EventEmitter {
 				executionId: sent.sessionId,
 			});
 			return { message: this.messages.get(botId, message.id), ...sent };
-		} catch {
+		} catch (failure) {
 			const error =
-				this.bots.get(botId).signIn.kind === 'none'
-					? 'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.'
-					: 'The execution could not start. Check sign-in and the container engine, then send a new message.';
+				failure instanceof BotError && failure.message === BOT_CLEANUP_UNCONFIRMED
+					? BOT_CLEANUP_UNCONFIRMED
+					: this.bots.get(botId).signIn.kind === 'none'
+						? 'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.'
+						: 'The execution could not start. Check sign-in and the container engine, then send a new message.';
 			try {
 				this.messages.setDispatch(botId, message.id, {
 					state: 'failed',
@@ -930,6 +947,7 @@ export class BotService extends EventEmitter {
 			if (this.stoppingBots.has(botId))
 				throw new BotError('busy', 'bot is stopping');
 			this.assertEnabled(botId);
+			await this.retryCleanup(botId);
 			this.queue.unblock(botId);
 			const bot = this.bots.get(botId);
 			if (origin.kind === 'chat' && origin.messageId)
@@ -1107,6 +1125,33 @@ export class BotService extends EventEmitter {
 					await this.closeLive(record.id, 'bot-stop');
 		} finally {
 			this.stoppingBots.delete(botId);
+		}
+	}
+	/**
+	 * An execution whose process cleanup the engine did not confirm blocks the
+	 * bot. Retry that cleanup, so a transient engine failure does not leave the
+	 * bot refusing every message until the server restarts. Each retry ends
+	 * only that execution's process group, never other running executions.
+	 */
+	private async retryCleanup(botId: string): Promise<void> {
+		for (const sessionId of this.queue.uncleaned(botId)) {
+			try {
+				const live = this.live.get(sessionId);
+				if (live) {
+					await live.runner.close('end');
+					this.live.delete(sessionId);
+				} else
+					await (await this.hooks.driver()).exec(
+						`terminay-bot-${botId}`,
+						['terminay-run', '--kill', sessionId],
+						{ user: 'root', deadlineMs: 20_000 },
+					);
+				this.runtime.release(sessionId);
+			} catch {
+				throw new BotBlockedError('engine', BOT_CLEANUP_UNCONFIRMED);
+			}
+			this.queue.cleaned(botId, sessionId);
+			this.sessions.runner(sessionId, 'Session cleanup confirmed on retry.\n');
 		}
 	}
 	private async suspend(id: string): Promise<void> {

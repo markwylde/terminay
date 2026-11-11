@@ -15,6 +15,8 @@ interface Lane {
 	active: Map<string, BotQueuedTurn>;
 	stopped: boolean;
 	failed: boolean;
+	/** Sessions whose process cleanup the engine did not confirm. */
+	uncleaned: Set<string>;
 	reservation?: { source: string; target: string };
 }
 export interface BotQueueHooks {
@@ -22,7 +24,7 @@ export interface BotQueueHooks {
 	suspend(sessionId: string): Promise<void>;
 	cancelled(item: BotQueuedTurn, reason: string): void;
 	changed(botId: string, running: number, queued: number): void;
-	failure(item: BotQueuedTurn): void;
+	failure(item: BotQueuedTurn, error: unknown): void;
 }
 /** Four work executions and one user-message coordination slot. No idle provider is retained. */
 export class BotTurnQueue {
@@ -31,7 +33,13 @@ export class BotTurnQueue {
 	private lane(id: string): Lane {
 		let lane = this.lanes.get(id);
 		if (!lane) {
-			lane = { waiting: [], active: new Map(), stopped: false, failed: false };
+			lane = {
+				waiting: [],
+				active: new Map(),
+				stopped: false,
+				failed: false,
+				uncleaned: new Set(),
+			};
 			this.lanes.set(id, lane);
 		}
 		return lane;
@@ -126,8 +134,25 @@ export class BotTurnQueue {
 		if (lane.failed && !reset)
 			throw new BotError('unavailable', 'Bot cleanup must be reconciled');
 		lane.stopped = false;
-		if (reset) lane.failed = false;
+		if (reset) {
+			lane.failed = false;
+			lane.uncleaned.clear();
+		}
 		this.dispatch(botId, lane);
+	}
+	/** Whether an execution's cleanup is unconfirmed, blocking new work. */
+	blocked(botId: string): boolean {
+		return this.lane(botId).failed;
+	}
+	/** Sessions whose cleanup must be confirmed before the bot runs again. */
+	uncleaned(botId: string): string[] {
+		return [...this.lane(botId).uncleaned];
+	}
+	/** A retried cleanup was confirmed; the last one lifts the block. */
+	cleaned(botId: string, sessionId: string): void {
+		const lane = this.lane(botId);
+		lane.uncleaned.delete(sessionId);
+		if (!lane.uncleaned.size) lane.failed = false;
 	}
 	private changed(id: string, lane: Lane): void {
 		this.hooks.changed(id, lane.active.size, lane.waiting.length);
@@ -154,10 +179,11 @@ export class BotTurnQueue {
 			this.changed(id, lane);
 			void this.hooks
 				.run(item!)
-				.catch(() => {
+				.catch((error: unknown) => {
 					lane.failed = true;
 					lane.stopped = true;
-					this.hooks.failure(item!);
+					lane.uncleaned.add(item!.sessionId);
+					this.hooks.failure(item!, error);
 				})
 				.finally(() => {
 					lane.active.delete(item!.id);
