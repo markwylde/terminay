@@ -15,14 +15,29 @@ interface Lane {
 	active: Map<string, BotQueuedTurn>;
 	stopped: boolean;
 	failed: boolean;
+	/** Consecutive finished executions whose cleanup failed, in finish order. */
+	cleanupFailures: number;
 	reservation?: { source: string; target: string };
 }
+/** How an execution ended its agent: `failed` means its process group was not confirmed gone. */
+export type BotRunResult =
+	| { readonly cleanup: 'ok' }
+	| { readonly cleanup: 'failed'; readonly error: unknown };
+export interface BotQueueFailure {
+	readonly error: unknown;
+	/** True when the failure was a cleanup failure counted toward the threshold. */
+	readonly cleanup: boolean;
+	/** True when this failure blocked the bot. */
+	readonly blocked: boolean;
+}
+/** Consecutive cleanup failures that block a bot until reconciliation. */
+export const BOT_CLEANUP_FAILURE_LIMIT = 3;
 export interface BotQueueHooks {
-	run(item: BotQueuedTurn): Promise<void>;
+	run(item: BotQueuedTurn): Promise<BotRunResult | undefined>;
 	suspend(sessionId: string): Promise<void>;
 	cancelled(item: BotQueuedTurn, reason: string): void;
 	changed(botId: string, running: number, queued: number): void;
-	failure(item: BotQueuedTurn): void;
+	failure(item: BotQueuedTurn, failure: BotQueueFailure): void | Promise<void>;
 }
 /** Four work executions and one user-message coordination slot. No idle provider is retained. */
 export class BotTurnQueue {
@@ -31,7 +46,13 @@ export class BotTurnQueue {
 	private lane(id: string): Lane {
 		let lane = this.lanes.get(id);
 		if (!lane) {
-			lane = { waiting: [], active: new Map(), stopped: false, failed: false };
+			lane = {
+				waiting: [],
+				active: new Map(),
+				stopped: false,
+				failed: false,
+				cleanupFailures: 0,
+			};
 			this.lanes.set(id, lane);
 		}
 		return lane;
@@ -126,8 +147,27 @@ export class BotTurnQueue {
 		if (lane.failed && !reset)
 			throw new BotError('unavailable', 'Bot cleanup must be reconciled');
 		lane.stopped = false;
-		if (reset) lane.failed = false;
+		if (reset) {
+			lane.failed = false;
+			lane.cleanupFailures = 0;
+		}
 		this.dispatch(botId, lane);
+	}
+	private fail(lane: Lane): void {
+		lane.failed = true;
+		lane.stopped = true;
+		for (const item of lane.waiting.splice(0))
+			this.hooks.cancelled(item, 'bot blocked after a cleanup failure');
+	}
+	private async report(
+		item: BotQueuedTurn,
+		failure: BotQueueFailure,
+	): Promise<void> {
+		try {
+			await this.hooks.failure(item, failure);
+		} catch (error) {
+			console.error('[terminay] bot failure hook failed:', error);
+		}
 	}
 	private changed(id: string, lane: Lane): void {
 		this.hooks.changed(id, lane.active.size, lane.waiting.length);
@@ -154,11 +194,28 @@ export class BotTurnQueue {
 			this.changed(id, lane);
 			void this.hooks
 				.run(item!)
-				.catch(() => {
-					lane.failed = true;
-					lane.stopped = true;
-					this.hooks.failure(item!);
-				})
+				.then(
+					(result) => {
+						if (result?.cleanup !== 'failed') {
+							if (!lane.failed) lane.cleanupFailures = 0;
+							return;
+						}
+						lane.cleanupFailures++;
+						const blocked =
+							!lane.failed && lane.cleanupFailures >= BOT_CLEANUP_FAILURE_LIMIT;
+						if (blocked) this.fail(lane);
+						return this.report(item!, {
+							error: result.error,
+							cleanup: true,
+							blocked,
+						});
+					},
+					(error: unknown) => {
+						const blocked = !lane.failed;
+						this.fail(lane);
+						return this.report(item!, { error, cleanup: false, blocked });
+					},
+				)
 				.finally(() => {
 					lane.active.delete(item!.id);
 					this.changed(id, lane);

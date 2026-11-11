@@ -4,7 +4,7 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
-	unlinkSync,
+	rmSync,
 	writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -137,17 +137,23 @@ export async function runtime(root, options = {}) {
 				continue;
 			}
 			const child = children.get(name);
-			const exited =
-				child && child.exitCode === null && child.signalCode === null
-					? once(child, 'close')
-					: undefined;
-			try {
-				process.kill(-pid, 'SIGKILL');
-			} catch (error) {
-				if (error.code !== 'ESRCH') throw error;
-			}
+			const running =
+				child && child.exitCode === null && child.signalCode === null;
+			const exited = running ? once(child, 'close') : undefined;
+			// Never signal our own group (0) or every process (-1). A group
+			// outlives its leader, so an exited leader is still signalled.
+			if (Number.isInteger(pid) && pid > 1)
+				try {
+					process.kill(-pid, 'SIGKILL');
+				} catch (error) {
+					// macOS reports EPERM for a group whose leader is an
+					// unreaped zombie of ours.
+					if (error.code !== 'ESRCH' && !(error.code === 'EPERM' && child))
+						throw error;
+				}
 			if (exited) await exited;
-			unlinkSync(join(records, name));
+			// A concurrent kill of the same record may already have removed it.
+			rmSync(join(records, name), { force: true });
 			children.delete(name);
 		}
 	};
@@ -198,6 +204,10 @@ export async function runtime(root, options = {}) {
 			if (options.execs) options.execs.push({ container, args, options: execOptions });
 			if (args[0] === 'terminay-run') {
 				await kill(args[1] === '--kill' ? args[2] : undefined);
+				// The engine ran the kill but the request still failed, as when
+				// a slow engine exceeds the exec deadline.
+				const failure = options.execFailure?.(args);
+				if (failure) throw failure;
 			}
 			return '';
 		},
