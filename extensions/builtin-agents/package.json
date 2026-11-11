@@ -233,6 +233,13 @@
 								"auth",
 								"logout"
 							]
+						},
+						"statusCommand": {
+							"executable": "claude",
+							"args": [
+								"auth",
+								"status"
+							]
 						}
 					},
 					"credentialSecrets": [
@@ -280,6 +287,13 @@
 							"executable": "codex",
 							"args": [
 								"logout"
+							]
+						},
+						"statusCommand": {
+							"executable": "codex",
+							"args": [
+								"login",
+								"status"
 							]
 						},
 						"configFiles": [
