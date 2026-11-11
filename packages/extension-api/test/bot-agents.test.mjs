@@ -64,7 +64,7 @@ const runtime = (overrides = {}) => ({
 });
 
 test('API 3.5 accepts a bot-only manifest, with or without a device sign-in', () => {
-	assert.equal(EXTENSION_API_VERSION, '3.6.0');
+	assert.equal(EXTENSION_API_VERSION, '3.7.0');
 	assert.deepEqual(validateExtensionManifest(manifest), {
 		ok: true,
 		value: manifest,

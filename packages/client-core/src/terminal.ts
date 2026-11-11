@@ -83,6 +83,9 @@ export interface TerminalClientCreateRequest {
 	/** A launcher the server lists in `terminal.launchers`. The server decides
 	 * what it starts; the client names it by id only (ADR-0073). */
 	readonly launcherId?: string;
+	/** Text for the launcher to start with, as one argument; only for a
+	 * launcher listed with `initialPrompt` (ADR-0104). */
+	readonly prompt?: string;
 	readonly cwd?: string;
 	readonly cols?: number;
 	readonly rows?: number;
@@ -426,6 +429,7 @@ export class TerminayTerminalClient {
 				...(request.launcherId === undefined
 					? {}
 					: { launcherId: request.launcherId }),
+				...(request.prompt === undefined ? {} : { prompt: request.prompt }),
 				...(request.cwd === undefined ? {} : { cwd: request.cwd }),
 				...(dimensions === undefined ? {} : dimensions),
 			},

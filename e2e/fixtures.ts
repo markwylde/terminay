@@ -410,6 +410,7 @@ export async function launchDesktopApp(options: {
 					'pixel.spec.ts',
 					'mcp-app-control.spec.ts',
 					'terminal-launchers.spec.ts',
+					'forge-pull-requests-and-issues.spec.ts',
 				].includes(
 					path.basename(testInfo.file),
 				)

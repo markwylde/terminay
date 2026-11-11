@@ -63,7 +63,12 @@ export const SIDEBAR_GROUP_IDS = ['explorer', 'documentation'] as const;
 export type SidebarGroupId = (typeof SIDEBAR_GROUP_IDS)[number];
 
 /** The tabs of a project's left column, in the order they are drawn. */
-export const FOLDERS_COLUMN_TAB_IDS = ['tabs', 'agents'] as const;
+export const FOLDERS_COLUMN_TAB_IDS = [
+	'tabs',
+	'agents',
+	'pullRequests',
+	'issues',
+] as const;
 export type FoldersColumnTabId = (typeof FOLDERS_COLUMN_TAB_IDS)[number];
 
 export type SidebarSettings = {

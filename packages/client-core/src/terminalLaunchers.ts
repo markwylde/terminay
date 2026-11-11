@@ -19,6 +19,8 @@ export interface TerminalLauncher {
 	readonly displayName: string;
 	/** An id from Terminay's icon allowlist. */
 	readonly icon: string;
+	/** Present when the launcher takes an initial prompt (ADR-0104). */
+	readonly initialPrompt?: 'positional';
 }
 
 export interface TerminalLauncherClientTransport extends QueryCommandTransport {
@@ -51,7 +53,10 @@ export function parseTerminalLaunchers(
 	const launchers: TerminalLauncher[] = [];
 	for (const entry of list.slice(0, 32)) {
 		if (typeof entry !== 'object' || entry === null) continue;
-		const { id, displayName, icon } = entry as Record<string, unknown>;
+		const { id, displayName, icon, initialPrompt } = entry as Record<
+			string,
+			unknown
+		>;
 		if (
 			typeof id !== 'string' ||
 			!ID.test(id) ||
@@ -65,7 +70,16 @@ export function parseTerminalLaunchers(
 		)
 			continue;
 		seen.add(id);
-		launchers.push(Object.freeze({ id, displayName, icon }));
+		launchers.push(
+			Object.freeze({
+				id,
+				displayName,
+				icon,
+				...(initialPrompt === 'positional'
+					? { initialPrompt: 'positional' as const }
+					: {}),
+			}),
+		);
 	}
 	return Object.freeze(launchers);
 }

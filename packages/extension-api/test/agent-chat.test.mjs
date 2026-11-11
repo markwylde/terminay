@@ -22,8 +22,8 @@ const chatManifest = Object.freeze({
   contributes: { agentChatProviders: [{ id: providerId, displayName: "Echo" }] },
 });
 
-test("the API version is 3.6.0", () => {
-  assert.equal(EXTENSION_API_VERSION, "3.6.0");
+test("the API version is 3.7.0", () => {
+  assert.equal(EXTENSION_API_VERSION, "3.7.0");
 });
 
 test("a chat-provider-only package passes contribution validation", () => {

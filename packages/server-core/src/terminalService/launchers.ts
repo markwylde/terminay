@@ -32,6 +32,8 @@ export interface TerminalLauncherListing {
 	readonly id: string;
 	readonly displayName: string;
 	readonly icon: string;
+	/** Present when the launcher's program takes an initial prompt (ADR-0104). */
+	readonly initialPrompt?: 'positional';
 }
 
 /** What a launch needs: the program to type, and the name to show until it sets a title. */
@@ -39,6 +41,7 @@ export interface TerminalLauncherTarget {
 	readonly id: string;
 	readonly displayName: string;
 	readonly executable: string;
+	readonly initialPrompt?: 'positional';
 }
 
 /** The part of the extension host manager the registry reads. */
@@ -123,8 +126,13 @@ export class TerminalLauncherRegistry {
 	async list(): Promise<readonly TerminalLauncherListing[]> {
 		const offered = await this.offered();
 		this.noteListed(offered);
-		return offered.map(({ id, displayName, icon }) =>
-			Object.freeze({ id, displayName, icon }),
+		return offered.map(({ id, displayName, icon, initialPrompt }) =>
+			Object.freeze({
+				id,
+				displayName,
+				icon,
+				...(initialPrompt === undefined ? {} : { initialPrompt }),
+			}),
 		);
 	}
 
@@ -140,6 +148,9 @@ export class TerminalLauncherRegistry {
 					id: found.id,
 					displayName: found.displayName,
 					executable: found.executable,
+					...(found.initialPrompt === undefined
+						? {}
+						: { initialPrompt: found.initialPrompt }),
 				});
 	}
 
@@ -184,6 +195,9 @@ export class TerminalLauncherRegistry {
 				displayName: entry.contribution.displayName,
 				icon: entry.contribution.icon,
 				executable: resolved.executable as string,
+				...(entry.contribution.initialPrompt === 'positional'
+					? { initialPrompt: 'positional' as const }
+					: {}),
 			}));
 	}
 
@@ -249,7 +263,12 @@ export class TerminalLauncherRegistry {
 
 	private noteListed(offered: readonly TerminalLauncherListing[]): void {
 		const key = JSON.stringify(
-			offered.map(({ id, displayName, icon }) => [id, displayName, icon]),
+			offered.map(({ id, displayName, icon, initialPrompt }) => [
+				id,
+				displayName,
+				icon,
+				initialPrompt ?? null,
+			]),
 		);
 		if (key === this.lastListed) return;
 		this.lastListed = key;
@@ -271,32 +290,86 @@ function currentPlatform(): ExtensionPlatform {
 			: 'linux';
 }
 
-/**
- * The line typed into a new terminal's shell to start a launcher's program:
- * its absolute path, then a matching command default's flags (ADR-0081), each
- * quoted for that shell, and nothing else.
- */
-export function launcherCommandLine(
-	executable: string,
-	shellPath: string,
-	defaultArgs: readonly string[] = [],
-): string {
-	const shell = shellPath
+/** The longest initial prompt a launcher is started with (ADR-0104). */
+export const LAUNCHER_PROMPT_MAX_LENGTH = 4_000;
+
+const POSIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'ash', 'yash']);
+
+function shellName(shellPath: string): string | undefined {
+	return shellPath
 		.replace(/\\/gu, '/')
 		.split('/')
 		.at(-1)
 		?.replace(/\.exe$/iu, '')
 		.toLocaleLowerCase('en-US');
+}
+
+/** Why a prompt cannot go to a launcher in this shell, or undefined when it can. */
+export function launcherPromptShellProblem(shellPath: string): string | undefined {
+	const shell = shellName(shellPath);
+	if (shell === 'cmd')
+		return 'cmd cannot quote a prompt safely; choose a POSIX shell, fish, or PowerShell profile';
+	if (
+		shell === undefined ||
+		!(POSIX_SHELLS.has(shell) || shell === 'fish' || shell === 'pwsh' || shell === 'powershell')
+	)
+		return `prompts are not supported in ${shell ?? 'this shell'}`;
+	return undefined;
+}
+
+/**
+ * Check and normalise an initial prompt: not empty, bounded, no control
+ * characters except newlines (folded to spaces), and never something that
+ * reads as a flag. Returns the prompt to send, or a reason it was refused.
+ */
+export function normaliseLauncherPrompt(
+	value: unknown,
+): { readonly prompt: string } | { readonly problem: string } {
+	if (typeof value !== 'string') return { problem: 'prompt must be text' };
+	if (value.length > LAUNCHER_PROMPT_MAX_LENGTH)
+		return { problem: `prompt is longer than ${LAUNCHER_PROMPT_MAX_LENGTH} characters` };
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is refused
+	if (/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(value))
+		return { problem: 'prompt contains control characters' };
+	const prompt = value.replace(/\r\n|\r|\n/gu, ' ').trim();
+	if (prompt.length === 0) return { problem: 'prompt is empty' };
+	if (prompt.startsWith('-')) return { problem: 'prompt cannot start with "-"' };
+	return { prompt };
+}
+
+/**
+ * The line typed into a new terminal's shell to start a launcher's program:
+ * its absolute path, then a matching command default's flags (ADR-0081), then
+ * an initial prompt as one argument (ADR-0104), each quoted for that shell,
+ * and nothing else. Callers check the prompt and shell first; a prompt this
+ * cannot quote safely is dropped rather than sent.
+ */
+export function launcherCommandLine(
+	executable: string,
+	shellPath: string,
+	defaultArgs: readonly string[] = [],
+	prompt?: string,
+): string {
+	const shell = shellName(shellPath);
 	// Flags are refused unless they pass the registry's rules, so a launcher
 	// line is never more than its path when something unexpected arrives.
-	const args = isTerminalCommandDefaultArgs(defaultArgs) ? defaultArgs : [];
+	const flags = isTerminalCommandDefaultArgs(defaultArgs) ? defaultArgs : [];
+	const checked =
+		prompt === undefined || launcherPromptShellProblem(shellPath) !== undefined
+			? undefined
+			: normaliseLauncherPrompt(prompt);
+	const args =
+		checked !== undefined && 'prompt' in checked
+			? [...flags, checked.prompt]
+			: flags;
 	if (shell === 'cmd') {
 		// cmd has no quoting that stops %VAR% expansion, so only plain flags go.
 		const plain = args.every((arg) => /^[-\w=.,:/+@]+$/u.test(arg));
 		return `${[executable, ...(plain ? args : [])].map((part) => `"${part.replace(/"/gu, '')}"`).join(' ')}\r`;
 	}
 	if (shell === 'pwsh' || shell === 'powershell')
-		return `& ${[executable, ...args].map((part) => `'${part.replace(/'/gu, "''")}'`).join(' ')}\r`;
+		// PowerShell also ends a single-quoted string at typographic single quotes.
+		return `& ${[executable, ...args].map((part) => `'${part.replace(/['\u2018\u2019\u201a\u201b]/gu, '$&$&')}'`).join(' ')}\r`;
 	// fish reads \\ and \' inside single quotes; POSIX shells read neither.
 	if (shell === 'fish')
 		return `${[executable, ...args].map((part) => `'${part.replace(/[\\']/gu, '\\$&')}'`).join(' ')}\r`;

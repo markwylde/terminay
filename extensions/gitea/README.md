@@ -64,11 +64,32 @@ needed:
 
 Properties are published only when they change.
 
+## Pull requests and issues
+
+The extension also contributes a forge source, `com.terminay.gitea/forge`,
+which answers Terminay's Pull Requests and Issues views on demand. It keeps no
+lists and runs no timers: Terminay asks for one page, and the source answers
+from `GET /api/v1/repos/issues/search`.
+
+- **Accounts.** One per Gitea origin: the `tea` login for that origin, else a
+  token stored through Terminay's sign-in. `/api/v1/user` and
+  `/api/v1/user/orgs` give the login and the organisations. A token the server
+  refuses marks the account rejected.
+- **Scopes.** Needs my review, Mine, Assigned, and Mentioned map to one search
+  flag each. Involved merges four searches (created, assigned, mentioned,
+  review requested); its cursor holds each search's page, so a later page
+  repeats nothing. All covers every repository the account can read.
+- **Merged.** Gitea's search has no merged filter, so Merged asks for closed
+  pull requests and keeps the merged ones. Such a page can be short and still
+  continue.
+- **Checks.** Each open pull request carries its head commit's combined status.
+
 ## Permissions
 
 - `network`: HTTPS requests to the Gitea servers your remotes already point at.
 - `worktree-observation`: receive repository contexts and publish worktree
   properties and sign-in requests for them.
+- `forge-source`: answer Terminay's pull request and issue questions.
 
 ## Tests
 

@@ -22,6 +22,8 @@ import {
 } from './inputSources.js';
 import {
 	launcherCommandLine,
+	launcherPromptShellProblem,
+	normaliseLauncherPrompt,
 	type TerminalLauncherRegistry,
 } from './launchers.js';
 import type { TerminalCommandDefaultRegistry } from './commandDefaults.js';
@@ -547,6 +549,25 @@ export function createTerminalOperationRegistry(
 				'launcher_unavailable',
 				'terminal launcher is not available',
 			);
+		// An initial prompt is text for one quoted argument of a launcher that
+		// declares it takes one (ADR-0104); it is never kept with the terminal.
+		let prompt: string | undefined;
+		if (payload.prompt !== undefined) {
+			if (launcher === undefined)
+				throw new TerminalServiceError(
+					'invalid_identity',
+					'a prompt needs a launcher',
+				);
+			if (launcher.initialPrompt !== 'positional')
+				throw new TerminalServiceError(
+					'invalid_identity',
+					`${launcher.displayName} does not take a prompt`,
+				);
+			const checked = normaliseLauncherPrompt(payload.prompt);
+			if ('problem' in checked)
+				throw new TerminalServiceError('invalid_identity', checked.problem);
+			prompt = checked.prompt;
+		}
 		const activePanelId = optionalId(payload.activePanelId, 'active panel id');
 		const folderId = optionalId(payload.folderId, 'folder id');
 		const cols =
@@ -581,6 +602,11 @@ export function createTerminalOperationRegistry(
 				'launcher_unavailable',
 				'terminal launcher needs canonical launch resolution',
 			);
+		if (prompt !== undefined && resolved !== undefined) {
+			const problem = launcherPromptShellProblem(resolved.shellPath);
+			if (problem !== undefined)
+				throw new TerminalServiceError('invalid_identity', problem);
+		}
 		if (launcher !== undefined && resolved !== undefined)
 			options.nameSession?.(resolved.identity.sessionId, launcher.displayName);
 		let session: Awaited<ReturnType<TerminalService['createSession']>>;
@@ -629,6 +655,7 @@ export function createTerminalOperationRegistry(
 					launcher.executable,
 					resolved.shellPath,
 					options.commandDefaults?.argsForExecutable(launcher.executable) ?? [],
+					prompt,
 				),
 			});
 		return {

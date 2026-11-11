@@ -1,6 +1,6 @@
 {
 	"name": "terminay-builtin-agents",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Official coding-agent status and MCP registration extension for Terminay",
 	"type": "module",
 	"license": "AGPL-3.0-or-later",
@@ -44,7 +44,7 @@
 		"@markwylde/all-your-agents": "1.4.4"
 	},
 	"peerDependencies": {
-		"@terminay/extension-api": "^3.6.0"
+		"@terminay/extension-api": "^3.7.0"
 	},
 	"peerDependenciesMeta": {
 		"@terminay/extension-api": {
@@ -52,7 +52,7 @@
 		}
 	},
 	"devDependencies": {
-		"@terminay/extension-api": "^3.6.0",
+		"@terminay/extension-api": "^3.7.0",
 		"@types/node": "^24.0.0",
 		"typescript": "^7.0.2"
 	},
@@ -61,7 +61,7 @@
 		"id": "com.terminay.builtin-agents",
 		"displayName": "Built-in Agents",
 		"description": "Shows Claude Code, Codex, Grok, and oh-my-pi sessions in the Agents panel, registers the Terminay MCP server with coding-agent CLIs, runs Claude Code and Codex chats, starts Claude Code and Codex in new terminals, and runs Codex without its shared background server in Terminay terminals.",
-		"api": "^3.6.0",
+		"api": "^3.7.0",
 		"engines": {
 			"terminay": ">=1.0.0",
 			"node": ">=24"
@@ -146,6 +146,7 @@
 					"id": "com.terminay.builtin-agents/launch-claude-code",
 					"displayName": "Claude Code",
 					"icon": "agent-claude-code",
+					"initialPrompt": "positional",
 					"platforms": [
 						"darwin",
 						"linux"
@@ -159,6 +160,7 @@
 					"id": "com.terminay.builtin-agents/launch-codex",
 					"displayName": "Codex",
 					"icon": "agent-codex",
+					"initialPrompt": "positional",
 					"platforms": [
 						"darwin",
 						"linux"

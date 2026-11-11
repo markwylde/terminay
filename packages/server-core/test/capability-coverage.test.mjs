@@ -16,6 +16,9 @@ import {
   FILE_OBSERVATION_OPERATIONS,
   FILE_OPERATIONS,
   GIT_OPERATIONS,
+  FORGE_OPERATIONS,
+  ForgeService,
+  ServerForgeAdapter,
   MACRO_OPERATIONS,
   AUTOMATION_OPERATIONS,
   MDX_RUNTIME_OPERATIONS,
@@ -151,6 +154,7 @@ test("every stable operation name in the protocol surface maps to its own capabi
     [DOCUMENTATION_OPERATIONS, FEATURE_CAPABILITIES.files],
     [MDX_RUNTIME_OPERATIONS, FEATURE_CAPABILITIES.files],
     [GIT_OPERATIONS, FEATURE_CAPABILITIES.git],
+    [FORGE_OPERATIONS, FEATURE_CAPABILITIES.forge],
     [ACTIVITY_OPERATIONS, FEATURE_CAPABILITIES.agents],
     [NOTIFICATION_OPERATIONS, FEATURE_CAPABILITIES.notifications],
     [PUSH_OPERATIONS, FEATURE_CAPABILITIES.push],
@@ -194,4 +198,50 @@ test("every stable operation name in the protocol surface maps to its own capabi
   ])
     assert.equal(capabilityOf(operation), CONNECTION_MECHANICS);
   assert.equal(capabilityOf("nonsense.operation"), undefined);
+});
+
+test("a server composed with forge sources advertises forge.v1 and answers forge.claims", async () => {
+  const workspace = new WorkspaceStore(createInitialWorkspace("forge-server"));
+  const hosts = {
+    forgeSourceContributions: () => [
+      { extensionId: "gitea", contribution: { id: "gitea/forge", displayName: "Gitea", kinds: ["pullRequest", "issue"], allReach: "readable" } },
+    ],
+    forgeSourceAccounts: async () => [],
+    claimForgeRemote: async () => ({ origin: "https://git.example.net", owner: "acme", name: "app" }),
+    queryForgeSource: async () => ({ page: { items: [] }, dropped: 0 }),
+    forgeSourceDetail: async () => { throw new Error("unused"); },
+    onContributionsChanged: () => () => {},
+    onForgeSourceEvent: () => () => {},
+  };
+  const projects = {
+    repositoryContexts: () => [{
+      projectId: "p1",
+      context: { id: "c", repositoryRoot: "/src/app", remotes: [{ name: "origin", url: "ssh://example/acme/app" }], worktrees: [] },
+    }],
+    onContextsChanged: () => () => {},
+  };
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: "forge-server",
+    serverVersion: "1.0.0",
+    capabilities: [FEATURE_CAPABILITIES.health],
+    ptyFactory: createPtyFactory(),
+    workspace,
+    forge: new ServerForgeAdapter(new ForgeService({ hosts, projects })),
+    operations: { queries: { "server.health": () => ({ ok: true }) } },
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+  });
+  try {
+    assert.ok(composition.coreOptions.capabilities.includes(FEATURE_CAPABILITIES.forge));
+    const handler = composition.operations.queries.get(FORGE_OPERATIONS.claims);
+    const result = await handler({
+      envelope: { payload: { projectId: "p1" } },
+      body: new Uint8Array(),
+      context: { authScope: "read", clientId: "c" },
+    });
+    assert.equal(result.claims[0].sourceId, "gitea/forge");
+    assert.equal(result.claims[0].owner, "acme");
+  } finally {
+    await composition.shutdown();
+  }
 });

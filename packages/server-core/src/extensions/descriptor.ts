@@ -61,6 +61,7 @@ export async function extensionLaunchDescriptor(
 		botAgents: manifest.contributes.botAgents ?? [],
 		terminalLaunchers: manifest.contributes.terminalLaunchers ?? [],
 		terminalCommandDefaults: manifest.contributes.terminalCommandDefaults ?? [],
+		forgeSources: manifest.contributes.forgeSources ?? [],
 		extensionDependencies: manifest.extensionDependencies ?? [],
 	});
 	return Object.freeze({ descriptor, manifest });

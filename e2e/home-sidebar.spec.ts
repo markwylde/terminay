@@ -21,7 +21,7 @@ const sidebarToggle = (page: Page) => page.getByLabel('Toggle file explorer');
 const homeView = activeHome;
 const homeSidebar = (page: Page) =>
 	page.locator('[data-terminay-home-sidebar]');
-type Section = 'home' | 'tabs' | 'bots' | 'automations' | 'workflows' | 'recordings';
+type Section = 'home' | 'tabs' | 'bots' | 'automations' | 'workflows' | 'recordings' | 'pullRequests' | 'issues';
 
 const sectionTab = (page: Page, section: Section) =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
@@ -79,7 +79,7 @@ test.describe('Home sidebar', () => {
 
 		// Exactly six sections, in order, and the one in front is current.
 		const items = homeSidebar(mainWindow).getByRole('tab');
-		await expect(items).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Workflows', 'Recordings']);
+		await expect(items).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Workflows', 'Recordings', 'Pull Requests', 'Issues']);
 		await expect(sectionTab(mainWindow, 'home')).toHaveAttribute(
 			'aria-selected',
 			'true',
@@ -122,6 +122,10 @@ test.describe('Home sidebar', () => {
 		await expectSection(mainWindow, 'tabs');
 		await expect(dashboard(mainWindow)).toBeVisible();
 		await mainWindow.keyboard.press('End');
+		await expect(sectionTab(mainWindow, 'issues')).toBeFocused();
+		await mainWindow.keyboard.press('ArrowUp');
+		await expect(sectionTab(mainWindow, 'pullRequests')).toBeFocused();
+		await mainWindow.keyboard.press('ArrowUp');
 		await expect(sectionTab(mainWindow, 'recordings')).toBeFocused();
 		await mainWindow.keyboard.press('ArrowUp');
 		await expect(sectionTab(mainWindow, 'workflows')).toBeFocused();
@@ -246,7 +250,7 @@ test.describe('Home sidebar', () => {
 		const empty = mainWindow.locator('[data-terminay-home-empty]');
 		await expect(
 			empty.locator('[data-terminay-home-empty-section]'),
-		).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Workflows', 'Recordings']);
+		).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Workflows', 'Recordings', 'Pull Requests', 'Issues']);
 		await empty.locator('[data-terminay-home-empty-section="automations"]').click();
 		await expectSection(mainWindow, 'automations');
 		await expect(homeTabChips(mainWindow)).toHaveText(['Automations']);

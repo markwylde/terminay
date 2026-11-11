@@ -170,6 +170,7 @@ export function createDefaultExtensionManagement(
 				terminalLaunchers: manifest.contributes.terminalLaunchers ?? [],
 				terminalCommandDefaults:
 					manifest.contributes.terminalCommandDefaults ?? [],
+				forgeSources: manifest.contributes.forgeSources ?? [],
 				extensionDependencies: manifest.extensionDependencies ?? [],
 			});
 			await hosts.stop(extensionId);
@@ -209,6 +210,7 @@ export function createDefaultExtensionManagement(
 			extensionName: descriptor.manifest.displayName,
 			terminalLaunchers: descriptor.terminalLaunchers,
 			terminalCommandDefaults: descriptor.terminalCommandDefaults,
+			forgeSources: descriptor.forgeSources,
 			extensionDependencies: descriptor.manifest.extensionDependencies ?? [],
 		});
 	};

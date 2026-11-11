@@ -96,6 +96,12 @@ import {
 	type SessionHolderPtyFactory,
 } from '../packages/server-core/src/sessionHolder/factory';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
+import {
+	fileForgeSettings,
+	ForgeService,
+	memoryForgeSettings,
+	ServerForgeAdapter,
+} from '../packages/server-core/src/forge/index';
 import { GitService } from '../packages/server-core/src/gitService/service';
 import type { GitObservationReport } from '../packages/server-core/src/gitService/types';
 import type { SessionHolderObservationReport } from '../packages/server-core/src/sessionHolder/observation';
@@ -684,6 +690,8 @@ export class ServerTerminalAuthority {
 			resolveProjectRoot: (projectId) =>
 				this.workspace.state.projects[projectId]?.root ?? null,
 			insights: this.worktreeInsights,
+			forgeRemotes: async (projectId, repository) =>
+				(await forgeSource?.claimedRemotes(projectId, repository)) ?? [],
 			...(options.revealPathOnHost === undefined
 				? {}
 				: {
@@ -875,6 +883,23 @@ export class ServerTerminalAuthority {
 			this.agentSources.attach(extensionManagement.hosts);
 			this.worktreeInsights.attach(extensionManagement.hosts);
 		}
+		// Pull requests and issues, pulled from extension forge sources on demand.
+		const forgeSource =
+			extensionManagement === undefined
+				? undefined
+				: new ForgeService({
+						hosts: extensionManagement.hosts,
+						projects: this.worktreeInsights,
+						credentials: this.worktreeInsights,
+						settings:
+							options.dataRoot === undefined
+								? memoryForgeSettings()
+								: fileForgeSettings(
+										resolve(options.dataRoot, 'forge-settings.v1.json'),
+									),
+					});
+		const forge =
+			forgeSource === undefined ? undefined : new ServerForgeAdapter(forgeSource);
 		// Each acts only on a commit that names what it depends on (ADR-0059):
 		// which project a view shows, and which folders exist.
 		this.workspace.subscribe((_event, record) => {
@@ -1191,6 +1216,7 @@ export class ServerTerminalAuthority {
 				scope: this.agentScope,
 			},
 			git: gitAdapter,
+			...(forge === undefined ? {} : { forge }),
 			folderRoots: folders.roots,
 			gitCommands: worktreeCapture.gitCommands,
 			eventJournal,

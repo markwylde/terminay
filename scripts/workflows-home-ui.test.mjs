@@ -228,7 +228,7 @@ test('3.2 fifty workflows render as fifty columns quickly', () => {
 	assert.ok(took < 1000, `rendered fifty columns in ${Math.round(took)}ms`);
 });
 
-test('4.1 the Home sidebar lists six sections and shows the workflows badge in its name', () => {
+test('4.1 the Home sidebar lists its sections and shows the workflows badge in its name', () => {
 	const html = renderToStaticMarkup(
 		React.createElement(
 			HomeView,
@@ -245,8 +245,8 @@ test('4.1 the Home sidebar lists six sections and shows the workflows badge in i
 			null,
 		),
 	);
-	const order = [...html.matchAll(/data-terminay-home-section-tab="([a-z]+)"/g)].map((match) => match[1]);
-	assert.deepEqual(order, ['home', 'tabs', 'bots', 'automations', 'workflows', 'recordings']);
+	const order = [...html.matchAll(/data-terminay-home-section-tab="([a-zA-Z]+)"/g)].map((match) => match[1]);
+	assert.deepEqual(order, ['home', 'tabs', 'bots', 'automations', 'workflows', 'recordings', 'pullRequests', 'issues']);
 	assert.match(html, /aria-label="Workflows, 2 workflows need you"/);
 	assert.match(html, /data-terminay-home-section-badge="workflows">2</);
 });

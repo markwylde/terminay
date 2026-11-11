@@ -1,3 +1,4 @@
+import type { ForgeSourceRegistry } from './forge.js';
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import type {
@@ -496,6 +497,7 @@ export async function createAgentExtensionHarness(
 				throw new Error('this harness serves agent extensions');
 			},
 		},
+		forges: unavailableForgeRegistry('this harness serves agent extensions'),
 		terminals: {
 			registerLauncher(launcherId, runtime) {
 				if (released) throw new Error('extension is deactivated');
@@ -970,6 +972,7 @@ export async function createLanguageServerExtensionHarness(
 				throw new Error('this harness serves language servers');
 			},
 		},
+		forges: unavailableForgeRegistry('this harness serves language servers'),
 		terminals: {
 			registerLauncher() {
 				throw new Error(
@@ -1325,4 +1328,21 @@ export async function openLanguageServerSession(
 		},
 	};
 	return session;
+}
+
+function unavailableForgeRegistry(message: string): ForgeSourceRegistry {
+	return {
+		registerSource() {
+			throw new Error(message);
+		},
+		credentials: {
+			async token() {
+				return undefined;
+			},
+			async reject() {},
+			onAvailable() {
+				return { dispose() {} };
+			},
+		},
+	};
 }

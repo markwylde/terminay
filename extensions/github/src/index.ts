@@ -2,6 +2,7 @@ import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { defineExtension } from '@terminay/extension-api';
+import { createGitHubForgeSource } from './forge.js';
 import { createGhTokenCommand } from './ghCommand.js';
 import { createCliTokenStore, ghHostsPath } from './ghConfig.js';
 import { createGitHubProbe } from './probe.js';
@@ -9,6 +10,10 @@ import { createGitHubInsightRuntime } from './refresh.js';
 
 export const EXTENSION_ID = 'com.terminay.github';
 export const INSIGHT_SOURCE_ID = 'com.terminay.github/github';
+export const FORGE_SOURCE_ID = 'com.terminay.github/forge';
+
+export type { GitHubForgeOptions } from './forge.js';
+export { createGitHubForgeSource, RateLimitedError, searchString } from './forge.js';
 
 export type { CliTokenStore, GhHost, GhTokenCommand } from './ghConfig.js';
 export {
@@ -65,17 +70,34 @@ export default defineExtension({
 			}),
 		});
 		context.subscriptions.add({ dispose: () => cli.dispose() });
+		const probe = createGitHubProbe({
+			fetch: (input, init) => fetch(input, init),
+		});
 		context.subscriptions.add(
 			context.worktrees.registerInsightSource(
 				INSIGHT_SOURCE_ID,
 				createGitHubInsightRuntime({
 					fetch: (input, init) => fetch(input, init),
-					probe: createGitHubProbe({
-						fetch: (input, init) => fetch(input, init),
-					}),
+					probe,
 					cli,
 				}),
 			),
+		);
+		// Pull requests and issues, asked for on demand (ADR-0105).
+		const forges = context.forges;
+		const source = createGitHubForgeSource({
+			fetch: (input, init) => fetch(input, init),
+			probe,
+			cli,
+			credentials: forges.credentials,
+		});
+		const registration = forges.registerSource(FORGE_SOURCE_ID, source);
+		context.subscriptions.add(registration);
+		context.subscriptions.add(
+			forges.credentials.onAvailable((origin) => {
+				source.knownOrigins.add(origin);
+				registration.invalidate(origin);
+			}),
 		);
 	},
 });

@@ -8,6 +8,7 @@ import {
 	ShellProfilesClient,
 	TerminayAiClient,
 	TerminayClientFacade,
+	TerminayGitClient,
 	WORKFLOWS_CAPABILITY,
 } from '@terminay/client-core';
 import type { DockviewApi, IDockviewPanel } from 'dockview-react';
@@ -74,6 +75,18 @@ import type {
 	FolderMenuEntry,
 } from './workspace/folderMenuModel';
 import { useServerTerminalLaunchers } from './workspace/useServerTerminalLaunchers';
+import {
+	ForgeHomeSection,
+
+	useForgeClaims,
+	useForgeHomeAvailability,
+	useForgeSources,
+	useProjectForgeTabs,
+} from './forge/ForgeHome';
+import { openInWorktree as openForgeWorktree } from './forge/forgeActions';
+import type { ForgeEnvironment, ForgeWorktreePlan } from './forge/ForgeViews';
+import type { ForgeClaimView, ForgeHomeFocus } from './forge/forgeModel';
+import { useForgeClient } from './forge/useForge';
 import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
 import {
 	createGitListingMemory,
@@ -490,6 +503,7 @@ import {
 } from './workspace/useHomeOverviewState';
 import type { HomeDashboardSettings } from './types/settings';
 import {
+	type HomeComposedSection,
 	HomeWorkspace,
 	type HomeWorkspaceHandle,
 } from './workspace/HomeWorkspace';
@@ -770,6 +784,11 @@ type ProjectWorkspaceHandle = {
 	/** Create a terminal in this workspace's folder that starts a launcher's
 	 * program, as New terminal does otherwise (ADR-0073). */
 	launchTerminal: (launcherId: string) => Promise<void>;
+	/** Create a terminal in this folder for Start work or Review with agent:
+	 * a launcher with its prompt, or a shell. Resolves whether it was created. */
+	startForgeTerminal: (
+		launcher: Readonly<{ launcherId: string; prompt: string }> | undefined,
+	) => Promise<boolean>;
 	/** The repository's worktree listing as this workspace last read it. */
 	worktreeStatus: () => WorktreePanelStatus | null;
 	/** This workspace's panes, for an MCP agent's view request (ADR-0070). */
@@ -893,6 +912,8 @@ type ProjectWorkspaceProps = {
 	onNewTerminalInFolder: (projectId: string, folderId: string) => void;
 	/** The launchers this project's server offers on a folder's New terminal row. */
 	terminalLaunchers: readonly TerminalLauncherView[];
+	/** Pull requests and issues for this project's left column (ADR-0105). */
+	forge?: ProjectForgeContext;
 	/** Create a terminal in a folder of this project that starts a launcher. */
 	onLaunchTerminalInFolder: (
 		projectId: string,
@@ -944,6 +965,35 @@ const PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS = 1_500;
 /** Terminal input is delivered only to the matching server-backed panel
  * attachment.  The renderer never falls back to a host-side terminal IPC
  * channel when a panel is unavailable. */
+/** What a project's left column needs for its forge tabs. */
+type ProjectForgeContext = Readonly<{
+	client: NonNullable<ReturnType<typeof useForgeClient>>;
+	claims: readonly ForgeClaimView[];
+	bound: boolean;
+	environment: ForgeEnvironment;
+	openInHome: (focus: Omit<ForgeHomeFocus, 'nonce'>) => void;
+}>;
+const NO_FORGE_CLAIMS: readonly ForgeClaimView[] = Object.freeze([]);
+const NO_FORGE_ENVIRONMENT: ForgeEnvironment = {
+	projects: [],
+	claims: new Map(),
+	launchers: [],
+	canWrite: false,
+	displayNames: new Map(),
+	actions: {
+		openWorktree: () => undefined,
+		planWorktree: async () => {
+			throw new Error('Pull requests and issues are unavailable.');
+		},
+		openInWorktree: async () => ({
+			ok: false,
+			message: 'Pull requests and issues are unavailable.',
+		}),
+		openExternal: () => undefined,
+		openSettings: () => undefined,
+	},
+};
+
 function sendTerminalPanelInput(sessionId: string, data: string): void {
 	if (!sessionId || data.length === 0) return;
 	window.dispatchEvent(
@@ -1582,6 +1632,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onDropTerminalOnFolder,
 			onNewTerminalInFolder,
 			terminalLaunchers,
+			forge,
 			onLaunchTerminalInFolder,
 			onOpenShellInFolder,
 			onEditProject,
@@ -1696,6 +1747,18 @@ const ProjectWorkspace = memo(forwardRef<
 			resolveFeatureProjectRoot(featureAvailability, project.rootFolder)
 				.state === 'no-root';
 		const rootScopedAuthority = rootScopedFeatureAuthority(featureAvailability);
+		const forgeTabs = useProjectForgeTabs({
+			client: forge?.client,
+			projectId: project.id,
+			claims: forge?.claims ?? NO_FORGE_CLAIMS,
+			visible: isActive && forge !== undefined,
+			...(folder.worktree?.path === undefined
+				? {}
+				: { selectedWorktreePath: folder.worktree.path }),
+			bound: forge?.bound ?? false,
+			environment: forge?.environment ?? NO_FORGE_ENVIRONMENT,
+			openInHome: forge?.openInHome ?? (() => undefined),
+		});
 		const [isRootFolderBrowserOpen, setIsRootFolderBrowserOpen] =
 			useState(false);
 		const explorerProjectRoot =
@@ -4832,6 +4895,19 @@ const ProjectWorkspace = memo(forwardRef<
 					setErrorText(null);
 					await addTerminal({ launcherId });
 				},
+				startForgeTerminal: async (launcher) => {
+					setErrorText(null);
+					const created = await addTerminal(
+						launcher === undefined
+							? { atFolderRoot: true }
+							: {
+									atFolderRoot: true,
+									launcherId: launcher.launcherId,
+									prompt: launcher.prompt,
+								},
+					);
+					return created !== null;
+				},
 				worktreeStatus: () => worktreePanelStatusRef.current,
 				viewApi: () => dockviewApiRef.current,
 				openFileTab,
@@ -5909,6 +5985,12 @@ const ProjectWorkspace = memo(forwardRef<
 										? renderAgentsPane()
 										: undefined
 								}
+								{...(forgeTabs.pullRequests === undefined
+									? {}
+									: { pullRequests: forgeTabs.pullRequests })}
+								{...(forgeTabs.issues === undefined
+									? {}
+									: { issues: forgeTabs.issues })}
 								acceptsTerminalDrop={acceptsFolderTerminalDrop}
 								isMenuOpen={foldersMenuPosition !== null}
 								onOpenMenu={setFoldersMenuPosition}
@@ -8944,6 +9026,36 @@ function App({
 			!serverWorkflows.has(entry.serverId),
 	);
 	const workflowsNeedingYou = needsYouCount(workflowRows);
+	// Pull requests and issues come from the server this window shows, asked
+	// for when a view needs them and never on a timer (ADR-0105).
+	const forgeClient = useForgeClient(
+		terminalClientContext?.applicationClient,
+		terminalClientContext?.serverCapabilities,
+	);
+	const forgeSources = useForgeSources(forgeClient);
+	const forgeProjectIds = useMemo(
+		() => projects.map((project) => project.id),
+		[projects],
+	);
+	const forgeClaims = useForgeClaims(forgeClient, forgeProjectIds);
+	const forgeHome = useForgeHomeAvailability(forgeClient, isHomeSelected);
+	const hiddenHomeSections = useMemo(() => {
+		const offers = (
+			kind: 'pullRequest' | 'issue',
+			key: 'pullRequestsOnHome' | 'issuesOnHome',
+		) =>
+			forgeHome?.unbound !== false &&
+			forgeSources.some(
+				(source) =>
+					source.kinds.includes(kind) && source.settings?.[key] !== false,
+			);
+		const hidden = new Set<HomeSection>();
+		if (!offers('pullRequest', 'pullRequestsOnHome')) hidden.add('pullRequests');
+		if (!offers('issue', 'issuesOnHome')) hidden.add('issues');
+		return hidden;
+	}, [forgeHome?.unbound, forgeSources]);
+	const forgeReviewCount = forgeHome?.counts.pullRequests ?? 0;
+	const forgeAssignedCount = forgeHome?.counts.issues ?? 0;
 	const homeSectionBadges = useMemo(
 		() => ({
 			bots: { count: botUnreadTotal, label: botUnreadLabel(botUnreadTotal) },
@@ -8951,8 +9063,18 @@ function App({
 				count: workflowsNeedingYou,
 				label: `${workflowsNeedingYou} ${workflowsNeedingYou === 1 ? 'workflow needs' : 'workflows need'} you`,
 			},
+			pullRequests: {
+				count: forgeReviewCount,
+				label: `${forgeReviewCount} ${forgeReviewCount === 1 ? 'pull request needs' : 'pull requests need'} your review`,
+				tone: 'neutral' as const,
+			},
+			issues: {
+				count: forgeAssignedCount,
+				label: `${forgeAssignedCount} ${forgeAssignedCount === 1 ? 'issue' : 'issues'} assigned to you`,
+				tone: 'neutral' as const,
+			},
 		}),
-		[botUnreadTotal, workflowsNeedingYou],
+		[botUnreadTotal, forgeAssignedCount, forgeReviewCount, workflowsNeedingYou],
 	);
 	// An MCP agent the user is talking to here reads and arranges this
 	// window's panes through the server (ADR-0070). The window is described
@@ -9172,6 +9294,165 @@ function App({
 		() => openHomeSection('workflows'),
 		[openHomeSection],
 	);
+	// A project tab's row or Show all on Home: Home's section, narrowed to
+	// that repository, with the item selected.
+	const [forgeFocus, setForgeFocus] = useState<ForgeHomeFocus>();
+	const forgeFocusNonceRef = useRef(0);
+	const openForgeInHome = useCallback(
+		(focus: Omit<ForgeHomeFocus, 'nonce'>) => {
+			forgeFocusNonceRef.current += 1;
+			setForgeFocus({ ...focus, nonce: forgeFocusNonceRef.current });
+			openHomeSection(focus.kind === 'pullRequest' ? 'pullRequests' : 'issues');
+		},
+		[openHomeSection],
+	);
+	const forgeGitClient = useMemo(
+		() =>
+			terminalClientContext?.applicationClient === undefined
+				? undefined
+				: new TerminayGitClient(
+						new TerminayClientFacade(terminalClientContext.applicationClient),
+					),
+		[terminalClientContext?.applicationClient],
+	);
+	/** The linked folder the server made for a worktree, once it has. */
+	const folderForWorktree = useCallback(
+		async (projectId: string, path: string): Promise<string | undefined> => {
+			const store = workspaceSnapshotStoreRef.current;
+			if (store === undefined) return undefined;
+			const find = (snapshot: NonNullable<typeof store.snapshot>) =>
+				Object.values(snapshot.folders).find(
+					(candidate) =>
+						candidate.projectId === projectId &&
+						candidate.worktree?.path === path,
+				)?.id;
+			const known = store.snapshot === null ? undefined : find(store.snapshot);
+			if (known !== undefined) return known;
+			const snapshot = await store.waitForSnapshot(
+				(candidate) => find(candidate) !== undefined,
+				{ timeoutMs: 15_000 },
+			);
+			return snapshot === null ? undefined : find(snapshot);
+		},
+		[],
+	);
+	/** Select a folder and create a terminal in it, resolving whether it was made. */
+	const startTerminalInFolder = useCallback(
+		(
+			projectId: string,
+			folderId: string,
+			launcher: Readonly<{ launcherId: string; prompt: string }> | undefined,
+		) =>
+			new Promise<boolean>((resolve) => {
+				let settled = false;
+				const finish = (created: boolean) => {
+					if (settled) return;
+					settled = true;
+					window.clearTimeout(timeout);
+					resolve(created);
+				};
+				// The folder's workspace reports a folder that never became ready.
+				const timeout = window.setTimeout(() => finish(false), 20_000);
+				runInFolderWorkspace(projectId, folderId, (workspace) => {
+					void workspace
+						.startForgeTerminal(launcher)
+						.then(finish, () => finish(false));
+				});
+			}),
+		[runInFolderWorkspace],
+	);
+	const forgeEnvironment = useMemo<ForgeEnvironment>(() => {
+		const gitClient = forgeGitClient;
+		const plan = async (
+			request: Parameters<ForgeEnvironment['actions']['planWorktree']>[0],
+		): Promise<ForgeWorktreePlan> => {
+			if (gitClient === undefined)
+				throw new Error('The server cannot create worktrees.');
+			return gitClient.createWorktree({ ...request, plan: true });
+		};
+		return {
+			projects: projects.map((project) => ({
+				projectId: project.id,
+				title: project.title,
+			})),
+			claims: forgeClaims,
+			launchers: terminalLaunchers
+				.filter((launcher) => launcher.initialPrompt === 'positional')
+				.map((launcher) => ({ id: launcher.id, label: launcher.displayName })),
+			canWrite: gitClient !== undefined,
+			displayNames: new Map(
+				forgeSources.map((source) => [source.sourceId, source.displayName]),
+			),
+			actions: {
+				openWorktree: (match) => {
+					if (match.path === undefined) return;
+					void folderForWorktree(match.projectId, match.path).then(
+						(folderId) => {
+							if (folderId === undefined) return;
+							selectFolder(match.projectId, folderId);
+							activateProjectRef.current(match.projectId);
+						},
+					);
+				},
+				planWorktree: plan,
+				openInWorktree: (target, terminal) =>
+					openForgeWorktree(
+						{
+							...(gitClient === undefined
+								? {}
+								: {
+										createWorktree: (request) =>
+											gitClient.createWorktree(request),
+									}),
+							folderForWorktree,
+							selectFolder: (projectId, folderId) => {
+								selectFolder(projectId, folderId);
+								activateProjectRef.current(projectId);
+							},
+							startTerminal: startTerminalInFolder,
+						},
+						target,
+						terminal,
+					),
+				openExternal: (url) => void openExternalUrl(url),
+				openSettings: () =>
+					void auxiliaryRouteController.openSettings('extensions'),
+			},
+		};
+	}, [
+		auxiliaryRouteController,
+		folderForWorktree,
+		forgeClaims,
+		forgeGitClient,
+		forgeSources,
+		projects,
+		selectFolder,
+		startTerminalInFolder,
+		terminalLaunchers,
+	]);
+	const projectForgeContexts = useMemo(() => {
+		const contexts = new Map<string, ProjectForgeContext>();
+		if (forgeClient === undefined) return contexts;
+		for (const project of projects) {
+			const claims = forgeClaims.get(project.id) ?? NO_FORGE_CLAIMS;
+			if (claims.length === 0) continue;
+			contexts.set(project.id, {
+				client: forgeClient,
+				claims,
+				bound: forgeHome?.unbound === false,
+				environment: forgeEnvironment,
+				openInHome: openForgeInHome,
+			});
+		}
+		return contexts;
+	}, [
+		forgeClaims,
+		forgeClient,
+		forgeEnvironment,
+		forgeHome?.unbound,
+		openForgeInHome,
+		projects,
+	]);
 	const automationsData = useMemo<AutomationsData>(
 		() => ({
 			automations: serverAutomations,
@@ -9663,12 +9944,16 @@ function App({
 			automations: 'Scheduled and triggered runs',
 			workflows: 'Checklists agents work through',
 			recordings: 'Saved terminal recordings',
+			pullRequests: 'Pull requests on your forges',
+			issues: 'Issues on your forges',
 		};
-		return HOME_SECTIONS.map((section) => ({
+		return HOME_SECTIONS.filter(
+			(section) => !hiddenHomeSections.has(section),
+		).map((section) => ({
 			section,
 			summary: summaries[section],
 		}));
-	}, [compactSwitcherGroups]);
+	}, [compactSwitcherGroups, hiddenHomeSections]);
 	const activateDashboardAgent = useCallback(
 		(serverId: string, projectId: string, agent: DashboardAgent) => {
 			// External agents run outside Terminay: nothing to activate.
@@ -10085,8 +10370,21 @@ function App({
 	const [hasShownHome, setHasShownHome] = useState(isHomeSelected);
 	if (isHomeSelected && !hasShownHome) setHasShownHome(true);
 	const renderHomeSection = useCallback(
-		(section: 'home' | 'tabs' | 'workflows') =>
-			section === 'workflows' ? (
+		(section: HomeComposedSection, isVisible: boolean) =>
+			section === 'pullRequests' || section === 'issues' ? (
+				forgeClient === undefined ? (
+					<FeatureUnavailableState reason="This server does not offer pull requests and issues." />
+				) : (
+					<ForgeHomeSection
+						client={forgeClient}
+						kind={section === 'pullRequests' ? 'pullRequest' : 'issue'}
+						environment={forgeEnvironment}
+						sources={forgeSources}
+						{...(forgeFocus === undefined ? {} : { focus: forgeFocus })}
+						visible={isVisible}
+					/>
+				)
+			) : section === 'workflows' ? (
 				<WorkflowsHome
 					rows={workflowRows}
 					loading={workflowsLoading}
@@ -10114,6 +10412,10 @@ function App({
 			activateDashboardRow,
 			automationClock,
 			dashboardSources,
+			forgeClient,
+			forgeEnvironment,
+			forgeFocus,
+			forgeSources,
 			homeDashboard.change,
 			homeDashboard.layout,
 			homeDashboard.saveFailed,
@@ -11362,6 +11664,7 @@ function App({
 						onSidebarWidthCommit={setHomeSidebarWidth}
 						renderSection={renderHomeSection}
 						sectionBadges={homeSectionBadges}
+						hiddenSections={hiddenHomeSections}
 						renderBots={(host) => (
 							<BotsSection servers={serverBots} host={host} />
 						)}
@@ -11466,6 +11769,9 @@ function App({
 							onOpenShellInFolder={openShellInFolder}
 							onNewTerminalInFolder={newTerminalInFolder}
 							terminalLaunchers={terminalLaunchers}
+							{...(projectForgeContexts.get(project.id) === undefined
+								? {}
+								: { forge: projectForgeContexts.get(project.id) })}
 							onLaunchTerminalInFolder={launchTerminalInFolder}
 							onCloseFolderPanel={closeFolderPanel}
 							isCompactChrome={isCompactChrome}

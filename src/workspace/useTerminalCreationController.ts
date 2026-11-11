@@ -17,6 +17,9 @@ export type AddTerminalOptions = {
 	/** A launcher the server offers; the server types its program into the
 	 * new shell (ADR-0073). */
 	launcherId?: string;
+	/** For a launcher that accepts one: its first message, passed once as an
+	 * argument and never stored (ADR-0105). */
+	prompt?: string;
 	direction?: SplitDirection;
 	groupId?: string;
 	initialInput?: string;
@@ -65,6 +68,7 @@ type UseTerminalCreationControllerOptions = {
 				cwd?: string;
 				folderId?: string;
 				launcherId?: string;
+				prompt?: string;
 				profileId?: string;
 				projectId: string;
 		  }) => Promise<{ sessionId: string }>)
@@ -188,6 +192,7 @@ export function useTerminalCreationController({
 					...(options?.launcherId === undefined
 						? {}
 						: { launcherId: options.launcherId }),
+					...(options?.prompt === undefined ? {} : { prompt: options.prompt }),
 				});
 				suppressInitialActivity(sessionId);
 				recordBootstrapDiagnostic('app.workspace.create.await-delta');

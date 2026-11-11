@@ -3,6 +3,7 @@ import type {
 	AgentChatProviderContribution,
 	AgentSessionSourceContribution,
 	ExtensionDependency,
+	ForgeSourceContribution,
 	LanguageServerContribution,
 	McpInstallTargetContribution,
 	TerminalCommandDefaultContribution,
@@ -44,6 +45,8 @@ export interface ExtensionLaunchDescriptor {
 	readonly terminalLaunchers?: readonly TerminalLauncherContribution[];
 	/** Declared terminal command defaults, checked the same way. */
 	readonly terminalCommandDefaults?: readonly TerminalCommandDefaultContribution[];
+	/** Declared forge sources, checked the same way. */
+	readonly forgeSources?: readonly ForgeSourceContribution[];
 	readonly extensionDependencies?: readonly ExtensionDependency[];
 }
 
@@ -62,6 +65,7 @@ export interface ExtensionHostStatus {
 	readonly botAgents?: readonly BotAgentContribution[];
 	readonly terminalLaunchers?: readonly TerminalLauncherContribution[];
 	readonly terminalCommandDefaults?: readonly TerminalCommandDefaultContribution[];
+	readonly forgeSources?: readonly ForgeSourceContribution[];
 }
 
 export interface ExtensionInvocation {
@@ -129,6 +133,14 @@ export interface ExtensionAgentBroker {
  * frame's shape and that the source is running; the broker validates every
  * value, scopes it to the contexts it issued, and owns credentials.
  */
+/** Where forge source hints and endings go; the forge service listens. */
+export interface ExtensionForgeBroker {
+	invalidate(
+		request: Readonly<{ extensionId: string; sourceId: string; origin: string }>,
+	): void;
+	sourceStopped(request: Readonly<{ extensionId: string; sourceId: string }>): void;
+}
+
 export interface ExtensionWorktreeBroker {
 	publish(
 		request: Readonly<{

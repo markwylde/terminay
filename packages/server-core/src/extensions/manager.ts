@@ -1,4 +1,12 @@
 import type {
+	ForgeAccount,
+	ForgeItemDetail,
+	ForgeItemReference,
+	ForgePageValidation,
+	ForgeQuery,
+	ForgeRemote,
+	ForgeRepository,
+	ForgeSourceContribution,
 	AgentChatAvailability,
 	AgentChatEvent,
 	BotAgentContribution,
@@ -96,6 +104,15 @@ export interface TerminalLauncherEntry {
 	readonly contribution: TerminalLauncherContribution;
 }
 
+export interface ForgeSourceEntry {
+	readonly extensionId: string;
+	readonly contribution: ForgeSourceContribution;
+}
+
+export type ForgeSourceEvent =
+	| Readonly<{ kind: 'invalidate'; extensionId: string; sourceId: string; origin: string }>
+	| Readonly<{ kind: 'stopped'; extensionId: string; sourceId: string }>;
+
 export interface TerminalCommandDefaultEntry {
 	readonly extensionId: string;
 	readonly contribution: TerminalCommandDefaultContribution;
@@ -142,6 +159,7 @@ export class ExtensionHostManager {
 	private readonly hostStateListeners = new Set<
 		(status: ExtensionHostStatus) => void
 	>();
+	private readonly forgeListeners = new Set<(event: ForgeSourceEvent) => void>();
 	private contributionMutation: Promise<void> = Promise.resolve();
 	constructor(private readonly options: ExtensionHostManagerOptions) {}
 
@@ -193,6 +211,14 @@ export class ExtensionHostManager {
 					}
 					this.options.onStateChange?.(status);
 				},
+				forges: {
+					invalidate: (request) => {
+						this.emitForge({ kind: 'invalidate', ...request });
+					},
+					sourceStopped: (request) => {
+						this.emitForge({ kind: 'stopped', ...request });
+					},
+				},
 				onLanguageDiagnostics: (notification) => {
 					for (const listener of this.languageDiagnosticsListeners)
 						listener(notification);
@@ -219,6 +245,7 @@ export class ExtensionHostManager {
 					...(status.botAgents ?? []),
 					...(status.terminalLaunchers ?? []),
 					...(status.terminalCommandDefaults ?? []),
+					...(status.forgeSources ?? []),
 				])
 					this.contributionOwners.set(contribution.id, descriptor.extensionId);
 				this.publishedExtensions.add(descriptor.extensionId);
@@ -444,6 +471,78 @@ export class ExtensionHostManager {
 		);
 	}
 
+	/** Hints and endings from forge sources; observers cannot affect hosts. */
+	onForgeSourceEvent(listener: (event: ForgeSourceEvent) => void): () => void {
+		this.forgeListeners.add(listener);
+		return () => this.forgeListeners.delete(listener);
+	}
+
+	private emitForge(event: ForgeSourceEvent): void {
+		for (const listener of this.forgeListeners)
+			try {
+				listener(event);
+			} catch {
+				/* observers cannot affect a host */
+			}
+	}
+
+	/** Every forge source registered by a running, published extension. */
+	forgeSourceContributions(): readonly ForgeSourceEntry[] {
+		return Object.freeze(
+			this.statuses().flatMap((status) =>
+				status.state === 'running' &&
+				this.publishedExtensions.has(status.extensionId)
+					? (status.forgeSources ?? []).map((contribution) =>
+							Object.freeze({ extensionId: status.extensionId, contribution }),
+						)
+					: [],
+			),
+		);
+	}
+
+	forgeSourceAccounts(
+		sourceId: string,
+		signal?: AbortSignal,
+	): Promise<ForgeAccount[]> {
+		return this.ownerHost(sourceId).forgeSourceAccounts(sourceId, signal);
+	}
+
+	claimForgeRemote(
+		sourceId: string,
+		remote: ForgeRemote,
+		signal?: AbortSignal,
+	): Promise<ForgeRepository | null> {
+		return this.ownerHost(sourceId).claimForgeRemote(sourceId, remote, signal);
+	}
+
+	queryForgeSource(
+		sourceId: string,
+		query: ForgeQuery,
+		signal?: AbortSignal,
+	): Promise<ForgePageValidation> {
+		return this.ownerHost(sourceId).queryForgeSource(sourceId, query, signal);
+	}
+
+	forgeSourceDetail(
+		sourceId: string,
+		reference: ForgeItemReference,
+		signal?: AbortSignal,
+	): Promise<ForgeItemDetail> {
+		return this.ownerHost(sourceId).forgeSourceDetail(
+			sourceId,
+			reference,
+			signal,
+		);
+	}
+
+	/** Tell one extension's forge sources a token was stored for an origin. */
+	async notifyForgeCredential(
+		extensionId: string,
+		origin: string,
+	): Promise<void> {
+		await this.hosts.get(extensionId)?.notifyForgeCredential(origin);
+	}
+
 	/** Every terminal command default registered by a running, published extension. */
 	terminalCommandDefaultContributions(): readonly TerminalCommandDefaultEntry[] {
 		return Object.freeze(
@@ -648,6 +747,7 @@ export class ExtensionHostManager {
 			...(status.botAgents ?? []),
 			...(status.terminalLaunchers ?? []),
 			...(status.terminalCommandDefaults ?? []),
+			...(status.forgeSources ?? []),
 		]) {
 			const owner = this.contributionOwners.get(contribution.id);
 			if (owner !== undefined && owner !== extensionId)

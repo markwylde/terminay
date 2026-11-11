@@ -27,7 +27,7 @@ const manifest = JSON.parse(
 test('the manifest contributes one worktree insight source under worktree-observation', () => {
 	assert.equal(validateExtensionManifest(manifest).ok, true);
 	assert.equal(manifest.id, 'com.terminay.github');
-	assert.deepEqual(manifest.permissions, ['network', 'worktree-observation']);
+	assert.deepEqual(manifest.permissions, ['network', 'worktree-observation', 'forge-source']);
 	assert.equal(
 		manifest.contributes.worktreeInsights[0].id,
 		'com.terminay.github/github',

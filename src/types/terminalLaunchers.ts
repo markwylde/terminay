@@ -10,4 +10,6 @@ export interface TerminalLauncherView {
 	displayName: string;
 	/** An id from Terminay's icon allowlist. An id this client does not know draws as a terminal. */
 	icon: string;
+	/** The launcher takes a first message, so Start work and Review with agent offer it. */
+	initialPrompt?: 'positional';
 }

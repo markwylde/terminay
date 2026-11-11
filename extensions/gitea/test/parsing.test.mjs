@@ -22,7 +22,7 @@ const manifest = JSON.parse(
 test('the manifest contributes one worktree insight source under worktree-observation', () => {
 	assert.equal(validateExtensionManifest(manifest).ok, true);
 	assert.equal(manifest.id, 'com.terminay.gitea');
-	assert.deepEqual(manifest.permissions, ['network', 'worktree-observation']);
+	assert.deepEqual(manifest.permissions, ['network', 'worktree-observation', 'forge-source']);
 	assert.equal(
 		manifest.contributes.worktreeInsights[0].id,
 		'com.terminay.gitea/gitea',
@@ -94,7 +94,7 @@ preferences:
 
 test("tea logins are read from the config's logins list", () => {
 	assert.deepEqual(parseTeaLogins(TEA_CONFIG), [
-		{ url: 'https://git.example.net', token: 'abc123' },
+		{ url: 'https://git.example.net', token: 'abc123', user: 'someone' },
 		{ url: 'https://other.example.org/', token: 'def456' },
 	]);
 	assert.deepEqual(parseTeaLogins('preferences:\n  editor: true\n'), []);

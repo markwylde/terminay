@@ -3,6 +3,7 @@ export * from './agent.js';
 export * from './chat.js';
 export * from './constants.js';
 export * from './fixtures.js';
+export * from './forge.js';
 export * from './protocol.js';
 export * from './terminals.js';
 export * from './testing.js';

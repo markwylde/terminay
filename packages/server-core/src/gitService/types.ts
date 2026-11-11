@@ -320,6 +320,52 @@ export interface GitWorktreePullResult {
 	readonly error?: GitErrorInfo;
 }
 
+/** Why a worktree could not be created (ADR-0105). */
+export type GitWorktreeCreateErrorCode =
+	| 'invalidBranch'
+	| 'branchExists'
+	| 'checkedOut'
+	| 'fetchFailed'
+	| 'remoteMissing'
+	| 'addFailed';
+
+export interface GitWorktreeCreateRequest {
+	readonly projectId: string;
+	/** The local branch the new worktree is on. */
+	readonly branch: string;
+	/** A new branch from the remote's default branch, or a remote branch to track. */
+	readonly base:
+		| Readonly<{ kind: 'default' }>
+		| Readonly<{ kind: 'track'; remoteBranch: string }>;
+	/** Remote names the server found claimed for the forge repository. */
+	readonly remotes: readonly string[];
+	/** Add the worktree on an existing, unused local branch. */
+	readonly reuseExisting?: boolean;
+	/** Report what would happen, creating and fetching nothing. */
+	readonly plan?: boolean;
+	readonly signal?: AbortSignal;
+}
+
+export interface GitWorktreeCreateResult {
+	readonly operation: 'worktree.create';
+	readonly projectId: string;
+	readonly plan: boolean;
+	readonly applied: boolean;
+	readonly branch: string;
+	readonly path: string | null;
+	readonly remote: string | null;
+	readonly branchValid: boolean;
+	readonly branchExists: boolean;
+	/** The worktree the branch is checked out in, if any. */
+	readonly checkedOutAt: string | null;
+	readonly worktreeId: GitWorktreeId | null;
+	readonly error?: Readonly<{
+		code: GitWorktreeCreateErrorCode;
+		message: string;
+		path?: string;
+	}>;
+}
+
 export interface GitWorktreeMoveRequest {
 	readonly projectId: string;
 	readonly repositoryId: GitRepositoryId;

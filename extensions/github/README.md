@@ -77,12 +77,32 @@ needed:
 
 Properties are published only when they change.
 
+## Pull requests and issues
+
+The extension also contributes a forge source, `com.terminay.github/forge`,
+which answers Terminay's Pull Requests and Issues views on demand with one
+GraphQL `search` per account. It keeps no lists and runs no timers.
+
+- **Accounts.** One per origin: the environment's token, then `gh`'s
+  `hosts.yml` or keychain token, then a token stored through Terminay's
+  sign-in. One `viewer` query gives the login and the organisations.
+- **Search.** The search string is built from fixed qualifiers
+  (`review-requested:@me`, `author:@me`, `involves:@me`, `assignee:@me`,
+  `mentions:@me`, `repo:`, `user:`). Text you type is one quoted phrase, so it
+  cannot add a qualifier.
+- **All.** GitHub search needs an owner, so All covers the account's own
+  repositories and its organisations' (`user:` for each). Repositories owned by
+  others that you collaborate on appear under Involved.
+- **Rate limits.** A spent limit is respected until it resets; nothing is
+  asked in the meantime.
+
 ## Permissions
 
 - `network`: HTTPS requests to `api.github.com` and to the GitHub Enterprise
   servers your remotes already point at.
 - `worktree-observation`: receive repository contexts and publish worktree
   properties and sign-in requests for them.
+- `forge-source`: answer Terminay's pull request and issue questions.
 
 ## Tests
 

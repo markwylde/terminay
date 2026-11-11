@@ -24,6 +24,7 @@ export const GIT_CLIENT_OPERATIONS = Object.freeze({
   remove: "git.worktree.remove",
   removeClean: "git.worktree.remove-clean",
   move: "git.worktree.move",
+  createWorktree: "git.worktree.create",
   quickPushPropose: "git.quick-push.propose",
   quickPushApprove: "git.quick-push.approve",
   worktreeProperties: "git.worktree.properties",
@@ -33,6 +34,35 @@ export const GIT_CLIENT_OPERATIONS = Object.freeze({
 } as const);
 
 export type GitSignInChoice = "accept" | "later" | "never";
+
+/** A worktree for a forge item (ADR-0105). The server chooses the path and remote. */
+export interface GitWorktreeCreateRequest {
+  readonly projectId: string;
+  readonly repository: { readonly origin: string; readonly owner: string; readonly name: string };
+  readonly branch: string;
+  /** A new branch from the default branch, or the remote branch of a pull request. */
+  readonly base: "default" | "track";
+  readonly remoteBranch?: string;
+  readonly reuseExisting?: boolean;
+  readonly plan?: boolean;
+}
+
+export interface GitWorktreeCreateResult {
+  readonly plan: boolean;
+  readonly applied: boolean;
+  readonly branch: string;
+  readonly path: string | null;
+  readonly remote: string | null;
+  readonly branchValid: boolean;
+  readonly branchExists: boolean;
+  readonly checkedOutAt: string | null;
+  readonly worktreeId: string | null;
+  readonly error?: {
+    readonly code: "invalidBranch" | "branchExists" | "checkedOut" | "fetchFailed" | "remoteMissing" | "addFailed";
+    readonly message: string;
+    readonly path?: string;
+  };
+}
 
 export interface GitClientTransport {
   readonly query: <T extends JsonValue = JsonValue>(operation: string, payload?: JsonValue, options?: QueryOptions) => Promise<T>;
@@ -81,6 +111,20 @@ export class TerminayGitClient {
     if (fresh !== undefined && typeof fresh !== "boolean") throw new TypeError("fresh is invalid");
     const payload = boundedObject(identities, "Git worktree list") as Record<string, JsonValue>;
     return this.transport.query(GIT_CLIENT_OPERATIONS.listWorktrees, fresh === true ? { ...payload, fresh: true } : payload, options);
+  }
+
+  /** Create, or with `plan` only describe, a worktree for a forge item. */
+  async createWorktree(request: GitWorktreeCreateRequest, options: CommandOptions = {}): Promise<GitWorktreeCreateResult> {
+    const result = await this.transport.command(GIT_CLIENT_OPERATIONS.createWorktree, {
+      projectId: request.projectId,
+      repository: { ...request.repository },
+      branch: request.branch,
+      base: request.base,
+      ...(request.remoteBranch === undefined ? {} : { remoteBranch: request.remoteBranch }),
+      ...(request.reuseExisting === true ? { reuseExisting: true } : {}),
+      ...(request.plan === true ? { plan: true } : {}),
+    }, options);
+    return result as unknown as GitWorktreeCreateResult;
   }
 
   subscribeStatusChanges(listener: (event: GitStatusChangeEvent) => void, onResync?: () => void): Promise<() => void> {

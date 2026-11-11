@@ -2,12 +2,17 @@ import { watch } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { defineExtension } from '@terminay/extension-api';
+import { createGiteaForgeSource } from './forge.js';
 import { createGiteaProbe } from './probe.js';
 import { createGiteaInsightRuntime } from './refresh.js';
 import { createTeaTokenStore, teaConfigPath } from './teaConfig.js';
 
 export const EXTENSION_ID = 'com.terminay.gitea';
 export const INSIGHT_SOURCE_ID = 'com.terminay.gitea/gitea';
+export const FORGE_SOURCE_ID = 'com.terminay.gitea/forge';
+
+export type { ForgeFetch, GiteaForgeOptions } from './forge.js';
+export { createGiteaForgeSource, mergeStreams, searchStreams } from './forge.js';
 
 export {
 	checkState,
@@ -51,17 +56,34 @@ export default defineExtension({
 			},
 		});
 		context.subscriptions.add({ dispose: () => tea.dispose() });
+		const probe = createGiteaProbe({
+			fetch: (input, init) => fetch(input, init),
+		});
 		context.subscriptions.add(
 			context.worktrees.registerInsightSource(
 				INSIGHT_SOURCE_ID,
 				createGiteaInsightRuntime({
 					fetch: (input, init) => fetch(input, init),
-					probe: createGiteaProbe({
-						fetch: (input, init) => fetch(input, init),
-					}),
+					probe,
 					tea,
 				}),
 			),
+		);
+		// Pull requests and issues, asked for on demand (ADR-0105).
+		const forges = context.forges;
+		const source = createGiteaForgeSource({
+			fetch: (input, init) => fetch(input, init),
+			probe,
+			tea,
+			credentials: forges.credentials,
+		});
+		const registration = forges.registerSource(FORGE_SOURCE_ID, source);
+		context.subscriptions.add(registration);
+		context.subscriptions.add(
+			forges.credentials.onAvailable((origin) => {
+				source.knownOrigins.add(origin);
+				registration.invalidate(origin);
+			}),
 		);
 	},
 });

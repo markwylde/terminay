@@ -1,3 +1,8 @@
+import {
+	type ForgeSourceContribution,
+	isForgeAllReach,
+	isForgeItemKind,
+} from './forge.js';
 import { validateBotAgentContribution } from './bots.js';
 import type { AgentChatProviderContribution } from './chat.js';
 import {
@@ -62,6 +67,7 @@ const permissions = new Set<ExtensionPermission>([
 	'agent-bots',
 	'agent-launch',
 	'terminal-command-defaults',
+	'forge-source',
 ]);
 const manifestKeys = new Set([
 	'manifestVersion',
@@ -254,6 +260,7 @@ export function validateExtensionManifest(
 				'botAgents',
 				'terminalLaunchers',
 				'terminalCommandDefaults',
+				'forgeSources',
 			]),
 			'$.contributes',
 			out,
@@ -268,6 +275,7 @@ export function validateExtensionManifest(
 			botAgents,
 			terminalLaunchers,
 			terminalCommandDefaults,
+			forgeSources,
 		} = value.contributes;
 		if (
 			agentSessionSources === undefined &&
@@ -277,7 +285,8 @@ export function validateExtensionManifest(
 			agentChatProviders === undefined &&
 			botAgents === undefined &&
 			terminalLaunchers === undefined &&
-			terminalCommandDefaults === undefined
+			terminalCommandDefaults === undefined &&
+			forgeSources === undefined
 		) {
 			out.push({
 				path: '$.contributes',
@@ -355,6 +364,15 @@ export function validateExtensionManifest(
 				out,
 			);
 		}
+		if (forgeSources !== undefined)
+			validateNamespacedContributions(
+				forgeSources,
+				'forgeSources',
+				EXTENSION_LIMITS.forgeSources,
+				extensionId,
+				validateForgeSourceContribution,
+				out,
+			);
 		if (
 			Array.isArray(botAgents) &&
 			botAgents.length > 0 &&
@@ -428,6 +446,16 @@ export function validateExtensionManifest(
 					code: 'missing_permission',
 					message:
 						'Terminal command defaults require terminal-command-defaults',
+				});
+			if (
+				Array.isArray(forgeSources) &&
+				forgeSources.length > 0 &&
+				!value.permissions.includes('forge-source')
+			)
+				out.push({
+					path: '$.permissions',
+					code: 'missing_permission',
+					message: 'Forge sources require forge-source',
 				});
 		}
 	}
@@ -689,7 +717,8 @@ function validateNamespacedContributions(
 		| 'agentChatProviders'
 		| 'botAgents'
 		| 'terminalLaunchers'
-		| 'terminalCommandDefaults',
+		| 'terminalCommandDefaults'
+		| 'forgeSources',
 	maximum: number,
 	extensionId: string,
 	validate: (item: unknown, extensionId: string) => ValidationResult<unknown>,
@@ -857,6 +886,56 @@ export function validateWorktreeInsightSourceContribution(
 		: { ok: false, issues: out };
 }
 
+/** Validates a standalone forge source manifest contribution. */
+export function validateForgeSourceContribution(
+	value: unknown,
+	extensionId: string,
+): ValidationResult<ForgeSourceContribution> {
+	const out: SchemaIssue[] = [];
+	if (!record(value)) return invalidObject();
+	closed(
+		value,
+		new Set(['id', 'displayName', 'description', 'kinds', 'allReach']),
+		'$',
+		out,
+	);
+	namespacedContributionId(value.id, extensionId, out);
+	string(
+		value.displayName,
+		'$.displayName',
+		out,
+		EXTENSION_LIMITS.displayNameLength,
+	);
+	if (value.description !== undefined)
+		string(
+			value.description,
+			'$.description',
+			out,
+			EXTENSION_LIMITS.descriptionLength,
+		);
+	if (
+		!Array.isArray(value.kinds) ||
+		value.kinds.length === 0 ||
+		value.kinds.length > 2 ||
+		!value.kinds.every(isForgeItemKind) ||
+		new Set(value.kinds).size !== value.kinds.length
+	)
+		out.push({
+			path: '$.kinds',
+			code: 'invalid_kinds',
+			message: 'kinds must list pullRequest, issue, or both',
+		});
+	if (!isForgeAllReach(value.allReach))
+		out.push({
+			path: '$.allReach',
+			code: 'invalid_all_reach',
+			message: 'allReach must be "readable" or "owners"',
+		});
+	return out.length === 0
+		? { ok: true, value: value as unknown as ForgeSourceContribution }
+		: { ok: false, issues: out };
+}
+
 /** Validates a standalone chat provider manifest contribution. */
 export function validateAgentChatProviderContribution(
 	value: unknown,
@@ -923,7 +1002,14 @@ export function validateTerminalLauncherContribution(
 	if (!record(value)) return invalidObject();
 	closed(
 		value,
-		new Set(['id', 'displayName', 'icon', 'platforms', 'harness']),
+		new Set([
+			'id',
+			'displayName',
+			'icon',
+			'platforms',
+			'harness',
+			'initialPrompt',
+		]),
 		'$',
 		out,
 	);
@@ -942,6 +1028,12 @@ export function validateTerminalLauncherContribution(
 		});
 	validatePlatforms(value.platforms, '$.platforms', out);
 	validateContributionHarness(value.harness, harnesses, 'A launcher', out);
+	if (value.initialPrompt !== undefined && value.initialPrompt !== 'positional')
+		out.push({
+			path: '$.initialPrompt',
+			code: 'invalid_initial_prompt',
+			message: 'initialPrompt must be "positional"',
+		});
 	return out.length === 0
 		? { ok: true, value: value as unknown as TerminalLauncherContribution }
 		: { ok: false, issues: out };
