@@ -121,19 +121,20 @@ export class BotTurnQueue {
 		item.coordinationOnly = false;
 		return true;
 	}
-	cancel(botId: string, id: string): void {
+	cancel(botId: string, id: string, reason = 'cancelled'): void {
 		const lane = this.lane(botId),
 			index = lane.waiting.findIndex((i) => i.id === id);
 		if (index < 0)
 			throw new BotError('not_found', 'Queued execution not found');
 		const [item] = lane.waiting.splice(index, 1);
-		this.hooks.cancelled(item!, 'cancelled');
+		this.hooks.cancelled(item!, reason);
 		this.changed(botId, lane);
 	}
-	disableTrigger(botId: string, triggerId: string): void {
+	/** Removes a trigger's queued items that have not started. */
+	disableTrigger(botId: string, triggerId: string, reason = 'cancelled'): void {
 		for (const item of this.list(botId))
 			if (botTriggerOrigin(item.origin)?.triggerId === triggerId)
-				this.cancel(botId, item.id);
+				this.cancel(botId, item.id, reason);
 	}
 	pause(botId: string): void {
 		this.lane(botId).stopped = true;

@@ -211,12 +211,16 @@ export function needsYou(entries: readonly BotEntry[]): NeedsYouEntry[] {
 }
 
 /** Investigate failures is on unless the profile turns it off. */
-export function investigatesFailures(bot: Pick<BotProfile, 'investigateFailures'>): boolean {
+export function investigatesFailures(
+	bot: Pick<BotProfile, 'investigateFailures'>,
+): boolean {
 	return bot.investigateFailures !== false;
 }
 
 /** Terminay MCP access is off unless the profile turns it on (ADR-0100). */
-export function hasTerminayMcpAccess(bot: Pick<BotProfile, 'terminayMcpAccess'>): boolean {
+export function hasTerminayMcpAccess(
+	bot: Pick<BotProfile, 'terminayMcpAccess'>,
+): boolean {
 	return bot.terminayMcpAccess === true;
 }
 
@@ -227,11 +231,60 @@ function failureCount(origin: BotSessionRecord['origin']): number {
 		: 0;
 }
 
+/**
+ * How an execution's startup went, in words, or null when it started on its
+ * first attempt. Attempts lists only failed temporary attempts (ADR-0109).
+ */
+export function startupSummary(
+	session: Pick<
+		BotSessionRecord,
+		| 'attempts'
+		| 'retryLimit'
+		| 'retryAt'
+		| 'dispatchedAt'
+		| 'state'
+		| 'startupFailure'
+	>,
+	formatTime: (at: number) => string = (at) =>
+		new Date(at).toLocaleTimeString(undefined, {
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+		}),
+): string | null {
+	const failed = session.attempts?.length ?? 0;
+	if (!failed) return null;
+	const allowed = (session.retryLimit ?? 3) + 1;
+	if (session.dispatchedAt != null)
+		return `Started on attempt ${failed + 1} of ${allowed}.`;
+	if (
+		session.retryAt != null &&
+		['running', 'needs-you'].includes(session.state)
+	)
+		return `Retrying: attempt ${failed + 1} of ${allowed} at ${formatTime(session.retryAt)}.`;
+	if (session.state === 'failed') {
+		// A lasting final failure is not in the temporary attempt history.
+		const made = failed + (session.startupFailure?.temporary === false ? 1 : 0);
+		return `Failed after ${made} attempt${made === 1 ? '' : 's'}.`;
+	}
+	return `${failed} startup attempt${failed === 1 ? '' : 's'} failed.`;
+}
+/** What the bot judged about a problem, as Sessions says it. */
+export const OUTCOME_LABELS: Readonly<
+	Record<NonNullable<BotSessionRecord['outcome']>['disposition'], string>
+> = {
+	'outside-control': 'Outside the bot’s control',
+	'needs-human': 'Needs you',
+	fixed: 'Fixed',
+};
+
 /** A session's title: its trigger's name, a failure investigation, or the chat's first words. */
 export function sessionTitle(session: BotSessionRecord): string {
 	if (session.origin.kind === 'failure') {
 		const n = failureCount(session.origin);
-		return n > 1 ? `Investigate failure (${n} failures)` : 'Investigate failure';
+		return n > 1
+			? `Investigate failure (${n} failures)`
+			: 'Investigate failure';
 	}
 	if (session.origin.kind !== 'chat') return session.origin.triggerName;
 	const text = session.queuedMessage?.text?.trim();

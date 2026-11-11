@@ -22,6 +22,8 @@ import {
 	sessionOriginLabel,
 	sessionTitle,
 	shortAge,
+	OUTCOME_LABELS,
+	startupSummary,
 } from './botsModel';
 import { foldTranscript } from './transcriptModel';
 import { useBotSession } from './useBotSession';
@@ -408,6 +410,42 @@ function SessionDetail({
 			{record.reason ? (
 				<p className="bots-note bots-note--warn">Reason: {record.reason}</p>
 			) : null}
+			{startupSummary(record) ? (
+				<div
+					className="bots-note"
+					data-terminay-bot-session-attempts={record.attempts?.length ?? 0}
+				>
+					<p className="bots-attempts__summary">{startupSummary(record)}</p>
+					<ol className="bots-attempts">
+						{(record.attempts ?? []).map((a, index) => (
+							<li key={`${a.at}-${index}`}>
+								<span className="bots-faint">
+									Attempt {index + 1} · {formatWhen(a.at)}
+								</span>{' '}
+								{a.cause}
+							</li>
+						))}
+					</ol>
+				</div>
+			) : null}
+			{record.outcome ? (
+				<div
+					className={`bots-note${record.outcome.disposition === 'needs-human' ? ' bots-note--need' : ''}`}
+					data-terminay-bot-session-outcome={record.outcome.disposition}
+				>
+					<p>
+						<strong>
+							The bot judged: {OUTCOME_LABELS[record.outcome.disposition]}.
+						</strong>{' '}
+						{record.outcome.reason}
+					</p>
+					{record.outcome.action ? (
+						<p>
+							<strong>What to do:</strong> {record.outcome.action}
+						</p>
+					) : null}
+				</div>
+			) : null}
 			{record.origin.kind === 'failure' ? (
 				<div data-terminay-bot-session-failures="true">
 					<h4 className="bots-lab">Failures</h4>
@@ -448,7 +486,8 @@ function SessionDetail({
 					</ul>
 					{record.origin.overflow > 0 ? (
 						<p className="bots-faint">
-							{record.origin.overflow} more failures were counted but not listed.
+							{record.origin.overflow} more failures were counted but not
+							listed.
 						</p>
 					) : null}
 				</div>

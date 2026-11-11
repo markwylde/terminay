@@ -6,6 +6,9 @@ import { StringDecoder } from 'node:string_decoder';
 export interface EngineCallOptions {
 	readonly onBuildEvent?: (event: Record<string, unknown>) => void;
 	readonly deadlineMs?: number;
+	/** Bounds the engine's own create/start/attach of a container command.
+	 * When set, `deadlineMs` counts from when the command is running. */
+	readonly startDeadlineMs?: number;
 	readonly signal?: AbortSignal;
 	readonly input?: string | Buffer;
 	readonly env?: Readonly<Record<string, string | undefined>>;
@@ -16,12 +19,19 @@ export interface EngineCallOptions {
 }
 
 export class EngineCommandError extends Error {
+	/** A container command's exit status, when the command ran and failed. */
+	readonly exitCode?: number;
+	/** The transport's error code (for example `ECONNRESET`), when known. */
+	readonly errno?: string;
 	constructor(
 		readonly code: string,
 		message: string,
+		detail: { readonly exitCode?: number; readonly errno?: string } = {},
 	) {
 		super(message);
 		this.name = 'EngineCommandError';
+		if (detail.exitCode !== undefined) this.exitCode = detail.exitCode;
+		if (detail.errno !== undefined) this.errno = detail.errno;
 	}
 }
 

@@ -409,7 +409,7 @@ test('an adapter from before pair selection sends nothing to the runtime relay',
 	assert.deepEqual(workspace.seen, { connections: 0, bytes: 0 });
 });
 
-test('on an image whose adapter cannot select its pair, the execution runs without terminay and says to rebuild', { timeout: 15000 }, async (t) => {
+test('on an image whose adapter cannot select its pair, the execution runs without terminay and says the image may be out of date', { timeout: 15000 }, async (t) => {
 	const h = harness(t, { terminayAdapter: beforeSelection });
 	const fake = fakeHandler();
 	const diagnostics = [];
@@ -418,7 +418,7 @@ test('on an image whose adapter cannot select its pair, the execution runs witho
 	assert.equal(Object.keys(bridge.environment).some((name) => name.startsWith('TERMINAY_MCP_')), false);
 	assert.equal(fake.closed(), 1, 'the minted capability is given up');
 	assert.equal(h.secrets.has(`${h.sid}:terminay`), false);
-	assert.ok(diagnostics.some((line) => /Terminay MCP is unavailable.*Rebuild the bot image/.test(line)), diagnostics.join('\n'));
+	assert.ok(diagnostics.some((line) => /Terminay MCP is unavailable.*bot image may be out of date/.test(line)), diagnostics.join('\n'));
 	await bridge.close();
 });
 

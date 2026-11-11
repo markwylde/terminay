@@ -2,6 +2,20 @@
 """Bounded stdio MCP adapter; only a private container socket is reachable."""
 import json, os, selectors, socket, sys
 MAX_LINE = 131072
+# --check-runtime exit statuses (sysexits.h): 75 a temporary problem the host
+# may retry, 69 a lasting one. Terminay classifies on these, never on text.
+EXIT_TEMPORARY = 75
+EXIT_LASTING = 69
+
+class Refused(ValueError): pass
+class Disconnected(ValueError): pass
+
+def exit_status(error):
+    if isinstance(error, (socket.timeout, TimeoutError, ConnectionRefusedError, ConnectionResetError, BrokenPipeError, Disconnected)):
+        return EXIT_TEMPORARY
+    if isinstance(error, (FileNotFoundError, PermissionError, Refused)):
+        return EXIT_LASTING
+    return 1
 
 def main():
     # Arguments are parsed before any socket is opened. --terminay-mcp selects
@@ -29,10 +43,10 @@ def main():
             data = b''
             while b'\n' not in data and len(data) <= MAX_LINE:
                 chunk = peer.recv(65536)
-                if not chunk: raise ValueError('Bot runtime disconnected')
+                if not chunk: raise Disconnected('Bot runtime disconnected')
                 data += chunk
             result = json.loads(data)
-            if 'error' in result: raise ValueError('Bot runtime capability refused')
+            if 'error' in result: raise Refused('Bot runtime capability refused')
             return
         peer.settimeout(None)
         selector = selectors.DefaultSelector()
@@ -59,6 +73,11 @@ def main():
 if __name__ == '__main__':
     try: main()
     except (OSError, ValueError, TypeError) as error:
-        reason = {2: 'runtime socket is missing', 13: 'runtime socket permission denied', 61: 'runtime connection refused', 111: 'runtime connection refused'}.get(getattr(error, 'errno', None), 'runtime request failed or capability revoked')
+        reason = {2: 'runtime socket is missing', 13: 'runtime socket permission denied', 61: 'runtime connection refused', 111: 'runtime connection refused'}.get(getattr(error, 'errno', None))
+        if reason is None:
+            reason = ('runtime did not answer in time' if isinstance(error, (socket.timeout, TimeoutError))
+                else 'runtime disconnected' if isinstance(error, (Disconnected, ConnectionResetError, BrokenPipeError))
+                else 'runtime capability refused' if isinstance(error, Refused)
+                else 'runtime request failed or capability revoked')
         print('terminay-bot-mcp: '+reason,file=sys.stderr)
-        sys.exit(1)
+        sys.exit(exit_status(error))

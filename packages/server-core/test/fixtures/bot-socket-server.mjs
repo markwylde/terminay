@@ -351,7 +351,8 @@ export async function startBotSocketServer(root, options = {}) {
 				(await read('mcp-state', 'denied'))
 			) {
 				spec.running = false;
-				spec.exitCode = 1;
+				// The adapter's lasting-problem status (sysexits EX_UNAVAILABLE).
+				spec.exitCode = 69;
 				socket.end(
 					frame(
 						Buffer.from('terminay-bot-mcp: runtime socket permission denied\n'),

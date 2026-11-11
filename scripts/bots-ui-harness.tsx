@@ -38,6 +38,8 @@ type Scenario = {
 	containers?: BotSiblingContainer[];
 	socketShared?: boolean;
 	limitsChangePending?: boolean;
+	/** Triggers listed after the fixed `tr1`. */
+	extraTriggers?: unknown[];
 	settingsRefusal?: string;
 	deleteWarning?: string;
 	sendRefusal?: string;
@@ -451,6 +453,7 @@ const client = {
 	})),
 	resetSource: record('resetSource'),
 	retrySource: record('retrySource'),
+	resumeTrigger: record('resumeTrigger'),
 	triggers: record('triggers', () => ({
 		revision: 1,
 		triggers: [
@@ -465,6 +468,7 @@ const client = {
 				missedCount: 1,
 				missedLatest: 1,
 			},
+			...(scenario.extraTriggers ?? []),
 		],
 	})),
 	triggerFirings: record('triggerFirings', () => []),
