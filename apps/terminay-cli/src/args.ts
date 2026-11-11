@@ -457,8 +457,9 @@ Usage:
 
 Commands:
   install [ref]        Install and start the server. \`ref\` is a tag such as
-                       v4.1.1, \`main\` for the rolling channel, or a branch or
-                       commit to build from source. Defaults to the latest tag.
+                       v4.1.1, \`main\` for the rolling Nightly, \`canary\`
+                       for the rolling Canary, or a branch or commit to build
+                       from source. Defaults to the latest tag.
   upgrade [ref]        Upgrade, following the installed channel by default.
                        With --check, print one line of JSON saying what is
                        installed and whether its channel has something

@@ -37,7 +37,7 @@ const checkReportSchema = z.strictObject({
 	schemaVersion: z.literal(1),
 	environment: z.enum(['user', 'system', 'container']),
 	installed: z.strictObject({
-		channel: z.enum(['tag', 'main', 'source']),
+		channel: z.enum(['tag', 'main', 'canary', 'source']),
 		version,
 		revision: z.string().max(128),
 	}),

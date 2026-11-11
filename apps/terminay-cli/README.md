@@ -56,7 +56,8 @@ for the full flag list.
 ```bash
 sudo npx terminay daemon install            # the newest tagged release
 sudo npx terminay daemon install v4.2.1     # a specific release
-sudo npx terminay daemon install main       # the rolling main channel
+sudo npx terminay daemon install main       # the rolling Nightly, built once a night
+sudo npx terminay daemon install canary     # the rolling Canary, built on every push
 sudo npx terminay daemon install my-branch  # built from source on the target
 ```
 
@@ -65,7 +66,8 @@ machine. It checks for `git`, `python3`, `make`, and a C++ compiler before
 downloading anything.
 
 `upgrade` with no reference re-resolves whatever channel the machine is already
-on, so a host tracking `main` never silently moves onto the tag stream.
+on, so a host tracking `main` or `canary` never silently moves onto the tag
+stream or the other rolling channel.
 
 ## The upgrader ships with the server
 

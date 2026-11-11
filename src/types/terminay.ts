@@ -487,7 +487,7 @@ export type TerminalRecordingChangeMessage = {
 	state: TerminalRecordingState;
 };
 
-export type AppUpdateChannel = 'stable' | 'beta';
+export type AppUpdateChannel = 'stable' | 'nightly' | 'canary';
 
 export type AppUpdateState =
 	| 'idle'

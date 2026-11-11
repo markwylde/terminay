@@ -2,7 +2,11 @@ import { Sparkles } from 'lucide-react';
 import type { JSX, MouseEvent } from 'react';
 import { useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { releaseNoteLinkTarget, renderReleaseNotesHtml } from '../appUpdateNotes';
+import {
+	releaseNoteLinkTarget,
+	releaseTrackLabel,
+	renderReleaseNotesHtml,
+} from '../appUpdateNotes';
 import { openExternalUrl } from '../host/nativeActions';
 import type { AppUpdateStatus } from '../types/terminay';
 import { InPageWindow } from '../shared/inPageWindow/InPageWindow';
@@ -47,7 +51,9 @@ export function AppUpdateDialog({
 	if (!open) return null;
 
 	const releaseUrl = status.releaseUrl;
-	const isBeta = status.channel === 'beta';
+	// A Nightly or Canary build is named for its track; a stable release
+	// offered on a prerelease channel is just a release.
+	const track = releaseTrackLabel(status.latestVersion);
 	const summary = isReady
 		? `Version ${status.latestVersion} has been downloaded. You're on ${status.currentVersion}. Restart to install it now, or it installs the next time you quit Terminay.`
 		: status.state === 'downloading'
@@ -65,7 +71,7 @@ export function AppUpdateDialog({
 			}
 			kind={{ resizable: false, width: 560 }}
 			name="app-update"
-			title={`What's new in ${status.latestVersion ?? 'Terminay'}${isBeta ? ' (beta)' : ''}`}
+			title={`What's new in ${status.latestVersion ?? 'Terminay'}${track === null ? '' : ` (${track})`}`}
 			onClose={onClose}
 		>
 			<div

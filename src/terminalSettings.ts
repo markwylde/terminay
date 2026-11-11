@@ -2125,15 +2125,24 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'updateChannel',
 				label: 'Update channel',
 				description:
-					'Stable follows tagged releases. Beta follows every merge to main and may be unstable. Switching never installs an older version.',
+					'Stable follows tagged releases. Nightly is built once a night from main. Canary is built on every push to main and is the least tested. Switching never installs an older version.',
 				sectionId: 'update-channel',
 				categoryId: 'updates',
 				input: 'select',
 				options: [
 					{ label: 'Stable', value: 'stable' },
-					{ label: 'Beta', value: 'beta' },
+					{ label: 'Nightly', value: 'nightly' },
+					{ label: 'Canary', value: 'canary' },
 				],
-				keywords: ['update', 'upgrade', 'beta', 'prerelease', 'release'],
+				keywords: [
+					'update',
+					'upgrade',
+					'nightly',
+					'canary',
+					'beta',
+					'prerelease',
+					'release',
+				],
 			}),
 		],
 	},
@@ -2641,6 +2650,20 @@ export function normalizeHomeDashboardSettings(
 	return { widgets };
 }
 
+/**
+ * The update channel a stored value names. Any value that is not one of the
+ * three reads as Stable. A stored `beta` reads as Nightly: Beta was replaced by
+ * Nightly and Canary (ADR-0109), and installed Beta builds move to Nightly on
+ * first launch. The follow-up change `retire-beta-feed` removes that mapping.
+ */
+export function normalizeUpdateChannel(
+	value: unknown,
+): TerminalSettings['updateChannel'] {
+	if (value === 'nightly' || value === 'canary') return value;
+	if (value === 'beta') return 'nightly';
+	return 'stable';
+}
+
 export function normalizeTerminalSettings(
 	candidate: unknown,
 ): TerminalSettings {
@@ -2910,7 +2933,7 @@ export function normalizeTerminalSettings(
 			typeof input.shellIntegration === 'boolean'
 				? input.shellIntegration
 				: defaultTerminalSettings.shellIntegration,
-		updateChannel: input.updateChannel === 'beta' ? 'beta' : 'stable',
+		updateChannel: normalizeUpdateChannel(input.updateChannel),
 		convertEol:
 			typeof input.convertEol === 'boolean'
 				? input.convertEol

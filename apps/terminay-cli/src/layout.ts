@@ -199,8 +199,8 @@ export function versionDirectory(layout: ReleaseTree, version: string): string {
 }
 
 /**
- * The rolling channel reuses the version string `main` for every build, so its
- * directories are named for the commit instead. Without this an upgrade would
+ * A rolling channel reuses its name (`main`, `canary`) as the version string
+ * for every build, so its directories are named for the commit instead. Without this an upgrade would
  * try to stage a new build on top of the running one.
  */
 export function stagedName(

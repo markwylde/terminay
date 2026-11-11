@@ -357,6 +357,55 @@ test('a rolling install that never recorded a time is told apart by the commit i
 	);
 });
 
+const CANARY = {
+	tag: 'canary-latest',
+	version: '0.0.0',
+	assetVersion: 'canary',
+	channel: 'canary',
+	revision: 'e'.repeat(40),
+	publishedAt: '2026-10-03T00:00:00Z',
+};
+const NIGHTLY_NEWER = { ...ROLLING[0], revision: 'f'.repeat(40), publishedAt: '2026-10-09T00:00:00Z' };
+
+test('a canary install checks the canary prerelease for a newer revision', async () => {
+	const record = { channel: 'canary', version: '0.0.0', revision: 'c'.repeat(40) };
+	await withInstall(
+		{
+			releases: [...TAGS, NIGHTLY_NEWER, CANARY],
+			record: { ...record, publishedAt: '2026-10-01T00:00:00Z' },
+		},
+		async ({ check }) => {
+			const report = await check();
+			assert.equal(report.installed.channel, 'canary');
+			assert.deepEqual(report.available, {
+				version: 'canary',
+				publishedAt: '2026-10-03T00:00:00Z',
+			});
+		},
+	);
+});
+
+test('a canary install on its own revision is offered neither the nightly nor a tag', async () => {
+	// The nightly prerelease and the tagged release are both newer, but a
+	// canary install follows canary-latest alone.
+	await withInstall(
+		{
+			releases: [...TAGS, NIGHTLY_NEWER, CANARY],
+			record: {
+				channel: 'canary',
+				version: '0.0.0',
+				revision: 'e'.repeat(40),
+				publishedAt: '2026-10-03T00:00:00Z',
+			},
+		},
+		async ({ check }) => {
+			const report = await check();
+			assert.equal(report.available, null);
+			assert.equal(report.checkError, undefined);
+		},
+	);
+});
+
 test('the last upgrade outcome is reported, and nothing private with it', async () => {
 	await withInstall({}, async ({ check, layout }) => {
 		await writeUpgradeOutcome(layout.resultPath, {

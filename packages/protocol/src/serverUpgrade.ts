@@ -20,7 +20,8 @@ export const SERVER_UPGRADE_OPERATIONS = Object.freeze({
 export const SERVER_UPGRADE_MODES = ['in-place', 'recreate'] as const;
 export type ServerUpgradeMode = (typeof SERVER_UPGRADE_MODES)[number];
 
-export const SERVER_UPGRADE_CHANNELS = ['tag', 'main', 'source'] as const;
+// `main` is the rolling Nightly and `canary` the rolling Canary (ADR-0109).
+export const SERVER_UPGRADE_CHANNELS = ['tag', 'main', 'canary', 'source'] as const;
 export type ServerUpgradeChannel = (typeof SERVER_UPGRADE_CHANNELS)[number];
 
 /** Why a `server.upgrade.start` was refused, in the error's `details.reason`. */

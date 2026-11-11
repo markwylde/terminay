@@ -1,5 +1,6 @@
 import {
 	type Architecture,
+	isRollingChannel,
 	type ReleaseChannel,
 	type ResolvedRef,
 	resolveRef,
@@ -64,7 +65,9 @@ export function assertChannelToFollow(
  * Resolve the release an upgrade moves to.
  *
  * With no reference it follows the installed channel: the newest tag for a
- * tagged install, the rolling build for a `main` install.
+ * tagged install, the rolling build of its own channel for a `main` or
+ * `canary` install. Neither rolling channel is ever offered the other's build
+ * or a tag without a reference naming it.
  */
 export async function resolveUpgradeTarget(
 	ref: string | undefined,
@@ -72,7 +75,8 @@ export async function resolveUpgradeTarget(
 	source: ReleaseSource,
 ): Promise<ResolvedRef> {
 	assertChannelToFollow(ref, installed);
-	const target = ref ?? (installed.channel === 'main' ? 'main' : undefined);
+	const target =
+		ref ?? (isRollingChannel(installed.channel) ? installed.channel : undefined);
 	return resolveRef(target, {
 		architecture: source.architecture,
 		...(source.repository === undefined
@@ -101,7 +105,10 @@ export function orderAgainstInstalled(
 		const order = compareVersions(resolved.version, installed.version);
 		return order === 0 ? 'same' : order < 0 ? 'older' : 'newer';
 	}
-	if (resolved.channel === 'main' && installed.channel === 'main') {
+	if (
+		isRollingChannel(resolved.channel) &&
+		resolved.channel === installed.channel
+	) {
 		// The rolling channel reuses one version string, so the published time
 		// is the only ordering it has.
 		const published = resolved.publishedAt;

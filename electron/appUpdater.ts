@@ -11,10 +11,27 @@ const REPOSITORY_OWNER = 'markwylde';
 const REPOSITORY_NAME = 'terminay';
 const RELEASES_URL = `https://github.com/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/releases`;
 const RELEASES_API_URL = `https://api.github.com/repos/${REPOSITORY_OWNER}/${REPOSITORY_NAME}/releases?per_page=100`;
-// The rolling `main` prerelease (ADR-0016) is the Beta channel's feed.
-const BETA_RELEASE_TAG = 'main-latest';
-const BETA_FEED_URL = `${RELEASES_URL}/download/${BETA_RELEASE_TAG}/`;
 const STABLE_FEED_URL = `${RELEASES_URL}/latest/download/`;
+
+/** A channel that reads a rolling prerelease as well as the stable release. */
+export type PrereleaseChannel = Exclude<AppUpdateChannel, 'stable'>;
+
+/**
+ * Each prerelease channel's own rolling release (ADR-0109): the Nightly is
+ * `main-latest`, the Canary `canary-latest`. Each publishes metadata named
+ * for its channel, so electron-updater reads `nightly-mac.yml` or
+ * `canary-mac.yml` from its feed.
+ */
+export const PRERELEASE_RELEASE_TAGS: Readonly<
+	Record<PrereleaseChannel, string>
+> = Object.freeze({ nightly: 'main-latest', canary: 'canary-latest' });
+
+function prereleaseFeedUrl(channel: PrereleaseChannel): string {
+	return `${RELEASES_URL}/download/${PRERELEASE_RELEASE_TAGS[channel]}/`;
+}
+
+const CHANNEL_NAMES: Readonly<Record<AppUpdateChannel, string>> =
+	Object.freeze({ stable: 'Stable', nightly: 'Nightly', canary: 'Canary' });
 
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 /** A forced check (the hourly timer, a retry after failure) still waits this long between network checks. */
@@ -71,8 +88,8 @@ export interface AppUpdaterOptions {
 	/** Called when a download starts, finishes, or fails outside a check's own result. */
 	onStatusChanged?: () => void;
 	/**
-	 * A test-only Beta feed in place of the rolling prerelease. With it the
-	 * stable source is not read, so a probe sees only the build it serves.
+	 * A test-only feed in place of the channel's rolling prerelease. With it
+	 * the stable source is not read, so a probe sees only the build it serves.
 	 */
 	testFeedUrl?: string | undefined;
 }
@@ -218,14 +235,21 @@ export async function fetchStableReleaseNotes(
 	return notes.slice(0, MAX_RELEASE_NOTES);
 }
 
-/** Notes electron-updater read from the channel metadata (the Beta channel's source). */
+/** Notes electron-updater read from a prerelease channel's own metadata. */
 export function releaseNotesFromUpdateInfo(
 	info: UpdateInfoLike,
 	version: string,
+	channel: PrereleaseChannel,
 ): AppReleaseNote[] | null {
 	const notes = info.releaseNotes;
 	if (typeof notes === 'string' && notes.trim() !== '')
-		return [{ version, url: `${RELEASES_URL}/tag/${BETA_RELEASE_TAG}`, markdown: capNote(notes) }];
+		return [
+			{
+				version,
+				url: `${RELEASES_URL}/tag/${PRERELEASE_RELEASE_TAGS[channel]}`,
+				markdown: capNote(notes),
+			},
+		];
 	if (Array.isArray(notes)) {
 		const entries: AppReleaseNote[] = [];
 		for (const entry of notes) {
@@ -287,14 +311,16 @@ function canInstallInPlaceOnWindows(options: {
 
 /**
  * Where an offered version comes from. The Stable channel only ever reads the
- * stable source; the Beta channel reads both and takes the higher version.
+ * stable source; a Nightly or Canary channel reads its own rolling prerelease
+ * and the stable source, and takes the higher version. Neither reads the
+ * other's prerelease.
  */
 type UpdateSource = AppUpdateChannel;
 
 function sourceMetadataUrl(
 	source: UpdateSource,
 	platform: NodeJS.Platform,
-	betaFeedUrl = BETA_FEED_URL,
+	feedUrl: (channel: PrereleaseChannel) => string = prereleaseFeedUrl,
 ): string | null {
 	// electron-updater's Windows metadata carries no platform suffix.
 	const suffix =
@@ -306,15 +332,15 @@ function sourceMetadataUrl(
 					? ''
 					: null;
 	if (suffix === null) return null;
-	return source === 'beta'
-		? `${betaFeedUrl}beta${suffix}.yml`
-		: `${STABLE_FEED_URL}latest${suffix}.yml`;
+	return source === 'stable'
+		? `${STABLE_FEED_URL}latest${suffix}.yml`
+		: `${feedUrl(source)}${source}${suffix}.yml`;
 }
 
 function releasePageUrl(source: UpdateSource, version: string): string {
-	return source === 'beta'
-		? `${RELEASES_URL}/tag/${BETA_RELEASE_TAG}`
-		: `${RELEASES_URL}/tag/v${version}`;
+	return source === 'stable'
+		? `${RELEASES_URL}/tag/v${version}`
+		: `${RELEASES_URL}/tag/${PRERELEASE_RELEASE_TAGS[source]}`;
 }
 
 function errorMessage(error: unknown): string {
@@ -356,7 +382,7 @@ export function describeManualCheck(status: AppUpdateStatus): {
 	return {
 		message: 'Terminay is up to date.',
 		detail: `Version ${status.currentVersion} is the newest release on the ${
-			status.channel === 'beta' ? 'Beta' : 'Stable'
+			CHANNEL_NAMES[status.channel ?? 'stable'] ?? CHANNEL_NAMES.stable
 		} channel.`,
 	};
 }
@@ -369,7 +395,8 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	const log = options.log ?? (() => {});
 	const currentVersion = versionString(options.currentVersion) ?? '0.0.0';
 	const installable = canInstallInPlace(options);
-	const betaFeedUrl = options.testFeedUrl ?? BETA_FEED_URL;
+	const feedUrl = (prerelease: PrereleaseChannel): string =>
+		options.testFeedUrl ?? prereleaseFeedUrl(prerelease);
 
 	let channel = options.channel;
 	let generation = 0;
@@ -428,8 +455,10 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		notesVersion = version;
 		releaseNotes = null;
 		releaseNotesError = null;
-		if (source === 'beta') {
-			releaseNotes = info ? releaseNotesFromUpdateInfo(info, version) : null;
+		if (source !== 'stable') {
+			releaseNotes = info
+				? releaseNotesFromUpdateInfo(info, version, source)
+				: null;
 			if (releaseNotes === null)
 				releaseNotesError = 'No release notes were published with this build.';
 			return;
@@ -525,11 +554,11 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	}
 
 	function configureFeed(updater: UpdaterLike, source: UpdateSource): void {
-		if (source === 'beta') {
+		if (source !== 'stable') {
 			updater.setFeedURL({
 				provider: 'generic',
-				url: betaFeedUrl,
-				channel: 'beta',
+				url: feedUrl(source),
+				channel: source,
 			});
 			// The rolling release replaces its payloads, so the previous
 			// build's blockmap is never there to diff against.
@@ -552,7 +581,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	async function probeVersion(source: UpdateSource): Promise<string> {
 		if (source === 'stable' && options.testFeedUrl !== undefined)
 			throw new Error('A test feed serves no stable source.');
-		const url = sourceMetadataUrl(source, options.platform, betaFeedUrl);
+		const url = sourceMetadataUrl(source, options.platform, feedUrl);
 		if (url === null)
 			throw new Error('This platform publishes no update metadata.');
 		const response = await options.fetch(url, {
@@ -570,44 +599,49 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	}
 
 	/**
-	 * The source to check and the version it publishes. Beta is stable plus
-	 * prereleases: it takes whichever source is higher, so a stable release is
-	 * not held back until `main` next publishes a beta. One unreadable source
-	 * leaves the other; a tie keeps the rolling prerelease.
+	 * The source to check and the version it publishes. A prerelease channel is
+	 * stable plus its own prerelease: it takes whichever source is higher, so a
+	 * stable release is not held back until `main` next publishes a build on
+	 * that track. One unreadable source leaves the other; a tie keeps the
+	 * rolling prerelease. Canary never reads the nightly prerelease: every
+	 * nightly commit was pushed first, so canary already offered it or
+	 * something newer.
 	 */
 	async function selectSource(): Promise<{
 		source: UpdateSource;
 		version: string;
 	}> {
-		if (channel === 'stable')
+		const prereleaseChannel = channel;
+		if (prereleaseChannel === 'stable')
 			return { source: 'stable', version: await probeVersion('stable') };
-		const [beta, stable] = await Promise.allSettled([
-			probeVersion('beta'),
+		const [prerelease, stable] = await Promise.allSettled([
+			probeVersion(prereleaseChannel),
 			probeVersion('stable'),
 		]);
-		if (beta.status === 'rejected') {
-			if (stable.status === 'rejected') throw beta.reason;
+		if (prerelease.status === 'rejected') {
+			if (stable.status === 'rejected') throw prerelease.reason;
 			return { source: 'stable', version: stable.value };
 		}
 		if (
 			stable.status === 'fulfilled' &&
-			compareVersions(stable.value, beta.value) > 0
+			compareVersions(stable.value, prerelease.value) > 0
 		)
 			return { source: 'stable', version: stable.value };
-		return { source: 'beta', version: beta.value };
+		return { source: prereleaseChannel, version: prerelease.value };
 	}
 
 	async function checkInPlace(): Promise<void> {
 		const updater = await getUpdater();
-		// Stable has one source, so only Beta pays for the probe. When neither
-		// source can be read the updater still checks the rolling prerelease and
-		// reports the failure itself.
+		// Stable has one source, so only a prerelease channel pays for the
+		// probe. When neither source can be read the updater still checks the
+		// channel's rolling prerelease and reports the failure itself.
+		const checking = channel;
 		checkSource =
-			channel === 'stable'
+			checking === 'stable'
 				? 'stable'
 				: await selectSource().then(
 						(selected) => selected.source,
-						() => 'beta' as const,
+						() => checking,
 					);
 		configureFeed(updater, checkSource);
 		const result = (await updater.checkForUpdates()) as {
@@ -619,7 +653,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	}
 
 	async function checkForNotice(): Promise<void> {
-		if (sourceMetadataUrl(channel, options.platform, betaFeedUrl) === null) {
+		if (sourceMetadataUrl(channel, options.platform, feedUrl) === null) {
 			state = 'idle';
 			return;
 		}
