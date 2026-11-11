@@ -25,9 +25,11 @@ fi
 image=${TERMINAY_MCP_CLI_IMAGE:-terminay-mcp-cli-compat:local}
 cache_bust=$(date -u +%Y%m%dT%H%M%SZ)
 
+# shellcheck disable=SC2046 # one docker build argument per line
 docker build \
   --pull \
   --platform "$platform" \
+  $(sh "$repo_dir/scripts/docker-hub-build-args.sh") \
   --build-arg "CLI_COMPAT_CACHE_BUST=$cache_bust" \
   --file "$repo_dir/Dockerfile.mcp-cli-compat" \
   --tag "$image" \

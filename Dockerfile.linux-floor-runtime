@@ -3,7 +3,10 @@
 # artifact probed here runs on its own runtime and its own native files. The
 # base is pinned by digest and must be LINUX_FLOOR_RUNTIME_IMAGE in
 # scripts/linux-glibc-floor.mjs.
-FROM debian:bullseye-slim@sha256:e5b6442dd2e9684cf5e87d8338b5968f3b348636fc0be6d7850a381e3731a2bd
+# Docker Hub's library namespace. The internal Gitea CI passes its mirror
+# (scripts/docker-hub-build-args.sh).
+ARG DOCKER_HUB=docker.io/library
+FROM ${DOCKER_HUB}/debian:bullseye-slim@sha256:e5b6442dd2e9684cf5e87d8338b5968f3b348636fc0be6d7850a381e3731a2bd
 
 # Packages come from the Debian snapshot this image was built from, which the
 # image names in its own sources. The live bullseye mirrors are past end of

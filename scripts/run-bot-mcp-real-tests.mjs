@@ -74,7 +74,15 @@ try {
 		throw new Error('the shipped bot image context is stale');
 	const botContext = path.join(context, 'bot');
 	await cp(source, botContext, { recursive: true });
-	await writeFile(path.join(botContext, 'Dockerfile'), plan.dockerfile);
+	// The shipped Dockerfile pulls from Docker Hub. The internal Gitea CI takes
+	// its base from the mirror instead (scripts/docker-hub-build-args.sh).
+	const mirror = process.env.TERMINAY_DOCKER_HUB_MIRROR;
+	await writeFile(
+		path.join(botContext, 'Dockerfile'),
+		mirror
+			? plan.dockerfile.replace(/^FROM docker\.io\/library\//gmu, `FROM ${mirror}/`)
+			: plan.dockerfile,
+	);
 	docker(
 		'build',
 		'--build-arg',
