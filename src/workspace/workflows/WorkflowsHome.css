@@ -268,8 +268,6 @@
 	padding: 16px 20px 18px;
 	overflow-x: auto;
 	overflow-y: hidden;
-	scroll-snap-type: x proximity;
-	scroll-padding: 20px;
 }
 
 .workflows-home__rows {
@@ -360,7 +358,6 @@
 	gap: 12px;
 	padding-bottom: 6px;
 	overflow-x: auto;
-	scroll-snap-type: x proximity;
 }
 
 /* Rows keep a fixed column height; a long step list scrolls in its column. */
@@ -384,7 +381,6 @@
 	border: 1px solid var(--workflows-home-line);
 	border-radius: 10px;
 	background: var(--workflows-home-surface);
-	scroll-snap-align: start;
 	font-size: 13px;
 }
 
@@ -632,7 +628,6 @@
 	flex-direction: column;
 	height: auto;
 	overflow: visible;
-	scroll-snap-type: none;
 }
 
 .workflows-home--compact .workflows-home__scroller,
