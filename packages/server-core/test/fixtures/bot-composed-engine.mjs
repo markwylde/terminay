@@ -276,6 +276,17 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 			);
 			await import('./bot-native.mjs');
 		}
+	} else if (
+		command[0] === 'sh' &&
+		JSON.stringify(command.slice(4)) ===
+			JSON.stringify(['codex', 'login', 'status'])
+	) {
+		// The device sign-in status check: a deleted home has no login.
+		fs.appendFileSync(
+			calls,
+			`${JSON.stringify({ status: true, home: process.env.HOME })}\n`,
+		);
+		out(`terminay-status=${read('login', 'state') === 'gone' ? 1 : 0}`);
 	} else {
 		let input = '';
 		for await (const chunk of process.stdin) input += chunk;

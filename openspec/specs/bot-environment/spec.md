@@ -321,6 +321,7 @@ When the user chooses an agent's device sign-in, the server SHALL start the bot'
 - **Config.** Before running the command, and before each session while the bot's sign-in is `device`, the host SHALL write the device sign-in's own bot config files in place of the agent's files of the same path.
 - **The login stays in the bot.** The login the command saves SHALL stay in the bot's home volume. Terminay SHALL NEVER read, copy, or display it, and SHALL NOT pass it to any other bot.
 - **Outcome.** When the command exits successfully, the bot's sign-in SHALL become `device`. When it fails, or the user closes the terminal first, the bot's sign-in SHALL be unchanged.
+- **Login check.** An agent's device sign-in MAY declare a status command that reports, offline, whether a login is in the bot's home. Before each session while the bot's sign-in is `device`, the server SHALL run it in the bot's container as `bot`, with `HOME=/home/bot`, and SHALL receive only its exit status. When it exits non-zero, the bot SHALL become Not signed in, and the session SHALL be refused with a reason that names Configure › Profile › Sign-in before the agent starts. When the check cannot run, the bot's sign-in SHALL be unchanged.
 - **Sign out.** Signing out SHALL run the declared sign-out command in the bot's container as `bot`, and SHALL set the bot to Not signed in only after successful sign-out.
 - **Deletion.** Deleting a bot with its home SHALL remove its login. Choosing another sign-in SHALL leave the saved login in the home until the user signs out.
 
@@ -343,6 +344,16 @@ When the user chooses an agent's device sign-in, the server SHALL start the bot'
 
 - **WHEN** the user signs a Codex bot out
 - **THEN** `codex logout` runs in that bot's container, and the bot is Not signed in
+
+#### Scenario: Device login removed from the home
+
+- **WHEN** a Codex bot signed in with ChatGPT has its home volume removed, and the user sends it a message
+- **THEN** the message is refused with a reason that names Configure › Profile › Sign-in, Codex is not started, and the bot is Not signed in
+
+#### Scenario: Recreate keeps the device login
+
+- **WHEN** a user recreates the container of a Codex bot signed in with ChatGPT
+- **THEN** its home volume is kept, and its next session runs signed in
 
 ### Requirement: Tokens are kept in the vault and injected without arguments
 

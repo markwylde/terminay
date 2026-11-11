@@ -42,6 +42,7 @@ const agent = {
 	deviceSignIn: {
 		command: { executable: 'codex', args: ['login', '--device-auth'] },
 		signOutCommand: { executable: 'codex-session', args: ['forget', '--all'] },
+		statusCommand: { executable: 'codex', args: ['login', 'status'] },
 		label: 'Sign in with ChatGPT',
 		help: 'Approve the code',
 		configFiles: [
@@ -701,6 +702,43 @@ test('9.3 device operations refuse restricted clients and agents without device 
 	await assert.rejects(owner.io.shell(bot.id, 1, 80, 24, {}, 'sign-in'));
 	await assert.rejects(owner.credentials.deviceSignOut(bot.id));
 	assert.deepEqual((await owner.bots.get(bot.id)).signIn, { kind: 'none' });
+});
+
+test('9.4 a device login missing from the home sets the bot Not signed in before the agent starts', {
+	timeout: 15000,
+}, async (t) => {
+	const r = await setup(t),
+		c = await r.connect();
+	await c.engine.build();
+	const bot = await c.bots.save({ name: 'Lost login', agentId: agent.id });
+	await terminalText(await c.io.shell(bot.id, 1, 80, 24, {}, 'sign-in'));
+	const signedIn = await c.bots.send(bot.id, 'normal');
+	await until(
+		r.service,
+		'changed',
+		() => r.service.sessions.get(signedIn.sessionId).state === 'completed',
+	);
+	assert.ok(r.calls().some((call) => call.status && call.home === '/home/bot'));
+	await c.bots.control(bot.id, signedIn.sessionId, 'end');
+	writeFileSync(join(r.root, 'login-state.json'), JSON.stringify('gone'));
+	const agentsBefore = r.calls().filter((call) => call.agent).length;
+	const lost = await c.bots.send(bot.id, 'normal');
+	await until(
+		r.service,
+		'changed',
+		() => !['queued', 'running'].includes(r.service.sessions.get(lost.sessionId).state),
+	);
+	assert.match(
+		r.service.sessions.get(lost.sessionId).reason ?? '',
+		/Sign in with ChatGPT login is no longer in its home.*Configure › Profile › Sign-in/,
+	);
+	assert.equal(r.calls().filter((call) => call.agent).length, agentsBefore);
+	assert.deepEqual((await c.bots.get(bot.id)).signIn, { kind: 'none' });
+	await assert.rejects(c.bots.send(bot.id, 'normal'), (e) => {
+		assert.equal(e.code, 'unavailable');
+		assert.match(e.message, /Configure › Profile › Sign-in/);
+		return true;
+	});
 });
 
 test('9.4 failed sign-out retains the device state', {

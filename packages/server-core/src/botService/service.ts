@@ -1119,6 +1119,46 @@ export class BotService extends EventEmitter {
 				'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.',
 			);
 	}
+	/**
+	 * A device login lives only in the bot's home volume, so it is gone if
+	 * that volume is removed. Run the agent's own status check as `bot`; when
+	 * it reports no login, record the bot as Not signed in and refuse, rather
+	 * than let the agent fail on a missing credential. An engine failure is
+	 * not evidence either way and leaves the sign-in unchanged.
+	 */
+	private async requireDeviceLogin(
+		driver: EngineDriver,
+		botId: string,
+		agent: BotAgentContribution,
+	): Promise<void> {
+		const status = agent.deviceSignIn?.statusCommand;
+		if (!status) return;
+		const output = await driver.exec(
+			`terminay-bot-${botId}`,
+			[
+				'sh',
+				'-c',
+				'"$@" >/dev/null 2>&1; echo "terminay-status=$?"',
+				'sh',
+				status.executable,
+				...status.args,
+			],
+			{
+				user: 'bot',
+				env: { HOME: '/home/bot' },
+				environmentNames: ['HOME'],
+				deadlineMs: 30_000,
+				maxBytes: 4096,
+			},
+		);
+		const code = /terminay-status=(\d+)/.exec(output)?.[1];
+		if (code === undefined || code === '0') return;
+		await this.setDeviceSignIn(botId, false);
+		throw new BotBlockedError(
+			'agent',
+			`This bot's ${agent.deviceSignIn?.label ?? 'device sign-in'} login is no longer in its home. Sign it in again under Configure › Profile › Sign-in.`,
+		);
+	}
 	private run(item: BotQueuedTurn): Promise<void> {
 		const task = this.runNow(item);
 		this.activeRuns.set(item.sessionId, { botId: item.botId, task });
@@ -1194,6 +1234,8 @@ export class BotService extends EventEmitter {
 							),
 						},
 					);
+				if (record.snapshot.signIn.kind === 'device')
+					await this.requireDeviceLogin(driver, record.botId, agent);
 				if (images.length) {
 					failureReason =
 						'The attached images could not be copied into the bot container.';
