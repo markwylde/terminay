@@ -55,7 +55,6 @@ async function composed({ permissions = {}, appWindows = {} } = {}) {
       ...(hello.clientId.startsWith("bound-") ? { claims: { projectId: "project-b" } } : {}),
     }),
     settings,
-    mcpApprovals: true,
     ...(appWindows === null ? {} : { appWindows }),
   });
   const cleanups = [];

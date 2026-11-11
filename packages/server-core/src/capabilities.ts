@@ -60,6 +60,8 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
 	['extension', FEATURE_CAPABILITIES.extensions],
 	['language', FEATURE_CAPABILITIES.language],
 	['workspace-view', FEATURE_CAPABILITIES.workspaceView],
+	['mcp', FEATURE_CAPABILITIES.mcpApprovals],
+	['app-windows', FEATURE_CAPABILITIES.appWindows],
 	['server', CONNECTION_MECHANICS],
 	['events', CONNECTION_MECHANICS],
 	['connection', CONNECTION_MECHANICS],
@@ -84,6 +86,9 @@ export function capabilityOf(
 		].includes(operation)
 	)
 		return FEATURE_CAPABILITIES.botSources;
+	// The view mirror is negotiated apart from the windows it mirrors.
+	if (operation.startsWith('app-windows.mirror.'))
+		return FEATURE_CAPABILITIES.appWindowMirror;
 	// The server's own upgrade is a feature a server may not serve, so it is
 	// classified apart from the connection mechanics it shares a namespace with.
 	if (

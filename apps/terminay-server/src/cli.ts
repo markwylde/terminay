@@ -20,8 +20,7 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { tmpdir } from 'node:os';
-import { gitCommandSocketHostOptions } from './gitCommandSocket.js';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
@@ -29,80 +28,83 @@ import { FEATURE_CAPABILITIES } from '@terminay/protocol';
 import {
 	AgentStatusService,
 	AiService,
+	APP_WINDOW_STORE_DIRECTORY_NAME,
 	AutomationRepository,
 	AutomationRunLog,
-	agentHarnessSwitchesFromSettings,
 	agentChatProviderBridge,
+	agentHarnessSwitchesFromSettings,
 	agentIntegrationEnabledFromSettings,
 	backgroundTerminalLimitMs,
 	CanonicalProjectPathResolver,
+	CONNECTION_METRICS_FILE,
 	createAutomationFileBackends,
 	createBotServerService,
-	installedBotAgentCatalog,
+	createFilePushEnrolmentPersistence,
+	createJsonFileBackend,
 	createNodePtyFactory,
-	createSessionHolderPtyFactory,
-	launchDetachedSessionHolder,
-	readHolderRecords,
-	sessionHolderEnabled as isSessionHolderEnabled,
 	createNodeShellDiscoveryHost,
 	createProductionExtensionManagement,
 	createServerAiProviderAdapters,
-	createWorkspaceAiTargetAuthority,
 	createServerCoreComposition,
-	ServerUpgradeService,
+	createSessionHolderPtyFactory,
+	createWorkflowTemplateFileBackend,
+	createWorkspaceAiTargetAuthority,
 	createWorktreeCaptureHost,
-	FOLDER_TERMINAL_CAPTURED_EVENT,
 	DocumentationCatalog,
 	FileCatalog,
 	FileContentStreamService,
 	type FileObservationHost,
 	FileWorkspaceStateBackend,
+	FOLDER_TERMINAL_CAPTURED_EVENT,
+	ForgeService,
+	fileForgeSettings,
 	fileWorktreePromptPreferences,
 	GitService,
+	installedBotAgentCatalog,
+	sessionHolderEnabled as isSessionHolderEnabled,
+	launchDetachedSessionHolder,
 	MacroRepository,
-	createWorkflowTemplateFileBackend,
-	WORKFLOW_RECORDS_DIRECTORY,
-	WorkflowTemplateRepository,
+	McpInstallRouter,
 	MdxRuntime,
 	type NodePtyModuleLike,
-	type SessionHolderObservationReport,
 	OpenAiDictationProvider,
 	OrderedEventJournal,
 	openCanonicalWorkspace,
 	ParakeetRuntime,
 	ProjectAgentScope,
+	PushEnrolmentStore,
+	pushOriginForSessionOrigin,
 	RecordingService,
 	type RemoteRegisteredDevice,
+	readHolderRecords,
 	type ServerCoreComposition,
+	type ServerCoreCompositionOptions,
 	ServerDocumentationCatalogAdapter,
 	ServerFileAdapter,
 	ServerFileCatalogAdapter,
 	ServerFileContentAdapter,
 	ServerFileObservationAdapter,
-	ServerGitAdapter,
-	ForgeService,
 	ServerForgeAdapter,
-	fileForgeSettings,
+	ServerGitAdapter,
 	ServerMdxRuntimeAdapter,
 	ServerParakeetDictationProvider,
 	ServerRecordingAdapter,
 	type ServerRuntimeServices,
 	ServerSettingsRepository,
+	ServerUpgradeService,
+	type SessionHolderObservationReport,
 	SessionSourceBridge,
 	SessionSourceSupervisor,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
-	createFilePushEnrolmentPersistence,
-	PushEnrolmentStore,
-	pushOriginForSessionOrigin,
-	type ServerCoreCompositionOptions,
 	serverVaultWorktreeCredentials,
 	TerminalActivityService,
 	TerminalReplayRegistry,
 	VaultProviderCredentialResolver,
+	WORKFLOW_RECORDS_DIRECTORY,
+	WorkflowTemplateRepository,
 	WorktreeInsightService,
 	withdrawnAgentExtensionSwitches,
-	CONNECTION_METRICS_FILE,
 } from '@terminay/server-core';
 import * as nodePty from 'node-pty';
 import {
@@ -116,6 +118,7 @@ import {
 	createStandaloneFolders,
 	type StandaloneFolders,
 } from './folders.js';
+import { gitCommandSocketHostOptions } from './gitCommandSocket.js';
 import { createStandaloneVaultComposition } from './headlessVault.js';
 import {
 	createLocalUiServer,
@@ -133,8 +136,16 @@ import {
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
 } from './index.js';
+import { placeControlSocket } from './mcp/controlSocketPlacement.js';
+import {
+	createMcpHost,
+	type McpHost,
+	withoutInheritedControlEnvironment,
+} from './mcp/host.js';
+import { createCompositionTerminalOpener } from './mcp/openTerminal.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
+import { releaseUpgraderFromEnvironment } from './releaseUpgrader.js';
 import { assertAdvertisedPortIsBindable } from './remote/advertisedIcePort.js';
 import {
 	approvalSocketPath,
@@ -164,7 +175,6 @@ import {
 	createSharedPairingHandoffRotator,
 } from './remote/pairingOperationQueue.js';
 import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
-import { releaseUpgraderFromEnvironment } from './releaseUpgrader.js';
 import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
 import {
 	describeUnreadableState,
@@ -348,7 +358,9 @@ else if (options.command === 'mcp') {
 					// Posted to the manager host beside this server's hosted session
 					// origin. A server exposed only by direct signaling has none.
 					origin: () =>
-						exposeHosted ? pushOriginForSessionOrigin(sessionOrigin) : undefined,
+						exposeHosted
+							? pushOriginForSessionOrigin(sessionOrigin)
+							: undefined,
 				},
 			);
 			const composition = serverComposition.core;
@@ -433,6 +445,9 @@ else if (options.command === 'mcp') {
 					const healthAddress = await healthServer?.start();
 					// Start journal observation before creating the default session.
 					await composition.start();
+					// Terminals restored above keep their capabilities; the endpoint
+					// starts before any client can connect.
+					await serverComposition.mcp.bind(serverComposition.mcpServer());
 					const health = await runtime!.start();
 					await waitForProtocolEndpoint(uiServer);
 					approvalSocket = await startApprovalSocket({
@@ -638,7 +653,9 @@ else if (options.command === 'mcp') {
 					await direct?.close().catch(() => undefined);
 					await approvalSocket?.close().catch(() => undefined);
 					await runtime!.stop().catch(() => undefined);
+					serverComposition.mcp.stopPersisting();
 					await composition.shutdown().catch(() => undefined);
+					await serverComposition.mcp.stop().catch(() => undefined);
 					await healthServer?.stop().catch(() => undefined);
 					await standaloneLease
 						?.release(options.dataRoot)
@@ -666,7 +683,11 @@ else if (options.command === 'mcp') {
 					await direct?.close().catch(() => undefined);
 					await approvalSocket?.close().catch(() => undefined);
 					await runtime!.stop();
+					// Kept terminals must still hold their capabilities next time,
+					// so the saved copy stops following before the endpoint revokes.
+					serverComposition.mcp.stopPersisting();
 					await composition.shutdown();
+					await serverComposition.mcp.stop();
 					await healthServer?.stop();
 					await standaloneLease?.release(options.dataRoot);
 				})()
@@ -747,6 +768,11 @@ async function createServerComposition(
 		workspaceWasCreated: boolean;
 		vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>;
 		extensions: ReturnType<typeof createProductionExtensionManagement>;
+		/** The Terminay MCP host (ADR-0108). Bound once the composition has
+		 * started, and stopped with it. */
+		mcp: McpHost;
+		/** What the MCP host binds once the composition has started. */
+		mcpServer: () => Parameters<McpHost['bind']>[0];
 	}>
 > {
 	const eventJournal = new OrderedEventJournal();
@@ -802,6 +828,18 @@ async function createServerComposition(
 		},
 	});
 	let composition: ServerCoreComposition;
+	// The Terminay MCP control socket (ADR-0054, ADR-0108). Its placement is
+	// checked before anything else opens a socket, so a server whose socket has
+	// nowhere to go says so and stops instead of starting without MCP.
+	const mcpPlacement = {
+		dataDirectory: options.dataRoot,
+		platform: process.platform,
+		temporaryDirectory: tmpdir(),
+		...(process.env.XDG_RUNTIME_DIR
+			? { runtimeDirectory: process.env.XDG_RUNTIME_DIR }
+			: {}),
+	};
+	await placeControlSocket(mcpPlacement);
 	// One linked folder per worktree of each project's repository, driven by
 	// the Git service's own events.
 	// Which terminal created a worktree: Git in each terminal reports its own
@@ -866,6 +904,28 @@ async function createServerComposition(
 	};
 	applyAgentSettings(settings.settings);
 	settings.onChange((state) => applyAgentSettings(state.settings));
+	// Every terminal this server starts gets the control socket and its own
+	// capability, unless Settings > AI > Terminay MCP is off. The entry runs on
+	// this Node with an absolute path, so nothing has to be on PATH.
+	const mcpServerCommand = {
+		command: process.execPath,
+		args: [fileURLToPath(new URL('./mcpEntry.js', import.meta.url))],
+	};
+	const mcp = createMcpHost({
+		serverId: options.serverId,
+		dataRoot: options.dataRoot,
+		placement: mcpPlacement,
+		serverCommand: () => mcpServerCommand,
+		clientVersion: options.serverVersion,
+		homeDirectory: homedir(),
+		initialSettings: settings.settings,
+		onSettingsChange: (listener) =>
+			settings.onChange((state) => listener(state.settings)),
+		openTerminal: createCompositionTerminalOpener({
+			composition: () => composition,
+			workspace,
+		}),
+	});
 	const shellProfiles = new ShellProfileCatalogueService({
 		settings,
 		discovery: new ShellProfileDiscoveryService(
@@ -952,13 +1012,15 @@ async function createServerComposition(
 	});
 	// Pull requests and issues, pulled from extension forge sources on demand.
 	const forgeService = new ForgeService({
-			hosts: extensions.hosts,
-			projects: worktreeInsights,
-			credentials: worktreeInsights,
-			settings: fileForgeSettings(join(options.dataRoot, 'forge-settings.v1.json')),
-			onError: (message) => {
-				process.stderr.write(`[terminay-server] ${message}\n`);
-			},
+		hosts: extensions.hosts,
+		projects: worktreeInsights,
+		credentials: worktreeInsights,
+		settings: fileForgeSettings(
+			join(options.dataRoot, 'forge-settings.v1.json'),
+		),
+		onError: (message) => {
+			process.stderr.write(`[terminay-server] ${message}\n`);
+		},
 	});
 	const forge = new ServerForgeAdapter(forgeService);
 	const parakeetRuntime = new ParakeetRuntime({
@@ -977,14 +1039,20 @@ async function createServerComposition(
 				serverId: options.serverId,
 				state: () => workspace.state,
 				applyHostCommand: (commandId, command) =>
-					composition.workspaceOperations?.applyHostCommand(
-						commandId,
-						command,
-					),
+					composition.workspaceOperations?.applyHostCommand(commandId, command),
 				getSession: (sessionId) => composition.terminal.getSession(sessionId),
 			}),
 			writeInput: async (target, input) => {
-				await composition.terminalInputSources.write({ identity: { serverId: target.serverId, projectId: target.projectId, sessionId: target.sessionId }, clientId: 'dictation', source: 'dictation', data: input });
+				await composition.terminalInputSources.write({
+					identity: {
+						serverId: target.serverId,
+						projectId: target.projectId,
+						sessionId: target.sessionId,
+					},
+					clientId: 'dictation',
+					source: 'dictation',
+					data: input,
+				});
 			},
 		},
 		replay: new TerminalReplayRegistry(),
@@ -1064,8 +1132,14 @@ async function createServerComposition(
 				pty: createNodePtyFactory(nodePty as unknown as NodePtyModuleLike, {
 					resolveCwd: resolveTerminalProcessCwd,
 				}),
+				terminayMcp: mcp.botTerminayMcp,
 			})
 		: undefined;
+	// Registers this server's MCP with the agent CLIs its extensions manage.
+	const mcpInstall = new McpInstallRouter({
+		hosts: () => extensions.hosts,
+		serverCommand: () => mcpServerCommand,
+	});
 	composition = createServerCoreComposition({
 		...(bots ? { bots } : {}),
 		connectionMetrics: {
@@ -1152,6 +1226,9 @@ async function createServerComposition(
 				agentScope.removeProject(projectId);
 				folders.releaseProject(projectId);
 			},
+			// A terminal's MCP capability follows it to its new project
+			// (ADR-0074).
+			rehomeTerminalSession: (move) => mcp.onTerminalRehomed(move),
 		},
 		// What a restored workspace contains is server policy; this supplies only
 		// the act of making a session. Without it a restart republished the
@@ -1188,11 +1265,34 @@ async function createServerComposition(
 			workRoot: join(options.dataRoot, 'agent-chat'),
 			projectExists: (projectId) =>
 				workspace.state.projects[projectId] !== undefined,
+			mcp: mcp.agentChatMcp,
+		},
+		terminalLaunchEnvironmentFor: (intent, placement) =>
+			mcp.terminalLaunchEnvironmentFor(intent, placement),
+		// Connected MCP servers: the file holds no credential; those are in the
+		// vault.
+		connectedServers: {
+			backend: createJsonFileBackend<unknown>(
+				join(options.dataRoot, 'mcp-connected-servers.v1.json'),
+				{ store: 'connected-servers' },
+			),
+			vault: vault.vault,
+		},
+		appWindows: {
+			terminalTitle: (terminalSessionId) =>
+				composition.terminalTitles?.displayedTitleForSession(terminalSessionId),
+			// Windows last as long as their terminals, across restarts (ADR-0076).
+			storeDirectory: join(options.dataRoot, APP_WINDOW_STORE_DIRECTORY_NAME),
+			onStoreError: (error, windowId) => {
+				process.stderr.write(
+					`[terminay-server] app window ${windowId ?? ''} not kept: ${error instanceof Error ? error.message : String(error)}\n`,
+				);
+			},
 		},
 		terminalProfiles: shellProfiles,
 		shellProfiles,
 		terminalLaunchEnvironment: {
-			...process.env,
+			...withoutInheritedControlEnvironment(process.env),
 			COLORTERM: 'truecolor',
 		},
 		terminalEnvironmentCaseInsensitive: process.platform === 'win32',
@@ -1248,10 +1348,22 @@ async function createServerComposition(
 				return {
 					target,
 					write: async (_candidate, bytes) => {
-						await composition.terminalInputSources.write({ identity: target, clientId: request.context.clientId, source: 'macro', data: bytes, authorization });
+						await composition.terminalInputSources.write({
+							identity: target,
+							clientId: request.context.clientId,
+							source: 'macro',
+							data: bytes,
+							authorization,
+						});
 					},
 					key: async (_candidate, key) => {
-						await composition.terminalInputSources.write({ identity: target, clientId: request.context.clientId, source: 'macro', data: macroKeyBytes(key), authorization });
+						await composition.terminalInputSources.write({
+							identity: target,
+							clientId: request.context.clientId,
+							source: 'macro',
+							data: macroKeyBytes(key),
+							authorization,
+						});
 					},
 					waitForInactivity: (_candidate, milliseconds, signal) =>
 						composition.terminal.waitForInactivity(target, milliseconds, {
@@ -1262,7 +1374,7 @@ async function createServerComposition(
 			},
 		},
 		terminalOptions: {
-			defaultEnvironment: process.env,
+			defaultEnvironment: withoutInheritedControlEnvironment(process.env),
 			maxReplayBytes: 4 * 1024 * 1024,
 			maxQueuedOutputBytes: 512 * 1024,
 		},
@@ -1274,11 +1386,21 @@ async function createServerComposition(
 				...files.documentation.operations().queries,
 				...files.mdxRuntime.operations().queries,
 				'server.health': () => health(),
+				'mcp-install.status': async () =>
+					(await mcpInstall.status()) as unknown as JsonValue,
 			},
 			commands: {
 				...files.session.operations().commands,
 				...files.catalog.operations().commands,
 				...files.mdxRuntime.operations().commands,
+				'mcp-install.install': (request) =>
+					mcpInstall.install(
+						mcpInstallTarget(request.envelope.payload),
+					) as unknown as Promise<JsonValue>,
+				'mcp-install.uninstall': (request) =>
+					mcpInstall.uninstall(
+						mcpInstallTarget(request.envelope.payload),
+					) as unknown as Promise<JsonValue>,
 			},
 		},
 	});
@@ -1287,7 +1409,26 @@ async function createServerComposition(
 		vault,
 		extensions,
 		workspaceWasCreated: workspaceRepository.wasCreated,
+		mcp,
+		mcpServer: () => ({
+			composition,
+			workspace,
+			activity,
+			agents,
+			keepsTerminalsAcrossRestart: sessionHolderEnabled(options),
+		}),
 	});
+}
+
+/** The agent an `mcp-install.*` command names. */
+function mcpInstallTarget(payload: unknown): string {
+	const agent =
+		typeof payload === 'object' && payload !== null
+			? (payload as Record<string, unknown>).agent
+			: undefined;
+	if (typeof agent !== 'string' || agent.length === 0 || agent.length > 192)
+		throw new TypeError('agent is invalid');
+	return agent;
 }
 
 function standaloneDictationSettings(

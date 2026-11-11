@@ -58,7 +58,6 @@ async function composed({ permissions = {}, appWindows = {} } = {}) {
       ...(hello.clientId.startsWith("bound-") ? { claims: { projectId: "project-b" } } : {}),
     }),
     settings,
-    mcpApprovals: true,
     ...(appWindows === null ? {} : { appWindows }),
   });
   const cleanups = [];
@@ -166,22 +165,24 @@ async function fenced(server, ...lists) {
   await Promise.all(lists.map((list) => list.fenced(fence)));
 }
 
-test("the server advertises app windows only when they are composed", async () => {
-  const withWindows = await composed();
+test("every server composes app windows, approvals and workspace view, and advertises them (ADR-0108)", async () => {
+  // No app-window configuration at all: the service is still composed.
+  const server = await composed({ appWindows: null });
   try {
-    assert.ok((await withWindows.connect("desktop", { attach: false })).hello.capabilities.includes("app-windows.v1"));
+    const { hello } = await server.connect("desktop", { attach: false });
+    for (const capability of [
+      "mcp-approvals.v1",
+      "workspace-view.v1",
+      "app-windows.v1",
+      "app-window-mirror.v1",
+      "app-window-attachments.v1",
+    ])
+      assert.ok(hello.capabilities.includes(capability), capability);
+    assert.ok(server.composition.appWindows);
+    assert.ok(server.composition.mcpApprovals);
+    assert.ok(server.composition.workspaceView);
   } finally {
-    await withWindows.close();
-  }
-  const without = await composed({ appWindows: null });
-  try {
-    const { client, hello } = await without.connect("desktop", { attach: false });
-    assert.equal(hello.capabilities.includes("app-windows.v1"), false);
-    assert.equal(hello.capabilities.includes("app-window-attachments.v1"), false);
-    assert.equal(without.composition.appWindows, undefined);
-    await assert.rejects(client.query(APP_WINDOW_OPERATIONS.list, {}));
-  } finally {
-    await without.close();
+    await server.close();
   }
 });
 
