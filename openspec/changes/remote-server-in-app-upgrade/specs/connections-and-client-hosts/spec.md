@@ -28,7 +28,7 @@ The header connections control SHALL show a warning icon beside the server label
 
 Choosing **Upgrade server…** SHALL open a confirmation in the host's in-page window frame that names the server, its running version, and the available version, and states that the connection to that server drops briefly and that its terminals keep running. When the server offers the recreate mode, the confirmation SHALL offer both modes with in-place preselected, and SHALL state beside recreate that it ends every terminal on that server. Nothing SHALL be sent to the server until the user confirms.
 
-While the upgrade is in progress the menu row SHALL say so, the upgrade action SHALL be unavailable on every client attached to that server, and the connection's drop and return SHALL use the ordinary reconnecting presentation. When the server's status reports the outcome, the client SHALL show it once: the new version on success, or the failure reason and the restored version on failure. A client that sees no status from that server within the reconnect deadline SHALL report that the server did not come back and SHALL keep its ordinary offline presentation.
+While the upgrade is in progress the menu row SHALL say so, the upgrade action SHALL be unavailable on every client attached to that server, and the connection's drop and return SHALL use the ordinary reconnecting presentation. When the server's status reports the outcome, the client SHALL tell it once as an entry in the header Notifications list, counted on the Notifications control like every other notification and kept until dismissed: the new version on success, or the failure reason and the restored version on failure. The outcome SHALL NOT be drawn as a separate popup over the workspace. A client that sees no status from that server within the reconnect deadline SHALL report that the server did not come back and SHALL keep its ordinary offline presentation.
 
 #### Scenario: Confirmation names the versions
 
@@ -53,9 +53,9 @@ While the upgrade is in progress the menu row SHALL say so, the upgrade action S
 #### Scenario: Success
 
 - **WHEN** the connection returns and the status reports the completed move
-- **THEN** the warning icon is gone and the user is told the server is now on `5.2.0`
+- **THEN** the warning icon is gone and the Notifications list holds one entry saying the server is now on `5.2.0`, with no popup over the workspace
 
 #### Scenario: Rolled back
 
 - **WHEN** the connection returns and the status reports a rollback
-- **THEN** the user is told the upgrade failed, why, and that `5.1.1` is running again, and the warning icon remains
+- **THEN** the Notifications list holds one entry saying the upgrade failed, why, and that `5.1.1` is running again, and the warning icon remains

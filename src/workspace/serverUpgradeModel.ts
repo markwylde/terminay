@@ -122,12 +122,15 @@ export type ServerUpgradeEntry = Readonly<{
 	reachable: boolean;
 }>;
 
-/** The end of an upgrade this window watched, told once and then dismissed. */
+/** The end of an upgrade this window watched, told once in the Notifications
+ * list and kept there until dismissed. */
 export type ServerUpgradeNotice = Readonly<{
 	id: string;
 	profileId: string;
 	tone: 'success' | 'failure';
 	text: string;
+	/** When this window learned the outcome, in epoch milliseconds. */
+	raisedAt: number;
 }>;
 
 export type ServerUpgradeBoardSnapshot = Readonly<{
@@ -332,6 +335,7 @@ export class ServerUpgradeBoard {
 	private readonly setTimer: (run: () => void, delayMs: number) => unknown;
 	private readonly clearTimer: (handle: unknown) => void;
 	private readonly memory: ServerUpgradeMemory | undefined;
+	private readonly now: () => number;
 
 	constructor(
 		options: Readonly<{
@@ -341,8 +345,10 @@ export class ServerUpgradeBoard {
 			memory?: ServerUpgradeMemory;
 			setTimer?: (run: () => void, delayMs: number) => unknown;
 			clearTimer?: (handle: unknown) => void;
+			now?: () => number;
 		}> = {},
 	) {
+		this.now = options.now ?? Date.now;
 		this.deadlineMs = options.deadlineMs ?? SERVER_UPGRADE_RETURN_DEADLINE_MS;
 		this.memory = options.memory;
 		this.setTimer =
@@ -660,7 +666,13 @@ export class ServerUpgradeBoard {
 		if (this.notices.some((notice) => notice.id === id)) return;
 		this.notices = Object.freeze([
 			...this.notices,
-			Object.freeze({ id, profileId: record.source.profileId, tone, text }),
+			Object.freeze({
+				id,
+				profileId: record.source.profileId,
+				tone,
+				text,
+				raisedAt: this.now(),
+			}),
 		]);
 	}
 

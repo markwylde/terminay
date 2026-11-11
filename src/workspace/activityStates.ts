@@ -6,6 +6,7 @@
 
 import type { TerminalActivityState } from '../components/TerminalTab';
 import type { AgentState } from '../types/agentStatus';
+import type { ServerUpgradeNotice } from './serverUpgradeModel';
 
 export type TerminalPresentationActivityState = Extract<
 	TerminalActivityState,
@@ -48,6 +49,12 @@ export type TerminalActivityOverviewItem = {
 	 * terminal fields are then empty and the row names the bot instead.
 	 */
 	bot?: BotNotificationRow;
+	/**
+	 * Present on how a server upgrade this window followed ended. It belongs
+	 * to no terminal and lives in this window only: dismissing it tells no
+	 * server anything.
+	 */
+	serverUpgrade?: ServerUpgradeNotice;
 	/** When the terminal entered `state`, in epoch milliseconds, when known. */
 	since?: number;
 	state: TerminalActivityOverviewState;

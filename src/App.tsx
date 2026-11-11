@@ -406,7 +406,7 @@ import {
 import { usePublishedNotifications } from './workspace/usePublishedNotifications';
 import { ServerUpgradeDialog } from './workspace/ServerUpgradeDialog';
 import { ServerUpgradeMenuRows } from './workspace/ServerUpgradeMenuRows';
-import { ServerUpgradeNotices } from './workspace/ServerUpgradeNotices';
+import { withServerUpgradeNotifications } from './workspace/serverUpgradeNotifications';
 import { useServerUpgrades } from './workspace/useServerUpgrades';
 import {
 	areTerminalActivityIndicatorsEnabled,
@@ -8761,14 +8761,26 @@ function App({
 				entries,
 				notificationBots,
 			);
-			return {
-				items: notifications,
-				notifications,
-				notificationCount: notifications.length,
-			};
+			return withServerUpgradeNotifications(
+				{
+					items: notifications,
+					notifications,
+					notificationCount: notifications.length,
+				},
+				serverUpgrades.notices,
+			);
 		}
-		return buildTerminalActivityOverview(selectNotableEntries(entries));
-	}, [inventoryByProject, notificationBots, projects, publishedNotifications]);
+		return withServerUpgradeNotifications(
+			buildTerminalActivityOverview(selectNotableEntries(entries)),
+			serverUpgrades.notices,
+		);
+	}, [
+		inventoryByProject,
+		notificationBots,
+		projects,
+		publishedNotifications,
+		serverUpgrades.notices,
+	]);
 
 	// The application icon carries the same number as the Notifications control.
 	const notificationCount = terminalActivityItems.notificationCount;
@@ -10066,6 +10078,8 @@ function App({
 
 	const activateTerminalFromOverview = useCallback(
 		(item: TerminalActivityOverviewItem) => {
+			// An upgrade outcome is its own news; there is nothing to go to.
+			if (item.serverUpgrade !== undefined) return;
 			setIsActivityMenuOpen(false);
 			if (item.bot !== undefined) {
 				// The bot's tab, in Chat, on the server that published the row.
@@ -10088,6 +10102,10 @@ function App({
 	// to the workspace that owns the terminal; nothing is selected or activated.
 	const dismissNotification = useCallback(
 		(item: TerminalActivityOverviewItem) => {
+			if (item.serverUpgrade !== undefined) {
+				serverUpgrades.dismissNotice(item.serverUpgrade.id);
+				return;
+			}
 			if (item.notificationId !== undefined && notificationClient !== undefined) {
 				// The server removes exactly this notification: an activity one by
 				// acknowledging its terminal, one a process sent by itself, a bot's
@@ -10113,7 +10131,7 @@ function App({
 			const workspace = workspaceOfPanel(item.projectId, item.panelId);
 			workspace?.acknowledgeTerminal(item.sessionId);
 		},
-		[notificationClient, workspaceOfPanel],
+		[notificationClient, serverUpgrades.dismissNotice, workspaceOfPanel],
 	);
 	// A banner the user opened names a terminal. Selecting it is what clears
 	// its notification, exactly as activating its row in the list does.
@@ -11831,10 +11849,6 @@ function App({
 				/>
 			) : null}
 
-			<ServerUpgradeNotices
-				notices={serverUpgrades.notices}
-				onDismiss={serverUpgrades.dismissNotice}
-			/>
 			{serverUpgrades.confirmation === undefined ? null : (
 				<ServerUpgradeDialog
 					key={serverUpgrades.confirmation.entry.profileId}
