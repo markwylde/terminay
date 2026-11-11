@@ -20,7 +20,7 @@ tests always use `node --test --test-force-exit --test-timeout=120000`.
 
 - [x] 3.1 Replace the removed code in `electron/main.ts` with one `createMcpHost` call (Desktop paths, Electron-run MCP entry command, `createServerOwnedTerminalSession` as `openTerminal`, launch-recovery placement reporting and diagnostics) and `bind`/`stop` at the existing lifecycle points. Verify: `timeout 900 npm run typecheck` passes.
 - [x] 3.2 Remove `mcpApprovals` from `electron/serverTerminalAuthority.ts` and take the five capabilities from the composition instead of re-deriving them. Verify: typecheck passes and the authority's advertised capabilities include all five.
-- [ ] 3.3 Keep Desktop behaviour unchanged. Verify: existing Desktop MCP unit tests pass, and `timeout 3600 npm run test:e2e` (Docker-isolated) passes the MCP, approvals and app-window specs.
+- [x] 3.3 Keep Desktop behaviour unchanged. Verify: existing Desktop MCP unit tests pass, and `timeout 3600 npm run test:e2e` (Docker-isolated) passes the MCP, approvals and app-window specs.
 
 ## 4. Standalone server composes the host
 
@@ -33,8 +33,8 @@ tests always use `node --test --test-force-exit --test-timeout=120000`.
 ## 5. Docs, verification and completion
 
 - [x] 5.1 Update the standalone runbook in `docs/operations/`: MCP is on by default, how to install agent registrations from Settings, the registered command, and the placement failure message. Verify: the runbook mentions the setting and the registered command.
-- [ ] 5.2 Run `openspec validate standalone-server-hosts-terminay-mcp` and `openspec validate --all`. Verify: this change is valid, and `--all` shows no new failure beyond the 7 that already fail in other changes on `main`.
-- [ ] 5.3 Run the full local typecheck and unit tests. Verify: all pass.
+- [x] 5.2 Run `openspec validate standalone-server-hosts-terminay-mcp` and `openspec validate --all`. Verify: this change is valid, and `--all` shows no new failure beyond the 7 that already fail in other changes on `main`.
+- [x] 5.3 Run the full local typecheck and unit tests. Verify: all pass.
 - [ ] 5.4 Build the Docker image locally, run it, connect Desktop, and confirm the connection menu shows no "Without …" line and an agent in a terminal on that server can call a Terminay tool. Verify: the tool result is captured in the PR description.
-- [ ] 5.5 Run `/opsx:verify`, sync the delta specs into `openspec/specs/`, and archive the change in the same branch. Verify: `openspec validate --all --archived` shows no new failures.
-- [ ] 5.6 Open the PR on Gitea and read back every commit status. Verify: all `success` or `skipped`.
+- [x] 5.5 Run `/opsx:verify`, sync the delta specs into `openspec/specs/`, and archive the change in the same branch. Verify: `openspec validate --all --archived` shows no new failures.
+- [x] 5.6 Open the PR on Gitea and read back every commit status. Verify: all `success` or `skipped`.
