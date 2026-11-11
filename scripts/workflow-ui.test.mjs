@@ -47,6 +47,10 @@ const seenStore = await bundle('src/workspace/workflows/workflowSeen.ts', 'seen.
 // A second copy of the setting module, so its width is first read under the
 // test's own storage.
 const widthStore = await bundle('src/workspace/workflows/workflowPanelSetting.ts', 'setting-width.cjs');
+// A third, so its note density is first read under the test's own storage.
+const notesStore = await bundle('src/workspace/workflows/workflowPanelSetting.ts', 'setting-notes.cjs');
+const homeView = await bundle('src/workspace/workflows/workflowsHomeView.ts', 'home-view.cjs');
+const homeModel = await bundle('src/workspace/workflows/workflowsHomeModel.ts', 'home-model.cjs');
 const library = await bundle('src/components/workflows/workflowLibraryModel.ts', 'library.cjs');
 const category = await bundle('src/components/settings/WorkflowsCategory.tsx', 'category.cjs');
 const settingsClient = await bundle('src/components/workflows/useWorkflowSettingsClient.ts', 'settings-client.cjs');
@@ -188,17 +192,158 @@ test('the collapse setting is one device-local choice every panel follows', () =
 	assert.deepEqual(seen, ['expanded', 'collapsed']);
 	// Nothing in the setting module reaches a server: it takes no client at all.
 	assert.deepEqual(Object.keys(setting).sort(), [
+		'WORKFLOW_PANEL_NOTES_STORAGE_KEY',
 		'WORKFLOW_PANEL_STORAGE_KEY',
 		'WORKFLOW_PANEL_WIDTH_STORAGE_KEY',
+		'setWorkflowPanelNotes',
 		'setWorkflowPanelSetting',
 		'setWorkflowPanelWidth',
+		'subscribeWorkflowPanelNotes',
 		'subscribeWorkflowPanelSetting',
 		'subscribeWorkflowPanelWidth',
+		'useWorkflowPanelNotes',
 		'useWorkflowPanelSetting',
 		'useWorkflowPanelWidth',
+		'workflowPanelNotes',
 		'workflowPanelSetting',
 		'workflowPanelWidth',
 	]);
+});
+
+// workflow-panel-note-density 1.1
+
+test('the note density is device-local, separate from Home, and an unusable stored value reads as Full', () => {
+	const stored = new Map();
+	const listeners = new Set();
+	globalThis.localStorage = {
+		getItem: (k) => (stored.has(k) ? stored.get(k) : null),
+		setItem: (k, v) => stored.set(k, String(v)),
+	};
+	globalThis.addEventListener = (type, fn) => type === 'storage' && listeners.add(fn);
+	globalThis.removeEventListener = (_type, fn) => listeners.delete(fn);
+	const key = notesStore.WORKFLOW_PANEL_NOTES_STORAGE_KEY;
+	const otherWindowWrites = (value) => {
+		stored.set(key, value);
+		for (const fn of listeners) fn({ key });
+	};
+	try {
+		assert.equal(key, 'terminay.workflowPanelNotes.v1');
+		assert.notEqual(key, homeView.WORKFLOWS_HOME_VIEW_KEY, 'Home keeps its own choice');
+		assert.equal(notesStore.workflowPanelNotes(), 'full', 'the default on an empty store');
+		const heard = [];
+		const stop = notesStore.subscribeWorkflowPanelNotes(() => heard.push(notesStore.workflowPanelNotes()));
+		notesStore.setWorkflowPanelNotes('short');
+		notesStore.setWorkflowPanelNotes('short');
+		notesStore.setWorkflowPanelNotes('current');
+		notesStore.setWorkflowPanelNotes('full');
+		assert.deepEqual(heard, ['short', 'current', 'full'], 'one notice per change');
+		assert.equal(stored.get(key), 'full');
+		assert.ok(![...stored.keys()].includes(homeView.WORKFLOWS_HOME_VIEW_KEY), 'Home’s view is never written');
+		// Another window's write is followed.
+		otherWindowWrites('current');
+		assert.equal(notesStore.workflowPanelNotes(), 'current');
+		for (const unusable of ['FULL', 'none', '', '2 lines', '{}']) {
+			otherWindowWrites(unusable);
+			assert.equal(notesStore.workflowPanelNotes(), 'full', `stored ${JSON.stringify(unusable)}`);
+		}
+		// A storage event for another key changes nothing.
+		otherWindowWrites('short');
+		const before = heard.length;
+		for (const fn of listeners) fn({ key: homeView.WORKFLOWS_HOME_VIEW_KEY });
+		assert.equal(heard.length, before);
+		stop();
+		// Storage that throws keeps the choice for this window.
+		globalThis.localStorage = {
+			getItem: () => {
+				throw new Error('blocked');
+			},
+			setItem: () => {
+				throw new Error('blocked');
+			},
+		};
+		notesStore.setWorkflowPanelNotes('current');
+		assert.equal(notesStore.workflowPanelNotes(), 'current');
+	} finally {
+		delete globalThis.localStorage;
+		delete globalThis.addEventListener;
+		delete globalThis.removeEventListener;
+	}
+});
+
+// workflow-panel-note-density 1.2
+
+test('a step’s note shows at each density by its status, and Home uses the same current-step rule', () => {
+	const statuses = ['not_started', 'running', 'done', 'failed', 'needs_input', 'skipped'];
+	const current = new Set(['running', 'failed', 'needs_input']);
+	for (const status of statuses) {
+		assert.equal(model.isCurrentStep(status), current.has(status), status);
+		assert.equal(homeModel.isHighlighted(status), current.has(status), `Home ${status}`);
+		const withNote = { status, note: 'a note' };
+		assert.equal(model.showsStepNote(withNote, 'full'), true, `full ${status}`);
+		assert.equal(model.showsStepNote(withNote, 'short'), true, `short ${status}`);
+		assert.equal(model.showsStepNote(withNote, 'current'), current.has(status), `current ${status}`);
+		for (const notes of model.WORKFLOW_PANEL_NOTES)
+			assert.equal(model.showsStepNote({ status, note: '' }, notes), false, 'an empty note is never shown');
+	}
+	assert.deepEqual(model.WORKFLOW_PANEL_NOTES, ['full', 'short', 'current']);
+});
+
+// workflow-panel-note-density 2.1, 2.2
+
+test('the expanded header offers Full, 2 lines and Current only, and the panel shows notes at that density', () => {
+	const steps = [
+		step('a', 'done', { note: 'note a' }),
+		step('b', 'failed', { note: 'note b' }),
+		step('c', 'skipped', { note: 'note c' }),
+		step('d', 'running', { note: 'note d' }),
+		step('e', 'not_started'),
+	];
+	const at = (notes) => render({ mode: 'expanded', view: attached(steps), ...(notes ? { notes } : {}) });
+	const full = at();
+	assert.match(full, /class="workflow-panel workflow-panel--expanded workflow-panel--notes-full"/);
+	assert.match(full, /<select class="workflow-notes-select" aria-label="Step notes" title="Step notes">/);
+	assert.match(full, /<option value="full" selected="">Full<\/option><option value="short">2 lines<\/option><option value="current">Current only<\/option>/);
+	for (const note of ['note a', 'note b', 'note c', 'note d']) assert.match(full, new RegExp(note));
+	assert.ok(!/workflow-step-note[^>]*title=/.test(full), 'no title while notes show in full');
+
+	const short = at('short');
+	assert.match(short, /workflow-panel--notes-short/);
+	assert.match(short, /<option value="short" selected="">2 lines<\/option>/);
+	assert.match(short, /<span class="workflow-step-note workflow-text" title="note a">note a<\/span>/);
+
+	const currentOnly = at('current');
+	assert.match(currentOnly, /<option value="current" selected="">Current only<\/option>/);
+	assert.deepEqual(currentOnly.match(/note [a-e]/g), ['note b', 'note d']);
+	assert.equal(currentOnly.match(/class="workflow-step[ "]/g).length, 5, 'every step is still listed');
+
+	// The choice is presentation: back at Full every note is whole again.
+	assert.equal(at('full'), full);
+
+	// Status changes move the shown note with them.
+	const later = render({
+		mode: 'expanded',
+		notes: 'current',
+		view: attached([
+			step('a', 'done', { note: 'note a' }),
+			step('d', 'done', { note: 'note d' }),
+			step('e', 'needs_input', { note: 'note e' }),
+		]),
+	});
+	assert.deepEqual(later.match(/note [a-e]/g), ['note e']);
+
+	// No current step: no notes, every step listed.
+	const settled = render({
+		mode: 'expanded',
+		notes: 'current',
+		view: attached([step('a', 'done', { note: 'note a' }), step('b', 'skipped', { note: 'note b' })]),
+	});
+	assert.equal(settled.match(/note [a-e]/g), null);
+	assert.equal(settled.match(/class="workflow-step[ "]/g).length, 2);
+
+	// The rail shows no notes and no density control.
+	const rail = render({ mode: 'collapsed', notes: 'full', view: attached(steps) });
+	assert.ok(!/note [a-e]/.test(rail));
+	assert.ok(!/workflow-notes-select/.test(rail));
 });
 
 test('a workflow that could not be restored says so and offers removal', () => {

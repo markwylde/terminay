@@ -310,3 +310,30 @@ export function overlayWidth(
 	if (paneWidth === undefined || !(paneWidth > 0)) return chosen;
 	return Math.min(chosen, Math.floor(paneWidth * 0.85));
 }
+
+/**
+ * How the expanded panel shows step notes: every note in full, each cut to
+ * two lines, or only the current steps' notes. Home's Workflows section
+ * offers the same three.
+ */
+export type WorkflowPanelNotes = 'full' | 'short' | 'current';
+
+export const WORKFLOW_PANEL_NOTES: readonly WorkflowPanelNotes[] = [
+	'full',
+	'short',
+	'current',
+];
+
+/** A step the user is following now: running, waiting on them, or failed. */
+export function isCurrentStep(status: WorkflowStepStatus): boolean {
+	return status === 'running' || status === 'needs_input' || status === 'failed';
+}
+
+/** Whether a step's note is shown at this density. */
+export function showsStepNote(
+	step: Pick<WorkflowStep, 'note' | 'status'>,
+	notes: WorkflowPanelNotes,
+): boolean {
+	if (step.note === '') return false;
+	return notes !== 'current' || isCurrentStep(step.status);
+}

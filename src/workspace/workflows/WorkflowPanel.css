@@ -279,6 +279,59 @@
   line-height: 16px;
 }
 
+/* The note density: its own line under the summary, so it never competes
+   with the collapse button for the header's width. */
+.workflow-notes-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: 100%;
+  margin-top: 6px;
+}
+
+.workflow-notes-label {
+  color: var(--text-secondary, #9aa4af);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.workflow-notes-select {
+  min-width: 0;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 6px;
+  color: var(--text-primary, #e6e6e6);
+  background: rgb(255 255 255 / 0.04);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workflow-notes-select:hover,
+.workflow-notes-select:focus-visible {
+  background: rgb(255 255 255 / 0.08);
+}
+
+.workflow-notes-select option {
+  color: #e6e6e6;
+  background: #1e1e1e;
+}
+
+/* 2 lines: the note is cut, never changed; its full text is its title. */
+.workflow-panel--notes-short .workflow-step-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
 .workflow-brief {
   margin: 12px 16px 2px;
   font-size: 12px;
