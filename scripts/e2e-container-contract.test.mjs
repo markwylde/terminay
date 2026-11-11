@@ -254,9 +254,9 @@ test("CI image cleanup keeps the newest and the named E2E image and base, and ne
     );
     assert.deepEqual(calls.slice(-3), [
       "image prune --force",
-      "builder prune --all --force",
+      "builder prune --force --keep-storage 10GB",
       "volume prune --force",
-    ], "build cache and anonymous volumes must not outlive the job either");
+    ], "build cache is capped, not wiped, and anonymous volumes must not outlive the job");
   } finally {
     await rm(bin, { recursive: true, force: true });
   }

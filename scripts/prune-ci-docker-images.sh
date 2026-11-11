@@ -42,7 +42,9 @@ prune_repository git.i.wylde.net/markwylde/terminay-e2e-base "$keep_base"
 
 docker image prune --force || true
 
-# Build cache is never reused across commits here: every build starts from a
-# pulled base or E2E image, whose layers survive above.
-docker builder prune --all --force >/dev/null || true
+# Keep the most recently used build cache. Dockerfile builds such as the bot
+# image download hundreds of megabytes of apt packages in one layer; wiping the
+# cache after every job made each run fetch them again over the internet. The
+# cap matches the runner fleet's scheduled prune (gitea-runner-docker-prune).
+docker builder prune --force --keep-storage 10GB >/dev/null || true
 docker volume prune --force >/dev/null || true
