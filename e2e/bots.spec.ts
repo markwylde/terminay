@@ -811,7 +811,7 @@ test.describe('Home › Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
-	test('a bot post nobody is reading raises a notification that opens its Chat, and one read as it arrives raises none', async ({
+	test('a bot post raises a notification until the user acts on its Chat, and the row opens that Chat', async ({
 		mainWindow,
 		tempDir,
 	}, testInfo) => {
@@ -824,11 +824,29 @@ test.describe('Home › Bots', () => {
 		const botRow = menu.locator('[data-notification-bot]');
 		const transcript = tab.locator('[data-terminay-bot-transcript]');
 
-		// A reply read as it arrives is acknowledged and raises nothing, even
-		// once the settle period has passed.
+		// Being on screen is not reading: a reply that lands while Chat is in
+		// front and the user does nothing is published after the settle period,
+		// as an agent's terminal finishing is.
 		await send(tab, 'hello');
 		await expect(transcript).toContainText('secret', { timeout: 30_000 });
-		await mainWindow.waitForTimeout(7_000);
+		await expect(mainWindow.locator('.notifications-count')).toHaveText('1', {
+			timeout: 15_000,
+		});
+		// Clicking into the Chat is acting on it, and clears the notification.
+		await transcript.click();
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
+
+		// So does asking for the bot from its sidebar row, though its Chat is
+		// already in front.
+		await send(tab, 'again');
+		await expect(transcript.locator('.bots-msg')).toHaveCount(4, {
+			timeout: 30_000,
+		});
+		await expect(mainWindow.locator('.notifications-count')).toHaveText('1', {
+			timeout: 15_000,
+		});
+		await mainWindow.locator('[data-terminay-home-sidebar-bot]').click();
+		await expect(mainWindow.locator('.notifications-count')).toHaveCount(0);
 		await bell.click();
 		await expect(botRow).toHaveCount(0);
 		await bell.click();
