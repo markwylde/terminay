@@ -796,6 +796,96 @@ export class BotService extends EventEmitter {
 			return { message, sessionId: message.dispatch.executionId };
 		if (message.dispatch?.state === 'failed')
 			return { message, error: message.dispatch.error };
+		return this.startUserMessage(botId, message);
+	}
+	/**
+	 * Retry a user message whose start failed. The guard runs under the bot's
+	 * serialize section, and the accepted retry moves to a new attempt, so a
+	 * second request naming the same attempt is refused.
+	 */
+	async retryUserMessage(
+		botId: string,
+		messageId: string,
+		revision: number,
+		attempt: number,
+	): Promise<{
+		message: BotMessage;
+		sessionId?: string;
+		queueId?: string;
+		error?: string;
+	}> {
+		this.assertEnabled(botId);
+		const message = await this.serialize(botId, async () => {
+			if (this.deleting.has(botId))
+				throw new BotError('conflict', 'This bot is being deleted.');
+			const current = this.retryableFailure(
+				botId,
+				messageId,
+				revision,
+				attempt,
+			);
+			this.messages.setDispatch(botId, messageId, {
+				state: 'pending',
+				executionId: null,
+				attempt: attempt + 1,
+			});
+			return this.messages.get(botId, current.id);
+		});
+		return this.startUserMessage(botId, message);
+	}
+	/** Record that the user dismissed a message's start-failure warning. */
+	async dismissDispatchFailure(
+		botId: string,
+		messageId: string,
+		revision: number,
+		attempt: number,
+	): Promise<BotMessage> {
+		return this.serialize(botId, async () => {
+			const current = this.retryableFailure(
+				botId,
+				messageId,
+				revision,
+				attempt,
+			);
+			this.messages.setDispatch(botId, messageId, {
+				...current.dispatch!,
+				dismissed: true,
+			});
+			return this.messages.get(botId, messageId);
+		});
+	}
+	private retryableFailure(
+		botId: string,
+		messageId: string,
+		revision: number,
+		attempt: number,
+	): BotMessage {
+		const message = this.messages.get(botId, messageId);
+		const dispatch = message.dispatch;
+		if (
+			message.author !== 'user' ||
+			dispatch?.state !== 'failed' ||
+			dispatch.dismissed
+		)
+			throw new BotError(
+				'conflict',
+				'Only a message that failed to start can be retried or dismissed',
+			);
+		if (message.revision !== revision || (dispatch.attempt ?? 1) !== attempt)
+			throw new BotError('conflict', 'Message changed; reload before retrying');
+		return message;
+	}
+	private async startUserMessage(
+		botId: string,
+		message: BotMessage,
+	): Promise<{
+		message: BotMessage;
+		sessionId?: string;
+		queueId?: string;
+		error?: string;
+	}> {
+		const attempt = message.dispatch?.attempt;
+		const numbered = attempt === undefined ? {} : { attempt };
 		let work = this.messageDispatches.get(message.id);
 		if (!work) {
 			work = this.dispatchExecution(botId, message.text, undefined, {
@@ -809,6 +899,7 @@ export class BotService extends EventEmitter {
 			this.messages.setDispatch(botId, message.id, {
 				state: 'started',
 				executionId: sent.sessionId,
+				...numbered,
 			});
 			return { message: this.messages.get(botId, message.id), ...sent };
 		} catch (failure) {
@@ -818,12 +909,13 @@ export class BotService extends EventEmitter {
 					? BOT_CLEANUP_UNCONFIRMED
 					: this.bots.get(botId).signIn.kind === 'none'
 						? 'This bot is not signed in. Choose how it signs in under Configure › Profile › Sign-in.'
-						: 'The execution could not start. Check sign-in and the container engine, then send a new message.';
+						: 'The execution could not start. Check sign-in and the container engine, then retry.';
 			try {
 				this.messages.setDispatch(botId, message.id, {
 					state: 'failed',
 					executionId: null,
 					error,
+					...numbered,
 				});
 			} catch {
 				throw new BotError(
@@ -1708,12 +1800,21 @@ export class BotService extends EventEmitter {
 					bot.id,
 					message.id,
 					execution
-						? { state: 'started', executionId: execution.id }
+						? {
+								state: 'started',
+								executionId: execution.id,
+								...(message.dispatch?.attempt === undefined
+									? {}
+									: { attempt: message.dispatch.attempt }),
+							}
 						: {
 								state: 'failed',
 								executionId: null,
 								error:
-									'Server restarted before this message started. Send a new message to retry.',
+									'Server restarted before this message started. Retry it to try again.',
+								...(message.dispatch?.attempt === undefined
+									? {}
+									: { attempt: message.dispatch.attempt }),
 							},
 				);
 			}

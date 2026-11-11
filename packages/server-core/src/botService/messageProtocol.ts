@@ -27,6 +27,11 @@ export function createBotMessageOperations(
 		assertJsonValue(v);
 		return v;
 	};
+	const count = (value: unknown, name: string): number => {
+		if (!Number.isSafeInteger(value) || (value as number) < 1)
+			throw new BotError('validation', `Invalid ${name}`);
+		return value as number;
+	};
 	const cursor = (p: Record<string, unknown>) =>
 		p.cursor === undefined ? undefined : text(p.cursor, 4096, 'cursor');
 	const queries: OperationRegistries['queries'] = {
@@ -91,6 +96,35 @@ export function createBotMessageOperations(
 				connectionId: r.context.connectionId,
 			});
 			return { result: json(result) };
+		},
+		[op.retry]: async (r) => {
+			const p = data(r);
+			const result = await service.retryUserMessage(
+				p.botId,
+				text(p.messageId, 24, 'message id'),
+				count(p.revision, 'revision'),
+				count(p.attempt, 'attempt'),
+			);
+			assertBotAuthority(r.context);
+			// Like a post, the retried execution acts on the asking window.
+			service.recordViewer(p.botId, {
+				clientId: r.context.clientId,
+				connectionId: r.context.connectionId,
+			});
+			return { result: json(result) };
+		},
+		[op.dismiss]: async (r) => {
+			const p = data(r);
+			return {
+				result: json(
+					await service.dismissDispatchFailure(
+						p.botId,
+						text(p.messageId, 24, 'message id'),
+						count(p.revision, 'revision'),
+						count(p.attempt, 'attempt'),
+					),
+				),
+			};
 		},
 		[op.upload]: async (r) => {
 			const p = data(r);

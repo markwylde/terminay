@@ -27,6 +27,10 @@ export interface BotMessage {
 		readonly state: 'pending' | 'started' | 'failed';
 		readonly executionId: string | null;
 		readonly error?: string;
+		/** Start attempt number; absent means the first attempt. */
+		readonly attempt?: number;
+		/** The user dismissed this start failure's warning. */
+		readonly dismissed?: boolean;
 	};
 	readonly text: string;
 	readonly attachments: readonly BotMessageAttachment[];
@@ -74,4 +78,6 @@ export const BOT_MESSAGE_OPERATIONS = Object.freeze({
 	events: 'bots.messages.events',
 	attachment: 'bots.messages.attachment',
 	upload: 'bots.messages.upload',
+	retry: 'bots.messages.retry',
+	dismiss: 'bots.messages.dismiss',
 });
