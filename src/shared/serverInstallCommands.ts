@@ -14,7 +14,9 @@ const VOLUMES =
 	'-v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay';
 
 const STABLE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
-const BETA = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-beta\.[1-9]\d*$/u;
+// A Nightly or Canary build: `X.Y.Z-main.<commit count>.<track>` (ADR-0110).
+const PRERELEASE =
+	/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-main\.[1-9]\d*\.(nightly|canary)$/u;
 /** What an unversioned development build reports. */
 const DEVELOPMENT = '0.0.0';
 
@@ -23,7 +25,7 @@ export const MANUAL_INSTALL_URL =
 	'https://terminay.com/docs/installation#manual-install';
 export const PUBLIC_HOST_PLACEHOLDER = "<this machine's address>";
 
-export type ServerInstallChannel = 'stable' | 'beta' | 'unknown';
+export type ServerInstallChannel = 'stable' | 'nightly' | 'canary' | 'unknown';
 
 export type ServerInstallCommands = Readonly<{
 	channel: ServerInstallChannel;
@@ -37,13 +39,30 @@ export type ServerInstallCommands = Readonly<{
 	dockerHostNetwork: string;
 }>;
 
-/** Stable is `X.Y.Z`, beta is `X.Y.Z-beta.N`. Anything else names no version. */
+/**
+ * Stable is `X.Y.Z`; Nightly and Canary are `X.Y.Z-main.N.nightly` and
+ * `X.Y.Z-main.N.canary`. Anything else, an old `-beta.N` build included,
+ * names no version.
+ */
 export function serverInstallChannel(version: unknown): ServerInstallChannel {
 	if (typeof version !== 'string' || version === DEVELOPMENT) return 'unknown';
 	if (STABLE.test(version)) return 'stable';
-	if (BETA.test(version)) return 'beta';
+	const track = PRERELEASE.exec(version)?.[1];
+	if (track === 'nightly' || track === 'canary') return track;
 	return 'unknown';
 }
+
+/**
+ * The installer reference that follows a client's track: the newest tag for
+ * Stable, the rolling `main` channel for Nightly, `canary` for Canary.
+ */
+const LINUX_INSTALL: Readonly<Record<ServerInstallChannel, string>> =
+	Object.freeze({
+		stable: 'sudo npx terminay daemon install',
+		nightly: 'sudo npx terminay daemon install main',
+		canary: 'sudo npx terminay daemon install canary',
+		unknown: 'sudo npx terminay daemon install',
+	});
 
 export function serverInstallCommands(
 	input: Readonly<{ version?: unknown }> = {},
@@ -60,11 +79,8 @@ export function serverInstallCommands(
 		}),
 		linux: Object.freeze({
 			// The CLI is published for releases only; `main` is the installer's
-			// name for the channel a beta is built from.
-			start:
-				channel === 'beta'
-					? 'sudo npx terminay daemon install main'
-					: 'sudo npx terminay daemon install',
+			// name for the Nightly's channel and `canary` for the Canary's.
+			start: LINUX_INSTALL[channel],
 			pair: 'sudo npx terminay daemon qr-code',
 		}),
 		dockerPublic: `docker run -d --name ${CONTAINER} ${VOLUMES} -p 8443:8443 -p 51000-51015:51000-51015/udp -e TERMINAY_PUBLIC_HOST=${PUBLIC_HOST_PLACEHOLDER} ${image}`,

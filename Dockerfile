@@ -48,7 +48,7 @@ ARG OCI_VERSION=0.0.0
 # it before anything is compiled so the server, its UI bundle manifest, and the
 # CLI all agree. A non-release build keeps the placeholder and is identified by
 # its revision instead.
-RUN if printf '%s' "$OCI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$' \
+RUN if printf '%s' "$OCI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-main\.[1-9][0-9]*\.(nightly|canary))?$' \
     && [ "$OCI_VERSION" != "0.0.0" ]; then \
     node scripts/sync-package-version.mjs "$OCI_VERSION"; \
   fi

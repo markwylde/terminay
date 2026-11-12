@@ -125,7 +125,7 @@ test('Adding a server shows the pair form in the detail and how to start a serve
 	page,
 }) => {
 	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-	await page.goto(fixtureUrl('?version=5.13.0-beta.214'));
+	await page.goto(fixtureUrl('?version=5.13.0-main.3312.nightly'));
 	await page.getByRole('button', { name: 'Add server…' }).click();
 	await expect(detailTitle(page)).toHaveText('Add server');
 	// Nothing in the list is selected while the form is open.
@@ -142,7 +142,7 @@ test('Adding a server shows the pair form in the detail and how to start a serve
 	await expect(docker).toBeChecked();
 	await expect(linux).not.toBeChecked();
 	const startDocker =
-		'docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay:5.13.0-beta.214';
+		'docker run -d --name terminay -v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay markwylde/terminay:5.13.0-main.3312.nightly';
 	await expect(guide.getByText(startDocker, { exact: true })).toBeVisible();
 	await expect(
 		guide.getByText('docker exec -it terminay terminay daemon qr-code', {
@@ -167,14 +167,14 @@ test('Adding a server shows the pair form in the detail and how to start a serve
 	await expect(hostNetwork).toBeHidden();
 	await guide.getByText('More options').click();
 	await expect(publicCommand).toContainText(
-		'markwylde/terminay:5.13.0-beta.214',
+		'markwylde/terminay:5.13.0-main.3312.nightly',
 	);
 	await expect(hostNetwork).toBeVisible();
 	await expect(
 		guide.getByRole('link', { name: 'Installation guide' }),
 	).toHaveAttribute('href', 'https://terminay.com/docs/installation');
 
-	// The choice is one keyboard stop; arrows move it. A beta client installs
+	// The choice is one keyboard stop; arrows move it. A Nightly client installs
 	// the rolling channel on a Linux host.
 	await docker.focus();
 	await page.keyboard.press('ArrowRight');

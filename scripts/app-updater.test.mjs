@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import {
 	canInstallInPlace,
@@ -12,6 +13,7 @@ import {
 } from '../electron/appUpdater.ts';
 import {
 	releaseNoteLinkTarget,
+	releaseTrackLabel,
 	renderReleaseNotesHtml,
 } from '../src/appUpdateNotes.ts';
 import {
@@ -20,13 +22,30 @@ import {
 	selectDeviceTerminalSettings,
 } from '../src/terminalSettings.ts';
 
+// The semver electron-updater itself decides "newer" with.
+const require = createRequire(import.meta.url);
+const electronUpdaterSemver = require(
+	require.resolve('semver', { paths: [require.resolve('electron-updater')] }),
+);
+
 test('update channel is a device setting defaulting to stable', () => {
 	assert.equal(defaultTerminalSettings.updateChannel, 'stable');
-	assert.equal(normalizeTerminalSettings({ updateChannel: 'beta' }).updateChannel, 'beta');
-	assert.equal(normalizeTerminalSettings({ updateChannel: 'nightly' }).updateChannel, 'stable');
+	for (const channel of ['stable', 'nightly', 'canary'])
+		assert.equal(normalizeTerminalSettings({ updateChannel: channel }).updateChannel, channel);
+	// Any value that is not one of the three reads as Stable.
+	for (const value of ['alpha', 'main', 'Nightly', '', null, 3, undefined])
+		assert.equal(normalizeTerminalSettings({ updateChannel: value }).updateChannel, 'stable', String(value));
+	assert.equal(
+		selectDeviceTerminalSettings(normalizeTerminalSettings({ updateChannel: 'canary' })).updateChannel,
+		'canary',
+	);
+});
+
+test('a stored Beta channel reads as Nightly', () => {
+	assert.equal(normalizeTerminalSettings({ updateChannel: 'beta' }).updateChannel, 'nightly');
 	assert.equal(
 		selectDeviceTerminalSettings(normalizeTerminalSettings({ updateChannel: 'beta' })).updateChannel,
-		'beta',
+		'nightly',
 	);
 });
 
@@ -127,10 +146,20 @@ function downloadsVersion(version, releaseNotes) {
 	};
 }
 
-test('semantic version precedence covers beta prereleases', () => {
-	assert.ok(compareVersions('0.43.0-beta.5', '0.43.0') < 0);
-	assert.ok(compareVersions('0.43.0-beta.5', '0.42.9') > 0);
-	assert.ok(compareVersions('0.43.0-beta.10', '0.43.0-beta.9') > 0);
+test('semantic version precedence covers nightly and canary prereleases', () => {
+	assert.ok(compareVersions('0.43.0-main.5.canary', '0.43.0') < 0);
+	assert.ok(compareVersions('0.43.0-main.5.nightly', '0.42.9') > 0);
+	assert.ok(compareVersions('0.43.0-main.10.canary', '0.43.0-main.9.nightly') > 0);
+	assert.ok(compareVersions('0.43.0-main.10.nightly', '0.43.0-main.10.canary') > 0);
+	assert.ok(compareVersions('0.43.0-beta.99', '0.43.0-main.1.canary') < 0);
+	// The updater and electron-updater agree on every one of these.
+	for (const [left, right] of [
+		['0.43.0-main.10.canary', '0.43.0-main.9.nightly'],
+		['0.43.0-main.10.nightly', '0.43.0-main.10.canary'],
+		['0.43.0-main.1.canary', '0.43.0-beta.99'],
+		['0.43.0', '0.43.0-main.10.nightly'],
+	])
+		assert.equal(electronUpdaterSemver.gt(left, right), compareVersions(left, right) > 0, `${left} > ${right}`);
 	assert.equal(compareVersions('v1.2.3', '1.2.3'), 0);
 	assert.ok(compareVersions('1.10.0', '1.9.0') > 0);
 });
@@ -171,7 +200,8 @@ test('a Windows build installs in place only from the per-user install directory
 
 for (const [channel, metadata] of [
 	['stable', 'https://github.com/markwylde/terminay/releases/latest/download/latest.yml'],
-	['beta', 'https://github.com/markwylde/terminay/releases/download/main-latest/beta.yml'],
+	['nightly', 'https://github.com/markwylde/terminay/releases/download/main-latest/nightly.yml'],
+	['canary', 'https://github.com/markwylde/terminay/releases/download/canary-latest/canary.yml'],
 ]) {
 	test(`a Windows build on the ${channel} channel reads ${metadata.split('/').pop()}`, async () => {
 		const fetched = [];
@@ -227,15 +257,29 @@ test('stable notes list every skipped release, newest first, excluding drafts an
 	await assert.rejects(fetchStableReleaseNotes(async () => jsonResponse({}, 403), '1.2.0', '1.4.0'), /403/u);
 });
 
-test('beta notes come from the channel metadata', () => {
-	assert.deepEqual(releaseNotesFromUpdateInfo({ releaseNotes: '- feat: a' }, '1.3.0-beta.4'), [
+test('prerelease notes come from the channel metadata and link the track release', () => {
+	assert.deepEqual(releaseNotesFromUpdateInfo({ releaseNotes: '- feat: a' }, '1.3.0-main.4.nightly', 'nightly'), [
 		{
-			version: '1.3.0-beta.4',
+			version: '1.3.0-main.4.nightly',
 			url: 'https://github.com/markwylde/terminay/releases/tag/main-latest',
 			markdown: '- feat: a',
 		},
 	]);
-	assert.equal(releaseNotesFromUpdateInfo({ releaseNotes: '' }, '1.3.0-beta.4'), null);
+	assert.deepEqual(releaseNotesFromUpdateInfo({ releaseNotes: '- feat: b' }, '1.3.0-main.5.canary', 'canary'), [
+		{
+			version: '1.3.0-main.5.canary',
+			url: 'https://github.com/markwylde/terminay/releases/tag/canary-latest',
+			markdown: '- feat: b',
+		},
+	]);
+	assert.equal(releaseNotesFromUpdateInfo({ releaseNotes: '' }, '1.3.0-main.4.nightly', 'nightly'), null);
+});
+
+test("What's new names a prerelease build's track, and a stable release's none", () => {
+	assert.equal(releaseTrackLabel('1.3.0-main.4.nightly'), 'Nightly build');
+	assert.equal(releaseTrackLabel('1.3.0-main.5.canary'), 'Canary build');
+	for (const version of ['1.3.0', '1.3.0-beta.4', null, '1.3.0-main.0.canary'])
+		assert.equal(releaseTrackLabel(version), null, String(version));
 });
 
 test('an installable build surfaces an update only once it is downloaded', async () => {
@@ -390,9 +434,11 @@ test('a manual check reports what it found', () => {
 		latestVersion: null,
 		releaseUrl: null,
 		state: 'idle',
-		channel: 'beta',
+		channel: 'nightly',
 	};
-	assert.match(describeManualCheck(base).detail, /1\.0\.0.*Beta channel/u);
+	assert.match(describeManualCheck(base).detail, /1\.0\.0.*Nightly channel/u);
+	assert.match(describeManualCheck({ ...base, channel: 'canary' }).detail, /Canary channel/u);
+	assert.match(describeManualCheck({ ...base, channel: 'stable' }).detail, /Stable channel/u);
 	assert.equal(
 		describeManualCheck({ ...base, state: 'downloading', latestVersion: '1.1.0' })
 			.message,
@@ -451,42 +497,11 @@ test('a notice-only build reports nothing when it is current', async () => {
 	assert.equal(status.hasUpdate, false);
 });
 
-test('switching to beta repoints the feed and checks immediately without allowing downgrade', async () => {
-	const h = harness();
-	await h.appUpdater.check();
-	h.updater.onCheck = downloadsVersion('1.3.0-beta.7', '- feat: beta thing');
-	const status = await h.appUpdater.setChannel('beta');
-	assert.equal(h.updater.checks, 2);
-	assert.deepEqual(h.updater.feeds.at(-1), {
-		provider: 'generic',
-		url: 'https://github.com/markwylde/terminay/releases/download/main-latest/',
-		channel: 'beta',
-	});
-	assert.equal(h.updater.allowDowngrade, false);
-	assert.equal(h.updater.disableDifferentialDownload, true);
-	assert.equal(status.channel, 'beta');
-	assert.equal(status.state, 'ready');
-	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/main-latest');
-	assert.deepEqual(status.releaseNotes, [
-		{
-			version: '1.3.0-beta.7',
-			url: 'https://github.com/markwylde/terminay/releases/tag/main-latest',
-			markdown: '- feat: beta thing',
-		},
-	]);
-});
-
-test('a beta install returning to stable keeps prereleases and downgrades off', async () => {
-	const h = harness({ currentVersion: '1.3.0-beta.7', channel: 'beta' });
-	await h.appUpdater.check();
-	await h.appUpdater.setChannel('stable');
-	assert.equal(h.updater.allowPrerelease, false);
-	assert.equal(h.updater.allowDowngrade, false);
-	assert.equal(h.updater.feeds.at(-1).provider, 'github');
-});
-
-const BETA_METADATA_URL =
-	'https://github.com/markwylde/terminay/releases/download/main-latest/beta-mac.yml';
+const NIGHTLY_FEED_URL = 'https://github.com/markwylde/terminay/releases/download/main-latest/';
+const CANARY_FEED_URL = 'https://github.com/markwylde/terminay/releases/download/canary-latest/';
+const NIGHTLY_METADATA_URL = `${NIGHTLY_FEED_URL}nightly-mac.yml`;
+const CANARY_METADATA_URL = `${CANARY_FEED_URL}canary-mac.yml`;
+const LEGACY_BETA_METADATA_URL = `${NIGHTLY_FEED_URL}beta-mac.yml`;
 const STABLE_METADATA_URL =
 	'https://github.com/markwylde/terminay/releases/latest/download/latest-mac.yml';
 const STABLE_FEED = {
@@ -495,23 +510,66 @@ const STABLE_FEED = {
 	repo: 'terminay',
 	releaseType: 'release',
 };
-const BETA_FEED = {
-	provider: 'generic',
-	url: 'https://github.com/markwylde/terminay/releases/download/main-latest/',
-	channel: 'beta',
+const NIGHTLY_FEED = { provider: 'generic', url: NIGHTLY_FEED_URL, channel: 'nightly' };
+const CANARY_FEED = { provider: 'generic', url: CANARY_FEED_URL, channel: 'canary' };
+const PRERELEASE = {
+	nightly: { feed: NIGHTLY_FEED, metadata: NIGHTLY_METADATA_URL, tag: 'main-latest' },
+	canary: { feed: CANARY_FEED, metadata: CANARY_METADATA_URL, tag: 'canary-latest' },
 };
 
-/** A Beta install whose two sources publish the given versions (null: unreadable). */
-function betaHarness({ beta, stable, ...overrides }) {
+for (const channel of ['nightly', 'canary']) {
+	test(`switching to ${channel} repoints the feed and checks immediately without allowing downgrade`, async () => {
+		const h = harness();
+		await h.appUpdater.check();
+		const version = `1.3.0-main.3300.${channel}`;
+		h.updater.onCheck = downloadsVersion(version, `- feat: ${channel} thing`);
+		const status = await h.appUpdater.setChannel(channel);
+		assert.equal(h.updater.checks, 2);
+		assert.deepEqual(h.updater.feeds.at(-1), PRERELEASE[channel].feed);
+		assert.equal(h.updater.allowDowngrade, false);
+		assert.equal(h.updater.disableDifferentialDownload, true);
+		assert.equal(status.channel, channel);
+		assert.equal(status.state, 'ready');
+		assert.equal(status.releaseUrl, `https://github.com/markwylde/terminay/releases/tag/${PRERELEASE[channel].tag}`);
+		assert.deepEqual(status.releaseNotes, [
+			{
+				version,
+				url: `https://github.com/markwylde/terminay/releases/tag/${PRERELEASE[channel].tag}`,
+				markdown: `- feat: ${channel} thing`,
+			},
+		]);
+	});
+
+	test(`a ${channel} install returning to stable keeps prereleases and downgrades off`, async () => {
+		const h = harness({ currentVersion: `1.3.0-main.3300.${channel}`, channel });
+		await h.appUpdater.check();
+		await h.appUpdater.setChannel('stable');
+		assert.equal(h.updater.allowPrerelease, false);
+		assert.equal(h.updater.allowDowngrade, false);
+		assert.equal(h.updater.feeds.at(-1).provider, 'github');
+	});
+}
+
+/**
+ * A Desktop on `channel` whose sources publish the given versions (null:
+ * unreadable). Every URL it fetches is recorded.
+ */
+function trackHarness({ channel = 'nightly', nightly = null, canary = null, stable = null, ...overrides }) {
 	const h = harness({
-		currentVersion: '1.3.0-beta.14',
-		channel: 'beta',
+		currentVersion: `1.3.0-main.3290.${channel === 'stable' ? 'nightly' : channel}`,
+		channel,
 		...overrides,
 		fetch: async (url) => {
 			h.fetches.push(url);
 			if (url.startsWith('https://api.github.com/')) return jsonResponse(releases);
 			const version =
-				url === BETA_METADATA_URL ? beta : url === STABLE_METADATA_URL ? stable : null;
+				url === NIGHTLY_METADATA_URL
+					? nightly
+					: url === CANARY_METADATA_URL
+						? canary
+						: url === STABLE_METADATA_URL
+							? stable
+							: null;
 			return version === null
 				? textResponse('', 404)
 				: textResponse(`version: ${version}\nfiles: []\n`);
@@ -520,116 +578,209 @@ function betaHarness({ beta, stable, ...overrides }) {
 	return h;
 }
 
-test('beta offers a stable release that is newer than the latest beta', async () => {
-	const h = betaHarness({ beta: '1.3.0-beta.15', stable: '1.3.0' });
-	h.updater.onCheck = downloadsVersion('1.3.0');
+test('nightly offers a stable release that is newer than the latest nightly', async () => {
+	const h = trackHarness({
+		currentVersion: '5.8.0-main.3290.nightly',
+		nightly: '5.8.0-main.3300.nightly',
+		stable: '5.8.0',
+	});
+	h.updater.onCheck = downloadsVersion('5.8.0');
 	const status = await h.appUpdater.check();
 	assert.deepEqual(h.updater.feeds.at(-1), STABLE_FEED);
 	assert.equal(h.updater.allowPrerelease, false);
 	assert.equal(h.updater.allowDowngrade, false);
 	assert.equal(h.updater.disableDifferentialDownload, false);
 	assert.equal(status.state, 'ready');
-	assert.equal(status.latestVersion, '1.3.0');
-	assert.equal(status.channel, 'beta');
-	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/v1.3.0');
-	assert.deepEqual(
-		status.releaseNotes.map((note) => note.version),
-		['1.3.0'],
-	);
+	assert.equal(status.latestVersion, '5.8.0');
+	assert.equal(status.channel, 'nightly');
+	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/v5.8.0');
 });
 
-test('beta keeps the rolling prerelease when it is newer than stable', async () => {
-	const h = betaHarness({ beta: '1.4.0-beta.3', stable: '1.3.0' });
-	h.updater.onCheck = downloadsVersion('1.4.0-beta.3', '- feat: beta thing');
+test('canary keeps its rolling prerelease when it is newer than stable', async () => {
+	const h = trackHarness({
+		channel: 'canary',
+		currentVersion: '5.8.0',
+		canary: '5.9.0-main.3320.canary',
+		stable: '5.8.0',
+	});
+	h.updater.onCheck = downloadsVersion('5.9.0-main.3320.canary', '- feat: canary thing');
 	const status = await h.appUpdater.check();
-	assert.deepEqual(h.updater.feeds.at(-1), BETA_FEED);
+	assert.deepEqual(h.updater.feeds.at(-1), CANARY_FEED);
 	assert.equal(h.updater.allowPrerelease, true);
 	assert.equal(h.updater.allowDowngrade, false);
-	assert.equal(status.latestVersion, '1.4.0-beta.3');
-	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/main-latest');
-	assert.equal(status.releaseNotes[0].markdown, '- feat: beta thing');
+	assert.equal(status.latestVersion, '5.9.0-main.3320.canary');
+	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/canary-latest');
+	assert.equal(status.releaseNotes[0].markdown, '- feat: canary thing');
+	assert.equal(releaseTrackLabel(status.latestVersion), 'Canary build');
 });
 
-test('beta resumes after a stable release without leaving the channel', async () => {
-	const h = betaHarness({ currentVersion: '1.3.0', beta: '1.4.0-beta.1', stable: '1.3.0' });
-	h.updater.onCheck = downloadsVersion('1.4.0-beta.1', '- next');
+test('nightly resumes after a stable release without leaving the channel', async () => {
+	const h = trackHarness({
+		currentVersion: '5.8.0',
+		nightly: '5.9.0-main.3330.nightly',
+		stable: '5.8.0',
+	});
+	h.updater.onCheck = downloadsVersion('5.9.0-main.3330.nightly', '- next');
 	const status = await h.appUpdater.check();
-	assert.deepEqual(h.updater.feeds.at(-1), BETA_FEED);
-	assert.equal(status.latestVersion, '1.4.0-beta.1');
-	assert.equal(status.channel, 'beta');
+	assert.deepEqual(h.updater.feeds.at(-1), NIGHTLY_FEED);
+	assert.equal(status.latestVersion, '5.9.0-main.3330.nightly');
+	assert.equal(status.channel, 'nightly');
 });
 
-test('beta proceeds with whichever source can be read', async () => {
-	const stableDown = betaHarness({ beta: '1.3.0-beta.15', stable: null });
-	stableDown.updater.onCheck = downloadsVersion('1.3.0-beta.15', '- beta');
-	const fromBeta = await stableDown.appUpdater.check();
-	assert.deepEqual(stableDown.updater.feeds.at(-1), BETA_FEED);
-	assert.equal(fromBeta.state, 'ready');
-	assert.equal(fromBeta.errorMessage, null);
-
-	const betaDown = betaHarness({ beta: null, stable: '1.3.0' });
-	betaDown.updater.onCheck = downloadsVersion('1.3.0');
-	const fromStable = await betaDown.appUpdater.check();
-	assert.deepEqual(betaDown.updater.feeds.at(-1), STABLE_FEED);
-	assert.equal(fromStable.latestVersion, '1.3.0');
-	assert.equal(fromStable.errorMessage, null);
-});
-
-test('beta with neither source readable fails through the updater and retries', async () => {
-	const h = betaHarness({ beta: null, stable: null });
-	h.updater.onCheck = async () => {
-		throw new Error('net::ERR_INTERNET_DISCONNECTED');
-	};
-	const status = await h.appUpdater.check();
-	assert.deepEqual(h.updater.feeds.at(-1), BETA_FEED);
-	assert.equal(status.state, 'error');
-	assert.equal(status.hasUpdate, false);
-	h.advance(11 * 60 * 1000);
+test('moving from nightly to canary offers the later canary commit', async () => {
+	const h = trackHarness({
+		channel: 'nightly',
+		currentVersion: '6.3.0-main.3300.nightly',
+		nightly: '6.3.0-main.3300.nightly',
+		canary: '6.3.0-main.3312.canary',
+		stable: '6.2.0',
+	});
 	await h.appUpdater.check();
-	assert.equal(h.updater.checks, 2);
+	h.updater.onCheck = downloadsVersion('6.3.0-main.3312.canary', '- later');
+	const status = await h.appUpdater.setChannel('canary');
+	assert.deepEqual(h.updater.feeds.at(-1), CANARY_FEED);
+	assert.equal(status.channel, 'canary');
+	assert.equal(status.latestVersion, '6.3.0-main.3312.canary');
+	assert.equal(h.updater.allowDowngrade, false);
 });
+
+test('moving from canary to nightly offers nothing until nightly reaches that commit', async () => {
+	// A notice-only build decides itself, so the version comparison is visible.
+	const behind = trackHarness({
+		isPackaged: false,
+		channel: 'canary',
+		currentVersion: '6.3.0-main.3312.canary',
+		nightly: '6.3.0-main.3300.nightly',
+		canary: '6.3.0-main.3312.canary',
+		stable: '6.2.0',
+	});
+	await behind.appUpdater.check();
+	const waiting = await behind.appUpdater.setChannel('nightly');
+	assert.equal(waiting.channel, 'nightly');
+	assert.equal(waiting.hasUpdate, false);
+	assert.equal(waiting.latestVersion, null);
+
+	// A nightly of the same commit is offered: it swaps in the notarized build.
+	const same = trackHarness({
+		isPackaged: false,
+		channel: 'nightly',
+		currentVersion: '6.3.0-main.3312.canary',
+		nightly: '6.3.0-main.3312.nightly',
+		stable: '6.2.0',
+	});
+	const offered = await same.appUpdater.check();
+	assert.equal(offered.hasUpdate, true);
+	assert.equal(offered.latestVersion, '6.3.0-main.3312.nightly');
+	assert.equal(offered.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/main-latest');
+});
+
+test('canary reads its own prerelease and stable, never the nightly prerelease', async () => {
+	const h = trackHarness({
+		channel: 'canary',
+		currentVersion: '6.3.0-main.3312.canary',
+		nightly: '6.3.0-main.3400.nightly',
+		canary: '6.3.0-main.3312.canary',
+		stable: '6.2.0',
+	});
+	h.updater.onCheck = async () => null;
+	await h.appUpdater.check();
+	assert.ok(h.fetches.includes(CANARY_METADATA_URL), h.fetches.join(', '));
+	assert.ok(h.fetches.includes(STABLE_METADATA_URL), h.fetches.join(', '));
+	assert.equal(h.fetches.some((url) => url.includes('/main-latest/')), false);
+	assert.deepEqual(h.updater.feeds.at(-1), CANARY_FEED);
+});
+
+test('nightly reads its own prerelease and stable, never the canary prerelease', async () => {
+	const h = trackHarness({
+		isPackaged: false,
+		channel: 'nightly',
+		currentVersion: '6.3.0-main.3300.nightly',
+		nightly: '6.3.0-main.3300.nightly',
+		canary: '6.3.0-main.3400.canary',
+		stable: '6.2.0',
+	});
+	const status = await h.appUpdater.check();
+	assert.equal(status.hasUpdate, false);
+	assert.ok(h.fetches.includes(NIGHTLY_METADATA_URL), h.fetches.join(', '));
+	assert.equal(h.fetches.some((url) => url.includes('/canary-latest/')), false);
+});
+
+for (const channel of ['nightly', 'canary']) {
+	test(`${channel} proceeds with whichever source can be read`, async () => {
+		const version = `1.3.0-main.3300.${channel}`;
+		const stableDown = trackHarness({ channel, [channel]: version, stable: null });
+		stableDown.updater.onCheck = downloadsVersion(version, '- prerelease');
+		const fromPrerelease = await stableDown.appUpdater.check();
+		assert.deepEqual(stableDown.updater.feeds.at(-1), PRERELEASE[channel].feed);
+		assert.equal(fromPrerelease.state, 'ready');
+		assert.equal(fromPrerelease.errorMessage, null);
+
+		const prereleaseDown = trackHarness({ channel, [channel]: null, stable: '1.3.0' });
+		prereleaseDown.updater.onCheck = downloadsVersion('1.3.0');
+		const fromStable = await prereleaseDown.appUpdater.check();
+		assert.deepEqual(prereleaseDown.updater.feeds.at(-1), STABLE_FEED);
+		assert.equal(fromStable.latestVersion, '1.3.0');
+		assert.equal(fromStable.errorMessage, null);
+	});
+
+	test(`${channel} with neither source readable fails through the updater and retries`, async () => {
+		const h = trackHarness({ channel });
+		h.updater.onCheck = async () => {
+			throw new Error('net::ERR_INTERNET_DISCONNECTED');
+		};
+		const status = await h.appUpdater.check();
+		assert.deepEqual(h.updater.feeds.at(-1), PRERELEASE[channel].feed);
+		assert.equal(status.state, 'error');
+		assert.equal(status.hasUpdate, false);
+		h.advance(11 * 60 * 1000);
+		await h.appUpdater.check();
+		assert.equal(h.updater.checks, 2);
+	});
+}
 
 test('a test feed replaces the rolling prerelease and the stable source is not read', async () => {
 	const feed = 'http://127.0.0.1:41234/';
 	const fetches = [];
 	const h = harness({
-		currentVersion: '1.3.0-beta.14',
-		channel: 'beta',
+		currentVersion: '1.3.0-main.3290.nightly',
+		channel: 'nightly',
 		testFeedUrl: feed,
 		fetch: async (url) => {
 			fetches.push(url);
 			if (url.startsWith('https://api.github.com/')) return jsonResponse(releases);
-			return url === `${feed}beta-mac.yml`
-				? textResponse('version: 1.4.0-beta.3\nfiles: []\n')
+			return url === `${feed}nightly-mac.yml`
+				? textResponse('version: 1.3.0-main.3291.nightly\nfiles: []\n')
 				: textResponse('version: 1.9.0\nfiles: []\n');
 		},
 	});
-	h.updater.onCheck = downloadsVersion('1.4.0-beta.3');
+	h.updater.onCheck = downloadsVersion('1.3.0-main.3291.nightly');
 	const status = await h.appUpdater.check();
-	assert.deepEqual(h.updater.feeds.at(-1), { provider: 'generic', url: feed, channel: 'beta' });
+	assert.deepEqual(h.updater.feeds.at(-1), { provider: 'generic', url: feed, channel: 'nightly' });
 	assert.equal(fetches.includes(STABLE_METADATA_URL), false);
-	assert.equal(fetches.includes(BETA_METADATA_URL), false);
-	assert.equal(status.latestVersion, '1.4.0-beta.3');
+	assert.equal(fetches.includes(NIGHTLY_METADATA_URL), false);
+	assert.equal(status.latestVersion, '1.3.0-main.3291.nightly');
 });
 
-test('the stable channel never reads the rolling prerelease', async () => {
-	const h = betaHarness({
+test('the stable channel never reads a rolling prerelease', async () => {
+	const h = trackHarness({
 		currentVersion: '1.2.0',
 		channel: 'stable',
-		beta: '1.4.0-beta.3',
+		nightly: '1.4.0-main.3300.nightly',
+		canary: '1.4.0-main.3312.canary',
 		stable: '1.3.0',
 	});
 	h.updater.onCheck = downloadsVersion('1.3.0');
 	await h.appUpdater.check();
 	assert.deepEqual(h.updater.feeds.at(-1), STABLE_FEED);
-	assert.equal(h.fetches.includes(BETA_METADATA_URL), false);
+	assert.equal(h.fetches.includes(NIGHTLY_METADATA_URL), false);
+	assert.equal(h.fetches.includes(CANARY_METADATA_URL), false);
 	assert.equal(h.fetches.includes(STABLE_METADATA_URL), false);
 });
 
-test('a notice-only beta build is told about a newer stable release and downloads nothing', async () => {
-	const h = betaHarness({
+test('a notice-only nightly build is told about a newer stable release and downloads nothing', async () => {
+	const h = trackHarness({
 		isPackaged: false,
-		beta: '1.3.0-beta.15',
+		nightly: '1.3.0-main.3300.nightly',
 		stable: '1.3.0',
 		loadUpdater: async () => assert.fail('the updater must not be loaded'),
 	});
@@ -637,19 +788,21 @@ test('a notice-only beta build is told about a newer stable release and download
 	assert.equal(status.state, 'available');
 	assert.equal(status.hasUpdate, true);
 	assert.equal(status.latestVersion, '1.3.0');
-	assert.equal(status.channel, 'beta');
+	assert.equal(status.channel, 'nightly');
 	assert.equal(status.releaseUrl, 'https://github.com/markwylde/terminay/releases/tag/v1.3.0');
 	assert.deepEqual(
 		status.releaseNotes.map((note) => note.version),
 		['1.3.0'],
 	);
+	assert.equal(releaseTrackLabel(status.latestVersion), null);
 });
 
-test('a notice-only beta build offers nothing when neither source is newer', async () => {
-	const h = betaHarness({
+test('a notice-only canary build offers nothing when neither source is newer', async () => {
+	const h = trackHarness({
 		isPackaged: false,
+		channel: 'canary',
 		currentVersion: '1.3.0',
-		beta: '1.3.0-beta.15',
+		canary: '1.3.0-main.3300.canary',
 		stable: '1.3.0',
 	});
 	const status = await h.appUpdater.check();
@@ -658,12 +811,48 @@ test('a notice-only beta build offers nothing when neither source is newer', asy
 	assert.equal(status.releaseUrl, null);
 });
 
-test('a notice-only beta build fails only when neither source can be read', async () => {
-	const h = betaHarness({ isPackaged: false, beta: null, stable: null });
+test('a notice-only prerelease build fails only when neither source can be read', async () => {
+	const h = trackHarness({ isPackaged: false, channel: 'canary' });
 	const status = await h.appUpdater.check();
 	assert.equal(status.state, 'error');
 	assert.equal(status.hasUpdate, false);
 	assert.match(status.errorMessage, /404/u);
+});
+
+test('an installed beta build is offered the first nightly on its legacy feed, and becomes Nightly', async () => {
+	// The installed Beta build runs the updater it shipped with: the generic
+	// provider on main-latest, channel `beta`, so it reads beta-mac.yml. While
+	// the legacy feed lasts, the nightly workflow publishes byte copies of the
+	// nightly metadata under that name, naming the same main payloads.
+	const legacyMetadata = 'version: 6.3.0-main.3300.nightly\nfiles:\n  - url: terminay-desktop-main-mac.zip\n';
+	const fetched = [];
+	const fetchLegacy = async (url) => {
+		fetched.push(url);
+		return url === LEGACY_BETA_METADATA_URL ? textResponse(legacyMetadata) : textResponse('', 404);
+	};
+	const offered = /^version:\s*(\S+)$/mu.exec(await (await fetchLegacy(LEGACY_BETA_METADATA_URL)).text())[1];
+	assert.equal(offered, '6.3.0-main.3300.nightly');
+	// electron-updater offers a feed's version when it is semver-greater than the
+	// running one, with downgrades off; the Beta build compares exactly so.
+	assert.ok(electronUpdaterSemver.gt(offered, '6.3.0-beta.812'));
+	assert.ok(compareVersions(offered, '6.3.0-beta.812') > 0);
+	// Older betas on an earlier base version move too.
+	assert.ok(electronUpdaterSemver.gt(offered, '6.2.9-beta.700'));
+	// On first launch the nightly build reads the stored Beta setting as Nightly,
+	// and from then on reads nightly-mac.yml on the same release.
+	const settings = normalizeTerminalSettings({ updateChannel: 'beta' });
+	assert.equal(settings.updateChannel, 'nightly');
+	const h = trackHarness({
+		channel: settings.updateChannel,
+		currentVersion: offered,
+		nightly: '6.3.0-main.3301.nightly',
+		stable: '6.2.0',
+	});
+	h.updater.onCheck = downloadsVersion('6.3.0-main.3301.nightly');
+	const status = await h.appUpdater.check();
+	assert.deepEqual(h.updater.feeds.at(-1), NIGHTLY_FEED);
+	assert.equal(status.latestVersion, '6.3.0-main.3301.nightly');
+	assert.equal(h.fetches.includes(LEGACY_BETA_METADATA_URL), false);
 });
 
 test('restart to update installs and relaunches only at the final quit', async () => {

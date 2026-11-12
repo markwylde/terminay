@@ -28,7 +28,12 @@ const operatorGuide = await readFile(
 );
 const workflows = new Map(
 	await Promise.all(
-		['server-image.yml', 'trigger-release.yml', 'main-prerelease.yml'].map(async (name) => [
+		[
+			'server-image.yml',
+			'trigger-release.yml',
+			'main-prerelease.yml',
+			'nightly.yml',
+		].map(async (name) => [
 			name,
 			await readFile(
 				new URL(`../.github/workflows/${name}`, import.meta.url),
@@ -180,25 +185,35 @@ function job(name) {
 	return next === -1 ? rest : rest.slice(0, next);
 }
 
-test('the image workflow publishes only a release tag or a validated beta version', () => {
+test('the image workflow publishes only a release tag or a validated nightly or canary version', () => {
 	const plan = job('plan');
 	// A release tag publishes its own version and takes no inputs.
 	assert.match(plan, /if \[\[ "\$GITHUB_REF" == refs\/tags\/v\* \]\]/u);
 	assert.match(plan, /echo "mode=release"/u);
 	assert.match(plan, /echo "channel=tag"/u);
-	// A beta is a dispatched version on the default branch, in the beta
-	// grammar, for a commit that branch contains.
+	// A Nightly or Canary is a dispatched version on the default branch, in
+	// the prerelease grammar, for a commit that branch contains.
 	assert.match(workflow, /^ {6}version:\n(?: {8}.*\n)*? {8}type: string$/mu);
 	assert.match(workflow, /^ {6}revision:\n(?: {8}.*\n)*? {8}type: string$/mu);
 	assert.match(plan, /"\$GITHUB_REF" != refs\/heads\/main/u);
-	assert.match(
-		plan,
-		/"\$VERSION" =~ \^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+-beta\\\.\[1-9\]\[0-9\]\*\$/u,
+	assert.ok(
+		plan.includes(
+			'"$VERSION" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+-main\\.[1-9][0-9]*\\.(nightly|canary)$',
+		),
 	);
+	assert.doesNotMatch(plan, /-beta\\\./u);
 	assert.match(plan, /"\$REVISION" =~ \^\[0-9a-f\]\{40\}\$/u);
 	assert.match(plan, /git merge-base --is-ancestor "\$REVISION" "\$GITHUB_SHA"/u);
-	assert.match(plan, /echo "mode=beta"/u);
-	assert.match(plan, /echo "channel=main"/u);
+	// The version names the track; the track names the mode and the server
+	// channel, so a Canary never moves a Nightly tag or the reverse.
+	assert.match(plan, /TRACK="\$\{VERSION##\*\.\}"/u);
+	assert.match(plan, /echo "mode=\$TRACK"/u);
+	assert.match(plan, /if \[ "\$TRACK" = nightly \]; then\n\s+CHANNEL=main\n/u);
+	assert.match(plan, /else\n\s+CHANNEL=canary\n\s+LEGACY_BETA=false\n/u);
+	assert.match(plan, /echo "channel=\$CHANNEL"/u);
+	// The legacy `beta` tag follows the one end date the workflows share.
+	assert.match(plan, /LEGACY_BETA="\$\(node scripts\/legacy-beta-feed\.mjs\)"/u);
+	assert.match(plan, /\[\[ "\$LEGACY_BETA" =~ \^\(true\|false\)\$ \]\]/u);
 	// Inputs reach the shell as environment, never as script text.
 	assert.doesNotMatch(plan, /run: \|[\s\S]*\$\{\{ inputs\./u);
 	// The plan decides before anything is built, and holds no write token.
@@ -215,21 +230,28 @@ test('the image workflow publishes only a release tag or a validated beta versio
 	assert.match(build, /TERMINAY_CHANNEL=\$\{\{ needs\.plan\.outputs\.channel \}\}/u);
 });
 
-test('image tags: a release moves latest, a beta moves beta, and neither carries a v', () => {
+test('image tags: each track moves only its own tag, and none carries a v', () => {
 	const publish = job('publish');
 	const tags = [...publish.matchAll(/^ {12}(type=.*)$/gmu)].map((match) => match[1]);
 	const expression = (text) => `\${{ ${text} }}`;
 	const release = `enable=${expression("needs.plan.outputs.mode == 'release'")}`;
-	const beta = `enable=${expression("needs.plan.outputs.mode == 'beta'")}`;
+	const prerelease = `enable=${expression("needs.plan.outputs.mode == 'nightly' || needs.plan.outputs.mode == 'canary'")}`;
 	assert.deepEqual(tags, [
 		`type=semver,pattern={{version}},${release}`,
 		`type=semver,pattern={{major}}.{{minor}},${release}`,
 		`type=sha,format=long,prefix=sha-,${release}`,
 		`type=raw,value=latest,${release}`,
-		`type=raw,value=${expression('needs.plan.outputs.version')},${beta}`,
-		`type=raw,value=sha-${expression('needs.plan.outputs.revision')},${beta}`,
-		`type=raw,value=beta,${beta}`,
+		`type=raw,value=${expression('needs.plan.outputs.version')},${prerelease}`,
+		`type=raw,value=sha-${expression('needs.plan.outputs.revision')},${prerelease}`,
+		`type=raw,value=nightly,enable=${expression("needs.plan.outputs.mode == 'nightly'")}`,
+		`type=raw,value=canary,enable=${expression("needs.plan.outputs.mode == 'canary'")}`,
+		// The legacy Beta tag names a Nightly, and only until its end date.
+		`type=raw,value=beta,enable=${expression("needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.legacy_beta == 'true'")}`,
 	]);
+	assert.match(
+		job('plan'),
+		/^ {6}legacy_beta: \$\{\{ steps\.plan\.outputs\.legacy_beta \}\}$/mu,
+	);
 	// The planned version is the tag without its v.
 	assert.match(job('plan'), /RELEASE="\$\{GITHUB_REF_NAME#v\}"/u);
 });
@@ -253,21 +275,21 @@ test('each architecture is built natively and joined in one manifest', () => {
 	assert.doesNotMatch(publish, /build-push-action|id-token/u);
 });
 
-test('the rolling prerelease publishes a beta image by dispatching the image workflow last', () => {
-	const start = prereleaseWorkflow.indexOf('\n  publish-beta-image:\n');
+test('the rolling prerelease publishes its image by dispatching the image workflow last', () => {
+	const start = prereleaseWorkflow.indexOf('\n  publish-image:\n');
 	assert.notEqual(start, -1);
 	const dispatch = prereleaseWorkflow.slice(start);
 	// Last job in the file, after the assets it follows.
-	assert.ok(start > prereleaseWorkflow.indexOf('\n  publish-main-prerelease:\n'));
+	assert.ok(start > prereleaseWorkflow.indexOf('\n  publish:\n'));
 	assert.doesNotMatch(dispatch.slice(1), /^ {2}[a-z][a-z0-9-]*:\n(?! {4})/mu);
-	assert.match(dispatch, /needs: \[build-main-desktop, publish-main-prerelease\]/u);
+	assert.match(dispatch, /needs: \[plan, build-desktop, publish\]/u);
 	assert.match(
 		dispatch,
-		/needs\.publish-main-prerelease\.result == 'success' && needs\.build-main-desktop\.result == 'success' && github\.ref == 'refs\/heads\/main'/u,
+		/needs\.publish\.result == 'success' && needs\.build-desktop\.result == 'success' && github\.ref == 'refs\/heads\/main'/u,
 	);
 	assert.match(dispatch, /^ {4}permissions:\n {6}contents: read\n(?: {6}#.*\n)* {6}actions: write$/mu);
 	assert.doesNotMatch(dispatch, /packages: write|contents: write|secrets\./u);
-	assert.match(dispatch, /VERSION: \$\{\{ needs\.build-main-desktop\.outputs\.version \}\}/u);
+	assert.match(dispatch, /VERSION: \$\{\{ needs\.plan\.outputs\.version \}\}/u);
 	assert.match(dispatch, /REVISION: \$\{\{ github\.sha \}\}/u);
 	assert.match(
 		dispatch,
@@ -275,7 +297,7 @@ test('the rolling prerelease publishes a beta image by dispatching the image wor
 	);
 	assert.match(
 		prereleaseWorkflow,
-		/^ {4}outputs:\n(?: {6}#.*\n)* {6}version: \$\{\{ steps\.beta_version\.outputs\.version \}\}$/mu,
+		/^ {4}outputs:\n(?: {6}.*\n)*? {6}version: \$\{\{ steps\.version\.outputs\.version \}\}$/mu,
 	);
 });
 
@@ -314,6 +336,8 @@ test('Docker image operator guide requires digest-pinned controlled deployments'
 test('GHCR publication actions are pinned to immutable reviewed revisions', () => {
 	const expected = new Map([
 		['actions/checkout', 'fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'],
+		// The plan reads the legacy Beta end date with Node.
+		['actions/setup-node', 'a0853c24544627f65ddf259abe73b1d18a591444'],
 		['docker/setup-buildx-action', 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'],
 		['docker/metadata-action', 'dc802804100637a589fabce1cb79ff13a1411302'],
 		['docker/login-action', 'dbcb813823bdd20940b903addbd779551569679f'],
@@ -327,7 +351,7 @@ test('GHCR publication actions are pinned to immutable reviewed revisions', () =
 
 	assert.equal(
 		references.length,
-		13,
+		14,
 		'every external action in the server-image workflow must be reviewed',
 	);
 	for (const [, action, revision] of references) {

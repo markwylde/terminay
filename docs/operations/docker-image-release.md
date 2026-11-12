@@ -1,9 +1,11 @@
 # Docker image release contract
 
 Terminay publishes its standalone server OCI image for every version the
-project publishes: each semver `v*.*.*` release tag, and each beta build of the
-default branch. One manifest is pushed under two names, so both resolve to the
-same manifest digest:
+project publishes: each semver `v*.*.*` release tag, and each Nightly and each
+Canary build of the default branch
+([ADR-0110](../../openspec/adr/0110-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md)).
+One manifest is pushed under two names, so both resolve to the same manifest
+digest:
 
 | Image | Registry |
 | --- | --- |
@@ -17,11 +19,30 @@ Tags carry no `v` prefix.
 | Published by | Tags | Moving tag |
 | --- | --- | --- |
 | Release `vX.Y.Z` | `X.Y.Z`, `X.Y`, `sha-<commit>` | `latest` |
-| Beta `X.Y.Z-beta.N` | `X.Y.Z-beta.N`, `sha-<commit>` | `beta` |
+| Nightly `X.Y.Z-main.N.nightly` | `X.Y.Z-main.N.nightly`, `sha-<commit>` | `nightly` |
+| Canary `X.Y.Z-main.N.canary` | `X.Y.Z-main.N.canary`, `sha-<commit>` | `canary` |
 
-`latest` only ever names a release, and `beta` only ever names a beta build. A
-beta image carries exactly the version its Desktop beta reports, so a beta
-Desktop can name the server image that matches it.
+`latest` only ever names a release, `nightly` only ever names a Nightly, and
+`canary` only ever names a Canary. `N` is the number of commits on the default
+branch at the built commit, so a later build sorts higher on either track. A
+Nightly or Canary image carries exactly the version its Desktop reports, so a
+Nightly or Canary Desktop can name the server image that matches it. A Nightly
+image's server follows the `main` channel and a Canary image's the `canary`
+channel.
+
+### The `beta` tag until 2027-02-09
+
+Nightly and Canary replaced the single Beta track. So that installations which
+followed `beta` move on without anyone acting, every Nightly is also tagged
+`beta`, and the Nightly prerelease also carries its update metadata under the
+old Beta names (`beta-mac.yml`, `beta-linux.yml`, `beta.yml`), through
+**2027-02-09**, ninety days after the change landed. The end date is
+`LEGACY_BETA_FEED_UNTIL` in `scripts/legacy-beta-feed.mjs`, which both the
+prerelease workflow and the image workflow read, so the tag and the metadata
+stop on the same day. After it, the Nightly workflow deletes the Beta metadata
+from `main-latest` and the `beta` tag no longer moves. The follow-up change
+`retire-beta-feed` removes the script, the copies, the tag publication, and the
+Desktop setting's mapping of a stored Beta channel to Nightly.
 
 The Trigger Release workflow publishes the image as its last job, by
 dispatching the image workflow at the tag it created. It has to: the release
@@ -37,13 +58,14 @@ with the `terminay` command on the `PATH`, and passwordless `sudo` for the
 terminals' account. How to run it is in
 [Running in a container](./standalone-server.md#running-in-a-container).
 
-The Rolling Main Prerelease workflow publishes a beta image the same way: its
-last job dispatches the image workflow on the default branch with the beta
-version and the commit it was built from, after that build's desktop and
-archive assets were published. The image workflow refuses a version that is not
-in the beta grammar, a branch that is not the default one, and a commit the
-default branch does not contain, before it builds anything. A prerelease that
-fails publishes no image.
+The Nightly and Canary workflows publish their image the same way: the last job
+of the shared Rolling Prerelease workflow dispatches the image workflow on the
+default branch with the build's version and the commit it was built from, after
+that build's desktop and archive assets were published. The image workflow
+refuses a version that is not in the Nightly or Canary grammar, a branch that
+is not the default one, and a commit the default branch does not contain,
+before it builds anything. It takes the track from the version, and moves only
+that track's tag. A prerelease that fails publishes no image.
 
 The image publishes Linux `amd64` and `arm64` manifests with an SBOM and
 BuildKit provenance attestation. Each architecture is built on a runner of that
@@ -70,8 +92,9 @@ docker pull ghcr.io/<owner>/terminay-server@sha256:<manifest-digest>
 Version tags (`X.Y.Z`) and major/minor tags (`X.Y`) are convenience selectors;
 they are not a substitute for recording the digest used in an environment.
 `sha-<commit>` identifies the source commit. `latest` names the newest tagged
-release, which is what makes the bare image name safe to try. `latest` and
-`beta` move, so they must not be used for a controlled rollout.
+release, which is what makes the bare image name safe to try. The moving
+tags `latest`, `nightly` and `canary`
+must not be used for a controlled rollout.
 
 Before deployment, inspect the resolved manifest and retain its digest with the
 deployment record:

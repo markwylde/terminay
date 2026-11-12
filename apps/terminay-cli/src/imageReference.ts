@@ -33,7 +33,11 @@ export type ImageReference =
 			readonly reason: string;
 	  };
 
-const VERSION_TAG = /^(v?)(\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?)$/u;
+// A release, or a Nightly or Canary build (`X.Y.Z-main.N.nightly`,
+// `X.Y.Z-main.N.canary`, ADR-0110). Their moving tags, `nightly` and
+// `canary`, are not versions and pull again like `latest`.
+const VERSION_TAG =
+	/^(v?)(\d+\.\d+\.\d+(?:-main\.[1-9]\d*\.(?:nightly|canary))?)$/u;
 const IMAGE_ID = /^(?:sha256:)?[a-f0-9]{64}$/u;
 
 export function parseImageReference(reference: string): ImageReference {

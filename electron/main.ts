@@ -2693,7 +2693,8 @@ let appUpdater: AppUpdater | null = null;
 
 function getAppUpdater(): AppUpdater {
 	if (appUpdater === null) {
-		// The Windows update probe serves the next build from a local Beta feed.
+		// The Windows update probe serves the next build from a local feed in
+		// the Nightly channel's shape (scripts/build-windows-update-probe.sh).
 		const testFeedUrl =
 			process.env.TERMINAY_TEST === '1'
 				? process.env.TERMINAY_TEST_UPDATE_FEED_URL
@@ -2716,7 +2717,7 @@ function getAppUpdater(): AppUpdater {
 			channel:
 				testFeedUrl === undefined
 					? readTerminalSettings().updateChannel
-					: 'beta',
+					: 'nightly',
 			loadUpdater: async () => {
 				const { default: electronUpdater } = await import('electron-updater');
 				return electronUpdater.autoUpdater;

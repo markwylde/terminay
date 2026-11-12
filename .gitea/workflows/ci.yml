@@ -7,7 +7,7 @@ on:
       - main
     # The spec-progress bot's widget commit touches only these files; it
     # needs no CI run, and must not carry [skip ci] because that would also
-    # suppress GitHub's main-prerelease build when main is mirrored there.
+    # suppress GitHub's canary build when main is mirrored there.
     paths-ignore:
       - docs/spec-progress.svg
       - README.md

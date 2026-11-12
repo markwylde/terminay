@@ -116,6 +116,27 @@ test('a check answer is accepted exactly as the upgrader prints it', () => {
 	);
 });
 
+test('a canary install reports its own channel and the canary build it follows', () => {
+	// The upgrader resolves a canary install against canary-latest only
+	// (apps/terminay-cli plan.ts); the server takes its answer as printed.
+	const newer = answer({
+		installed: { channel: 'canary', version: 'canary', revision: 'a'.repeat(40) },
+		available: { version: 'canary', publishedAt: '2026-11-12T00:00:00.000Z' },
+	});
+	assert.deepEqual(parseUpgradeCheckOutput(JSON.stringify(newer)).installed, {
+		channel: 'canary',
+		version: 'canary',
+		revision: 'a'.repeat(40),
+	});
+	assert.equal(parseUpgradeCheckOutput(JSON.stringify(newer)).available?.version, 'canary');
+	// Its own build is current: nothing is offered, whatever the nightly holds.
+	const current = answer({
+		installed: { channel: 'canary', version: 'canary', revision: 'a'.repeat(40) },
+		available: null,
+	});
+	assert.equal(parseUpgradeCheckOutput(JSON.stringify(current)).available, null);
+});
+
 test('anything else an upgrader prints is refused', () => {
 	for (const output of [
 		'',

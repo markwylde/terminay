@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { archiveName, ROLLING_TAG, resolveRef } from '../dist/resolve.js';
+import { archiveName, ROLLING, ROLLING_TAG, resolveRef } from '../dist/resolve.js';
 import { createFakeBin } from './fake-bin.mjs';
 import {
 	expandedAssets,
@@ -29,6 +29,10 @@ const ROLLING_ASSETS = [
 	'terminay-server-main-linux-arm64.tar.gz.sig',
 ];
 
+const CANARY_ASSETS = ROLLING_ASSETS.map((name) =>
+	name.replace('terminay-server-main-', 'terminay-server-canary-'),
+);
+
 /** Serves the two GitHub surfaces the resolver uses, with per-test overrides. */
 async function withGitHub(options, run) {
 	const seen = [];
@@ -49,6 +53,10 @@ async function withGitHub(options, run) {
 		}
 		if (url === `/repos/markwylde/terminay/releases/tags/${ROLLING_TAG}`) {
 			json(response, 200, releaseDocument(ROLLING_TAG, ROLLING_ASSETS));
+			return;
+		}
+		if (url === '/repos/markwylde/terminay/releases/tags/canary-latest') {
+			json(response, 200, releaseDocument('canary-latest', CANARY_ASSETS));
 			return;
 		}
 		if (url === '/repos/markwylde/terminay/releases/tags/v9.9.9') {
@@ -72,6 +80,10 @@ async function withGitHub(options, run) {
 		}
 		if (url === `/markwylde/terminay/releases/expanded_assets/${ROLLING_TAG}`) {
 			html(response, 200, expandedAssets(ROLLING_TAG, ROLLING_ASSETS));
+			return;
+		}
+		if (url === '/markwylde/terminay/releases/expanded_assets/canary-latest') {
+			html(response, 200, expandedAssets('canary-latest', CANARY_ASSETS));
 			return;
 		}
 		if (url === '/markwylde/terminay/releases/expanded_assets/v9.9.9') {
@@ -135,6 +147,25 @@ test('main resolves the rolling prerelease, which is not tagged for the branch',
 			/terminay-server-main-linux-x64\.tar\.gz$/u,
 		);
 	});
+});
+
+test('canary resolves the rolling canary prerelease and its own archive', async () => {
+	assert.deepEqual(ROLLING.canary, { tag: 'canary-latest', asset: 'canary' });
+	assert.deepEqual(ROLLING.main, { tag: 'main-latest', asset: 'main' });
+	for (const apiDown of [false, true]) {
+		await withGitHub({ apiDown, architecture: 'arm64' }, async (options, seen) => {
+			const resolved = await resolveRef('canary', options);
+			assert.equal(resolved.channel, 'canary');
+			assert.equal(resolved.version, 'canary');
+			assert.equal(resolved.tag, 'canary-latest');
+			assert.match(
+				resolved.assets.archive,
+				/\/releases\/download\/canary-latest\/terminay-server-canary-linux-arm64\.tar\.gz$/u,
+			);
+			// The nightly prerelease is never read for a canary reference.
+			assert.ok(seen.every((url) => !url.includes(ROLLING_TAG)), seen.join(', '));
+		});
+	}
 });
 
 test('the host architecture selects the archive', async () => {

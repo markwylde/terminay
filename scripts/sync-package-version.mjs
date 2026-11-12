@@ -8,9 +8,9 @@ if (!rawVersion) {
   process.exit(1)
 }
 
-// A tag releases x.y.z. The rolling main channel builds the next stable
-// version as a beta, x.y.z-beta.<run>, and nothing else.
-if (!/^\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?$/.test(rawVersion)) {
+// A tag releases x.y.z. A Nightly or Canary builds the next stable version as
+// x.y.z-main.<commit count>.<track> (ADR-0110), and nothing else.
+if (!/^\d+\.\d+\.\d+(?:-main\.[1-9]\d*\.(?:nightly|canary))?$/.test(rawVersion)) {
   console.error(`Invalid semantic version: ${rawVersion}`)
   process.exit(1)
 }

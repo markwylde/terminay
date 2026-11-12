@@ -1,0 +1,44 @@
+name: Canary
+
+# One Canary build per push to `main` (ADR-0110), published to the rolling
+# `canary-latest` prerelease. macOS is signed but never notarized: this caller
+# passes no notarization credential to the build, so Apple sees nothing from a
+# push however often `main` moves.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and sign without touching the canary prerelease
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two swaps must never interleave over the same asset names, and builds
+  # publish in push order. Pushes that arrive during a build wait; GitHub keeps
+  # only the newest of them, so the next build is of the newest pushed head.
+  group: canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Canary
+    uses: ./.github/workflows/main-prerelease.yml
+    permissions:
+      # The publishing job replaces release assets, and the last job dispatches
+      # the image workflow; every other job narrows back to read.
+      contents: write
+      actions: write
+    with:
+      track: canary
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    # Named one by one: a Canary job never holds APPLE_APP_SPECIFIC_PASSWORD.
+    secrets:
+      TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}

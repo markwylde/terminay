@@ -1,0 +1,86 @@
+name: Nightly
+
+# One Nightly build a night of the head of `main` (ADR-0110), signed and
+# notarized, published to the rolling `main-latest` prerelease. A night when
+# `main` has not moved since the published Nightly builds nothing and submits
+# nothing to Apple.
+on:
+  schedule:
+    # 02:00 UTC. GitHub may start a scheduled run late or drop it under load;
+    # the next night builds whatever is unbuilt, and a dispatch builds now.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and sign without touching the nightly prerelease
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  # Two swaps must never interleave over the same asset names.
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    name: Decide whether main moved since the published nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.compare.outputs.build }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+
+      - name: Compare main with the published nightly
+        id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/published"
+          # build.json moves last in a publication, so it names the commit of
+          # the last Nightly that was published in full. A missing or
+          # unreadable file proves nothing, and the night builds.
+          gh release download main-latest --repo "$GH_REPO" --pattern build.json --dir "$RUNNER_TEMP/published" \
+            || echo "No published build.json on main-latest"
+          node scripts/nightly-skip.mjs --head "$HEAD_COMMIT" --build-json "$RUNNER_TEMP/published/build.json" | tee -a "$GITHUB_OUTPUT"
+          if grep -qx 'build=false' "$GITHUB_OUTPUT"; then
+            echo "main is still at $HEAD_COMMIT, the published Nightly; nothing to build." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  nightly:
+    name: Nightly
+    needs: decide
+    # Skipped, not failed, when nothing changed.
+    if: needs.decide.outputs.build == 'true'
+    uses: ./.github/workflows/main-prerelease.yml
+    permissions:
+      # The publishing job replaces release assets, and the last job dispatches
+      # the image workflow; every other job narrows back to read.
+      contents: write
+      actions: write
+    with:
+      track: nightly
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    secrets:
+      TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}

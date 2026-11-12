@@ -163,10 +163,12 @@ test('standalone artifact manifest records and enforces channel, revision, and a
 			);
 		}
 
-		await assert.rejects(
-			() => validateStandaloneArtifact(root, { ...manifest, channel: 'nightly' }),
-			/release channel must be one of/,
-		);
+		// The Nightly records `main`; the track name itself is not a channel.
+		for (const channel of ['nightly', 'beta'])
+			await assert.rejects(
+				() => validateStandaloneArtifact(root, { ...manifest, channel }),
+				/release channel must be one of/,
+			);
 		await assert.rejects(
 			() => validateStandaloneArtifact(root, { ...manifest, revision: 'abc' }),
 			/release revision must be a full lowercase commit sha/,
@@ -202,6 +204,26 @@ test('standalone artifact manifest records and enforces channel, revision, and a
 		assert.deepEqual(
 			await validateStandaloneArtifact(root, manifest, manifest),
 			manifest,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('a Canary archive records the canary channel and is verified against it', async () => {
+	const root = await createFixture();
+	try {
+		const manifest = await writeStandaloneArtifactManifest(root, {
+			channel: 'canary',
+			revision: 'd'.repeat(40),
+			architecture: 'x64',
+		});
+		assert.equal(manifest.channel, 'canary');
+		assert.deepEqual(await validateStandaloneArtifact(root, manifest, manifest), manifest);
+		// A Canary archive is never accepted where the Nightly's `main` is expected.
+		await assert.rejects(
+			() => validateStandaloneArtifact(root, manifest, { ...manifest, channel: 'main' }),
+			/manifest channel is canary, expected main/,
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });

@@ -601,6 +601,29 @@ test('a version tag moves to the available version, written the same way', () =>
 	});
 });
 
+test('nightly and canary image tags are versions, and their track tags move', () => {
+	for (const tag of ['5.13.0-main.3312.nightly', '5.13.0-main.3320.canary']) {
+		assert.deepEqual(parseImageReference(`markwylde/terminay:${tag}`), {
+			kind: 'version',
+			repository: 'markwylde/terminay',
+			tag,
+			version: tag,
+			prefixed: false,
+		});
+	}
+	for (const tag of ['nightly', 'canary', 'beta']) {
+		assert.deepEqual(parseImageReference(`markwylde/terminay:${tag}`), {
+			kind: 'moving',
+			repository: 'markwylde/terminay',
+			tag,
+		});
+	}
+	// Anything near the grammar but not in it is a plain moving tag, never a version.
+	for (const tag of ['5.13.0-beta.4', '5.13.0-main.0.canary', '5.13.0-main.12.beta', '5.13.0-main.12']) {
+		assert.equal(parseImageReference(`markwylde/terminay:${tag}`).kind, 'moving', tag);
+	}
+});
+
 test('a version tag with no release to move to, or a release that is not a version, is refused', () => {
 	assert.throws(
 		() => resolveTargetImage('terminay:5.1.1'),

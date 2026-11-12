@@ -6,27 +6,44 @@ import { request, requestJson } from './http.js';
 /**
  * Turning an operator's reference into something installable.
  *
- * Four shapes are accepted, and the shape decides the channel the install
+ * Five shapes are accepted, and the shape decides the channel the install
  * follows afterwards. The channel matters more than the version: an upgrade
  * with no reference re-resolves whatever channel the machine is already on,
- * so a box tracking `main` never silently jumps onto the tag stream.
+ * so a box tracking `main` or `canary` never silently jumps onto the tag
+ * stream or the other rolling channel.
  */
 
 const execFileAsync = promisify(execFile);
 
 export const DEFAULT_REPOSITORY = 'markwylde/terminay';
 
+/** The two rolling channels, each one release track built from `main` (ADR-0110). */
+export type RollingChannel = 'main' | 'canary';
+
 /**
- * The rolling channel is tagged `main-latest`, not `main`: a release tag named
- * for the default branch makes the ref ambiguous in every clone, so
- * `git fetch main` resolves the tag instead of the branch.
+ * Where each rolling channel is published. `main` is the Nightly and `canary`
+ * the Canary. The Nightly is tagged `main-latest`, not `main`: a release tag
+ * named for the default branch makes the ref ambiguous in every clone, so
+ * `git fetch main` resolves the tag instead of the branch. Assets on a rolling
+ * release are named for the channel, not a version.
  */
-export const ROLLING_TAG = 'main-latest';
+export const ROLLING: Readonly<
+	Record<RollingChannel, Readonly<{ tag: string; asset: string }>>
+> = Object.freeze({
+	main: Object.freeze({ tag: 'main-latest', asset: 'main' }),
+	canary: Object.freeze({ tag: 'canary-latest', asset: 'canary' }),
+});
 
-/** Assets on the rolling release are named for the channel, not a version. */
-const ROLLING_ASSET_VERSION = 'main';
+/** The Nightly's rolling tag. */
+export const ROLLING_TAG = ROLLING.main.tag;
 
-export type ReleaseChannel = 'tag' | 'main' | 'source';
+export type ReleaseChannel = 'tag' | RollingChannel | 'source';
+
+export function isRollingChannel(
+	channel: string | undefined,
+): channel is RollingChannel {
+	return channel === 'main' || channel === 'canary';
+}
 export type Architecture = 'x64' | 'arm64';
 
 export interface ResolvedAssets {
@@ -37,7 +54,7 @@ export interface ResolvedAssets {
 
 export interface ResolvedRef {
 	readonly channel: ReleaseChannel;
-	/** Release version for `tag`, the channel name for `main`, the short commit for `source`. */
+	/** Release version for `tag`, the channel name for `main` and `canary`, the short commit for `source`. */
 	readonly version: string;
 	/** Known up front only for `source`; otherwise read from the signed manifest after install. */
 	readonly revision?: string;
@@ -238,26 +255,24 @@ async function resolveTag(
 	});
 }
 
-async function resolveRolling(options: ResolveOptions): Promise<ResolvedRef> {
-	const payload = await readRelease(
-		options,
-		`tags/${ROLLING_TAG}`,
-		ROLLING_TAG,
-	);
-	requireArchitectureAsset(payload, options, ROLLING_ASSET_VERSION);
+async function resolveRolling(
+	options: ResolveOptions,
+	channel: RollingChannel,
+): Promise<ResolvedRef> {
+	const { tag, asset } = ROLLING[channel];
+	const payload = await readRelease(options, `tags/${tag}`, tag);
+	requireArchitectureAsset(payload, options, asset);
 	// The rolling release is created once and has its assets replaced on every
 	// build, so the release's own publication time never moves. The time this
 	// architecture's archive was last replaced is the time of the build.
 	const publishedAt =
-		payload.assetUpdatedAt[
-			archiveName(ROLLING_ASSET_VERSION, options.architecture)
-		];
+		payload.assetUpdatedAt[archiveName(asset, options.architecture)];
 	return Object.freeze({
-		channel: 'main' as const,
-		version: ROLLING_ASSET_VERSION,
-		tag: ROLLING_TAG,
+		channel,
+		version: asset,
+		tag,
 		...(publishedAt === undefined ? {} : { publishedAt }),
-		assets: assetUrls(options, ROLLING_TAG, ROLLING_ASSET_VERSION),
+		assets: assetUrls(options, tag, asset),
 	});
 }
 
@@ -312,6 +327,6 @@ export async function resolveRef(
 	if (ref === 'latest')
 		return resolveTag(options, await readLatestTag(options));
 	if (SEMVER_TAG.test(ref)) return resolveTag(options, ref);
-	if (ref === 'main') return resolveRolling(options);
+	if (isRollingChannel(ref)) return resolveRolling(options, ref);
 	return resolveSource(options, ref);
 }

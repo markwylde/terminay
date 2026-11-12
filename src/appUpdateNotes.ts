@@ -19,3 +19,15 @@ export function releaseNoteLinkTarget(href: string | null): string | null {
 	if (href === null) return null;
 	return /^https?:\/\//i.test(href) ? href : null;
 }
+
+/**
+ * The track a Nightly or Canary version was built for (`X.Y.Z-main.N.nightly`,
+ * `X.Y.Z-main.N.canary`, ADR-0110), named in the What's new title. A stable
+ * release, offered on any channel, names no track.
+ */
+export function releaseTrackLabel(version: string | null): string | null {
+	const track = /-main\.[1-9]\d*\.(nightly|canary)$/u.exec(version ?? '')?.[1];
+	if (track === 'nightly') return 'Nightly build';
+	if (track === 'canary') return 'Canary build';
+	return null;
+}

@@ -301,7 +301,7 @@ jobs:
         run: node scripts/check-windows-pe-architecture.mjs "release/${TAG#v}/win-unpacked"
 
       # Build N+1 for the update step: this run's app one patch version higher,
-      # with its beta.yml, outside release/ so nothing publishes it.
+      # with its nightly.yml, outside release/ so nothing publishes it.
       - name: Build the Windows update probe's next version
         id: update_probe
         if: matrix.os == 'windows-latest'
@@ -370,7 +370,7 @@ jobs:
           METADATA_FILE="release/$VERSION/$UPDATE_METADATA"
           test -f "$METADATA_FILE"
           test ! -L "$METADATA_FILE"
-          ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
+          ACTUAL_METADATA="$(find release -type f \( -name 'latest*.yml' -o -name 'nightly*.yml' -o -name 'canary*.yml' -o -name 'beta*.yml' -o -name 'alpha*.yml' \) -print)"
           test "$ACTUAL_METADATA" = "$METADATA_FILE"
 
           {

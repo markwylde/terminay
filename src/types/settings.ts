@@ -239,7 +239,7 @@ export type TerminalSettings = {
 	 * Terminay's shell integration after the user's startup files (ADR-0082). */
 	shellIntegration: boolean;
 	/** Device setting: which Terminay Desktop release channel this machine follows. */
-	updateChannel: 'stable' | 'beta';
+	updateChannel: 'stable' | 'nightly' | 'canary';
 	convertEol: boolean;
 	cursorBlink: boolean;
 	cursorStyle: 'block' | 'underline' | 'bar';

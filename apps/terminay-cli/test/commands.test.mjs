@@ -2234,3 +2234,130 @@ test('a rolling install is labelled by its commit, and learns when its build was
 		},
 	);
 });
+
+const CANARY_RELEASE = {
+	tag: 'canary-latest',
+	version: '0.0.0',
+	assetVersion: 'canary',
+	channel: 'canary',
+	revision: 'c'.repeat(40),
+	publishedAt: '2026-10-03T00:00:00Z',
+};
+const NIGHTLY_RELEASE = {
+	tag: 'main-latest',
+	version: '0.0.0',
+	assetVersion: 'main',
+	channel: 'main',
+	revision: 'd'.repeat(40),
+	publishedAt: '2026-10-09T00:00:00Z',
+};
+const TAGGED_RELEASE = {
+	tag: 'v4.1.1',
+	version: '4.1.1',
+	revision: 'a'.repeat(40),
+	latest: true,
+	publishedAt: '2026-10-10T00:00:00Z',
+};
+
+/** A canary install from the machine's release fixture, ready to upgrade. */
+async function installCanary({ health, fake, layout, installDependencies, write }) {
+	await runInstall(
+		'canary',
+		{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+		installDependencies,
+	);
+	await pointHealthAtFixture(layout, health.port);
+	return {
+		layout,
+		record: await readInstallRecord(layout),
+		systemd: createSystemd({ scope: 'user', env: fake.env() }),
+		write,
+	};
+}
+
+test('canary installs the canary prerelease and records the canary channel', async () => {
+	await withMachine(
+		{ releases: [TAGGED_RELEASE, NIGHTLY_RELEASE, CANARY_RELEASE] },
+		async (machine) => {
+			await installCanary(machine);
+			const record = await readInstallRecord(machine.layout);
+			assert.equal(record.channel, 'canary');
+			assert.equal(record.revision, 'c'.repeat(40));
+			assert.equal(await activeVersion(machine.layout), `canary-${'c'.repeat(12)}`);
+		},
+	);
+});
+
+test('a canary upgrade with nothing newer on canary installs nothing, whatever nightly and tags hold', async () => {
+	await withMachine(
+		{ releases: [TAGGED_RELEASE, NIGHTLY_RELEASE, CANARY_RELEASE] },
+		async (machine) => {
+			const context = await installCanary(machine);
+			const result = await runUpgrade(undefined, OPTIONS, context, {
+				apiBase: machine.installDependencies.apiBase,
+				webBase: machine.installDependencies.webBase,
+				architecture: 'x64',
+				releasePublicKeyPem: machine.installDependencies.releasePublicKeyPem,
+			});
+			assert.equal(result.upToDate, true);
+			assert.equal(await activeVersion(machine.layout), `canary-${'c'.repeat(12)}`);
+			assert.equal((await readInstallRecord(machine.layout)).channel, 'canary');
+		},
+	);
+});
+
+test('a canary upgrade follows the canary channel to a newer revision', async () => {
+	await withMachine(
+		{ releases: [TAGGED_RELEASE, NIGHTLY_RELEASE, CANARY_RELEASE] },
+		async (machine) => {
+			const context = await installCanary(machine);
+			// The canary prerelease has since been rebuilt from a later commit.
+			const directory = await mkdtemp(join(tmpdir(), 'terminay-canary-next-'));
+			const next = await startReleaseFixture({
+				directory,
+				releases: [
+					TAGGED_RELEASE,
+					NIGHTLY_RELEASE,
+					{ ...CANARY_RELEASE, revision: 'e'.repeat(40), publishedAt: '2026-10-11T00:00:00Z' },
+				],
+			});
+			try {
+				const result = await runUpgrade(undefined, OPTIONS, context, {
+					apiBase: next.origin,
+					webBase: next.origin,
+					architecture: 'x64',
+					releasePublicKeyPem: next.publicPem,
+					readinessTimeoutMs: 5_000,
+				});
+				assert.notEqual(result.upToDate, true);
+				assert.equal(await activeVersion(machine.layout), `canary-${'e'.repeat(12)}`);
+				const record = await readInstallRecord(machine.layout);
+				assert.equal(record.channel, 'canary');
+				assert.equal(record.revision, 'e'.repeat(40));
+			} finally {
+				await next.close();
+				await rm(directory, { recursive: true, force: true });
+			}
+		},
+	);
+});
+
+test('upgrade main moves a canary install to the nightly channel', async () => {
+	await withMachine(
+		{ releases: [TAGGED_RELEASE, NIGHTLY_RELEASE, CANARY_RELEASE] },
+		async (machine) => {
+			const context = await installCanary(machine);
+			await runUpgrade('main', OPTIONS, context, {
+				apiBase: machine.installDependencies.apiBase,
+				webBase: machine.installDependencies.webBase,
+				architecture: 'x64',
+				releasePublicKeyPem: machine.installDependencies.releasePublicKeyPem,
+				readinessTimeoutMs: 5_000,
+			});
+			assert.equal(await activeVersion(machine.layout), `main-${'d'.repeat(12)}`);
+			const record = await readInstallRecord(machine.layout);
+			assert.equal(record.channel, 'main');
+			assert.equal(record.revision, 'd'.repeat(40));
+		},
+	);
+});

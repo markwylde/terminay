@@ -126,15 +126,18 @@ requirement.
 #### Version references
 
 `install` with no reference takes the newest tagged release. `vX.Y.Z` takes
-that tag. `main` takes the rolling prerelease, which is published under the
-tag `main-latest` — a release tagged for the default branch would make `main`
-ambiguous in every clone. Any other branch or commit is built from source on
+that tag. `main` takes the rolling Nightly prerelease, which is published under
+the tag `main-latest` — a release tagged for the default branch would make
+`main` ambiguous in every clone. `canary` takes the rolling Canary prerelease,
+published under the tag `canary-latest` and rebuilt on every push to the
+default branch. Any other branch or commit is built from source on
 the target, after a preflight for `git`, `python3`, `make`, and a C++
 compiler; the resulting manifest records the built commit and a `source`
 channel.
 
 `upgrade` with no reference re-resolves whatever channel the machine is
-already on, so a box tracking `main` never silently moves onto the tag stream.
+already on, so a box tracking `main` or `canary` never silently moves onto the
+tag stream or the other rolling channel.
 A source install has no ordering the CLI can trust, so it must be told what to
 move to.
 
@@ -598,11 +601,12 @@ architecture has one self-contained
 sidecar and an Ed25519 `.sig` beside it. The archive carries its own pinned
 Node runtime, the compiled server, the production dependency closure including
 the native `node-pty`, the matched UI bundle, and the selected WebRTC runtime,
-so the target needs neither Node nor a compiler. Merges to the default branch
-also publish a rolling `main` channel under stable asset names on the
-`main-latest` prerelease. Verify the sidecar and the signature before staging,
-and compare `revision` in the archive's `artifact-manifest.json` — not
-`version` — to decide whether the rolling channel moved. The full contract is
+so the target needs neither Node nor a compiler. The default branch also
+publishes two rolling channels under stable asset names: the Nightly `main`
+channel on the `main-latest` prerelease, and the Canary `canary` channel on the
+`canary-latest` prerelease. Verify the sidecar and the signature before
+staging, and compare `revision` in the archive's `artifact-manifest.json` — not
+`version` — to decide whether a rolling channel moved. The full contract is
 in the [release install and update policy](./release-update-policy.md), and the
 [systemd example](#systemd-linux) below is the unit the CLI writes.
 
