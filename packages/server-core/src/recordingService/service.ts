@@ -102,6 +102,9 @@ export class RecordingService {
 		RecordingSessionMetadata
 	>();
 	private readonly failed = new Map<string, RecordingState>();
+	private dimensionResolver:
+		| ((sessionId: string) => { cols: number; rows: number } | undefined)
+		| undefined;
 	private readonly stateListeners = new Set<RecordingStateListener>();
 	private readonly options: {
 		readonly serverId: string;
@@ -260,8 +263,12 @@ export class RecordingService {
 		const recordingId = options.recordingId ?? randomUUID();
 		if (!RECORDING_ID_PATTERN.test(recordingId))
 			throw new RecordingServiceError('invalid_id', 'Recording id is invalid.');
-		const cols = numberDimension(merged.cols, 80, 2);
-		const rows = numberDimension(merged.rows, 24, 1);
+		// The live PTY size is the truth; a terminal that was never resized has
+		// no remembered size, and a cast header that disagrees with the size the
+		// program drew for garbles every full-screen redraw on replay.
+		const live = this.liveDimensions(sessionId);
+		const cols = numberDimension(live?.cols ?? merged.cols, 80, 2);
+		const rows = numberDimension(live?.rows ?? merged.rows, 24, 1);
 		const captureInput = options.captureInput ?? this.resolveInputSetting();
 		const sensitivePolicy =
 			options.sensitiveInputPolicy ?? this.resolveSensitivePolicy();
@@ -478,6 +485,24 @@ export class RecordingService {
 		if (active === undefined) return this.getState(sessionId);
 		active.captureInput = enabled;
 		return this.toState(active);
+	}
+
+	/** Supply the live PTY size so a recording's header matches what the
+	 * terminal is drawing when recording starts. */
+	setDimensionResolver(
+		resolver: (sessionId: string) => { cols: number; rows: number } | undefined,
+	): void {
+		this.dimensionResolver = resolver;
+	}
+
+	private liveDimensions(
+		sessionId: string,
+	): { cols: number; rows: number } | undefined {
+		try {
+			return this.dimensionResolver?.(sessionId);
+		} catch {
+			return undefined;
+		}
 	}
 
 	appendResize(sessionId: string, cols: number, rows: number): void {

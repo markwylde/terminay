@@ -141,3 +141,46 @@ test("recording state and timeline run through the framed TerminayClient contrac
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("a full replay chunk of escape-heavy output fits the framed contract", async () => {
+  const home = await mkdtemp(join(tmpdir(), "terminay-recordings-client-escape-"));
+  const pair = createInMemoryTransportPair();
+  const service = new RecordingService({ homeDirectory: home, recordingRoot: join(home, "recordings"), serverId: "server-e2e" });
+  const operations = new ServerRecordingAdapter(service, { serverId: "server-e2e" }).operations();
+  const server = createServerCore({
+    serverId: "server-e2e",
+    serverVersion: "test",
+    capabilities: ["recordings"],
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "admin", claims: { projectId: "project-e2e" } }),
+    queries: operations.queries,
+    commands: operations.commands,
+    policies: operations.policies,
+  }).accept(pair.server);
+  const serverLoop = server.start();
+  const client = new TerminayClient({ transport: pair.client, clientId: "client-e2e", capabilities: ["recordings"] });
+  try {
+    await pair.open();
+    await client.connect();
+    const recordings = new RecordingsClient(new TerminayClientFacade(client));
+    const started = await recordings.start("session-e2e", { projectId: "project-e2e" });
+    // Colour codes and quotes are escaped once in the cast file and again in a
+    // JSON header, so a default 64 KiB chunk inflates well past 64 KiB inline.
+    const line = '\u001b[38;5;208m"quoted"\u001b[0m \\path\\ ';
+    for (let index = 0; index < 400; index += 1) service.appendOutput("session-e2e", `${line.repeat(8)}\r\n`);
+    await recordings.stop("session-e2e", { projectId: "project-e2e" });
+    let start = 0;
+    let content = "";
+    for (;;) {
+      const chunk = await recordings.replay(started.recordingId, { start });
+      content += chunk.content;
+      if (chunk.eof || chunk.nextOffset === start) break;
+      start = chunk.nextOffset;
+    }
+    assert.ok(Buffer.byteLength(content) > 64 * 1024);
+    assert.equal(content.split("\n").filter((record) => record.includes("quoted")).length, 400);
+  } finally {
+    await client.close().catch(() => undefined);
+    await serverLoop.catch(() => undefined);
+    await rm(home, { recursive: true, force: true });
+  }
+});

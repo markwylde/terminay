@@ -1,6 +1,10 @@
 import type { AuthScope, JsonValue } from '@terminay/protocol';
 import { scopeAllows } from '../auth.js';
-import type { CommandRequest, QueryRequest } from '../types.js';
+import type {
+	BinaryQueryHandlerResult,
+	CommandRequest,
+	QueryRequest,
+} from '../types.js';
 import { RecordingService } from './service.js';
 import {
 	type RecordingAdapterOptions,
@@ -186,7 +190,10 @@ export class ServerRecordingAdapter implements RecordingAdapter {
 				[RECORDING_OPERATIONS.list]: (request) =>
 					asJson(this.list(this.listRequest(request))),
 				[RECORDING_OPERATIONS.replay]: (request) =>
-					asJson(this.replay(this.replayRequest(request))),
+					replayResult(
+						this.replay(this.replayRequest(request)),
+						objectPayload(request.envelope.payload).contentInBody === true,
+					),
 			},
 			commands: {
 				[RECORDING_OPERATIONS.start]: (request) =>
@@ -446,5 +453,25 @@ function asStartOptions(value: unknown): RecordingStartOptions {
 		...(typeof payload.captureInput === 'boolean'
 			? { captureInput: payload.captureInput }
 			: {}),
+	};
+}
+
+const utf8Encoder = new TextEncoder();
+
+/**
+ * Replay content is raw asciicast NDJSON. Carried inline, it is escaped a
+ * second time inside the JSON frame header, whose limit (64 KiB) a full 64 KiB
+ * chunk can exceed. Clients that ask for it receive the content as the frame
+ * body instead, which is bounded only by the body limit.
+ */
+function replayResult(
+	chunk: RecordingChunk,
+	contentInBody: boolean,
+): JsonValue | BinaryQueryHandlerResult {
+	if (!contentInBody) return asJson(chunk);
+	const { content, ...metadata } = chunk;
+	return {
+		result: asJson({ ...metadata, contentInBody: true }),
+		body: utf8Encoder.encode(content),
 	};
 }

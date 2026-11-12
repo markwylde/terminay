@@ -126,6 +126,29 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+/** Only what is known: no "Unknown folder" or "exit unknown" filler. */
+function replayDetail(recording: TerminalRecordingListItem): string {
+  const exit =
+    recording.exitCode === null
+      ? recording.signal === null ? null : `signal ${recording.signal}`
+      : `exit ${recording.exitCode}`
+  return [
+    formatDate(recording.startedAt),
+    recording.cwdLabel,
+    recording.durationMs === null ? null : formatDuration(recording.durationMs),
+    recording.bytesWritten > 0 ? formatBytes(recording.bytesWritten) : null,
+    exit,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** "Updated just now" / "Updated 3 min ago", as the Pull Requests page says it. */
+function updatedAgo(loadedAt: number, now: number): string {
+  const minutes = Math.floor((now - loadedAt) / 60_000)
+  return minutes < 1 ? 'Updated just now' : `Updated ${minutes} min ago`
+}
+
 function formatPlaybackTime(seconds: number): string {
   const safeSeconds = Math.max(0, seconds)
   const minutes = Math.floor(safeSeconds / 60)
@@ -444,7 +467,7 @@ function toRecordingMetadata(item: RecordingListItem): TerminalRecordingListItem
     eventCount: item.eventCount,
     exitCode: item.exitCode,
     inputPolicy: item.inputPolicy,
-    projectColor: null,
+    projectColor: item.color,
     projectEmoji: item.emoji,
     projectId: item.projectId,
     projectTitle: item.projectName,
@@ -495,13 +518,18 @@ function useRecordingsLibrary(client: RecordingsClient) {
   const [query, setQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [listErrorText, setListErrorText] = useState<string | null>(null)
+  const [loadedAt, setLoadedAt] = useState<number>()
 
   const loadRecordings = useCallback(async (): Promise<TerminalRecordingListItem[]> => {
     setIsLoading(true)
     setListErrorText(null)
     try {
+      // Every read here is a person asking for the current timeline: another
+      // tab may have recorded or deleted since, so never answer from the cache.
+      client.invalidate()
       const nextRecordings = (await client.list()).items.map(toRecordingMetadata)
       setRecordings(nextRecordings)
+      setLoadedAt(Date.now())
       return nextRecordings
     } catch (error) {
       setListErrorText(error instanceof Error ? error.message : String(error))
@@ -548,7 +576,23 @@ function useRecordingsLibrary(client: RecordingsClient) {
     return [...groups.entries()]
   }, [filteredRecordings])
 
-  return { groupedRecordings, isLoading, listErrorText, loadRecordings, query, recordings, setQuery }
+  const deleteRecording = useCallback(
+    async (recordingId: string): Promise<boolean> => {
+      if (!confirm('Delete this recording? This cannot be undone.')) return false
+      try {
+        await client.delete(recordingId)
+      } catch (error) {
+        setListErrorText(error instanceof Error ? error.message : String(error))
+        return false
+      }
+      setRecordings((current) => current.filter((recording) => recording.recordingId !== recordingId))
+      void loadRecordings()
+      return true
+    },
+    [client, loadRecordings],
+  )
+
+  return { deleteRecording, groupedRecordings, isLoading, listErrorText, loadRecordings, loadedAt, query, recordings, setQuery }
 }
 
 function RecordingsWindowContent({ client }: { readonly client: RecordingsClient }) {
@@ -624,6 +668,18 @@ export function RecordingsTimeline({
     if (isVisible && !wasVisible.current) void loadRecordings()
     wasVisible.current = isVisible
   }, [isVisible, loadRecordings])
+  // The server publishes no recording events; while on screen, the timeline
+  // reads itself again so a recording started or finished elsewhere appears.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!isVisible) return
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+      void loadRecordings()
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [isVisible, loadRecordings])
+  const updatedLabel = library.loadedAt === undefined ? undefined : updatedAgo(library.loadedAt, Math.max(now, library.loadedAt))
 
   return (
     <div className="recordings-home" data-terminay-recordings-timeline="true">
@@ -633,6 +689,8 @@ export function RecordingsTimeline({
         isLoading={library.isLoading}
         onQueryChange={library.setQuery}
         onRefresh={() => void loadRecordings()}
+        onDelete={(recordingId) => void library.deleteRecording(recordingId)}
+        updatedLabel={updatedLabel}
         onSelect={(recordingId) => {
           const recording = recordings.find((candidate) => candidate.recordingId === recordingId)
           if (recording !== undefined) onOpen({ recordingId, title: getRecordingDisplayTitle(recording) })
@@ -667,6 +725,7 @@ export function RecordingReplay({
   useEffect(() => {
     let current = true
     setErrorText(null)
+    client.invalidate()
     void client.list().then(
       (result) => {
         if (!current) return
@@ -1200,30 +1259,35 @@ function RecordingsReplayPane({
         {errorText ? <div className="recordings-error" role="alert">{errorText}</div> : null}
         {isReplayLoading ? <div className="recordings-empty" role="status">Preparing replay…</div> : null}
         {replayWarning ? <div className="recordings-warning" role="status">{replayWarning}</div> : null}
-        <header className="recordings-detail-header">
-          <div>
-            <h2>{selectedRecording ? getRecordingDisplayTitle(selectedRecording) : replayIndex?.title ?? 'Select a recording'}</h2>
-            <p>
-              {selectedRecording ? `${formatDate(selectedRecording.startedAt)} · ${selectedRecording.cwdLabel ?? 'Unknown folder'}` : 'Choose a saved session to replay it.'}
-            </p>
+        <header className="home-section__header recordings-detail-header">
+          <div className="recordings-detail-header__text">
+            <h2 className="home-section__heading">
+              {selectedRecording ? getRecordingDisplayTitle(selectedRecording) : replayIndex?.title ?? 'Recording'}
+            </h2>
             {selectedRecording ? (
-              <p className="recordings-detail-path">
-                {selectedRecording.recordingState} · exit {selectedRecording.exitCode ?? 'unknown'} · {formatBytes(selectedRecording.bytesWritten)}
-              </p>
+              <p className="home-section__subheading">{replayDetail(selectedRecording)}</p>
             ) : null}
           </div>
           {selectedRecording ? (
             <div className="recordings-actions">
+              {selectedRecording.recordingState === 'completed' ? null : (
+                <span className={`recordings-page__pill recordings-page__pill--${selectedRecording.recordingState}`}>
+                  {selectedRecording.recordingState}
+                </span>
+              )}
               <button
                 type="button"
-                className="recordings-secondary-button"
-                onClick={() => void client.reveal(selectedRecording.recordingId)}
+                className="recordings-button"
+                onClick={() => void client.reveal(selectedRecording.recordingId).catch((error: unknown) => {
+                  setErrorText(error instanceof Error ? error.message : String(error))
+                })}
+                title="Show the .cast file on the server host"
               >
-                <ExternalLink size={15} />
+                <ExternalLink size={13} aria-hidden="true" />
                 Reveal
               </button>
-              <button type="button" className="recordings-secondary-button recordings-secondary-button--danger" onClick={() => void onDelete()}>
-                <Trash2 size={15} />
+              <button type="button" className="recordings-button recordings-button--danger" onClick={() => void onDelete()}>
+                <Trash2 size={13} aria-hidden="true" />
                 Delete
               </button>
             </div>

@@ -1,6 +1,6 @@
 import { type JsonValue } from "@terminay/protocol";
 import type { CommandOptions, QueryOptions } from "./types.js";
-import type { QueryCommandTransport } from "./queryCommand.js";
+import { ClientBinaryQueryUnavailableError, type BinaryQueryTransport, type QueryCommandTransport } from "./queryCommand.js";
 
 /** Stable operation names shared by local and remote recording adapters. */
 export const RECORDINGS_OPERATIONS = Object.freeze({
@@ -120,8 +120,29 @@ export class RecordingsClient {
     const start = boundedOffset(options.start, "start");
     const maxBytes = options.maxBytes === undefined ? undefined : boundedMaxBytes(options.maxBytes);
     const payload = { recordingId: id, ...(start === undefined ? {} : { start }), ...(maxBytes === undefined ? {} : { maxBytes }) };
+    // Replay content travels in the frame body: inline, the already-escaped
+    // asciicast text is escaped again in the header and can overflow its limit.
+    const response = await this.queryReplayBody({ ...payload, contentInBody: true }, queryOptions);
+    if (response !== undefined) {
+      const { result, body } = response;
+      if (!isRecord(result) || result.contentInBody !== true) return validateChunk(result);
+      if (body.byteLength > 1024 * 1024) throw new TypeError("recording replay result is invalid");
+      const { contentInBody: _contentInBody, ...metadata } = result;
+      return validateChunk({ ...metadata, content: utf8Decoder.decode(body) });
+    }
     const result = await this.transport.query<JsonValue>(RECORDINGS_OPERATIONS.replay, payload, queryOptions);
     return validateChunk(result);
+  }
+
+  private async queryReplayBody(payload: JsonValue, queryOptions: QueryOptions): Promise<{ readonly result: JsonValue; readonly body: Uint8Array } | undefined> {
+    const binary = this.transport as Partial<BinaryQueryTransport>;
+    if (typeof binary.queryWithBody !== "function") return undefined;
+    try {
+      return await binary.queryWithBody<JsonValue>(RECORDINGS_OPERATIONS.replay, payload, queryOptions);
+    } catch (error) {
+      if (error instanceof ClientBinaryQueryUnavailableError) return undefined;
+      throw error;
+    }
   }
 
   async start(sessionId: string, input: RecordingStartInput = {}, commandOptions: CommandOptions = {}): Promise<RecordingState> {
@@ -200,6 +221,8 @@ function validateItem(value: JsonValue): RecordingListItem {
   // letting that compatibility shape re-enter renderer state.
   return Object.freeze({ recordingId, sessionId, serverId: value.serverId, projectId: value.projectId, projectName: value.projectName, title: value.title, note: value.note, color: value.color, emoji: value.emoji, startedAt: value.startedAt, endedAt: value.endedAt, durationMs: value.durationMs, exitCode: value.exitCode, signal: value.signal, recordingState, capturedInput: value.capturedInput, inputPolicy, sensitiveInputPolicy, eventCount: value.eventCount, bytesWritten: value.bytesWritten, castSize: value.castSize, castAvailable: value.castAvailable, cwdLabel: value.cwdLabel, shellName: value.shellName, format: "asciicast", formatVersion: 3, errorMessage: value.errorMessage });
 }
+
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 function validateChunk(value: JsonValue): RecordingChunk {
   if (!isRecord(value) || typeof value.recordingId !== "string" || !safeUInt(value.start) || !safeUInt(value.nextOffset) || !safeUInt(value.totalSize) || typeof value.content !== "string" || value.content.length > 1024 * 1024 || typeof value.eof !== "boolean" || typeof value.incompleteTail !== "boolean" || value.nextOffset < value.start) throw new TypeError("recording replay result is invalid");

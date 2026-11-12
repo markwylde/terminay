@@ -1902,6 +1902,23 @@ export function createServerCoreComposition(
 	);
 	const recordingOperations = options.recordings?.operations();
 	if (options.recordings !== undefined) {
+		const recordingService = options.recordings.service;
+		recordingService.setDimensionResolver?.(
+			(sessionId) => terminal.getSession(sessionId)?.dimensions,
+		);
+		// Reported before the PTY redraws, so the cast places each size change
+		// ahead of the output drawn for it.
+		terminal.onResize((identity, dimensions) => {
+			try {
+				recordingService.appendResize(
+					identity.sessionId,
+					dimensions.cols,
+					dimensions.rows,
+				);
+			} catch {
+				// Recording is optional and cannot affect a PTY resize.
+			}
+		});
 		terminal.onEvent((event) => {
 			if (event.type === 'output' && !event.replay) {
 				options.recordings?.service.appendOutputBytes(
