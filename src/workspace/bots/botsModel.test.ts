@@ -12,6 +12,7 @@ import {
 	hasTerminayMcpAccess,
 	needsYou,
 	recoveryNotice,
+	startupSummary,
 	SESSION_ORIGIN_CHIPS,
 	SESSION_ORIGIN_FILTER_LABELS,
 	sessionOriginLabel,
@@ -161,15 +162,33 @@ test('initials and ages are short enough for a card', () => {
 
 test('Investigate failures reads as on unless a profile turns it off', () => {
 	assert.equal(investigatesFailures(bot('b', 'Bird')), true);
-	assert.equal(investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: true }), true);
-	assert.equal(investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: false }), false);
+	assert.equal(
+		investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: true }),
+		true,
+	);
+	assert.equal(
+		investigatesFailures({ ...bot('b', 'Bird'), investigateFailures: false }),
+		false,
+	);
 	assert.equal(hasTerminayMcpAccess(bot('b', 'Bird')), false);
-	assert.equal(hasTerminayMcpAccess({ ...bot('b', 'Bird'), terminayMcpAccess: true }), true);
-	assert.equal(hasTerminayMcpAccess({ ...bot('b', 'Bird'), terminayMcpAccess: false }), false);
+	assert.equal(
+		hasTerminayMcpAccess({ ...bot('b', 'Bird'), terminayMcpAccess: true }),
+		true,
+	);
+	assert.equal(
+		hasTerminayMcpAccess({ ...bot('b', 'Bird'), terminayMcpAccess: false }),
+		false,
+	);
 });
 
 test('failure investigations have their own filter, chip, label and title', () => {
-	assert.deepEqual(Object.keys(SESSION_ORIGIN_FILTER_LABELS), ['all', 'chat', 'trigger', 'run-now', 'failure']);
+	assert.deepEqual(Object.keys(SESSION_ORIGIN_FILTER_LABELS), [
+		'all',
+		'chat',
+		'trigger',
+		'run-now',
+		'failure',
+	]);
 	assert.equal(SESSION_ORIGIN_FILTER_LABELS.failure, 'Failure');
 	assert.equal(SESSION_ORIGIN_CHIPS.failure, 'Investigate');
 	const ref = {
@@ -181,22 +200,38 @@ test('failure investigations have their own filter, chip, label and title', () =
 		at: 1,
 		reason: 'spawn EAGAIN',
 	};
-	const one = session('i', 'running', { origin: { kind: 'failure', failures: [ref], overflow: 0 } });
-	const many = session('j', 'running', { origin: { kind: 'failure', failures: [ref, ref], overflow: 3 } });
+	const one = session('i', 'running', {
+		origin: { kind: 'failure', failures: [ref], overflow: 0 },
+	});
+	const many = session('j', 'running', {
+		origin: { kind: 'failure', failures: [ref, ref], overflow: 3 },
+	});
 	assert.equal(sessionOriginLabel(one.origin), 'Investigate failure');
 	assert.equal(sessionTitle(one), 'Investigate failure');
 	assert.equal(sessionTitle(many), 'Investigate failure (5 failures)');
-	const trigger = { kind: 'trigger' as const, triggerId: 't'.repeat(24), triggerName: 'Nightly', fireTime: 1 };
+	const trigger = {
+		kind: 'trigger' as const,
+		triggerId: 't'.repeat(24),
+		triggerName: 'Nightly',
+		fireTime: 1,
+	};
 	assert.equal(sessionOriginLabel(trigger), 'Trigger · Nightly');
-	assert.equal(sessionOriginLabel({ ...trigger, kind: 'run-now' }), 'Run now · Nightly');
+	assert.equal(
+		sessionOriginLabel({ ...trigger, kind: 'run-now' }),
+		'Run now · Nightly',
+	);
 	assert.equal(sessionOriginLabel({ kind: 'chat' }), 'Chat');
 });
 
 test('composer accepts PNG, JPEG, GIF and WebP up to 2 MiB and four per message', () => {
 	const img = (type: string, size = 10) => ({ type, size });
 	assert.deepEqual(
-		acceptChatImages(0, [img('image/png'), img('image/jpeg'), img('image/gif'), img('image/webp')])
-			.accepted.length,
+		acceptChatImages(0, [
+			img('image/png'),
+			img('image/jpeg'),
+			img('image/gif'),
+			img('image/webp'),
+		]).accepted.length,
 		4,
 	);
 	const text = acceptChatImages(0, [img('text/plain'), img('image/png')]);
@@ -205,11 +240,17 @@ test('composer accepts PNG, JPEG, GIF and WebP up to 2 MiB and four per message'
 	const big = acceptChatImages(0, [img('image/png', 2 * 1024 * 1024 + 1)]);
 	assert.deepEqual(big.accepted, []);
 	assert.match(big.refusal ?? '', /2 MiB/);
-	assert.equal(acceptChatImages(0, [img('image/png', 2 * 1024 * 1024)]).refusal, undefined);
+	assert.equal(
+		acceptChatImages(0, [img('image/png', 2 * 1024 * 1024)]).refusal,
+		undefined,
+	);
 	const fifth = acceptChatImages(4, [img('image/png')]);
 	assert.deepEqual(fifth.accepted, []);
 	assert.match(fifth.refusal ?? '', /at most 4/);
-	assert.equal(acceptChatImages(3, [img('image/png'), img('image/png')]).accepted.length, 1);
+	assert.equal(
+		acceptChatImages(3, [img('image/png'), img('image/png')]).accepted.length,
+		1,
+	);
 });
 
 test('a retry of the same content reuses its idempotency key', () => {
@@ -235,7 +276,10 @@ test('an environment that needs the user names the bot, the tone and the action'
 
 	// A missing container is created from the current image, so an outdated
 	// image changes nothing about what a not-created bot offers.
-	assert.equal(recoveryNotice('Codexia', 'not-created', true)?.kind, 'not-created');
+	assert.equal(
+		recoveryNotice('Codexia', 'not-created', true)?.kind,
+		'not-created',
+	);
 
 	const outdated = recoveryNotice('Codexia', 'stopped', true);
 	assert.equal(outdated?.kind, 'outdated');
@@ -245,4 +289,69 @@ test('an environment that needs the user names the bot, the tone and the action'
 	for (const state of ['running', 'stopped', 'starting', 'building'] as const)
 		assert.equal(recoveryNotice('Codexia', state, false), undefined);
 	assert.equal(recoveryNotice('Codexia', undefined, false), undefined);
+});
+
+test('startup attempts read as plain words', () => {
+	const attempt = {
+		stage: 'adapter-check',
+		temporary: true,
+		code: 'adapter-timeout',
+		at: 0,
+		cause: 'slow',
+	} as const;
+	const time = () => '10:00:30';
+	assert.equal(
+		startupSummary({ state: 'completed', dispatchedAt: 5, attempts: [] }),
+		null,
+	);
+	assert.equal(
+		startupSummary({
+			state: 'completed',
+			dispatchedAt: 5,
+			retryLimit: 3,
+			attempts: [attempt],
+		}),
+		'Started on attempt 2 of 4.',
+	);
+	assert.equal(
+		startupSummary(
+			{
+				state: 'running',
+				dispatchedAt: null,
+				retryLimit: 3,
+				retryAt: 30_000,
+				attempts: [attempt, attempt],
+			},
+			time,
+		),
+		'Retrying: attempt 3 of 4 at 10:00:30.',
+	);
+	assert.equal(
+		startupSummary({
+			state: 'failed',
+			dispatchedAt: null,
+			retryLimit: 3,
+			attempts: [attempt, attempt, attempt, attempt],
+			startupFailure: {
+				stage: 'adapter-check',
+				temporary: true,
+				code: 'adapter-timeout',
+			},
+		}),
+		'Failed after 4 attempts.',
+	);
+	// A lasting final failure is not in the temporary history.
+	assert.equal(
+		startupSummary({
+			state: 'failed',
+			dispatchedAt: null,
+			attempts: [attempt],
+			startupFailure: {
+				stage: 'adapter-check',
+				temporary: false,
+				code: 'adapter-lasting',
+			},
+		}),
+		'Failed after 2 attempts.',
+	);
 });

@@ -120,10 +120,11 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0094](./0094-bots-attribute-engine-workloads-through-per-bot-proxies.md) | Bots attribute engine workloads through per-bot socket proxies | accepted, supersedes 0089 and 0092 (socket exposure and attribution only) | 2026-11-02 |
 | [0096](./0096-bots-use-terminay-owned-native-cli-drivers.md) | Bots use Terminay-owned native CLI drivers adapted from Atlas | accepted, supersedes ACP and adapter installation choices in part | 2026-11-04 |
 | [0098](./0098-project-reach-may-curate-workflow-templates-behind-an-asking-group.md) | Project reach may curate the server's workflow templates, behind a group that asks | accepted, supersedes ADR-0072 in part | 2026-11-04 |
-| [0099](./0099-a-bot-is-woken-by-its-own-failures-never-by-a-failures-failure.md) | A bot is woken by its own failures, never by a failure's failure | accepted | 2026-11-06 |
+| [0099](./0099-a-bot-is-woken-by-its-own-failures-never-by-a-failures-failure.md) | A bot is woken by its own failures, never by a failure's failure | accepted (partly superseded by 0109) | 2026-11-06 |
 | [0100](./0100-a-notification-belongs-to-one-terminal-or-one-bot.md) | A notification belongs to one terminal or one bot | accepted, supersedes 0061 in part | 2026-11-06 |
 | [0101](./0101-the-home-overview-layout-is-a-server-setting.md) | The Home overview layout is a server setting | accepted | 2026-11-06 |
 | [0104](./0104-a-notification-is-acknowledged-only-by-what-the-user-does.md) | A notification is acknowledged only by what the user does | accepted | 2026-11-11 |
 | [0105](./0105-a-launcher-may-start-an-agent-with-a-user-confirmed-initial-prompt.md) | A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents | accepted, supersedes 0081 | 2026-11-11 |
 | [0106](./0106-forge-pull-requests-and-issues-come-from-pull-based-on-demand-forge-sources.md) | Forge pull requests and issues come from pull-based, on-demand forge sources; Terminay renders and joins them | accepted | 2026-11-11 |
 | [0108](./0108-every-server-host-composes-one-mcp-host-with-no-opt-outs.md) | Every server host composes one MCP host, and no host can opt out of approvals, app windows or workspace view | accepted | 2026-11-11 |
+| [0109](./0109-terminay-reports-execution-failures-as-facts-and-the-bot-judges-them.md) | Terminay reports execution failures as facts, retries only before task hand-over, and the bot judges what they mean | accepted, supersedes 0099 in part | 2026-11-11 |

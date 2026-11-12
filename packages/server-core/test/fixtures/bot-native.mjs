@@ -11,7 +11,7 @@ if (process.env.FAKE_IGNORE_EOF === '1') {
 	port1.on('message', () => {});
 }
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
-async function postReply() {
+async function postReply(needsHuman = false) {
 	if (
 		!process.env.TERMINAY_RUNTIME_SOCKET ||
 		process.env.FAKE_MCP_DISCONNECTED === '1'
@@ -30,21 +30,48 @@ async function postReply() {
 				},
 			},
 			{ method: 'tools/list' },
-			{
+			needsHuman
+				? {
+						method: 'tools/call',
+						params: { name: 'triggers_list', arguments: {} },
+					}
+				: {
+						method: 'tools/call',
+						params: {
+							name: 'chat_post',
+							arguments: { text: 'secret', key: 'fixture-reply' },
+						},
+					},
+		];
+		// A trigger execution that needs a human reports it with the revision it read.
+		if (needsHuman)
+			requests.push((listed) => ({
 				method: 'tools/call',
 				params: {
-					name: 'chat_post',
-					arguments: { text: 'secret', key: 'fixture-reply' },
+					name: 'outcome_report',
+					arguments: {
+						disposition: 'needs-human',
+						reason: 'The support portal refused the login.',
+						action: 'Add the support portal password to the bot’s secrets',
+						revision: listed.revision,
+						key: 'fixture-needs-human',
+					},
 				},
-			},
-		];
+			}));
+		let previous = null;
 		let index = 0,
 			buffer = '';
 		const next = () =>
 			socket.write(
 				`${JSON.stringify({
 					token: env.TERMINAY_RUNTIME_TOKEN,
-					message: { jsonrpc: '2.0', id: index + 1, ...requests[index] },
+					message: {
+						jsonrpc: '2.0',
+						id: index + 1,
+						...(typeof requests[index] === 'function'
+							? requests[index](previous)
+							: requests[index]),
+					},
 				})}\n`,
 			);
 		socket.on('error', reject);
@@ -55,6 +82,12 @@ async function postReply() {
 			while (at >= 0) {
 				const result = JSON.parse(buffer.slice(0, at));
 				buffer = buffer.slice(at + 1);
+				const text = result.result?.content?.[0]?.text;
+				try {
+					previous = text ? JSON.parse(text) : null;
+				} catch {
+					previous = null;
+				}
 				if (result.error) {
 					socket.destroy();
 					reject(Error(result.error.message));
@@ -160,7 +193,7 @@ lines.on('line', async (line) => {
 			});
 		}
 		if (prompt.includes('hold')) return;
-		await postReply();
+		await postReply(prompt.includes('fixture-portal-refused'));
 		result();
 	}
 });

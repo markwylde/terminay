@@ -19,6 +19,7 @@ export function socketError(error: unknown): EngineCommandError {
 				? 'not-installed'
 				: 'not-running',
 		'engine socket unavailable',
+		typeof code === 'string' ? { errno: code } : {},
 	);
 }
 export function httpError(status: number): EngineCommandError {

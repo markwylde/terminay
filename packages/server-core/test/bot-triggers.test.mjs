@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { BotCleanupError } from '../dist/botService/agentProcess.js';
 import { SourceRunError } from '../dist/botService/sourceRunner.js';
+import { EngineCommandError } from '../dist/botService/index.js';
 import {
 	AutomationRepository,
 	AutomationRunLog,
@@ -158,6 +159,7 @@ async function setup(t, options = {}) {
 	const service = new BotService(bots, sessions, memories, {
 		now: () => time.now,
 		sources: options.sources,
+		...(options.hooks ?? {}),
 		agents: {
 			botAgentContributions: () => [
 				{ extensionId: 'fake', contribution: agent },
@@ -1336,8 +1338,18 @@ for (const [label, stats, error, cause] of [
 		'The bot container has run out of processes (1020 of 1024). Restart the bot container.',
 		'processes',
 	],
-	['below the process limit', { PIDs: 10, PidsLimit: 1024 }, 'The agent could not start a process (EAGAIN).', null],
-	['without engine stats', new Error('stats down'), 'The agent could not start a process (EAGAIN).', null],
+	[
+		'below the process limit',
+		{ PIDs: 10, PidsLimit: 1024 },
+		'The agent could not start a process (EAGAIN).',
+		null,
+	],
+	[
+		'without engine stats',
+		new Error('stats down'),
+		'The agent could not start a process (EAGAIN).',
+		null,
+	],
 ])
 	test(`a condition command that cannot spawn ${label} records the classified health error and cause`, async (t) => {
 		const sources = {
@@ -1353,7 +1365,9 @@ for (const [label, stats, error, cause] of [
 		const trigger = r.triggers.create(r.bot.id, commandDraft());
 		await r.time.advance(start + MINUTE, r.engine);
 		await flush();
-		const health = r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health;
+		const health = r.triggers
+			.list(r.bot.id)
+			.triggers.find((x) => x.id === trigger.id).health;
 		assert.equal(health.state, 'failed');
 		assert.equal(health.error, error);
 		assert.equal(health.cause ?? null, cause);
@@ -1370,7 +1384,9 @@ test('a condition that fails for an ordinary reason has no cause', async (t) => 
 	const trigger = r.triggers.create(r.bot.id, commandDraft());
 	await r.time.advance(start + MINUTE, r.engine);
 	await flush();
-	const health = r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health;
+	const health = r.triggers
+		.list(r.bot.id)
+		.triggers.find((x) => x.id === trigger.id).health;
 	assert.equal(health.error, 'poll.sh exited 1');
 	assert.equal(health.cause ?? null, null);
 });
@@ -1384,11 +1400,14 @@ test('a firing that cannot start records the structured cause on the firing and 
 	r.bots.save({ ...r.bots.get(r.bot.id), signIn: { kind: 'none' } });
 	await r.time.advance(start + 5 * MINUTE, r.engine);
 	await flush();
-	const firing = r.triggers.firings(r.bot.id).find((f) => f.triggerId === trigger.id);
+	const firing = r.triggers
+		.firings(r.bot.id)
+		.find((f) => f.triggerId === trigger.id);
 	assert.equal(firing.outcome, 'failed');
 	assert.equal(firing.cause, 'agent');
 	assert.equal(
-		r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health.cause,
+		r.triggers.list(r.bot.id).triggers.find((x) => x.id === trigger.id).health
+			.cause,
 		'agent',
 	);
 });
@@ -1426,8 +1445,18 @@ test('a condition failure episode wakes the bot once until a check succeeds', as
 	assert.equal(investigations(r).length, 1);
 	const [ref] = investigations(r)[0].origin.failures;
 	assert.deepEqual(
-		{ kind: ref.kind, triggerId: ref.triggerId, triggerName: ref.triggerName, reason: ref.reason },
-		{ kind: 'condition', triggerId: trigger.id, triggerName: 'Nightly', reason: 'poll.sh exited 1' },
+		{
+			kind: ref.kind,
+			triggerId: ref.triggerId,
+			triggerName: ref.triggerName,
+			reason: ref.reason,
+		},
+		{
+			kind: 'condition',
+			triggerId: trigger.id,
+			triggerName: 'Nightly',
+			reason: 'poll.sh exited 1',
+		},
 	);
 	await finish(r, investigations(r)[0].id);
 	// failed → checking → failed is one episode.
@@ -1451,7 +1480,12 @@ test('a restart during a condition failure episode does not wake the bot again',
 	const root = mkdtempSync(join(tmpdir(), 'bot-triggers-episode-'));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 	const s = switchable();
-	const first = await setup(t, { root, keepRoot: true, sources: s.sources, autoComplete: true });
+	const first = await setup(t, {
+		root,
+		keepRoot: true,
+		sources: s.sources,
+		autoComplete: true,
+	});
 	const trigger = first.triggers.create(first.bot.id, commandDraft());
 	await first.time.advance(start + MINUTE, first.engine);
 	await settle(first);
@@ -1459,7 +1493,13 @@ test('a restart during a condition failure episode does not wake the bot again',
 	first.triggers.stop();
 	first.engine.stop();
 	await first.service.shutdown();
-	const second = await setup(t, { root, keepRoot: true, sources: s.sources, at: start + 2 * MINUTE, autoComplete: true });
+	const second = await setup(t, {
+		root,
+		keepRoot: true,
+		sources: s.sources,
+		at: start + 2 * MINUTE,
+		autoComplete: true,
+	});
 	await second.time.advance(start + 4 * MINUTE, second.engine);
 	await settle(second);
 	assert.equal(healthOf(second, trigger).state, 'failed');
@@ -1507,7 +1547,9 @@ test('a failed trigger execution wakes the bot once, naming the execution and tr
 	const trigger = r.triggers.create(r.bot.id, draft());
 	await r.time.advance(start + 5 * MINUTE, r.engine);
 	await flush();
-	const run = r.sessions.list(r.bot.id).find((s) => s.origin.kind === 'trigger');
+	const run = r.sessions
+		.list(r.bot.id)
+		.find((s) => s.origin.kind === 'trigger');
 	r.sessions.patch(run.id, {
 		state: 'failed',
 		reason: 'script.sh: line 3: jq: not found',
@@ -1551,7 +1593,10 @@ test('an engine error while ending a completed trigger turn does not block later
 		r.time.clock,
 		() => r.time.now,
 	).get(first.id);
-	assert.match(stored.runnerOutput, /Cleanup failed: .*container process failed/);
+	assert.match(
+		stored.runnerOutput,
+		/Cleanup failed: .*container process failed/,
+	);
 	assert.equal(stored.state, 'completed');
 	assert.ok(
 		logged.some(
@@ -1639,7 +1684,10 @@ test('three consecutive cleanup failures block the bot without waking a failure 
 	await r.time.advance(start + 20 * MINUTE, r.engine);
 	await flush();
 	assert.equal(r.turns.length, 3, 'the fourth firing never reached the agent');
-	await assert.rejects(r.service.send(r.bot.id, 'hello?'), /could not be cleaned up/);
+	await assert.rejects(
+		r.service.send(r.bot.id, 'hello?'),
+		/could not be cleaned up/,
+	);
 	assert.equal(r.turns.length, 3, 'a chat message never reached the agent');
 	// The engine recovers: the next message retries the cleanup and runs.
 	r.driver.exec = exec;
@@ -1728,9 +1776,12 @@ function interrupted(stderr = '', exitCode = 1, cleaned = true) {
 	return error;
 }
 const ended = (outcome, message, exitCode = null) =>
-	Object.assign(new SourceRunError(outcome, message, { exitCode, stderr: '' }), {
-		cleaned: true,
-	});
+	Object.assign(
+		new SourceRunError(outcome, message, { exitCode, stderr: '' }),
+		{
+			cleaned: true,
+		},
+	);
 // Each check takes the next planned outcome: an Error to throw, a function to
 // await, or (when the plan is empty) a successful empty observation.
 function planned(outcomes) {
@@ -1850,7 +1901,10 @@ test('a trigger test is never retried', async (t) => {
 });
 
 for (const [label, act] of [
-	['the trigger is disabled', (r, id) => r.triggers.enable(r.bot.id, id, false)],
+	[
+		'the trigger is disabled',
+		(r, id) => r.triggers.enable(r.bot.id, id, false),
+	],
 	['the trigger is deleted', (r, id) => r.triggers.remove(r.bot.id, id)],
 	['the bot is disabled', (r) => r.service.enableBot(r.bot.id, false)],
 	[
@@ -2044,4 +2098,380 @@ test('a once trigger reports disabled health after it fires', async (t) => {
 	await settle(r);
 	assert.equal(r.bots.trigger(r.bot.id, once.id).enabled, false);
 	assert.equal(healthOf(r, once).state, 'disabled');
+});
+
+// --- bot-failure-resilience (ADR-0109) ---
+
+/** Makes the terminay_bot adapter check fail with an engine deadline `times` times. */
+function slowAdapter(r, times = Infinity) {
+	const exec = r.driver.exec.bind(r.driver);
+	const state = { checks: 0, failures: times };
+	r.driver.exec = async (container, args, options) => {
+		if (args[0] === '/usr/local/bin/terminay-bot-mcp') {
+			state.checks++;
+			if (state.failures-- > 0)
+				throw new EngineCommandError('deadline', 'engine command timed out');
+		}
+		return exec(container, args, options);
+	};
+	return state;
+}
+const settled = async (r, id, states = ['failed', 'stopped', 'completed']) => {
+	for (let i = 0; i < 400 && !states.includes(r.sessions.get(id).state); i++)
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	return r.sessions.get(id);
+};
+const handedOver = async (r, id) => {
+	for (let i = 0; i < 400 && r.sessions.get(id).dispatchedAt == null; i++)
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	return r.sessions.get(id);
+};
+const fast = { startupRetryDelays: [1, 1, 1], random: () => 0.5 };
+const BLOCKER_SESSION = 'f'.repeat(24);
+
+test('failure settings default to 3 retries and pause, and refuse values out of range', async (t) => {
+	const r = await setup(t);
+	const plain = r.triggers.create(r.bot.id, draft());
+	assert.equal(r.triggers.retryLimit(r.bot.id, plain.id), 3);
+	assert.equal(r.triggers.paused({ ...plain, blocker: { id: 'x' } }), true);
+	const set = r.triggers.create(
+		r.bot.id,
+		draft(undefined, { startupRetries: 0, onNeedsHuman: 'keep-running' }),
+	);
+	assert.equal(r.triggers.retryLimit(r.bot.id, set.id), 0);
+	assert.equal(set.onNeedsHuman, 'keep-running');
+	assert.throws(
+		() => r.triggers.create(r.bot.id, draft(undefined, { startupRetries: 5 })),
+		/Startup retries must be a whole number from 0 to 3/,
+	);
+	assert.throws(
+		() =>
+			r.triggers.create(r.bot.id, draft(undefined, { onNeedsHuman: 'ignore' })),
+		/When the bot needs you/,
+	);
+});
+
+test('the next due time is the schedule, and null for sources without one', async (t) => {
+	const r = await setup(t);
+	const every = r.triggers.create(r.bot.id, draft());
+	assert.equal(r.triggers.nextDue(every.id), start + 5 * MINUTE);
+	const cron = r.triggers.create(
+		r.bot.id,
+		draft({ kind: 'cron', cron: '0 * * * *' }),
+	);
+	assert.equal(r.triggers.nextDue(cron.id), start + HOUR);
+	const once = r.triggers.create(
+		r.bot.id,
+		draft({ kind: 'once', at: start + MINUTE }),
+	);
+	assert.equal(r.triggers.nextDue(once.id), start + MINUTE);
+	await r.time.advance(start + MINUTE, r.engine);
+	assert.equal(r.triggers.nextDue(once.id), null);
+	const off = r.triggers.create(r.bot.id, draft(undefined, { enabled: false }));
+	assert.equal(r.triggers.nextDue(off.id), null);
+	assert.equal(r.triggers.nextDue('z'.repeat(24)), null);
+});
+
+test('a paused trigger skips due firings, posts once, and resumes without catching up', async (t) => {
+	const r = await setup(t, { autoComplete: true });
+	const trigger = r.triggers.create(r.bot.id, draft());
+	assert.equal(
+		r.triggers.block(
+			r.bot.id,
+			trigger.id,
+			'Login refused',
+			'Add the portal password',
+			BLOCKER_SESSION,
+		),
+		true,
+	);
+	// A second report updates the wording without a second post.
+	assert.equal(
+		r.triggers.block(
+			r.bot.id,
+			trigger.id,
+			'Login still refused',
+			'Add the portal password',
+			BLOCKER_SESSION,
+		),
+		false,
+	);
+	const posts = () =>
+		r.service.messages
+			.list(r.bot.id, { limit: 25 })
+			.items.filter((m) => m.author === 'bot');
+	assert.equal(posts().length, 1);
+	const stored = r.triggers.list(r.bot.id).triggers[0];
+	assert.equal(stored.blocker.reason, 'Login still refused');
+	assert.equal(stored.blocker.notice, 'posted');
+	// Nothing is coming up while it waits.
+	const upcoming = () =>
+		r.triggers.upcoming(r.bot.id, r.time.now, r.time.now + 60 * MINUTE).firings
+			.length;
+	assert.equal(upcoming(), 0);
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	await r.time.advance(start + 10 * MINUTE, r.engine);
+	assert.equal(r.turns.length, 0);
+	assert.deepEqual(
+		r.triggers.firings(r.bot.id, trigger.id).map((f) => [f.outcome, f.reason]),
+		[
+			['skipped', 'waiting for you'],
+			['skipped', 'waiting for you'],
+		],
+	);
+	// Run now still works and keeps the blocker.
+	await r.triggers.runNow(r.bot.id, trigger.id);
+	await flush();
+	assert.equal(r.turns.length, 1);
+	assert.ok(r.triggers.list(r.bot.id).triggers[0].blocker);
+	await r.time.advance(start + 12 * MINUTE, r.engine);
+	r.triggers.resume(r.bot.id, trigger.id);
+	assert.equal(r.triggers.list(r.bot.id).triggers[0].blocker ?? null, null);
+	assert.ok(upcoming() > 0);
+	await r.time.advance(start + 15 * MINUTE, r.engine);
+	await flush();
+	assert.equal(r.turns.length, 2);
+	assert.equal(posts().length, 1);
+});
+
+test('a firing queued when the blocker is recorded is skipped and never starts', async (t) => {
+	const r = await setup(t);
+	for (let n = 0; n < 4; n++) await r.service.send(r.bot.id, 'hold');
+	const trigger = r.triggers.create(r.bot.id, draft());
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	assert.equal(r.service.queue.list(r.bot.id).length, 1);
+	r.triggers.block(
+		r.bot.id,
+		trigger.id,
+		'Login refused',
+		'Add the password',
+		BLOCKER_SESSION,
+	);
+	assert.equal(r.service.queue.list(r.bot.id).length, 0);
+	const [firing] = r.triggers.firings(r.bot.id, trigger.id);
+	assert.equal(firing.outcome, 'skipped');
+	assert.equal(firing.reason, 'waiting for you');
+});
+
+test('Keep running fires while waiting, read live; Disable keeps the blocker', async (t) => {
+	const r = await setup(t, { autoComplete: true });
+	const trigger = r.triggers.create(r.bot.id, draft());
+	r.triggers.block(
+		r.bot.id,
+		trigger.id,
+		'Login refused',
+		'Add the password',
+		BLOCKER_SESSION,
+	);
+	r.triggers.update(
+		r.bot.id,
+		trigger.id,
+		draft(undefined, { onNeedsHuman: 'keep-running' }),
+	);
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	await flush();
+	assert.equal(r.turns.length, 1);
+	r.triggers.enable(r.bot.id, trigger.id, false);
+	r.triggers.enable(r.bot.id, trigger.id, true);
+	assert.ok(r.triggers.list(r.bot.id).triggers[0].blocker);
+});
+
+test('a blocker survives restart and a notice pending at a crash is posted exactly once', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bot-triggers-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const first = await setup(t, { root, keepRoot: true });
+	const trigger = first.triggers.create(first.bot.id, draft());
+	// The crash: the blocker is durable but its message was never posted.
+	first.bots.putTrigger({
+		...first.bots.trigger(first.bot.id, trigger.id),
+		blocker: {
+			id: 'b'.repeat(24),
+			reason: 'Login refused',
+			action: 'Add the password',
+			sessionId: BLOCKER_SESSION,
+			at: start,
+			notice: 'pending',
+		},
+	});
+	first.triggers.stop();
+	for (let n = 0; n < 2; n++) {
+		const again = await setup(t, { root, keepRoot: true });
+		const posts = again.service.messages
+			.list(again.bot.id, { limit: 25 })
+			.items.filter((m) => m.author === 'bot');
+		assert.equal(posts.length, 1, `start ${n + 1}`);
+		const kept = again.triggers.list(again.bot.id).triggers[0].blocker;
+		assert.equal(kept.reason, 'Login refused');
+		assert.equal(kept.notice, 'posted');
+		again.triggers.stop();
+	}
+});
+
+test('a temporary adapter-check failure is retried and the second attempt starts work', async (t) => {
+	const r = await setup(t, { hooks: fast });
+	const adapter = slowAdapter(r, 1);
+	const { sessionId } = await r.service.send(r.bot.id, 'hello');
+	const s = await handedOver(r, sessionId);
+	assert.equal(adapter.checks, 2);
+	assert.equal(s.attempts.length, 1);
+	assert.equal(s.attempts[0].stage, 'adapter-check');
+	assert.equal(s.attempts[0].temporary, true);
+	assert.equal(s.startupFailure, null);
+	assert.match(
+		s.runnerOutput,
+		/Startup attempt 1 failed while checking the terminay_bot adapter: .*Retrying in 0s\./,
+	);
+	await finish(r, sessionId);
+	assert.equal((await settled(r, sessionId)).state, 'completed');
+});
+
+test('retries are exhausted after four attempts and the failure stays temporary, with no cause', async (t) => {
+	const r = await setup(t, { hooks: fast });
+	const adapter = slowAdapter(r);
+	const { sessionId } = await r.service.send(r.bot.id, 'hello');
+	const s = await settled(r, sessionId);
+	assert.equal(s.state, 'failed');
+	assert.equal(adapter.checks, 4);
+	assert.equal(s.attempts.length, 4);
+	assert.equal(s.dispatchedAt ?? null, null);
+	assert.deepEqual(s.startupFailure, {
+		stage: 'adapter-check',
+		temporary: true,
+		code: 'adapter-timeout',
+	});
+	assert.equal(s.cause ?? null, null);
+	assert.match(s.reason, /timed out.*overloaded/);
+	assert.doesNotMatch(s.reason, /[Rr]ebuild/);
+});
+
+test('a trigger with Startup retries 0 fails on its first temporary failure, snapshotted at creation', async (t) => {
+	const r = await setup(t, { hooks: fast });
+	const adapter = slowAdapter(r);
+	const trigger = r.triggers.create(
+		r.bot.id,
+		draft(undefined, { startupRetries: 0 }),
+	);
+	const firing = await r.triggers.runNow(r.bot.id, trigger.id);
+	// Editing the setting later does not change this execution.
+	r.triggers.update(
+		r.bot.id,
+		trigger.id,
+		draft(undefined, { startupRetries: 3 }),
+	);
+	const s = await settled(r, firing.sessionId);
+	assert.equal(s.state, 'failed');
+	assert.equal(s.retryLimit, 0);
+	assert.equal(adapter.checks, 1);
+});
+
+test('stopping an execution that waits for a retry ends it as stopped with no further attempt', async (t) => {
+	const r = await setup(t, {
+		hooks: { startupRetryDelays: [60_000], random: () => 0.5 },
+	});
+	const adapter = slowAdapter(r);
+	const { sessionId } = await r.service.send(r.bot.id, 'hello');
+	for (let i = 0; i < 400 && !r.sessions.get(sessionId).retryAt; i++)
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	assert.ok(r.sessions.get(sessionId).retryAt);
+	await r.service.stop(r.bot.id, sessionId);
+	const s = await settled(r, sessionId);
+	assert.equal(s.state, 'stopped');
+	assert.equal(adapter.checks, 1);
+});
+
+test('the next firing replaces an execution waiting for a retry', async (t) => {
+	const r = await setup(t, {
+		hooks: { startupRetryDelays: [60_000], random: () => 0.5 },
+	});
+	const adapter = slowAdapter(r, 1);
+	const trigger = r.triggers.create(r.bot.id, draft());
+	await r.time.advance(start + 5 * MINUTE, r.engine);
+	const [first] = r.triggers.firings(r.bot.id, trigger.id);
+	for (let i = 0; i < 400 && !r.sessions.get(first.sessionId).retryAt; i++)
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	await r.time.advance(start + 10 * MINUTE, r.engine);
+	const old = await settled(r, first.sessionId);
+	assert.equal(old.state, 'failed');
+	assert.match(old.reason, /[Rr]eplaced by the next firing/);
+	const second = r.triggers
+		.firings(r.bot.id, trigger.id)
+		.find((f) => f.id !== first.id);
+	assert.ok(second.sessionId);
+	await handedOver(r, second.sessionId);
+	assert.equal(adapter.checks, 2);
+});
+
+test('a startup slot is held until hand-over, and a waiting execution says so', async (t) => {
+	const r = await setup(t, { hooks: { ...fast, startupPermits: 1 } });
+	const exec = r.driver.exec.bind(r.driver);
+	let release;
+	const gate = new Promise((resolve) => {
+		release = resolve;
+	});
+	let checks = 0;
+	r.driver.exec = async (container, args, options) => {
+		if (args[0] === '/usr/local/bin/terminay-bot-mcp' && checks++ === 0)
+			await gate;
+		return exec(container, args, options);
+	};
+	const a = await r.service.send(r.bot.id, 'one');
+	const b = await r.service.send(r.bot.id, 'two');
+	for (
+		let i = 0;
+		i < 400 &&
+		!/Waiting for another bot execution/.test(
+			r.sessions.get(b.sessionId).runnerOutput,
+		);
+		i++
+	)
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	assert.match(
+		r.sessions.get(b.sessionId).runnerOutput,
+		/Waiting for another bot execution to finish starting/,
+	);
+	assert.equal(checks, 1);
+	release();
+	await handedOver(r, a.sessionId);
+	await handedOver(r, b.sessionId);
+	assert.equal(checks, 2);
+});
+
+test('a restart ends an execution waiting for a startup retry as interrupted and does not resume it', async (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bot-triggers-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const first = await setup(t, { root, keepRoot: true });
+	const s = first.sessions.create(
+		first.bot.id,
+		{ kind: 'chat' },
+		{
+			agentId: agent.id,
+			modelId: null,
+			signIn: { kind: 'none' },
+			approvalMode: 'autonomous',
+			instructions: '',
+			context: '',
+			maxTurnMs: 10000,
+		},
+	);
+	first.sessions.patch(s.id, {
+		state: 'running',
+		retryLimit: 3,
+		retryAt: start + 30_000,
+		attempts: [
+			{
+				stage: 'adapter-check',
+				temporary: true,
+				code: 'adapter-timeout',
+				at: start,
+				cause: 'timed out',
+			},
+		],
+	});
+	first.sessions.commit(s.id);
+	first.triggers.stop();
+	const again = await setup(t, { root, keepRoot: true });
+	const after = again.sessions.get(s.id);
+	assert.equal(after.state, 'interrupted');
+	assert.equal(after.retryAt, null);
+	assert.equal(after.attempts.length, 1);
 });

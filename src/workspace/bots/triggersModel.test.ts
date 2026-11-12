@@ -130,6 +130,8 @@ test('a trigger round-trips through the form', () => {
 			prompt: 'Summarise failures',
 			recovery: 'skip',
 			condition: { kind: 'every', intervalMs: 3 * 3_600_000 },
+			startupRetries: 3,
+			onNeedsHuman: 'pause',
 		},
 	});
 });
@@ -183,4 +185,59 @@ test('upcoming shows each trigger once at its next firing, marking repeats', () 
 			['daily', minute(90), false],
 		],
 	);
+});
+
+test('a trigger waiting for the user shows Needs you, unless it is disabled', () => {
+	const blocker = {
+		id: 'b'.repeat(24),
+		reason: 'Login refused',
+		action: 'Add the password',
+		sessionId: 's'.repeat(24),
+		at: 1,
+		notice: 'posted' as const,
+	};
+	assert.deepEqual(statusOf({ ...withHealth('healthy'), blocker }, true), {
+		label: 'Needs you',
+		tone: 'need',
+	});
+	assert.equal(
+		statusOf({ ...withHealth('healthy', false), blocker }, true).label,
+		'Disabled',
+	);
+	assert.equal(
+		statusOf({ ...withHealth('healthy'), blocker }, false).label,
+		'Disabled',
+	);
+});
+
+test('failure settings default to 3 and pause, and round-trip through the form', () => {
+	const form = emptyTriggerForm(0);
+	assert.equal(form.startupRetries, 3);
+	assert.equal(form.onNeedsHuman, 'pause');
+	const draft = formToDraft({
+		...form,
+		name: 'Tickets',
+		prompt: 'Check',
+		kind: 'every',
+		every: '5',
+		startupRetries: 0,
+		onNeedsHuman: 'keep-running',
+	});
+	assert.ok(draft.ok);
+	assert.equal(draft.draft.startupRetries, 0);
+	assert.equal(draft.draft.onNeedsHuman, 'keep-running');
+	const back = formFromTrigger(
+		{
+			...draft.draft,
+			id: 't'.repeat(24),
+			botId: 'b'.repeat(12),
+			condition: { kind: 'every', intervalMs: 300000, anchor: 0 },
+			evaluatedThrough: 0,
+			missedCount: 0,
+			missedLatest: null,
+		},
+		0,
+	);
+	assert.equal(back.startupRetries, 0);
+	assert.equal(back.onNeedsHuman, 'keep-running');
 });

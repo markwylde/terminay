@@ -15,6 +15,7 @@ export const BOT_OPERATIONS = Object.freeze({
 	sourceMemory: 'bots.triggers.memory',
 	resetSource: 'bots.triggers.reset',
 	retrySource: 'bots.triggers.retry',
+	resumeTrigger: 'bots.triggers.resume',
 	enableBot: 'bots.enable',
 	createTrigger: 'bots.triggers.create',
 	updateTrigger: 'bots.triggers.update',
@@ -129,9 +130,7 @@ export type BotTriggerOrigin = Extract<
 export function botTriggerOrigin(
 	origin: BotSessionOrigin,
 ): BotTriggerOrigin | null {
-	return origin.kind === 'trigger' || origin.kind === 'run-now'
-		? origin
-		: null;
+	return origin.kind === 'trigger' || origin.kind === 'run-now' ? origin : null;
 }
 export interface BotSessionSnapshot {
 	readonly agentId: string;
@@ -200,7 +199,65 @@ export interface BotSessionRecord {
 	readonly reason: string | null;
 	readonly cause?: BotFailureCause | null;
 	readonly recoveryMayHaveLostUpdates: boolean;
+	/** When the server handed the agent its task; null before hand-over. */
+	readonly dispatchedAt?: number | null;
+	/** Failed startup attempts, oldest first. History only. */
+	readonly attempts?: readonly BotStartupAttempt[];
+	/** Retries this execution may make, fixed when it was created. */
+	readonly retryLimit?: number;
+	/** When the next startup attempt is due, while waiting for it. */
+	readonly retryAt?: number | null;
+	/** The final failure, when the execution ended before hand-over. */
+	readonly startupFailure?: BotStartupFailure | null;
+	/** The outcome the execution reported with `outcome_report`. */
+	readonly outcome?: BotExecutionOutcome | null;
 }
+export type BotStartupStage =
+	| 'prepare'
+	| 'agent-check'
+	| 'relay'
+	| 'adapter-check'
+	| 'agent-launch';
+export type BotStartupCode =
+	| 'engine-deadline'
+	| 'engine-connection'
+	| 'relay-not-ready'
+	| 'adapter-timeout'
+	| 'adapter-temporary'
+	| 'adapter-lasting'
+	| 'adapter-missing'
+	| 'other';
+export interface BotStartupFailure {
+	readonly stage: BotStartupStage;
+	readonly temporary: boolean;
+	readonly code: BotStartupCode;
+}
+export interface BotStartupAttempt extends BotStartupFailure {
+	readonly at: number;
+	/** Redacted and cut to 256 bytes. */
+	readonly cause: string;
+}
+export type BotOutcomeDisposition = 'outside-control' | 'needs-human' | 'fixed';
+export interface BotExecutionOutcome {
+	readonly disposition: BotOutcomeDisposition;
+	readonly reason: string;
+	readonly action: string | null;
+	readonly triggerId: string | null;
+	readonly at: number;
+}
+/** Set by a `needs-human` outcome; cleared by Resume or a `fixed` outcome. */
+export interface BotTriggerBlocker {
+	readonly id: string;
+	readonly reason: string;
+	readonly action: string;
+	readonly sessionId: string;
+	readonly at: number;
+	/** Whether the one chat message for this blocker has been posted. */
+	readonly notice: 'pending' | 'posted';
+}
+export type BotNeedsHumanPolicy = 'pause' | 'keep-running';
+export const BOT_STARTUP_RETRIES_DEFAULT = 3;
+export const BOT_STARTUP_RETRIES_MAX = 3;
 export interface BotSession extends BotSessionRecord {
 	readonly updates: readonly JsonValue[];
 }
@@ -246,8 +303,14 @@ export interface BotTriggerDraft {
 	readonly condition:
 		| Exclude<BotTriggerCondition, { kind: 'every' }>
 		| { readonly kind: 'every'; readonly intervalMs: number };
+	/** 0–3; absent means 3. */
+	readonly startupRetries?: number;
+	/** Absent means `pause`. */
+	readonly onNeedsHuman?: BotNeedsHumanPolicy;
 }
 export interface BotTrigger extends Omit<BotTriggerDraft, 'condition'> {
+	/** Present while the trigger waits for the user. */
+	readonly blocker?: BotTriggerBlocker | null;
 	readonly generation?: string;
 	readonly health?: BotSourceHealth;
 	readonly unsupported?: string;

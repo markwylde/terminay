@@ -186,6 +186,22 @@
 	background: var(--bots-need-bg);
 	color: var(--bots-need);
 }
+/* A trigger waiting for the user: attention tone, readable body text. */
+.bots-note--need {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	background: var(--bots-need-bg);
+	color: var(--bots-fg);
+	border-left: 3px solid var(--bots-need);
+}
+.bots-note--need p {
+	margin: 0;
+}
+.bots-note--need strong {
+	color: var(--bots-need);
+}
 .bots-kv {
 	display: flex;
 	justify-content: space-between;
@@ -1109,4 +1125,16 @@ button.bots-build-step__toggle:hover {
 
 .bots-ui .bots-engine[hidden] {
 	display: none;
+}
+
+.bots-attempts__summary {
+	margin: 0 0 4px;
+	color: var(--bots-fg);
+}
+.bots-attempts {
+	margin: 0;
+	padding-left: 18px;
+	display: grid;
+	gap: 2px;
+	overflow-wrap: anywhere;
 }
