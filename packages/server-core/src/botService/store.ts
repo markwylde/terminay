@@ -42,6 +42,12 @@ export class BotBlockedError extends BotError {
 		this.failureCause = failureCause;
 	}
 }
+/** Work refused at admission for a stated reason, recorded as a skipped firing. */
+export class BotSkippedError extends BotError {
+	constructor(reason: string) {
+		super('conflict', reason);
+	}
+}
 export class BotImageBuildError extends BotError {
 	constructor() {
 		super('unavailable', 'bot image build failed');
@@ -161,7 +167,10 @@ function profile(value: unknown): BotProfile {
 				: typeof d.investigateFailures === 'boolean'
 					? d.investigateFailures
 					: (() => {
-							throw new BotError('validation', 'invalid investigate failures setting');
+							throw new BotError(
+								'validation',
+								'invalid investigate failures setting',
+							);
 						})(),
 		terminayMcpAccess:
 			d.terminayMcpAccess === undefined
@@ -169,7 +178,10 @@ function profile(value: unknown): BotProfile {
 				: typeof d.terminayMcpAccess === 'boolean'
 					? d.terminayMcpAccess
 					: (() => {
-							throw new BotError('validation', 'invalid Terminay MCP access setting');
+							throw new BotError(
+								'validation',
+								'invalid Terminay MCP access setting',
+							);
 						})(),
 		pinnedMemories: pins,
 		createdAt: d.createdAt as number,

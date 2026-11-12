@@ -291,6 +291,11 @@ test('6.1 trigger wire operations use binary bodies, expose firings/next times, 
 	assert.equal(history[0].outcome, 'completed');
 	assert.equal((await facade.triggers(r.bot.id)).triggers[0].enabled, false);
 	await facade.dismissMissedTriggers(r.bot.id, trigger.id);
+	// Resume clears a trigger that waits for the user, through the facade.
+	r.service.triggers.block(r.bot.id, trigger.id, 'Login refused', 'Add the password', 'f'.repeat(24));
+	assert.ok((await facade.triggers(r.bot.id)).triggers[0].blocker);
+	await facade.resumeTrigger(r.bot.id, trigger.id);
+	assert.equal((await facade.triggers(r.bot.id)).triggers[0].blocker ?? null, null);
 	await facade.deleteTrigger(r.bot.id, trigger.id);
 	assert.deepEqual((await facade.triggers(r.bot.id)).triggers, []);
 	await new Promise((resolve) => setImmediate(resolve));

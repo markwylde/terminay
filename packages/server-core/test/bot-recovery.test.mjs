@@ -82,7 +82,7 @@ test('chat MCP permission failure is Failed with adapter stderr, never Completed
   if(command[0]==='/usr/local/bin/terminay-bot-mcp') {
    assert.equal(options.user,'bot');
    options.onOutput?.('terminay-bot-mcp: runtime socket permission denied\n','stderr');
-   throw new EngineCommandError('not-running','container process failed');
+   throw new EngineCommandError('not-running','container process failed',{exitCode:69});
   }
   return exec(container,command,options);
  };
@@ -90,7 +90,8 @@ test('chat MCP permission failure is Failed with adapter stderr, never Completed
  const {sessionId}=await r.service.send(r.bot.id,'hello');
  await until(r.service,'changed',()=>r.sessions.get(sessionId).state==='failed');
  const session=r.sessions.get(sessionId);
- assert.match(session.reason,/MCP adapter could not connect/);
+ assert.match(session.reason,/adapter could not use its runtime socket/);
+ assert.doesNotMatch(session.reason,/[Rr]ebuild/);
  assert.match(session.runnerOutput,/runtime socket permission denied/);
  assert.equal(launches,0);
 });

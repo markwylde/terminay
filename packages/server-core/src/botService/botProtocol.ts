@@ -216,6 +216,9 @@ export function createBotOperations(service: BotService): OperationRegistries {
 			[op.retrySource]: command((d) =>
 				service.triggers.retry(bot(d), text(d.triggerId, 24, 'trigger id')),
 			),
+			[op.resumeTrigger]: command((d) =>
+				service.triggers.resume(bot(d), text(d.triggerId, 24, 'trigger id')),
+			),
 			[op.createTrigger]: command(async (d, r) => {
 				const trigger = await service.triggers.prepare(
 					bot(d),

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build a Nightly or Canary Desktop payload (ADR-0109). Linux runs this inside
+# Build a Nightly or Canary Desktop payload (ADR-0110). Linux runs this inside
 # the GNU/Linux floor image through run-in-linux-floor.sh (ADR-0077); macOS
 # runs it on its runner, where it signs; Windows runs it on its x64 runner.
 #

@@ -17,7 +17,7 @@ const execFileAsync = promisify(execFile);
 
 export const DEFAULT_REPOSITORY = 'markwylde/terminay';
 
-/** The two rolling channels, each one release track built from `main` (ADR-0109). */
+/** The two rolling channels, each one release track built from `main` (ADR-0110). */
 export type RollingChannel = 'main' | 'canary';
 
 /**

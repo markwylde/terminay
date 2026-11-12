@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Decides whether tonight's Nightly builds anything (ADR-0109).
+// Decides whether tonight's Nightly builds anything (ADR-0110).
 //
 // The nightly rolling release carries `build.json`, `{ "commit", "version" }`,
 // moved into place after everything else in a publication. When it names the

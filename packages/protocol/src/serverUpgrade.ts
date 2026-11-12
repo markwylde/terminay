@@ -20,7 +20,7 @@ export const SERVER_UPGRADE_OPERATIONS = Object.freeze({
 export const SERVER_UPGRADE_MODES = ['in-place', 'recreate'] as const;
 export type ServerUpgradeMode = (typeof SERVER_UPGRADE_MODES)[number];
 
-// `main` is the rolling Nightly and `canary` the rolling Canary (ADR-0109).
+// `main` is the rolling Nightly and `canary` the rolling Canary (ADR-0110).
 export const SERVER_UPGRADE_CHANNELS = ['tag', 'main', 'canary', 'source'] as const;
 export type ServerUpgradeChannel = (typeof SERVER_UPGRADE_CHANNELS)[number];
 

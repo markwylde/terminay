@@ -2653,7 +2653,7 @@ export function normalizeHomeDashboardSettings(
 /**
  * The update channel a stored value names. Any value that is not one of the
  * three reads as Stable. A stored `beta` reads as Nightly: Beta was replaced by
- * Nightly and Canary (ADR-0109), and installed Beta builds move to Nightly on
+ * Nightly and Canary (ADR-0110), and installed Beta builds move to Nightly on
  * first launch. The follow-up change `retire-beta-feed` removes that mapping.
  */
 export function normalizeUpdateChannel(

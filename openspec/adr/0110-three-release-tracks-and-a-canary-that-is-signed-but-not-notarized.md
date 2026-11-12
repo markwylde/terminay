@@ -1,4 +1,4 @@
-# ADR-0109: Publish three release tracks from `main`, with a canary that is signed but not notarized
+# ADR-0110: Publish three release tracks from `main`, with a canary that is signed but not notarized
 
 Status: accepted, supersedes ADR-0016 and ADR-0027 in part
 Date: 2026-11-11

@@ -22,7 +22,7 @@ export function releaseNoteLinkTarget(href: string | null): string | null {
 
 /**
  * The track a Nightly or Canary version was built for (`X.Y.Z-main.N.nightly`,
- * `X.Y.Z-main.N.canary`, ADR-0109), named in the What's new title. A stable
+ * `X.Y.Z-main.N.canary`, ADR-0110), named in the What's new title. A stable
  * release, offered on any channel, names no track.
  */
 export function releaseTrackLabel(version: string | null): string | null {

@@ -1,6 +1,6 @@
 name: Canary
 
-# One Canary build per push to `main` (ADR-0109), published to the rolling
+# One Canary build per push to `main` (ADR-0110), published to the rolling
 # `canary-latest` prerelease. macOS is signed but never notarized: this caller
 # passes no notarization credential to the build, so Apple sees nothing from a
 # push however often `main` moves.

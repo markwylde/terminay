@@ -28,7 +28,7 @@ compiler.
 
 Three channels publish the same three files per architecture, one for each
 release track
-([ADR-0109](../../openspec/adr/0109-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md)):
+([ADR-0110](../../openspec/adr/0110-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md)):
 
 - **`tag`** — a tagged Stable release. Assets are named for the version and
   are immutable: a published name is never replaced.

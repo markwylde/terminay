@@ -9,7 +9,7 @@ if (!rawVersion) {
 }
 
 // A tag releases x.y.z. A Nightly or Canary builds the next stable version as
-// x.y.z-main.<commit count>.<track> (ADR-0109), and nothing else.
+// x.y.z-main.<commit count>.<track> (ADR-0110), and nothing else.
 if (!/^\d+\.\d+\.\d+(?:-main\.[1-9]\d*\.(?:nightly|canary))?$/.test(rawVersion)) {
   console.error(`Invalid semantic version: ${rawVersion}`)
   process.exit(1)

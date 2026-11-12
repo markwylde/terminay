@@ -3,7 +3,7 @@
 Terminay publishes its standalone server OCI image for every version the
 project publishes: each semver `v*.*.*` release tag, and each Nightly and each
 Canary build of the default branch
-([ADR-0109](../../openspec/adr/0109-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md)).
+([ADR-0110](../../openspec/adr/0110-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md)).
 One manifest is pushed under two names, so both resolve to the same manifest
 digest:
 

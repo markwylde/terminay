@@ -12,7 +12,7 @@ const REQUIRED_BINS = {
 // `source` is a build the operator made on their own machine from a branch or
 // commit. It carries no publisher signature, so it is never a channel the
 // release pipeline produces — only one `terminay daemon install <ref>` writes.
-// `main` is the Nightly's rolling channel and `canary` the Canary's (ADR-0109).
+// `main` is the Nightly's rolling channel and `canary` the Canary's (ADR-0110).
 export const RELEASE_CHANNELS = Object.freeze(['tag', 'main', 'canary', 'source'])
 export const ARTIFACT_ARCHITECTURES = Object.freeze(['x64', 'arm64'])
 

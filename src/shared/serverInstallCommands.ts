@@ -14,7 +14,7 @@ const VOLUMES =
 	'-v terminay-data:/var/lib/terminay -v terminay-home:/home/terminay';
 
 const STABLE = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
-// A Nightly or Canary build: `X.Y.Z-main.<commit count>.<track>` (ADR-0109).
+// A Nightly or Canary build: `X.Y.Z-main.<commit count>.<track>` (ADR-0110).
 const PRERELEASE =
 	/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-main\.[1-9]\d*\.(nightly|canary)$/u;
 /** What an unversioned development build reports. */

@@ -1,6 +1,6 @@
 name: Rolling Prerelease
 
-# One Nightly or Canary build of `main` (ADR-0109). canary.yml calls this on
+# One Nightly or Canary build of `main` (ADR-0110). canary.yml calls this on
 # every push to `main`; nightly.yml calls it once a night when `main` has moved.
 # The callers own the triggers and the concurrency group. The track decides the
 # rolling release, the asset names, the metadata channel, the server channel,

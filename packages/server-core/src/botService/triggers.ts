@@ -1,12 +1,15 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import type {
-	BotSourceTest,
-	BotTrigger,
-	BotTriggerDraft,
-	BotTriggerFiring,
-	BotUpcomingCursor,
-	BotUpcomingPage,
+import {
+	BOT_STARTUP_RETRIES_DEFAULT,
+	botTriggerOrigin,
+	type BotSourceTest,
+	type BotTrigger,
+	type BotTriggerBlocker,
+	type BotTriggerDraft,
+	type BotTriggerFiring,
+	type BotUpcomingCursor,
+	type BotUpcomingPage,
 } from '@terminay/protocol';
 import {
 	type EventFanout,
@@ -36,17 +39,24 @@ import {
 } from './sourceValidation.js';
 import {
 	BotBlockedError,
+	BotSkippedError,
 	BotError,
 	type BotStore,
 	object,
 	text,
 } from './store.js';
 import {
+	failureSettings,
 	storedTrigger,
 	triggerCondition,
 	triggerId,
 	triggerTime,
 } from './triggerState.js';
+
+const WAITING_FOR_YOU = 'waiting for you';
+function blockerMessage(trigger: string, reason: string, action: string) {
+	return `The trigger "${trigger}" needs you: ${reason}\n\nWhat to do: ${action}\n\nIt runs again when you choose Resume on the trigger, or when I confirm the fix.`;
+}
 
 /** Server-owned admission and schedules. Observations run only in bot containers. */
 export class BotTriggers {
@@ -65,6 +75,8 @@ export class BotTriggers {
 	private retries = new Map<string, ReturnType<typeof setTimeout>>();
 	private attempts = new Map<string, number>();
 	private draining = new Set<string>();
+	/** Firings waiting for a previous execution's in-progress attempt. */
+	private finishing = new Map<string, string>();
 	private checks = new Map<string, Promise<void>>();
 	private started = false;
 	private stopped = false;
@@ -202,6 +214,7 @@ export class BotTriggers {
 				});
 		}
 		this.reconcileSources();
+		this.postPendingBlockers();
 		for (const b of this.store.list()) {
 			void this.drain(b.id);
 			for (const t of this.store.triggers(b.id))
@@ -761,6 +774,20 @@ export class BotTriggers {
 					// Accepted once-trigger events remain valid after automatic disable.
 					if (!this.store.firings(botId).some((f) => f.id === event.id))
 						this.recordPending(trigger, event);
+					if (event.origin === 'trigger' && this.paused(trigger)) {
+						const queued = this.service.queue
+							.list(botId)
+							.find((i) => i.sessionId === event.sessionId);
+						if (queued)
+							this.service.queue.cancel(botId, queued.id, WAITING_FOR_YOU);
+						const session = this.service.sessions
+							.list(botId)
+							.find((s) => s.id === event.sessionId);
+						if (!session || queued || session.state === 'queued') {
+							this.skipEvent(botId, trigger, event, WAITING_FOR_YOU, session);
+							continue;
+						}
+					}
 					const existing = this.service.sessions
 						.list(botId)
 						.find((s) => s.id === event.sessionId);
@@ -782,16 +809,54 @@ export class BotTriggers {
 							origin: event.origin,
 							sessionId: existing.id,
 							outcome:
-								existing.state === 'completed'
-									? 'completed'
-									: existing.state === 'queued'
-										? 'pending'
-										: existing.state === 'running'
-											? 'running'
-											: 'failed',
+								existing.firing === 'skipped'
+									? 'skipped'
+									: existing.state === 'completed'
+										? 'completed'
+										: existing.state === 'queued'
+											? 'pending'
+											: existing.state === 'running'
+												? 'running'
+												: 'failed',
 							reason: existing.reason,
 						});
 						continue;
+					}
+					if (event.origin === 'trigger') {
+						// An execution of this trigger that has not handed over its task
+						// is its pending firing (ADR-0109).
+						const waitingOn = this.finishing.get(event.id);
+						const prior =
+							waitingOn ??
+							this.service.sessions
+								.list(botId)
+								.find(
+									(s) =>
+										s.id !== event.sessionId &&
+										botTriggerOrigin(s.origin)?.triggerId === id &&
+										this.service.startingWork(s.id),
+								)?.id;
+						if (prior) {
+							const verdict = waitingOn
+								? this.service.startingWork(prior)
+									? 'finishing'
+									: 'ended'
+								: this.service.replaceStart(prior);
+							if (verdict === 'finishing') {
+								// Its attempt finishes first; a session change drains again.
+								this.finishing.set(event.id, prior);
+								byTrigger.delete(id);
+								continue;
+							}
+							this.finishing.delete(event.id);
+							if (
+								verdict === 'ended' &&
+								this.service.sessions.get(prior).dispatchedAt != null
+							) {
+								this.skipEvent(botId, trigger, event, 'bot busy');
+								continue;
+							}
+						}
 					}
 					const context = {
 						eventId: event.id,
@@ -813,11 +878,23 @@ export class BotTriggers {
 								triggerName: event.triggerName,
 								fireTime: event.dueAt,
 							},
-							() =>
-								!this.stopped &&
-								this.store.get(botId).enabled !== false &&
-								!!this.find(id) &&
-								this.observations.pending(botId).some((e) => e.id === event.id),
+							() => {
+								const current = this.find(id);
+								if (
+									current &&
+									event.origin === 'trigger' &&
+									this.paused(current)
+								)
+									return WAITING_FOR_YOU;
+								return (
+									!this.stopped &&
+									this.store.get(botId).enabled !== false &&
+									!!current &&
+									this.observations
+										.pending(botId)
+										.some((e) => e.id === event.id)
+								);
+							},
 							event.sessionId,
 						);
 						if (this.service.sessions.get(result.sessionId).state !== 'queued')
@@ -840,6 +917,10 @@ export class BotTriggers {
 						)
 							return;
 						if (error instanceof BotError && error.code === 'resource') return;
+						if (error instanceof BotSkippedError) {
+							this.skipEvent(botId, trigger, event, error.message);
+							continue;
+						}
 						const reason =
 							error instanceof Error &&
 							error.message === 'bot restart reconciliation is not complete'
@@ -881,6 +962,166 @@ export class BotTriggers {
 			this.draining.delete(botId);
 			this.syncFirings(botId);
 		}
+	}
+	/** Records a firing as skipped and removes it from the pending events. */
+	private skipEvent(
+		botId: string,
+		t: BotTrigger,
+		event: PendingSourceEvent,
+		reason: string,
+		session?: { id: string },
+	): void {
+		this.store.putFiring({
+			id: event.id,
+			botId,
+			triggerId: t.id,
+			triggerName: event.triggerName,
+			firedAt: event.dueAt,
+			origin: event.origin,
+			sessionId: session?.id ?? null,
+			outcome: 'skipped',
+			reason,
+		});
+		this.observations.delivered(botId, event.id);
+	}
+	/** The trigger's next due firing after now, or null when none is scheduled
+	 * (sse/files/event sources, a disabled trigger, or a once already past). */
+	nextDue(id: string): number | null {
+		const t = this.find(id);
+		if (!t || !this.active(t)) return null;
+		const schedule = asSchedule(t.condition);
+		if (!schedule) return null;
+		const from = Math.max(this.now(), t.evaluatedThrough);
+		return (
+			previewSchedule(schedule, from, 2, this.timeZone, 60000).find(
+				(at) => at > this.now(),
+			) ?? null
+		);
+	}
+	/** Startup retries for an execution this trigger creates now. */
+	retryLimit(botId: string, id: string): number {
+		const t = this.store
+			.triggers(botId)
+			.find((candidate) => candidate.id === id);
+		return t?.startupRetries ?? BOT_STARTUP_RETRIES_DEFAULT;
+	}
+	/** Paused: waiting for the user and set to Pause this trigger (read live). */
+	paused(t: BotTrigger): boolean {
+		return !!t.blocker && (t.onNeedsHuman ?? 'pause') === 'pause';
+	}
+	/**
+	 * Records that the user owes this trigger an action, or updates the reason
+	 * and action of an existing blocker without a second post. Returns whether
+	 * a new blocker was recorded.
+	 */
+	block(
+		botId: string,
+		id: string,
+		reason: string,
+		action: string,
+		sessionId: string,
+	): boolean {
+		const t = this.store.trigger(botId, triggerId(id));
+		const fresh = !t.blocker;
+		const blocker: BotTriggerBlocker = t.blocker
+			? { ...t.blocker, reason, action }
+			: {
+					id: randomBytes(12).toString('hex'),
+					reason,
+					action,
+					sessionId,
+					at: this.now(),
+					notice: 'pending',
+				};
+		this.store.putTrigger({ ...t, blocker });
+		this.changed(botId, id);
+		if (fresh) {
+			this.skipPaused(botId, id);
+			this.postBlocker(botId, id);
+		}
+		return fresh;
+	}
+	/** Resume, or the bot reporting `fixed`: the next due firing runs again. */
+	unblock(botId: string, id: string): void {
+		const t = this.store.trigger(botId, triggerId(id));
+		if (!t.blocker) return;
+		this.store.putTrigger({
+			...t,
+			blocker: null,
+			// No catch-up for firings skipped while it waited.
+			evaluatedThrough: Math.max(t.evaluatedThrough, this.now()),
+		});
+		this.changed(botId, id);
+		void this.service.failureFollowUps.closeEpisode(botId, id);
+		void this.drain(botId);
+	}
+	resume(botId: string, id: string): void {
+		this.unblock(botId, id);
+	}
+	/** Skips the trigger's firings that have not started yet, if it is paused. */
+	private skipPaused(botId: string, id: string): void {
+		const t = this.find(id);
+		if (!t || !this.paused(t)) return;
+		for (const item of this.service.queue.list(botId))
+			if (item.origin.kind === 'trigger' && item.origin.triggerId === id)
+				this.service.queue.cancel(botId, item.id, WAITING_FOR_YOU);
+		for (const e of this.observations
+			.pending(botId)
+			.filter((e) => e.triggerId === id && e.origin === 'trigger')) {
+			const session = this.service.sessions
+				.list(botId)
+				.find((s) => s.id === e.sessionId);
+			if (session && session.state !== 'stopped' && session.state !== 'queued')
+				continue;
+			this.store.putFiring({
+				id: e.id,
+				botId,
+				triggerId: id,
+				triggerName: e.triggerName,
+				firedAt: e.dueAt,
+				origin: e.origin,
+				sessionId: session?.id ?? null,
+				outcome: 'skipped',
+				reason: WAITING_FOR_YOU,
+			});
+			this.observations.delivered(botId, e.id);
+		}
+	}
+	/** Posts the one chat message for a pending blocker, then marks it posted.
+	 * The key is derived from the blocker, so a re-post after a crash replays. */
+	private postBlocker(botId: string, id: string): void {
+		const t = this.find(id);
+		const b = t?.blocker;
+		if (!t || !b || b.notice !== 'pending') return;
+		try {
+			this.service.messages.post(
+				botId,
+				'bot',
+				blockerMessage(t.name, b.reason, b.action),
+				b.sessionId,
+				`blocker:${b.id}`,
+			);
+		} catch (error) {
+			// A replay with a since-edited reason conflicts: the message exists.
+			if (!(error instanceof BotError && error.code === 'conflict'))
+				throw error;
+		}
+		const latest = this.find(id);
+		if (latest?.blocker?.id === b.id)
+			this.store.putTrigger({
+				...latest,
+				blocker: { ...latest.blocker, notice: 'posted' },
+			});
+	}
+	/** Posts notices for blockers recorded before a crash. */
+	private postPendingBlockers(): void {
+		for (const t of this.store.triggers())
+			if (t.blocker?.notice === 'pending')
+				try {
+					this.postBlocker(t.botId, t.id);
+				} catch {
+					// The bot may be gone; the next start tries again.
+				}
 	}
 	list(botId: string): { revision: number; triggers: BotTrigger[] } {
 		this.store.get(botId);
@@ -957,7 +1198,16 @@ export class BotTriggers {
 	): BotTrigger {
 		this.store.get(botId);
 		const d = object(draft);
-		exact(d, ['name', 'enabled', 'prompt', 'condition', 'recovery']);
+		exact(d, [
+			'name',
+			'enabled',
+			'prompt',
+			'condition',
+			'recovery',
+			'startupRetries',
+			'onNeedsHuman',
+		]);
+		const settings = failureSettings(d);
 		if (typeof d.enabled !== 'boolean')
 			throw new BotError('validation', 'enabled must be boolean');
 		const previous = id ? this.store.trigger(botId, id) : undefined;
@@ -996,6 +1246,8 @@ export class BotTriggers {
 			evaluatedThrough: same ? previous.evaluatedThrough : this.now(),
 			missedCount: previous?.missedCount ?? 0,
 			missedLatest: previous?.missedLatest ?? null,
+			...settings,
+			...(previous?.blocker ? { blocker: previous.blocker } : {}),
 		});
 		const schedule = asSchedule(t.condition);
 		if (
@@ -1034,6 +1286,7 @@ export class BotTriggers {
 		);
 		if (!enabled) {
 			this.cancelPending(t);
+			void this.service.failureFollowUps.closeEpisode(botId, id);
 			this.observations.update(t, (c) => {
 				c.failureEpisode = false;
 			});
@@ -1072,6 +1325,7 @@ export class BotTriggers {
 		this.cancelPending(t);
 		this.observations.cancel(t, true);
 		this.store.removeTrigger(botId, id, revision);
+		void this.service.failureFollowUps.closeEpisode(botId, id);
 		this.changed(botId, id, 'trigger.deleted');
 	}
 	removeBot(botId: string): void {
@@ -1111,7 +1365,8 @@ export class BotTriggers {
 			.triggers(botId)
 			.flatMap((t) => {
 				const schedule = asSchedule(t.condition);
-				if (!schedule || !this.active(t)) return [];
+				// A paused trigger skips its firings, so none are coming up.
+				if (!schedule || !this.active(t) || this.paused(t)) return [];
 				return previewSchedule(
 					schedule,
 					Math.max(
@@ -1283,6 +1538,7 @@ export class BotTriggers {
 		const t = this.store.trigger(botId, triggerId(id));
 		this.stopSource(id);
 		this.observations.reset(t);
+		void this.service.failureFollowUps.closeEpisode(botId, id);
 		this.changed(botId, id);
 		this.reconcileSources();
 	}

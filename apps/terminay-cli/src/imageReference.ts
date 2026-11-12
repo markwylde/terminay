@@ -34,7 +34,7 @@ export type ImageReference =
 	  };
 
 // A release, or a Nightly or Canary build (`X.Y.Z-main.N.nightly`,
-// `X.Y.Z-main.N.canary`, ADR-0109). Their moving tags, `nightly` and
+// `X.Y.Z-main.N.canary`, ADR-0110). Their moving tags, `nightly` and
 // `canary`, are not versions and pull again like `latest`.
 const VERSION_TAG =
 	/^(v?)(\d+\.\d+\.\d+(?:-main\.[1-9]\d*\.(?:nightly|canary))?)$/u;

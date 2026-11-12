@@ -253,6 +253,30 @@ export function BotTriggersPanel({
 																	{TRIGGER_KIND_LABELS[t.condition.kind]} ·{' '}
 																	{describeCondition(t.condition)}
 																</span>
+																{t.blocker ? (
+																	<span
+																		className="bots-trigrow__problem"
+																		data-terminay-bot-trigger-needs-you={t.id}
+																	>
+																		Needs you: {t.blocker.reason} What to do:{' '}
+																		{t.blocker.action}{' '}
+																		<button
+																			type="button"
+																			className="bots-link"
+																			data-terminay-bot-trigger-resume={t.id}
+																			onClick={() =>
+																				act(
+																					server.client.resumeTrigger(
+																						bot.id,
+																						t.id,
+																					),
+																				)
+																			}
+																		>
+																			Resume
+																		</button>
+																	</span>
+																) : null}
 																{health?.error || health?.gap ? (
 																	<span className="bots-trigrow__problem">
 																		{health.error ?? health.gap}
@@ -336,7 +360,12 @@ export function BotTriggersPanel({
 														)}
 													</td>
 													<td className="bots-trigtable__opt bots-trigrow__when bots-mono">
-														{next ? formatWhen(next) : '—'}
+														{t.blocker &&
+														(t.onNeedsHuman ?? 'pause') === 'pause'
+															? 'Paused'
+															: next
+																? formatWhen(next)
+																: '—'}
 													</td>
 													<td>
 														<button

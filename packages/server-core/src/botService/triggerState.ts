@@ -1,7 +1,10 @@
-import type {
-	BotTrigger,
-	BotTriggerCondition,
-	BotTriggerFiring,
+import {
+	BOT_STARTUP_RETRIES_MAX,
+	type BotNeedsHumanPolicy,
+	type BotTrigger,
+	type BotTriggerBlocker,
+	type BotTriggerCondition,
+	type BotTriggerFiring,
 } from '@terminay/protocol';
 import { previewSchedule } from '../scheduleEngine/scheduler.js';
 import { isObservation, observationSource, exact } from './sourceValidation.js';
@@ -121,6 +124,58 @@ export function storedTrigger(value: unknown): BotTrigger {
 		evaluatedThrough: triggerTime(d.evaluatedThrough),
 		missedCount: d.missedCount as number,
 		missedLatest: d.missedLatest === null ? null : triggerTime(d.missedLatest),
+		...failureSettings(d),
+		...(d.blocker === undefined || d.blocker === null
+			? {}
+			: { blocker: triggerBlocker(d.blocker) }),
+	};
+}
+/** Startup retries (0–3) and the needs-human policy; absent values are omitted
+ * and read as the defaults. */
+export function failureSettings(d: Record<string, unknown>): {
+	startupRetries?: number;
+	onNeedsHuman?: BotNeedsHumanPolicy;
+} {
+	if (
+		d.startupRetries !== undefined &&
+		(!Number.isInteger(d.startupRetries) ||
+			(d.startupRetries as number) < 0 ||
+			(d.startupRetries as number) > BOT_STARTUP_RETRIES_MAX)
+	)
+		throw new BotError(
+			'validation',
+			`Startup retries must be a whole number from 0 to ${BOT_STARTUP_RETRIES_MAX}`,
+		);
+	if (
+		d.onNeedsHuman !== undefined &&
+		d.onNeedsHuman !== 'pause' &&
+		d.onNeedsHuman !== 'keep-running'
+	)
+		throw new BotError(
+			'validation',
+			'When the bot needs you must be pause or keep-running',
+		);
+	return {
+		...(d.startupRetries === undefined
+			? {}
+			: { startupRetries: d.startupRetries as number }),
+		...(d.onNeedsHuman === undefined
+			? {}
+			: { onNeedsHuman: d.onNeedsHuman as BotNeedsHumanPolicy }),
+	};
+}
+export function triggerBlocker(value: unknown): BotTriggerBlocker {
+	const d = object(value);
+	exact(d, ['id', 'reason', 'action', 'sessionId', 'at', 'notice']);
+	if (d.notice !== 'pending' && d.notice !== 'posted')
+		throw new BotError('validation', 'invalid trigger blocker');
+	return {
+		id: triggerId(d.id),
+		reason: text(d.reason, 1024, 'blocker reason'),
+		action: text(d.action, 1024, 'blocker action'),
+		sessionId: text(d.sessionId, 64, 'blocker session'),
+		at: triggerTime(d.at),
+		notice: d.notice,
 	};
 }
 export function storedFiring(value: unknown): BotTriggerFiring {

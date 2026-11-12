@@ -213,6 +213,10 @@ export class BotsClient {
 	async retrySource(botId: string, triggerId: string): Promise<void> {
 		await this.transport.command(op.retrySource, { botId, triggerId }, {});
 	}
+	/** Clears a trigger's Needs you blocker. */
+	async resumeTrigger(botId: string, triggerId: string): Promise<void> {
+		await this.transport.command(op.resumeTrigger, { botId, triggerId }, {});
+	}
 	async triggers(
 		botId: string,
 		options: QueryOptions = {},

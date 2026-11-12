@@ -17,7 +17,7 @@ const STABLE_FEED_URL = `${RELEASES_URL}/latest/download/`;
 export type PrereleaseChannel = Exclude<AppUpdateChannel, 'stable'>;
 
 /**
- * Each prerelease channel's own rolling release (ADR-0109): the Nightly is
+ * Each prerelease channel's own rolling release (ADR-0110): the Nightly is
  * `main-latest`, the Canary `canary-latest`. Each publishes metadata named
  * for its channel, so electron-updater reads `nightly-mac.yml` or
  * `canary-mac.yml` from its feed.

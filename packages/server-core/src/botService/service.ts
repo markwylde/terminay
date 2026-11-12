@@ -17,9 +17,14 @@ import type {
 	BotSessionOrigin,
 	BotSessionRecord,
 	BotSessionSnapshot,
+	BotStartupStage,
 	JsonValue,
 } from '@terminay/protocol';
-import { foldTranscript } from '@terminay/protocol';
+import {
+	BOT_STARTUP_RETRIES_DEFAULT,
+	botTriggerOrigin,
+	foldTranscript,
+} from '@terminay/protocol';
 import type { OperationRegistries, RequestContext } from '../types.js';
 import {
 	BotAgentProcess,
@@ -66,7 +71,20 @@ import {
 	openBotRuntimeBridge,
 } from './runtimeBridge.js';
 import { BotSessionStore } from './sessions.js';
-import { BotBlockedError, BotError, BotStore, text } from './store.js';
+import {
+	BotStartupError,
+	classifyStartup,
+	StartupBudget,
+	startupRetryDelay,
+	startupStageNames,
+} from './startup.js';
+import {
+	BotBlockedError,
+	BotError,
+	BotSkippedError,
+	BotStore,
+	text,
+} from './store.js';
 import { BotTriggers } from './triggers.js';
 
 export interface BotAgents {
@@ -150,6 +168,30 @@ export interface BotServiceHooks {
 	readonly additionalOperations?: () => OperationRegistries;
 	readonly dispose?: () => Promise<void>;
 	readonly agentInfo?: () => Promise<BotAgent[]>;
+	/** Startup retry delays in ms; tests shorten them. Defaults to 10/30/60 s. */
+	readonly startupRetryDelays?: readonly number[];
+	/** Jitter source for retry delays. */
+	readonly random?: () => number;
+	/** Executions in startup at once, across every bot. Defaults to 2. */
+	readonly startupPermits?: number;
+}
+/** No attempt begins more than this long after an execution's first. */
+export const BOT_STARTUP_WINDOW_MS = 5 * 60_000;
+function utf8Slice(value: string, bytes: number): string {
+	const buffer = Buffer.from(value);
+	if (buffer.byteLength <= bytes) return value;
+	return new TextDecoder()
+		.decode(buffer.subarray(0, bytes))
+		.replace(/\uFFFD$/, '');
+}
+/** The final failure of an execution that the next firing replaced. */
+function replacedByNextFiring(last: BotStartupError): BotStartupError {
+	return new BotStartupError(
+		last.stage,
+		last.code,
+		true,
+		'Replaced by the next firing of its trigger before it could start.',
+	);
 }
 interface Live {
 	runner: BotAgentProcess;
@@ -236,6 +278,20 @@ export class BotService extends EventEmitter {
 	private initialized = false;
 	private reconciling?: Promise<void>;
 	private readonly cancelledStarts = new Set<string>();
+	/** Executions the next firing of their trigger replaces or finishes. */
+	private readonly replacedStarts = new Set<string>();
+	/** Executions waiting for a startup retry, by how the wait ends. */
+	private readonly retryWaits = new Map<
+		string,
+		(outcome: 'stopped' | 'replaced') => void
+	>();
+	private startupBudgetValue?: StartupBudget;
+	private get startupBudget(): StartupBudget {
+		this.startupBudgetValue ??= new StartupBudget(
+			this.hooks.startupPermits ?? 2,
+		);
+		return this.startupBudgetValue;
+	}
 	/** Turns this process is starting: running, but with no live runner yet. */
 	private readonly starting = new Set<string>();
 	private readonly stoppingBots = new Set<string>();
@@ -329,8 +385,13 @@ export class BotService extends EventEmitter {
 		}) => {
 			if (record.state === 'failed' || record.state === 'timed-out')
 				void this.failureFollowUps.execution(record);
-			else if (!['queued', 'running', 'needs-you'].includes(record.state))
-				void this.failureFollowUps.drain(record.botId);
+			else {
+				// A completed trigger execution closes its failure episode.
+				if (record.state === 'completed')
+					void this.failureFollowUps.execution(record);
+				if (!['queued', 'running', 'needs-you'].includes(record.state))
+					void this.failureFollowUps.drain(record.botId);
+			}
 		};
 		this.sessions.on('state', sessionState);
 		this.detach.push(() => this.sessions.off('state', sessionState));
@@ -979,7 +1040,8 @@ export class BotService extends EventEmitter {
 		prompt: string,
 		id?: string,
 		origin: BotSessionOrigin = { kind: 'chat' },
-		accept: () => boolean = () => true,
+		/** True admits; a string refuses with that skip reason. */
+		accept: () => boolean | string = () => true,
 		reservedId?: string,
 	): Promise<{ sessionId: string; queueId: string }> {
 		if (origin.kind === 'chat' && !origin.messageId) {
@@ -1013,7 +1075,8 @@ export class BotService extends EventEmitter {
 		prompt: string,
 		id?: string,
 		origin: BotSessionOrigin = { kind: 'chat' },
-		accept: () => boolean = () => true,
+		/** True admits; a string refuses with that skip reason. */
+		accept: () => boolean | string = () => true,
 		reservedId?: string,
 	): Promise<{ sessionId: string; queueId: string }> {
 		if (!this.initialized) await this.reconcile();
@@ -1096,6 +1159,15 @@ export class BotService extends EventEmitter {
 						},
 						reservedId,
 					);
+					// Startup retries are fixed when the execution is created.
+					const triggerOrigin = botTriggerOrigin(origin);
+					if (triggerOrigin)
+						this.sessions.patch(record.id, {
+							retryLimit: this.triggers.retryLimit(
+								botId,
+								triggerOrigin.triggerId,
+							),
+						});
 				} finally {
 					lease.release();
 				}
@@ -1125,14 +1197,17 @@ export class BotService extends EventEmitter {
 					'busy',
 					'bot queue is full or this work is already queued',
 				);
-			if (!accept() || this.bots.get(botId).enabled === false) {
+			const admitted = accept();
+			if (admitted !== true || this.bots.get(botId).enabled === false) {
+				const skip = typeof admitted === 'string' ? admitted : 'cancelled';
 				if (origin.kind !== 'chat')
 					this.sessions.patch(record.id, {
 						state: 'stopped',
 						open: false,
 						firing: 'skipped',
-						reason: 'cancelled',
+						reason: skip,
 					});
+				if (typeof admitted === 'string') throw new BotSkippedError(skip);
 				throw new BotError('conflict', 'firing cancelled');
 			}
 			this.runtime.register(record.id);
@@ -1299,6 +1374,99 @@ export class BotService extends EventEmitter {
 			`This bot's ${agent.deviceSignIn?.label ?? 'device sign-in'} login is no longer in its home. Sign it in again under Configure › Profile › Sign-in.`,
 		);
 	}
+	/** The retry deadline: 5 minutes after the first attempt, or the trigger's
+	 * next due firing when that is earlier (ADR-0109). */
+	private retryDeadline(id: string, firstAttemptAt: number): number {
+		// Run now has no next firing to make way for; only a scheduled firing does.
+		const origin = this.sessions.get(id).origin;
+		const next =
+			origin.kind === 'trigger' ? this.triggers.nextDue(origin.triggerId) : null;
+		const window = firstAttemptAt + BOT_STARTUP_WINDOW_MS;
+		return next === null ? window : Math.min(window, next);
+	}
+	private async acquireStartup(
+		id: string,
+		deadline: number,
+	): Promise<() => void> {
+		const budget = this.startupBudget;
+		if (budget.inUse >= (this.hooks.startupPermits ?? 2))
+			this.sessions.runner(
+				id,
+				'Waiting for another bot execution to finish starting.\n',
+			);
+		const release = await budget.acquire(id);
+		if (this.now() >= deadline) {
+			release();
+			throw new BotStartupError(
+				'prepare',
+				'other',
+				true,
+				'Other bot executions were starting until this one ran out of time to start.',
+			);
+		}
+		return release;
+	}
+	/** One timer; it ends early when the execution is stopped or replaced. */
+	private waitForRetry(
+		id: string,
+		delay: number,
+	): Promise<'elapsed' | 'stopped' | 'replaced'> {
+		return new Promise((resolve) => {
+			const timer = setTimeout(() => {
+				this.retryWaits.delete(id);
+				resolve('elapsed');
+			}, delay);
+			this.retryWaits.set(id, (outcome) => {
+				clearTimeout(timer);
+				this.retryWaits.delete(id);
+				if (outcome === 'stopped') this.cancelledStarts.delete(id);
+				resolve(outcome);
+			});
+		});
+	}
+	/**
+	 * The next firing of a trigger is due while this execution has not handed
+	 * over its task. A waiting execution ends now; one mid-attempt finishes that
+	 * attempt without retrying. Returns which, or `none` if it started work.
+	 */
+	/** Whether this execution is running but has not handed over its task. */
+	startingWork(id: string): boolean {
+		if (!this.starting.has(id)) return false;
+		const r = this.sessions.get(id);
+		return (
+			this.starting.has(id) &&
+			r.dispatchedAt == null &&
+			['running', 'needs-you'].includes(r.state)
+		);
+	}
+	replaceStart(id: string): 'replaced' | 'finishing' | 'none' {
+		const r = this.sessions.get(id);
+		if (
+			!this.starting.has(id) ||
+			r.dispatchedAt != null ||
+			!['running', 'needs-you'].includes(r.state)
+		)
+			return 'none';
+		this.replacedStarts.add(id);
+		const wait = this.retryWaits.get(id);
+		if (wait) {
+			wait('replaced');
+			return 'replaced';
+		}
+		if (this.startupBudget.isWaiting(id)) {
+			this.startupBudget.cancel(
+				id,
+				new BotStartupError(
+					'prepare',
+					'other',
+					true,
+					'Replaced by the next firing of its trigger before it could start.',
+				),
+			);
+			return 'replaced';
+		}
+		return 'finishing';
+	}
 	private run(item: BotQueuedTurn): Promise<BotRunResult> {
 		const task = this.runNow(item);
 		this.activeRuns.set(item.sessionId, { botId: item.botId, task });
@@ -1323,6 +1491,10 @@ export class BotService extends EventEmitter {
 		this.runtime.changed(record.id, 'execution.running');
 		let failureReason = 'agent not ready';
 		let cleanupFailure: BotCleanupError | undefined;
+		/** A machine-wide startup permit, held until hand-over (ADR-0109). */
+		let startupPermit: (() => void) | undefined;
+		/** Where startup is, for an honest final failure before hand-over. */
+		let stage: BotStartupStage = 'prepare';
 		this.starting.add(record.id);
 		// The trigger message's images, as snapshotted at dispatch.
 		let images: { mime: string; bytes: Uint8Array }[] = [];
@@ -1343,84 +1515,161 @@ export class BotService extends EventEmitter {
 			}
 			if (!live) {
 				const agent = this.agent(record.snapshot.agentId);
-				failureReason = 'container engine unavailable';
-				let driver: EngineDriver | undefined = await this.hooks.driver();
-				const sessionEnvironment = await this.hooks.environment.prepareSession(
-					record.botId,
-				);
-				if (this.cancelledStarts.delete(record.id)) return { cleanup: 'ok' };
-				driver ??= await this.hooks.driver();
-				failureReason = 'agent not ready';
-				const status = await this.hooks.agents.botAgentStatus(agent.id);
-				if (!status.available)
-					throw new BotBlockedError(
-						'agent',
-						'The bot agent is not ready. Check its sign-in and rebuild the bot image.',
-					);
-				const configFiles = botAgentConfigFiles(
-					agent,
-					record.snapshot.signIn.kind === 'device',
-				);
-				if (configFiles.length)
-					await driver.exec(
-						`terminay-bot-${record.botId}`,
-						['terminay-init', '--config'],
-						{
-							user: 'root',
-							input: JSON.stringify(
-								configFiles.map((f) => ({
-									path: f.path,
-									content: f.contents,
-								})),
+				const firstAttemptAt = this.now();
+				const retryLimit =
+					this.sessions.get(record.id).retryLimit ??
+					BOT_STARTUP_RETRIES_DEFAULT;
+				let driver!: EngineDriver;
+				let sessionEnvironment!: Awaited<
+					ReturnType<BotServiceHooks['environment']['prepareSession']>
+				>;
+				let credential!: BotCredentialLease;
+				// Startup attempts. Only failures before hand-over that are
+				// temporary, with confirmed cleanup, are retried (ADR-0109).
+				for (let attempt = 1; ; attempt++) {
+					stage = 'prepare';
+					try {
+						startupPermit = await this.acquireStartup(
+							record.id,
+							this.retryDeadline(record.id, firstAttemptAt),
+						);
+						if (this.cancelledStarts.delete(record.id))
+							return { cleanup: 'ok' };
+						failureReason = 'container engine unavailable';
+						driver = await this.hooks.driver();
+						sessionEnvironment = await this.hooks.environment.prepareSession(
+							record.botId,
+						);
+						if (this.cancelledStarts.delete(record.id))
+							return { cleanup: 'ok' };
+						failureReason = 'agent not ready';
+						stage = 'agent-check';
+						const status = await this.hooks.agents.botAgentStatus(agent.id);
+						if (!status.available)
+							throw new BotBlockedError(
+								'agent',
+								'The bot agent is not ready. Check its sign-in and rebuild the bot image.',
+							);
+						stage = 'prepare';
+						const configFiles = botAgentConfigFiles(
+							agent,
+							record.snapshot.signIn.kind === 'device',
+						);
+						if (configFiles.length)
+							await driver.exec(
+								`terminay-bot-${record.botId}`,
+								['terminay-init', '--config'],
+								{
+									user: 'root',
+									input: JSON.stringify(
+										configFiles.map((f) => ({
+											path: f.path,
+											content: f.contents,
+										})),
+									),
+								},
+							);
+						stage = 'agent-check';
+						if (record.snapshot.signIn.kind === 'device')
+							await this.requireDeviceLogin(driver, record.botId, agent);
+						stage = 'prepare';
+						if (images.length && !imagePaths.length) {
+							failureReason =
+								'The attached images could not be copied into the bot container.';
+							imageDriver = driver;
+							imagePaths = await writeExecutionImages(
+								driver,
+								this.hooks.serverId ?? 'server',
+								record.botId,
+								record.id,
+								images,
+							);
+						}
+						credential = await this.hooks.credentials.acquire(
+							record.botId,
+							record.snapshot,
+						);
+						pendingCredential = credential;
+						if (this.cancelledStarts.delete(record.id)) {
+							credential.release();
+							pendingCredential = undefined;
+							return { cleanup: 'ok' };
+						}
+						failureReason =
+							'The terminay_bot MCP relay could not start. See Runner output for details.';
+						stage = 'relay';
+						const lease = credential;
+						bridge = await openBotRuntimeBridge(
+							driver,
+							record.botId,
+							record.id,
+							this.runtime,
+							(value) =>
+								this.sessions.runner(
+									record.id,
+									`Bot MCP: ${lease.redact(value)}\n`,
+								),
+							this.terminayMcpOpener(record.botId, record.id),
+						);
+						if (this.cancelledStarts.delete(record.id)) {
+							await bridge.close();
+							credential.release();
+							pendingCredential = undefined;
+							return { cleanup: 'ok' };
+						}
+						break;
+					} catch (error) {
+						const failure = classifyStartup(error, stage);
+						pendingCredential?.release();
+						pendingCredential = undefined;
+						startupPermit?.();
+						startupPermit = undefined;
+						if (this.cancelledStarts.delete(record.id))
+							return { cleanup: 'ok' };
+						if (!(failure instanceof BotStartupError) || !failure.temporary)
+							throw failure;
+						const at = this.now();
+						const cause = utf8Slice(
+							await this.redactMessage(record.botId, failure.message).catch(
+								() => 'startup failed',
 							),
-						},
-					);
-				if (record.snapshot.signIn.kind === 'device')
-					await this.requireDeviceLogin(driver, record.botId, agent);
-				if (images.length) {
-					failureReason =
-						'The attached images could not be copied into the bot container.';
-					imageDriver = driver;
-					imagePaths = await writeExecutionImages(
-						driver,
-						this.hooks.serverId ?? 'server',
-						record.botId,
-						record.id,
-						images,
-					);
-				}
-				const credential = await this.hooks.credentials.acquire(
-					record.botId,
-					record.snapshot,
-				);
-				pendingCredential = credential;
-				if (this.cancelledStarts.delete(record.id)) {
-					credential.release();
-					pendingCredential = undefined;
-					return { cleanup: 'ok' };
-				}
-				failureReason =
-					'The terminay_bot MCP relay could not start. See Runner output for details.';
-				bridge = await openBotRuntimeBridge(
-					driver,
-					record.botId,
-					record.id,
-					this.runtime,
-					(value) =>
+							256,
+						);
+						const attempts = [
+							...(this.sessions.get(record.id).attempts ?? []),
+							{ ...failure.failure, at, cause },
+						];
+						const delay = startupRetryDelay(
+							attempt,
+							this.hooks.random,
+							this.hooks.startupRetryDelays,
+						);
+						const deadline = this.retryDeadline(record.id, firstAttemptAt);
+						const retry =
+							attempt <= retryLimit &&
+							!this.replacedStarts.has(record.id) &&
+							at + delay < deadline;
+						this.sessions.patch(record.id, {
+							attempts,
+							retryAt: retry ? at + delay : null,
+						});
 						this.sessions.runner(
 							record.id,
-							`Bot MCP: ${credential.redact(value)}\n`,
-						),
-					this.terminayMcpOpener(record.botId, record.id),
-				);
-				if (this.cancelledStarts.delete(record.id)) {
-					await bridge.close();
-					credential.release();
-					pendingCredential = undefined;
-					return { cleanup: 'ok' };
+							`\nStartup attempt ${attempt} failed while ${startupStageNames[failure.stage]}: ${cause}${retry ? ` Retrying in ${Math.round(delay / 1000)}s.` : ''}\n`,
+						);
+						if (!retry)
+							throw this.replacedStarts.has(record.id)
+								? replacedByNextFiring(failure)
+								: failure;
+						const outcome = await this.waitForRetry(record.id, delay);
+						this.sessions.patch(record.id, { retryAt: null });
+						if (outcome === 'stopped') return { cleanup: 'ok' };
+						if (outcome === 'replaced') throw replacedByNextFiring(failure);
+					}
 				}
 				failureReason =
 					'The agent process failed. See Runner output for details.';
+				stage = 'agent-launch';
 				const runner = (this.hooks.process ?? ((o) => new BotAgentProcess(o)))({
 					driver,
 					botId: record.botId,
@@ -1478,6 +1727,16 @@ export class BotService extends EventEmitter {
 			}, record.snapshot.maxTurnMs);
 			this.sessions.append(record.id, { kind: 'user', text: item.prompt });
 			const first = record.acpSessionId === null;
+			// The hand-over marker is durable before the agent sees its task: from
+			// here the execution counts as having started work, and is never retried.
+			this.sessions.patch(record.id, {
+				dispatchedAt: this.now(),
+				startupFailure: null,
+				retryAt: null,
+			});
+			this.sessions.commit(record.id);
+			startupPermit?.();
+			startupPermit = undefined;
 			await live.runner.client.prompt(
 				`${first ? `${record.snapshot.context}\n\n` : ''}${this.runtime.briefing(record.id, live.terminay)}\n\n${record.origin.kind === 'chat' ? '' : item.prompt}`,
 				record.snapshot.maxTurnMs,
@@ -1515,16 +1774,34 @@ export class BotService extends EventEmitter {
 				).catch(() => null);
 				const reason = await this.redactMessage(
 					record.botId,
-					processFailure?.reason ?? botFailure(error)?.message ?? failureReason,
+					processFailure?.reason ??
+						(error instanceof BotStartupError ? error.message : undefined) ??
+						botFailure(error)?.message ??
+						failureReason,
 				).catch(() => failureReason);
 				this.sessions.runner(
 					record.id,
 					`\nBot execution failed: ${reason}\n${detail}\n`,
 				);
+				// The final failure is a startup failure only before hand-over.
+				const startupFailure =
+					this.sessions.get(record.id).dispatchedAt == null
+						? error instanceof BotStartupError
+							? error.failure
+							: { stage, temporary: false, code: 'other' as const }
+						: null;
+				if (error instanceof BotStartupError && error.cleanupUnconfirmed)
+					cleanupFailure = new BotCleanupError(error);
 				this.sessions.patch(record.id, {
 					state: 'failed',
 					reason,
-					cause: processFailure ? processFailure.cause : botFailureCause(error),
+					cause: processFailure
+						? processFailure.cause
+						: startupFailure?.temporary
+							? null
+							: botFailureCause(error),
+					startupFailure,
+					retryAt: null,
 					endedAt: this.now(),
 					permission: null,
 					permissions: [],
@@ -1532,6 +1809,8 @@ export class BotService extends EventEmitter {
 				if (live) await this.closeLive(record.id, 'failure');
 			}
 		} finally {
+			startupPermit?.();
+			this.replacedStarts.delete(record.id);
 			this.starting.delete(record.id);
 			if (!live) {
 				try {
@@ -1659,6 +1938,12 @@ export class BotService extends EventEmitter {
 			}
 			if (['running', 'needs-you'].includes(record.state)) {
 				this.cancelledStarts.add(id);
+				this.retryWaits.get(id)?.('stopped');
+				if (this.startupBudget.isWaiting(id))
+					this.startupBudget.cancel(
+						id,
+						new BotStartupError('prepare', 'other', false, 'stopped'),
+					);
 				this.sessions.patch(id, {
 					state: reason === 'timeout' ? 'timed-out' : 'stopped',
 					open: false,
@@ -1747,8 +2032,14 @@ export class BotService extends EventEmitter {
 					r.state,
 				);
 				this.sessions.patch(r.id, {
+					// A wait for a startup retry or slot is not resumed (ADR-0109).
 					...(interrupted
-						? { state: 'interrupted', open: false, endedAt: this.now() }
+						? {
+								state: 'interrupted',
+								open: false,
+								endedAt: this.now(),
+								retryAt: null,
+							}
 						: {}),
 					permission: null,
 					permissions: [],

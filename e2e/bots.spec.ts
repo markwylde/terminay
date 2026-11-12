@@ -512,7 +512,7 @@ test.describe('Home › Bots', () => {
 		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
 		await tab.locator('[data-terminay-bot-session-row]').first().click();
 		await expect(tab.locator('[data-terminay-bot-session]')).toContainText(
-			'MCP adapter could not connect',
+			'adapter could not use its runtime socket',
 		);
 		await expect(
 			tab.locator('[data-terminay-bot-session-lifetime]'),
@@ -588,14 +588,16 @@ test.describe('Home › Bots', () => {
 			path: testInfo.outputPath('failure-investigation.png'),
 		});
 		const link = failures.locator('[data-terminay-bot-failure-session]');
-		const failedId = await link.getAttribute('data-terminay-bot-failure-session');
+		const failedId = await link.getAttribute(
+			'data-terminay-bot-failure-session',
+		);
 		await link.click();
 		await expect(
 			tab.locator(`[data-terminay-bot-session="${failedId}"]`),
 		).toBeVisible();
-		await expect(tab.locator('[data-terminay-bot-sessions-origin]')).toHaveValue(
-			'all',
-		);
+		await expect(
+			tab.locator('[data-terminay-bot-sessions-origin]'),
+		).toHaveValue('all');
 
 		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
 		const toggle = tab.locator('[data-terminay-bot-investigate-failures]');
@@ -615,7 +617,9 @@ test.describe('Home › Bots', () => {
 		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
 		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
 		// Two failed chats and the one investigation from the first.
-		await expect(rows.filter({ has: tab.page().locator('.bots-state--failed') })).toHaveCount(3, {
+		await expect(
+			rows.filter({ has: tab.page().locator('.bots-state--failed') }),
+		).toHaveCount(3, {
 			timeout: 30_000,
 		});
 		// An investigation would start straight after the failure; give it time to appear.
@@ -802,8 +806,7 @@ test.describe('Home › Bots', () => {
 		await expect(upcoming).toHaveCount(1);
 		await expect(upcoming).toContainText('Every so often');
 		await expect(upcoming.getByLabel('Repeats')).toBeVisible();
-		await mainWindow.screenshot({
-		});
+		await mainWindow.screenshot({});
 
 		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
 		await chat(tab);
@@ -866,6 +869,97 @@ test.describe('Home › Bots', () => {
 		// The header button; a disabled bot also offers an inline Enable bot link.
 		await tab.locator('.bots-btn').getByText('Enable bot').click();
 		await expect(status).toHaveText('Waiting');
+	});
+
+	test('a trigger the bot reports as needing a human pauses as Needs you, posts once, and Resume clears it', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Plover');
+		// The fake agent reports needs-human when its prompt names fixture-portal-refused.
+		const row = await newTrigger(
+			tab,
+			'Support tickets',
+			'fixture-portal-refused check',
+		);
+		const id = (await row.getAttribute('data-terminay-bot-trigger')) ?? '';
+		const status = row.locator('[data-terminay-bot-trigger-status]');
+		const editor = mainWindow.locator('[data-terminay-bot-trigger-editor]');
+
+		// The editor offers the failure settings, with their defaults.
+		await row.locator('.bots-trigrow__name').click();
+		const settings = editor.locator(
+			'section[aria-label="If something goes wrong"]',
+		);
+		await expect(
+			settings.getByRole('combobox', { name: 'Startup retries', exact: true }),
+		).toContainText('3');
+		await pick(editor, 'Startup retries', '1');
+		await settings.scrollIntoViewIfNeeded();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-failure-settings.png'),
+		});
+		await editor.locator('[data-terminay-bot-trigger-save]').click();
+		await expect(editor).toHaveCount(0);
+
+		// One run: the bot reports it needs a human, so the trigger pauses.
+		await row.locator('[data-terminay-bot-trigger-run]').click();
+		await expect(status).toHaveText('Needs you', { timeout: 30_000 });
+		await expect(status).toHaveAttribute(
+			'data-terminay-bot-trigger-status',
+			'need',
+		);
+		const needsYou = row.locator(
+			`[data-terminay-bot-trigger-needs-you="${id}"]`,
+		);
+		await expect(needsYou).toContainText('refused the login');
+		await expect(needsYou).toContainText('Add the support portal password');
+		// Its firings are skipped while it waits, so nothing is coming up.
+		await expect(row.locator('.bots-trigrow__when.bots-mono')).toHaveText('Paused');
+		await expect(tab.locator('[data-terminay-bot-upcoming-strip]')).toHaveCount(
+			0,
+		);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-needs-you.png'),
+		});
+
+		// The editor explains the pause, and saving keeps it.
+		await row.locator('.bots-trigrow__name').click();
+		await expect(
+			editor.locator(`[data-terminay-bot-trigger-needs-you="${id}"]`),
+		).toContainText('paused until you choose Resume');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-editor-needs-you.png'),
+		});
+		await editor.locator('[data-terminay-bot-trigger-save]').click();
+		await expect(editor).toHaveCount(0);
+		await expect(status).toHaveText('Needs you');
+
+		// The bot told the user once, in Chat.
+		await chat(tab);
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await expect(transcript).toContainText('refused the login');
+		await expect(
+			transcript.getByText('The support portal refused the login.', {
+				exact: false,
+			}),
+		).toHaveCount(1);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('chat-needs-you-post.png'),
+		});
+
+		// Resume clears it.
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="triggers"]').click();
+		await row.locator(`[data-terminay-bot-trigger-resume="${id}"]`).click();
+		await expect(status).toHaveText('Waiting');
+		await expect(needsYou).toHaveCount(0);
+		await expect(row.locator('.bots-trigrow__when.bots-mono')).not.toHaveText('Paused');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-resumed.png'),
+		});
 	});
 
 	test('a bot post raises a notification until the user acts on its Chat, and the row opens that Chat', async ({
@@ -1552,9 +1646,7 @@ test.describe('Home › Bots', () => {
 		await shot('start-failure-warning');
 
 		// Dismiss hides it, and it stays hidden after reopening Chat.
-		await warnings
-			.locator('[data-terminay-bot-start-failure-dismiss]')
-			.click();
+		await warnings.locator('[data-terminay-bot-start-failure-dismiss]').click();
 		await expect(warnings).toHaveCount(0);
 		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
 		await chat(tab);

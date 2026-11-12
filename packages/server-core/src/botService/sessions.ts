@@ -75,6 +75,77 @@ export function failureRef(value: unknown): BotFailureRef {
 	text(r.reason, 1024, 'failure reason', true);
 	return r as unknown as BotFailureRef;
 }
+const startupStages = [
+	'prepare',
+	'agent-check',
+	'relay',
+	'adapter-check',
+	'agent-launch',
+];
+const startupCodes = [
+	'engine-deadline',
+	'engine-connection',
+	'relay-not-ready',
+	'adapter-timeout',
+	'adapter-temporary',
+	'adapter-lasting',
+	'adapter-missing',
+	'other',
+];
+function startupFailureShape(value: unknown): Record<string, unknown> {
+	const f = object(value);
+	if (
+		!startupStages.includes(String(f.stage)) ||
+		!startupCodes.includes(String(f.code)) ||
+		typeof f.temporary !== 'boolean'
+	)
+		throw new Error('invalid startup failure');
+	return f;
+}
+const optionalTime = (value: unknown, label: string) => {
+	if (
+		value !== undefined &&
+		value !== null &&
+		(typeof value !== 'number' || !Number.isFinite(value))
+	)
+		throw new Error(`invalid ${label}`);
+};
+/** The optional failure-resilience fields (ADR-0109). */
+function parseResilience(d: Record<string, unknown>): void {
+	optionalTime(d.dispatchedAt, 'hand-over time');
+	optionalTime(d.retryAt, 'retry time');
+	if (
+		d.retryLimit !== undefined &&
+		(!Number.isSafeInteger(d.retryLimit) ||
+			(d.retryLimit as number) < 0 ||
+			(d.retryLimit as number) > 3)
+	)
+		throw new Error('invalid retry limit');
+	if (d.startupFailure !== undefined && d.startupFailure !== null)
+		startupFailureShape(d.startupFailure);
+	if (d.attempts !== undefined) {
+		if (!Array.isArray(d.attempts) || d.attempts.length > 8)
+			throw new Error('invalid startup attempts');
+		for (const a of d.attempts) {
+			const attempt = startupFailureShape(a);
+			optionalTime(attempt.at, 'attempt time');
+			text(attempt.cause, 256, 'attempt cause', true);
+		}
+	}
+	if (d.outcome !== undefined && d.outcome !== null) {
+		const o = object(d.outcome);
+		if (
+			!['outside-control', 'needs-human', 'fixed'].includes(
+				String(o.disposition),
+			)
+		)
+			throw new Error('invalid outcome');
+		text(o.reason, 512, 'outcome reason', true);
+		if (o.action !== null) text(o.action, 512, 'outcome action', true);
+		if (o.triggerId !== null) text(o.triggerId, 256, 'trigger id');
+		optionalTime(o.at, 'outcome time');
+	}
+}
 function parseRecord(value: unknown): BotSessionRecord {
 	const d = object(value);
 	sessionId(d.id);
@@ -133,6 +204,7 @@ function parseRecord(value: unknown): BotSessionRecord {
 		}
 	}
 	if (d.cause !== undefined && d.cause !== null) failureCause(d.cause);
+	parseResilience(d);
 	const origin = object(d.origin);
 	if (origin.kind === 'failure') {
 		if (
@@ -202,7 +274,10 @@ function parseRecord(value: unknown): BotSessionRecord {
 		if (r.triggerMessageId !== null) sessionId(r.triggerMessageId);
 		if (r.supersededBy !== null) sessionId(r.supersededBy);
 		if (r.triggerAttachments !== undefined) {
-			if (!Array.isArray(r.triggerAttachments) || r.triggerAttachments.length > 4)
+			if (
+				!Array.isArray(r.triggerAttachments) ||
+				r.triggerAttachments.length > 4
+			)
 				throw new Error('invalid execution attachments');
 			for (const raw of r.triggerAttachments) {
 				const a = object(raw);

@@ -3,7 +3,7 @@
 // change that still sorts above build N on its own track.
 //
 // A stable build `X.Y.Z` becomes `X.Y.(Z+1)-update-probe`. A Nightly or Canary
-// `X.Y.Z-main.<count>.<track>` (ADR-0109) becomes the same track one commit
+// `X.Y.Z-main.<count>.<track>` (ADR-0110) becomes the same track one commit
 // later, `X.Y.Z-main.<count + 1>.<track>`, which is what the next build of
 // that track would be called.
 //

@@ -311,7 +311,10 @@ test(
 				openBotRuntimeBridge(transport, botId, sessionId, rpc, (value) =>
 					diagnostics.push(value),
 				),
-				/MCP adapter could not connect/,
+				(error) =>
+					error.code === 'adapter-lasting' &&
+					/could not use its runtime socket/.test(error.message) &&
+					!/[Rr]ebuild/.test(error.message),
 			);
 			assert.match(diagnostics.join('\n'), /runtime socket permission denied/);
 			assert.equal(rpc.state.unbound, true);
@@ -594,3 +597,39 @@ for (const brokenPrefix of [false, true]) {
 			}),
 	);
 }
+
+test(
+	'real bot image: the adapter check exits 69 for a missing socket and 75 for a socket that never answers',
+	options,
+	async () =>
+		container(async ({ driver, name }) => {
+			const token = 'a'.repeat(64);
+			const check = async (socket) => {
+				try {
+					await driver.exec(name, ['/usr/local/bin/terminay-bot-mcp', '--check-runtime'], {
+						user: 'bot',
+						env: { TERMINAY_RUNTIME_SOCKET: socket, TERMINAY_RUNTIME_TOKEN: token },
+						environmentNames: ['TERMINAY_RUNTIME_SOCKET', 'TERMINAY_RUNTIME_TOKEN'],
+						deadlineMs: 30000,
+					});
+					return 0;
+				} catch (error) {
+					return error.exitCode;
+				}
+			};
+			assert.equal(await check('/tmp/terminay-mcp-missing.sock'), 69);
+			// A listener that accepts and never answers: the adapter's own
+			// 10-second timeout fires and reports a temporary problem.
+			await driver.exec(
+				name,
+				[
+					'sh',
+					'-c',
+					'nohup python3 -c "import socket,time;s=socket.socket(socket.AF_UNIX);s.bind(\'/tmp/terminay-mcp-silent.sock\');import os;os.chmod(\'/tmp/terminay-mcp-silent.sock\',0o777);s.listen(4);c=[];[c.append(s.accept()) for _ in range(4)];time.sleep(60)" >/dev/null 2>&1 &',
+				],
+				{ user: 'root' },
+			);
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+			assert.equal(await check('/tmp/terminay-mcp-silent.sock'), 75);
+		}),
+);

@@ -415,13 +415,26 @@ export class SocketDriver implements EngineDriver {
 			let output = Buffer.alloc(0),
 				failure: Error | undefined;
 			const limit = options.maxBytes ?? 4 * 1024 * 1024;
-			const timer = setTimeout(() => {
-				failure = new EngineCommandError(
-					'deadline',
-					'engine operation deadline exceeded',
-				);
+			const expire = (message: string) => () => {
+				failure = new EngineCommandError('deadline', message);
 				child.kill();
-			}, options.deadlineMs ?? 30_000);
+			};
+			// With a start deadline, the engine's own create/start/attach is
+			// bounded separately and the command's deadline counts from `ready`.
+			let timer = setTimeout(
+				options.startDeadlineMs === undefined
+					? expire('engine operation deadline exceeded')
+					: expire('engine did not start the command in time'),
+				options.startDeadlineMs ?? options.deadlineMs ?? 30_000,
+			);
+			if (options.startDeadlineMs !== undefined)
+				child.once('ready', () => {
+					clearTimeout(timer);
+					timer = setTimeout(
+						expire('engine operation deadline exceeded'),
+						options.deadlineMs ?? 30_000,
+					);
+				});
 			const abort = () => {
 				failure = new EngineCommandError(
 					'not-running',
@@ -458,7 +471,11 @@ export class SocketDriver implements EngineDriver {
 				if (failure) reject(failure);
 				else if (code !== 0)
 					reject(
-						new EngineCommandError('not-running', 'container process failed'),
+						new EngineCommandError(
+							'not-running',
+							'container process failed',
+							typeof code === 'number' ? { exitCode: code } : {},
+						),
 					);
 				else resolve(output.toString('utf8'));
 			});

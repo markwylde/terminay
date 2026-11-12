@@ -7,6 +7,70 @@ import { BOT_RUNTIME_TOOLS, type BotExecutionRuntime } from './runtime.js';
 import type { BotTerminayMcpHandler } from './service.js';
 import { BotError, object } from './store.js';
 import { BotTokenRedactor } from './tokens.js';
+import { EngineCommandError } from './process.js';
+import {
+	ADAPTER_EXIT_LASTING,
+	ADAPTER_EXIT_TEMPORARY,
+	BotStartupError,
+	classifyStartup,
+	temporaryEngineCode,
+} from './startup.js';
+
+const RELAY_START_DEADLINE_MS = 60_000;
+const RELAY_READY_DEADLINE_MS = 10_000;
+const ADAPTER_START_DEADLINE_MS = 60_000;
+const ADAPTER_CHECK_DEADLINE_MS = 10_000;
+
+/** Names the real cause. Rebuild advice only when the adapter itself is
+ * missing from the image (exit 126/127), never for a slow or refused check. */
+export function adapterCheckFailure(
+	error: unknown,
+	stderr: string,
+): BotStartupError {
+	const detail = stderr ? ` Adapter said: ${stderr}` : '';
+	if (temporaryEngineCode(error) === 'engine-deadline')
+		return new BotStartupError(
+			'adapter-check',
+			'adapter-timeout',
+			true,
+			`The terminay_bot adapter check timed out. The host may be overloaded.${detail}`,
+		);
+	if (temporaryEngineCode(error) === 'engine-connection')
+		return new BotStartupError(
+			'adapter-check',
+			'engine-connection',
+			true,
+			`The container engine connection dropped during the terminay_bot adapter check. The host may be overloaded.${detail}`,
+		);
+	const exit = error instanceof EngineCommandError ? error.exitCode : undefined;
+	if (exit === ADAPTER_EXIT_TEMPORARY)
+		return new BotStartupError(
+			'adapter-check',
+			'adapter-temporary',
+			true,
+			`The terminay_bot adapter could not reach its runtime in time. The host may be overloaded.${detail}`,
+		);
+	if (exit === 126 || exit === 127)
+		return new BotStartupError(
+			'adapter-check',
+			'adapter-missing',
+			false,
+			`The terminay_bot adapter is missing from the bot image. Rebuild the bot image and recreate the environment.${detail}`,
+		);
+	if (exit === ADAPTER_EXIT_LASTING)
+		return new BotStartupError(
+			'adapter-check',
+			'adapter-lasting',
+			false,
+			`The terminay_bot adapter could not use its runtime socket.${detail || ' See Runner output for details.'}`,
+		);
+	return new BotStartupError(
+		'adapter-check',
+		'other',
+		false,
+		`The terminay_bot adapter check failed.${detail || ' See Runner output for details.'}`,
+	);
+}
 
 export interface BotRuntimeBridge {
 	readonly servers: readonly JsonValue[];
@@ -38,7 +102,7 @@ export async function openBotRuntimeBridge(
 		);
 	} catch (error) {
 		unbind();
-		throw error;
+		throw classifyStartup(error, 'relay');
 	}
 
 	const diagnostic = (value: string) =>
@@ -76,7 +140,10 @@ export async function openBotRuntimeBridge(
 		lifetime.abort();
 		for (const controller of requests.values()) controller.abort();
 		readyReject(
-			new Error(
+			new BotStartupError(
+				'relay',
+				'relay-not-ready',
+				true,
 				'Bot MCP relay closed before readiness' +
 					(stderr ? `: ${diagnostic(stderr)}` : ''),
 			),
@@ -274,18 +341,26 @@ export async function openBotRuntimeBridge(
 		})();
 		return closeTask;
 	};
-	const timer = setTimeout(
-		() =>
-			readyReject(
-				new Error(
-					'Bot MCP relay readiness deadline' +
-						(stderr ? `: ${diagnostic(stderr)}` : ''),
-				),
+	// The engine's own exec start is bounded separately from the relay's
+	// readiness, which counts from when the relay is running (ADR-0109).
+	const readinessDeadline = () =>
+		readyReject(
+			new BotStartupError(
+				'relay',
+				'relay-not-ready',
+				true,
+				'Bot MCP relay readiness deadline' +
+					(stderr ? `: ${diagnostic(stderr)}` : ''),
 			),
-		10000,
-	);
+		);
+	let timer = setTimeout(readinessDeadline, RELAY_START_DEADLINE_MS);
+	stream.once('ready', () => {
+		clearTimeout(timer);
+		timer = setTimeout(readinessDeadline, RELAY_READY_DEADLINE_MS);
+	});
 	try {
 		await ready;
+		let adapterStderr = '';
 		try {
 			await driver.exec(
 				`terminay-bot-${botId}`,
@@ -300,18 +375,18 @@ export async function openBotRuntimeBridge(
 						'TERMINAY_RUNTIME_SOCKET',
 						'TERMINAY_RUNTIME_TOKEN',
 					],
-					deadlineMs: 10000,
+					startDeadlineMs: ADAPTER_START_DEADLINE_MS,
+					deadlineMs: ADAPTER_CHECK_DEADLINE_MS,
 					onOutput: (chunk, source) => {
-						if (source === 'stderr' && chunk.trim())
+						if (source === 'stderr' && chunk.trim()) {
+							adapterStderr = (adapterStderr + chunk).slice(-1024);
 							onDiagnostic?.(diagnostic(`Adapter startup: ${chunk}`));
+						}
 					},
 				},
 			);
-		} catch {
-			throw new BotError(
-				'unavailable',
-				'The terminay_bot MCP adapter could not connect to its runtime. Rebuild the bot image and recreate the environment; see Runner output for details.',
-			);
+		} catch (error) {
+			throw adapterCheckFailure(error, diagnostic(adapterStderr.trim()));
 		}
 	} catch (error) {
 		onDiagnostic?.(
@@ -319,8 +394,14 @@ export async function openBotRuntimeBridge(
 				error instanceof Error ? error.message : 'Bot MCP relay startup failed',
 			),
 		);
-		await close().catch(() => undefined);
-		throw error;
+		const cleaned = await close().then(
+			() => true,
+			() => false,
+		);
+		// A retry needs the failed attempt's relay group confirmed ended.
+		throw !cleaned && error instanceof BotStartupError
+			? error.unconfirmed()
+			: error;
 	} finally {
 		clearTimeout(timer);
 	}
@@ -605,13 +686,23 @@ async function openTerminayRelay(
 				user: 'bot',
 				env: environment,
 				environmentNames: Object.keys(environment),
-				deadlineMs: 10000,
+				startDeadlineMs: ADAPTER_START_DEADLINE_MS,
+				deadlineMs: ADAPTER_CHECK_DEADLINE_MS,
 			},
 		);
-	} catch {
+	} catch (error) {
 		await close();
+		// Same honest classification as the terminay_bot check: rebuild advice
+		// only when the adapter program itself is missing (exit 126/127).
+		const failure = adapterCheckFailure(error, '');
 		throw new Error(
-			'its adapter could not connect. Rebuild the bot image and recreate the environment.',
+			failure.code === 'adapter-missing'
+				? 'its adapter is missing from the bot image. Rebuild the bot image and recreate the environment.'
+				: failure.temporary
+					? 'its adapter check did not finish in time. The host may be overloaded.'
+					: failure.code === 'adapter-lasting'
+						? 'its adapter could not use its relay socket.'
+						: 'its adapter rejected the check, so the bot image may be out of date.',
 		);
 	}
 	return {

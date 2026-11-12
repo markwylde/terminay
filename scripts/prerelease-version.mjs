@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Names and describes a Nightly or Canary build of `main` (ADR-0109).
+// Names and describes a Nightly or Canary build of `main` (ADR-0110).
 //
 // The version is the next stable version the release workflow would cut from
 // these commits, then `main`, the number of commits reachable from the built

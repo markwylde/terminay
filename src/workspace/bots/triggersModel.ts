@@ -90,6 +90,9 @@ export function describeCondition(
 export type TriggerForm = Readonly<{
 	name: string;
 	recovery: import('@terminay/protocol').BotRecoveryPolicy;
+	/** 0–3 retries of a temporary startup failure. */
+	startupRetries: number;
+	onNeedsHuman: import('@terminay/protocol').BotNeedsHumanPolicy;
 	command: string;
 	cwd: string;
 	url: string;
@@ -132,6 +135,8 @@ export function emptyTriggerForm(now: number): TriggerForm {
 	return {
 		name: '',
 		recovery: 'skip',
+		startupRetries: 3,
+		onNeedsHuman: 'pause',
 		command: '',
 		cwd: '/home/bot',
 		url: '',
@@ -173,6 +178,8 @@ export function formFromTrigger(trigger: BotTrigger, now: number): TriggerForm {
 		prompt: trigger.prompt,
 		kind: condition.kind,
 		recovery: trigger.recovery ?? 'skip',
+		startupRetries: trigger.startupRetries ?? 3,
+		onNeedsHuman: trigger.onNeedsHuman ?? 'pause',
 	};
 	switch (condition.kind) {
 		case 'cron':
@@ -395,6 +402,8 @@ export function formToDraft(
 			prompt: form.prompt,
 			recovery: form.recovery,
 			condition: condition.condition,
+			startupRetries: form.startupRetries,
+			onNeedsHuman: form.onNeedsHuman,
 		},
 	};
 }
@@ -504,11 +513,12 @@ export type TriggerStatusTone = 'need' | 'idle' | 'work' | 'done';
  * bot's switches, never from health, so the pill cannot contradict them.
  */
 export function statusOf(
-	t: Pick<BotTrigger, 'enabled' | 'unsupported' | 'health'>,
+	t: Pick<BotTrigger, 'enabled' | 'unsupported' | 'health' | 'blocker'>,
 	botEnabled: boolean,
 ): { label: string; tone: TriggerStatusTone } {
 	if (t.unsupported) return { label: 'Unsupported', tone: 'need' };
 	if (!t.enabled || !botEnabled) return { label: 'Disabled', tone: 'idle' };
+	if (t.blocker) return { label: 'Needs you', tone: 'need' };
 	const state = t.health?.state === 'disabled' ? 'waiting' : t.health?.state;
 	if (state === 'failed' || state === 'blocked')
 		return { label: HEALTH_LABELS[state] ?? state, tone: 'need' };

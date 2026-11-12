@@ -1,6 +1,6 @@
 name: Nightly
 
-# One Nightly build a night of the head of `main` (ADR-0109), signed and
+# One Nightly build a night of the head of `main` (ADR-0110), signed and
 # notarized, published to the rolling `main-latest` prerelease. A night when
 # `main` has not moved since the published Nightly builds nothing and submits
 # nothing to Apple.

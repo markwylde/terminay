@@ -145,7 +145,7 @@ export function createReleaseManifest(inputs, sbom) {
  * The published install and upgrade unit for a standalone server: one
  * self-contained archive per architecture with its checksum sidecar and
  * detached signature, on the tagged channel or one of the two rolling ones:
- * `main` for the Nightly and `canary` for the Canary (ADR-0109). The
+ * `main` for the Nightly and `canary` for the Canary (ADR-0110). The
  * `npm pack` tarball is not an install unit; the server's workspace
  * dependencies are private, so it never resolved on a target.
  */

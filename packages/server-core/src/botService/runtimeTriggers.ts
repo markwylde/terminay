@@ -113,6 +113,18 @@ const draft = schema(
 		enabled: { type: 'boolean' },
 		prompt: string,
 		condition,
+		startupRetries: {
+			type: 'integer',
+			minimum: 0,
+			maximum: 3,
+			description:
+				'How many times a run retries a temporary startup failure. Default 3.',
+		},
+		onNeedsHuman: {
+			enum: ['pause', 'keep-running'],
+			description:
+				'While the user owes this trigger an action: pause it (default) or keep running.',
+		},
 	},
 	['name', 'enabled', 'prompt', 'condition'],
 );
@@ -245,6 +257,8 @@ function parseDraft(value: unknown): BotTriggerDraft {
 		'prompt',
 		'condition',
 		'recovery',
+		'startupRetries',
+		'onNeedsHuman',
 	]);
 	parseCondition(d.condition);
 	// BotTriggers owns all value validation and normalization, shared with the UI.

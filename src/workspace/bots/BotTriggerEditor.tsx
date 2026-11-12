@@ -1,4 +1,5 @@
 import type {
+	BotNeedsHumanPolicy,
 	BotProfile,
 	BotRecoveryPolicy,
 	BotSourceTest,
@@ -104,6 +105,65 @@ function SelectField<V extends string>({
 			<span>{label}</span>
 			<GroupedSelect<V> label={label} {...props} />
 			{hint ? <small className="bots-faint">{hint}</small> : null}
+		</div>
+	);
+}
+
+/** The trigger waits for the user: what to do, and Resume. */
+export function TriggerNeedsYou({
+	server,
+	bot,
+	trigger,
+	onResumed,
+}: Readonly<{
+	server: ServerBots;
+	bot: BotProfile;
+	trigger: BotTrigger;
+	onResumed: () => void;
+}>) {
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string>();
+	const blocker = trigger.blocker;
+	if (!blocker) return null;
+	const resume = async () => {
+		setBusy(true);
+		setError(undefined);
+		try {
+			await server.client.resumeTrigger(bot.id, trigger.id);
+			onResumed();
+		} catch (e) {
+			setError(refusalText(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<div
+			className="bots-note bots-note--need"
+			role="status"
+			data-terminay-bot-trigger-needs-you={trigger.id}
+		>
+			<p>
+				<strong>Needs you.</strong> {blocker.reason}
+			</p>
+			<p>
+				<strong>What to do:</strong> {blocker.action}
+			</p>
+			<p className="bots-faint">
+				{(trigger.onNeedsHuman ?? 'pause') === 'pause'
+					? 'This trigger is paused until you choose Resume.'
+					: 'This trigger keeps running while it waits for you.'}
+			</p>
+			<button
+				type="button"
+				className="bots-btn"
+				disabled={busy}
+				onClick={() => void resume()}
+				data-terminay-bot-trigger-resume={trigger.id}
+			>
+				{busy ? 'Resuming…' : 'Resume'}
+			</button>
+			{error ? <p className="bots-source-hint">{error}</p> : null}
 		</div>
 	);
 }
@@ -292,6 +352,14 @@ export function BotTriggerEditor({
 				</button>
 			</header>
 			<div className="bots-source-editor__body">
+				{trigger?.blocker ? (
+					<TriggerNeedsYou
+						server={server}
+						bot={bot}
+						trigger={trigger}
+						onResumed={onSaved}
+					/>
+				) : null}
 				{field('Name', 'name', 'text', { maxLength: 80, autoFocus: !trigger })}
 				<section className="bots-source-section" aria-label="When">
 					<h4 className="bots-lab">When</h4>
@@ -566,6 +634,42 @@ export function BotTriggerEditor({
 						container.
 						{continuous ? ' Continuous watching keeps it running.' : ''}
 					</p>
+				</section>
+				<section
+					className="bots-source-section"
+					aria-label="If something goes wrong"
+				>
+					<h4 className="bots-lab">If something goes wrong</h4>
+					<SelectField<'0' | '1' | '2' | '3'>
+						label="Startup retries"
+						value={String(form.startupRetries) as '0' | '1' | '2' | '3'}
+						onChange={(v) => update({ startupRetries: Number(v) })}
+						groups={plainOptions([
+							{ value: '3', label: '3 retries (default)' },
+							{ value: '2', label: '2 retries' },
+							{ value: '1', label: '1 retry' },
+							{ value: '0', label: 'Don’t retry' },
+						])}
+						hint="If the computer is too busy to start the bot, try again after about 10, 30 and 60 seconds. Retries stop once the bot has started working."
+					/>
+					<SelectField<BotNeedsHumanPolicy>
+						label="When the bot needs you"
+						value={form.onNeedsHuman}
+						onChange={(onNeedsHuman) => update({ onNeedsHuman })}
+						groups={plainOptions([
+							{
+								value: 'pause',
+								label: 'Pause this trigger',
+								description: 'Skip its runs until you choose Resume',
+							},
+							{
+								value: 'keep-running',
+								label: 'Keep running',
+								description: 'Keep firing while it waits for you',
+							},
+						])}
+						hint="The bot says it needs you when only you can fix something, such as a missing password. It tells you once in chat."
+					/>
 				</section>
 				{trigger ? (
 					<section className="bots-source-section">

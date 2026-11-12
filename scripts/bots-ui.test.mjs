@@ -1866,3 +1866,152 @@ test('generic source editor groups fields, preserves a narrow draft, and tests w
   assert.equal(created.condition.kind,'command');assert.equal(created.condition.intervalMs,60000);assert.equal(created.condition.match.identity,'/id');assert.equal(created.recovery,'once');
  } finally {await page.close();}
 });
+
+const blockerFor = (id) => ({
+	id: id.padEnd(24, '0'),
+	reason: 'The support portal refused the login.',
+	action: 'Add the support portal password to the bot’s secrets',
+	sessionId: 's'.repeat(24),
+	at: NOW - 600_000,
+	notice: 'posted',
+});
+const waitingTrigger = (id, patch = {}) => ({
+	id,
+	botId: BIRD,
+	name: id === 'tr2' ? 'Support tickets' : 'Weekly report',
+	enabled: true,
+	prompt: 'Check new tickets',
+	condition: { kind: 'every', intervalMs: 3_600_000, anchor: 0 },
+	evaluatedThrough: 0,
+	missedCount: 0,
+	missedLatest: null,
+	blocker: blockerFor(id),
+	...patch,
+});
+
+test('a trigger waiting for the user shows Needs you with the action and Resume, also when disabled', async () => {
+	const page = await configure('triggers', {
+		extraTriggers: [waitingTrigger('tr2'), waitingTrigger('tr3', { enabled: false })],
+	});
+	try {
+		const row = page.locator('[data-terminay-bot-trigger="tr2"]');
+		await row.waitFor();
+		assert.equal(
+			await row.locator('[data-terminay-bot-trigger-status]').innerText(),
+			'Needs you',
+		);
+		assert.equal(
+			await row.locator('[data-terminay-bot-trigger-status]').getAttribute('data-terminay-bot-trigger-status'),
+			'need',
+		);
+		assert.match(await row.innerText(), /Add the support portal password/);
+		assert.match(await row.innerText(), /refused the login/);
+		// Disabled takes precedence in the status; Resume is still offered.
+		const off = page.locator('[data-terminay-bot-trigger="tr3"]');
+		assert.equal(await off.locator('[data-terminay-bot-trigger-status]').innerText(), 'Disabled');
+		await off.locator('[data-terminay-bot-trigger-resume="tr3"]').waitFor();
+		await shot(page, 'triggers-needs-you');
+		await row.locator('[data-terminay-bot-trigger-resume="tr2"]').click();
+		await page.waitForFunction(() =>
+			window.__calls.some((c) => c.op === 'resumeTrigger' && c.args[1] === 'tr2'),
+		);
+		// The editor sheet shows the same, with Resume.
+		await row.locator('.bots-trigrow__name').click();
+		const sheet = page.locator('[data-terminay-bot-trigger-needs-you="tr2"]').first();
+		await page.locator('[data-terminay-bot-trigger-editor] [data-terminay-bot-trigger-needs-you="tr2"]').waitFor();
+		assert.match(
+			await page.locator('[data-terminay-bot-trigger-editor] [data-terminay-bot-trigger-needs-you="tr2"]').innerText(),
+			/paused until you choose Resume/,
+		);
+		assert.ok(await sheet.count());
+		await shot(page, 'trigger-editor-needs-you');
+	} finally {
+		await page.close();
+	}
+});
+
+test('the trigger editor offers Startup retries and When the bot needs you, with defaults', async () => {
+	const page = await configure('triggers');
+	try {
+		await page.locator('[data-terminay-bot-trigger-new]').click();
+		const editor = page.locator('[data-terminay-bot-trigger-editor]');
+		assert.equal(await picked(editor, 'Startup retries'), '3');
+		assert.equal(await picked(editor, 'When the bot needs you'), 'pause');
+		await editor.locator('[data-terminay-bot-trigger-field="name"]').fill('Tickets');
+		await editor.locator('[data-terminay-bot-trigger-field="prompt"]').fill('Check tickets');
+		await pick(editor, 'Source', 'every');
+		await editor.locator('[data-terminay-bot-trigger-field="every"]').fill('5');
+		await pick(editor, 'Startup retries', '1');
+		await pick(editor, 'When the bot needs you', 'keep-running');
+		await editor.locator('section[aria-label="If something goes wrong"]').scrollIntoViewIfNeeded();
+		await shot(page, 'trigger-editor-failure-settings');
+		await editor.locator('[data-terminay-bot-trigger-save]').click();
+		await page.waitForFunction(() => window.__calls.some((c) => c.op === 'createTrigger'));
+		const [created] = await calls(page, 'createTrigger');
+		const draft = created.args.find((a) => a && typeof a === 'object' && 'condition' in a);
+		assert.equal(draft.startupRetries, 1);
+		assert.equal(draft.onNeedsHuman, 'keep-running');
+	} finally {
+		await page.close();
+	}
+});
+
+test('Sessions shows startup attempts and the outcome the bot reported', async () => {
+	const attempt = (i) => ({
+		stage: 'adapter-check',
+		temporary: true,
+		code: 'adapter-timeout',
+		at: NOW - 300_000 + i * 30_000,
+		cause: 'The terminay_bot adapter check timed out. The host may be overloaded.',
+	});
+	const page = await configure('sessions', {
+		sessions: {
+			[BIRD]: [
+				session('s2', BIRD, {
+					state: 'failed',
+					open: false,
+					canLoad: false,
+					reason: 'The terminay_bot adapter check timed out. The host may be overloaded.',
+					dispatchedAt: null,
+					retryLimit: 3,
+					attempts: [0, 1, 2, 3].map(attempt),
+					startupFailure: { stage: 'adapter-check', temporary: true, code: 'adapter-timeout' },
+				}),
+				session('s1', BIRD, {
+					state: 'completed',
+					open: false,
+					dispatchedAt: NOW - 200_000,
+					retryLimit: 3,
+					attempts: [attempt(0)],
+					outcome: {
+						disposition: 'needs-human',
+						reason: 'The support portal refused the login.',
+						action: 'Add the support portal password to the bot’s secrets',
+						triggerId: null,
+						at: NOW - 100_000,
+					},
+				}),
+			],
+		},
+	});
+	try {
+		await page.locator('[data-terminay-bot-session="s2"]').waitFor();
+		const attempts = page.locator('[data-terminay-bot-session-attempts]');
+		assert.match(await attempts.innerText(), /Failed after 4 attempts\./);
+		assert.equal(await attempts.locator('li').count(), 4);
+		await shot(page, 'session-retry-attempts');
+		await page.locator('[data-terminay-bot-session-row="s1"]').click();
+		await page.locator('[data-terminay-bot-session-outcome="needs-human"]').waitFor();
+		assert.match(
+			await page.locator('[data-terminay-bot-session-attempts]').innerText(),
+			/Started on attempt 2 of 4\./,
+		);
+		assert.match(
+			await page.locator('[data-terminay-bot-session-outcome]').innerText(),
+			/Needs you.*refused the login[\s\S]*What to do: Add the support portal password/,
+		);
+		await shot(page, 'session-outcome');
+	} finally {
+		await page.close();
+	}
+});
