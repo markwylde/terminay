@@ -154,7 +154,9 @@ test("the canary caller builds every push to main, one at a time, with no notari
 
 test("the nightly caller builds once a night, only when main moved, and notarizes", async () => {
   const nightly = await readFile(new URL("../.github/workflows/nightly.yml", import.meta.url), "utf8")
-  assert.match(nightly, /^on:\n {2}schedule:\n(?: {4}#.*\n)* {4}- cron: "0 2 \* \* \*"\n {2}workflow_dispatch:\n/mu)
+  assert.match(nightly, /^on:\n {2}schedule:\n(?: {4}#.*\n)* {4}- cron: "23 2 \* \* \*"\n {2}workflow_dispatch:\n/mu)
+  // GitHub drops scheduled runs at the top of the hour under load.
+  assert.doesNotMatch(nightly, /- cron: "0 /u)
   assert.match(nightly, /^concurrency:\n(?: {2}#.*\n)* {2}group: nightly\n {2}cancel-in-progress: false$/mu)
   const decide = workflowJob(nightly, "decide")
   assert.match(decide, /gh release download main-latest --repo "\$GH_REPO" --pattern build\.json/u)
