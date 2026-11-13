@@ -59,7 +59,13 @@ async function expectChooserShown(
 	await expect(
 		chooser.locator('[data-terminay-start-action="home"]'),
 	).toContainText('Home directory');
-	await expect(folder).toBeFocused();
+	// Once recent folders load, the search box takes focus; with none,
+	// Open a folder keeps it.
+	await expect(chooser.getByText('Loading recent projects…')).toHaveCount(0, {
+		timeout: 15_000,
+	});
+	const search = chooser.locator('[data-terminay-recent-search]');
+	await expect((await search.count()) > 0 ? search : folder).toBeFocused();
 	// No terminal, no panels, and no sidebar until it is answered.
 	await expect(chooser.locator('.terminal-panel')).toHaveCount(0);
 	await expect(chooser.locator('.file-explorer-sidebar')).toHaveCount(0);
@@ -266,6 +272,12 @@ test('a folder opened through the browser becomes a recent folder that a later p
 	await expect(recent).toBeVisible();
 	await expect(recent).toHaveAttribute('data-available', 'true');
 	await expect(recent).toContainText(name);
+	// Even one recent folder gets a search box.
+	await expect(
+		startChooserFor(mainWindow, second).locator(
+			'[data-terminay-recent-search]',
+		),
+	).toBeVisible();
 	await recent.locator('[data-terminay-recent-open]').click();
 	await expect(startChooserFor(mainWindow, second)).toHaveCount(0);
 	await expect(
