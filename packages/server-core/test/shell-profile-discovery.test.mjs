@@ -300,3 +300,18 @@ test("host call deadlines abort and bound hanging discovery adapters", async (t)
   assert.equal(signals.length, 5);
   assert.equal(signals.every((signal) => signal.aborted), true);
 });
+
+test("a service account's refusing shell is never the system shell", async () => {
+  const fixture = fixtureHost({
+    platform: "linux",
+    accountShell: "/usr/sbin/nologin",
+    environmentShell: "/usr/sbin/nologin",
+    etcShells: "/bin/false\n/bin/bash\n",
+    executables: [["/usr/sbin/nologin", "/usr/sbin/nologin"], ["/bin/false", "/bin/false"], ["/bin/bash", "/bin/bash"], ["/bin/sh", "/bin/sh"]],
+  });
+  const result = await new ShellProfileDiscoveryService(fixture.host).discover();
+
+  assert.equal(result.systemExecutable, "/bin/bash");
+  assert.equal(fixture.probes.includes("/usr/sbin/nologin"), false);
+  assert.equal(fixture.probes.includes("/bin/false"), false);
+});

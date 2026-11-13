@@ -384,3 +384,13 @@ test("no document links a canary desktop payload for download", async () => {
   const workflow = await readFile(prereleaseWorkflowUrl, "utf8")
   assert.doesNotMatch(workflow, /canary-latest\/terminay-desktop/u)
 })
+
+test("the rolling server archives carry the prerelease version, not the workspace placeholder", async () => {
+  const workflow = await readFile(prereleaseWorkflowUrl, "utf8")
+  const archives = workflowJob(workflow, "build-archives")
+  const sync = archives.indexOf('node scripts/sync-package-version.mjs "$VERSION"')
+  const build = archives.indexOf("Build self-contained rolling channel archive")
+  assert.ok(sync > 0 && sync < build, "the version is synced before the archive is built")
+  assert.match(archives, /VERSION: \$\{\{ needs\.plan\.outputs\.version \}\}\n\s+run: node scripts\/sync-package-version\.mjs "\$VERSION"/u)
+  assert.match(archives, /--version "\$VERSION" > "\$RUNNER_TEMP\/standalone-probe\.json"/u)
+})

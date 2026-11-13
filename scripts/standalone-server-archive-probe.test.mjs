@@ -63,3 +63,11 @@ test('archive probe refuses execution outside matching native Linux', async () =
     /native Linux/u,
   )
 })
+
+test('a build that names its version refuses an archive reporting another, or the placeholder', async () => {
+  const { assertExpectedVersion } = await import('./probe-standalone-server-archive.mjs')
+  assert.doesNotThrow(() => assertExpectedVersion('6.9.0-main.812.nightly', '6.9.0-main.812.nightly'))
+  assert.doesNotThrow(() => assertExpectedVersion('0.0.0', undefined))
+  assert.throws(() => assertExpectedVersion('0.0.0', '6.9.0-main.812.nightly'), /placeholder version 0\.0\.0/u)
+  assert.throws(() => assertExpectedVersion('6.8.0', '6.9.0'), /reports version 6\.8\.0; this build is 6\.9\.0/u)
+})

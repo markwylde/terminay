@@ -7,6 +7,7 @@ import {
 } from 'node:net';
 import { dirname, join } from 'node:path';
 import type { PendingEnrollmentApprovalSummary } from './serverExposure.js';
+import type { TerminalProbeResult } from './terminalProbe.js';
 
 /**
  * Headless approval for standalone servers. The data root is the trust
@@ -26,7 +27,8 @@ export type ApprovalSocketRequest =
 	| Readonly<{ op: 'approve'; approvalId: string }>
 	| Readonly<{ op: 'deny'; approvalId: string }>
 	| Readonly<{ op: 'pairing'; rotate?: boolean }>
-	| Readonly<{ op: 'status' }>;
+	| Readonly<{ op: 'status' }>
+	| Readonly<{ op: 'probe-terminal' }>;
 
 /**
  * What a running server says about itself to its operator: whether it is
@@ -68,6 +70,7 @@ export type ApprovalSocketResponse =
 			handoffs: readonly PairingHandoffSummary[];
 	  }>
 	| Readonly<{ ok: true; status: ServerStatusSummary }>
+	| Readonly<{ ok: true; terminal: TerminalProbeResult }>
 	| Readonly<{ ok: false; error: string }>;
 
 export interface ApprovalSocketAuthority {
@@ -93,6 +96,8 @@ export interface ApprovalSocketAuthority {
 	exposureModes?(): readonly string[];
 	/** Readiness, build, and reachability of the server composing the socket. */
 	serverStatus?(): ServerStatusSummary;
+	/** Whether the shell a new terminal would start can run at all. */
+	probeTerminal?(): Promise<TerminalProbeResult>;
 }
 
 export function approvalSocketPath(dataRoot: string): string {
@@ -115,6 +120,11 @@ export function parseApprovalSocketRequest(
 		if (Object.keys(input).length !== 1)
 			throw new Error('approval request is invalid');
 		return Object.freeze({ op: 'status' });
+	}
+	if (input.op === 'probe-terminal') {
+		if (Object.keys(input).length !== 1)
+			throw new Error('approval request is invalid');
+		return Object.freeze({ op: 'probe-terminal' });
 	}
 	if (input.op === 'pairing') {
 		if (Object.keys(input).some((key) => key !== 'op' && key !== 'rotate')) {
@@ -172,6 +182,24 @@ export async function handleApprovalSocketRequest(
 					...(status.advertiseAddress === undefined
 						? {}
 						: { advertiseAddress: status.advertiseAddress }),
+				}),
+			});
+		}
+		if (request.op === 'probe-terminal') {
+			if (authority.probeTerminal === undefined)
+				throw new Error('this server does not probe its terminals');
+			const probe = await authority.probeTerminal();
+			// Rebuilt field by field, as status is.
+			return Object.freeze({
+				ok: true,
+				terminal: Object.freeze({
+					ok: probe.ok === true,
+					...(probe.shell === undefined ? {} : { shell: probe.shell }),
+					...(probe.exitCode === undefined ? {} : { exitCode: probe.exitCode }),
+					...(probe.output === undefined
+						? {}
+						: { output: probe.output.slice(-1024) }),
+					...(probe.reason === undefined ? {} : { reason: probe.reason }),
 				}),
 			});
 		}

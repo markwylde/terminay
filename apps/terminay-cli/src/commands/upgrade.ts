@@ -1,9 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
-
+import { ensureLoginShell } from '../account.js';
 import { derivePublicHost, PUBLIC_HOST_NEEDS_LITERAL } from '../address.js';
 import { ADVERTISED_PORT_SPAN } from '../advertise.js';
 import type { DaemonOptions } from '../args.js';
-import type { CommandContext } from '../context.js';
+import { type CommandContext, sendToInstalledServer } from '../context.js';
 import {
 	discardDownloads,
 	downloadAsset,
@@ -17,6 +17,7 @@ import {
 	upgradeHelperInstalled,
 } from '../helper.js';
 import { activate, activeVersion, installArchive, retain } from '../install.js';
+import { installLauncher } from '../launcher.js';
 import { stagedName, writeInstallRecord } from '../layout.js';
 import { releaseLabel, writeUpgradeOutcome } from '../outcome.js';
 import {
@@ -29,6 +30,7 @@ import { hostArchitecture } from '../platform.js';
 import type { ResolvedRef } from '../resolve.js';
 import { buildFromSource } from '../source.js';
 import { withEnvironmentValue, withUnitKillMode } from '../unit.js';
+import { describeFailures, serverFailed, verifyUsable } from '../usable.js';
 import { verifyArchive } from '../verify.js';
 
 /**
@@ -143,6 +145,14 @@ export async function runUpgrade(
 		await installUpgradeHelper({ layout, runAs: record.runAs, systemd });
 		write('Installed the upgrade helper, so this server can upgrade itself.');
 	}
+	// An account created before it was given a login shell is corrected on
+	// the upgrade that reaches it; the helper's oneshot runs as root too.
+	if ((dependencies.uid ?? process.getuid?.()) === 0)
+		await ensureLoginShell({
+			scope: layout.scope,
+			runAs: record.runAs,
+			write,
+		});
 
 	let architecture: 'x64' | 'arm64';
 	let resolved: ResolvedRef;
@@ -290,12 +300,22 @@ export async function runUpgrade(
 		() => false,
 	);
 
-	if (
-		!started ||
-		(await waitForReady(record.healthPort, dependencies.readinessTimeoutMs)) ===
-			undefined
-	) {
-		write('The upgraded server did not report ready. Rolling back.');
+	const usable = started
+		? await verifyUsable(record, {
+				send: (request) => sendToInstalledServer(context, request),
+				...(dependencies.readinessTimeoutMs === undefined
+					? {}
+					: { timeoutMs: dependencies.readinessTimeoutMs }),
+			})
+		: undefined;
+	if (usable !== undefined && !usable.usable && !serverFailed(usable)) {
+		// The server is fine; only this side could not reach its socket.
+		for (const line of describeFailures(usable)) write(line);
+	}
+	if (usable === undefined || serverFailed(usable)) {
+		write('The upgraded server is not usable. Rolling back.');
+		if (usable !== undefined)
+			for (const line of describeFailures(usable)) write(line);
 		await systemd.stop().catch(() => undefined);
 		await activate(layout, previous);
 		const restarted = await systemd.start().then(
@@ -318,6 +338,12 @@ export async function runUpgrade(
 		write(await systemd.journal(20));
 		throw new UpgradeError(reason);
 	}
+	// An install made before the launcher existed gains it here.
+	await installLauncher({
+		layout,
+		write,
+		...(dependencies.env === undefined ? {} : { env: dependencies.env }),
+	});
 
 	// A server installed before the renderer directory was written has an
 	// environment naming only the local UI bundle, so it pairs a device and then

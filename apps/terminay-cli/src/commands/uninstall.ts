@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import type { DaemonOptions } from '../args.js';
 import type { CommandContext } from '../context.js';
 import { removeUpgradeHelper } from '../helper.js';
+import { removeLauncher } from '../launcher.js';
 import {
 	confirm,
 	defaultStreams,
@@ -72,6 +73,7 @@ export async function runUninstall(
 	await rm(layout.versionsDirectory, { recursive: true, force: true });
 	await rm(layout.currentLink, { force: true });
 	await rm(layout.recordPath, { force: true });
+	await removeLauncher(layout);
 	await rm(layout.resultPath, { force: true });
 	await rm(layout.environmentFile, { force: true });
 

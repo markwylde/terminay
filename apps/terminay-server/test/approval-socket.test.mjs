@@ -10,6 +10,8 @@ import {
 	sendApprovalSocketRequest,
 	startApprovalSocket,
 } from '../dist/remote/approvalSocket.js';
+import { probeShell } from '../dist/remote/terminalProbe.js';
+import { chmod, writeFile } from 'node:fs/promises';
 
 function authority(exposure = {}) {
 	const pending = new Map([
@@ -317,5 +319,65 @@ test('approval and denial responses wait for the consumed pairing room refresh',
 		// What the refresh resolved to is what is answered, so the answer was
 		// made after it.
 		assert.equal(result.deviceName, 'Phone', op);
+	}
+});
+
+test('a terminal probe reports a shell that runs, one that refuses, and one that hangs', async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), 'terminay-terminal-probe-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const nologin = join(directory, 'nologin');
+	await writeFile(nologin, '#!/bin/sh\necho "This account is currently not available."\nexit 1\n');
+	await chmod(nologin, 0o755);
+	const hangs = join(directory, 'hangs');
+	await writeFile(hangs, '#!/bin/sh\nsleep 30\n');
+	await chmod(hangs, 0o755);
+
+	assert.deepEqual(await probeShell('/bin/sh'), { ok: true, shell: '/bin/sh' });
+	assert.deepEqual(await probeShell(nologin), {
+		ok: false,
+		shell: nologin,
+		reason: 'exit',
+		exitCode: 1,
+		output: 'This account is currently not available.',
+	});
+	assert.deepEqual(await probeShell(hangs, { timeoutMs: 200 }), {
+		ok: false,
+		shell: hangs,
+		reason: 'timeout',
+	});
+	assert.deepEqual(await probeShell(null), { ok: false, reason: 'no-shell' });
+});
+
+test('the socket answers probe-terminal with the probe, field by field', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'terminay-approval-socket-'));
+	const socketPath = approvalSocketPath(directory);
+	const server = await startApprovalSocket({
+		socketPath,
+		authority: {
+			...authority(),
+			probeTerminal: async () => ({
+				ok: false,
+				shell: '/usr/sbin/nologin',
+				reason: 'exit',
+				exitCode: 1,
+				output: 'x'.repeat(5000),
+				smuggled: 'secret',
+			}),
+		},
+	});
+	try {
+		const response = await sendApprovalSocketRequest(socketPath, { op: 'probe-terminal' });
+		assert.equal(response.ok, true);
+		assert.equal(response.terminal.ok, false);
+		assert.equal(response.terminal.exitCode, 1);
+		assert.equal(response.terminal.output.length, 1024);
+		assert.equal('smuggled' in response.terminal, false);
+		assert.deepEqual(
+			await sendApprovalSocketRequest(socketPath, { op: 'probe-terminal', extra: 1 }),
+			{ ok: false, error: 'approval request is invalid' },
+		);
+	} finally {
+		await server.close();
+		await rm(directory, { recursive: true, force: true });
 	}
 });

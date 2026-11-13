@@ -102,11 +102,30 @@ support, and is the fallback rather than the default.
 ### The `terminay daemon` installer
 
 ```bash
-sudo npx terminay daemon install
+npx terminay daemon install
 ```
 
+Run it as your ordinary login. A system-wide install needs root, so the CLI
+re-runs itself through `sudo`, which asks for your password once. It calls
+`sudo` with the absolute paths of its own Node.js and script, so a Node.js
+installed by nvm or fnm under your home works; `sudo npx …` does not, because
+`sudo` resets `PATH`. Without a terminal it prints the exact `sudo` command to
+run instead.
+
 The CLI resolves a version, verifies it, lays it out on disk, drives systemd,
-and puts pairing and approval in one terminal. It does not bundle the server:
+checks that the server is usable, and then shows the pairing QR code and waits
+for a device. Ctrl+C ends pairing; the server keeps running.
+
+Install also leaves a `terminay` command on the machine — `/usr/local/bin` for a
+system install, `~/.local/bin` for a user install — that runs the CLI shipped
+in the installed release on that release's own Node.js. Every later command is
+`sudo terminay daemon …` (or `terminay daemon …` for a user install), with no
+`npx`. A `terminay` file the installer did not write is left alone.
+
+"Ready" in `install`, `start`, `upgrade`, and `status` means usable: the health
+endpoint is ready, the approval socket answers the way pairing commands reach
+it, and the server can start its default shell. A failure names the check, the
+detail, and the fix. It does not bundle the server:
 it fetches a distribution at install time. It supports GNU/Linux x64 and arm64
 with systemd, and refuses to run anywhere else with a message naming the
 requirement.
@@ -117,6 +136,7 @@ requirement.
 | `daemon upgrade [ref]` | Follow the installed channel, stage beside, switch, roll back on failure |
 | `daemon upgrade --check` | Report the installed and available release as one line of JSON; change nothing |
 | `daemon status` | Unit state, version, channel, readiness, exposure modes |
+| `daemon doctor` | Check unit, runtime, account shell, data root, health, socket, terminal, and port; print a fix for each failure; change nothing |
 | `daemon start` / `daemon stop` | Wrap the unit and wait for readiness or exit |
 | `daemon qr-code` | Terminal QR, pairing URLs, and the approval prompt |
 | `daemon approvals` / `approve <id>` / `deny <id>` | The same approvals, non-interactively |
@@ -207,6 +227,13 @@ run as that account, so the choice decides whose files, keys, and agents a
 paired device can reach. A dedicated `terminay` system account is preselected
 and created if absent; `--run-as <user>` names an existing login user instead,
 and is checked before anything is written.
+
+The dedicated account has a real login shell (`/bin/bash`, or `/bin/sh` without
+bash) and no password, because the server starts the account's shell for
+every terminal. An account left with `/usr/sbin/nologin` or `/bin/false` would
+open terminals that exit at once, so install and upgrade correct the dedicated
+account and say so. A `--run-as` account is never changed; install warns when
+its shell refuses logins.
 
 #### Layout
 
@@ -554,8 +581,9 @@ npx terminay daemon qr-code
 https://192.168.1.20:8443 --advertise-address 192.168.1.20:51000`.
 `daemon qr-code` for an installed systemd service, run as root against a
 service owned by another account, uses `sudo` to reach that account's
-owner-only socket, so `sudo` must be installed and the Node.js binary must be
-one the service account can execute. QR output defaults to a hosted,
+owner-only socket, so `sudo` must be installed. It runs that step on the
+installed release's own Node.js, so the service account never needs to execute
+the operator's. QR output defaults to a hosted,
 browser-compatible link; use `--mode direct` only when copying a link into
 Terminay Desktop.
 

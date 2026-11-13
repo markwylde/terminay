@@ -704,7 +704,8 @@ jobs:
             --archive "$ARCHIVE" \
             --target "$TARGET" \
             --channel tag \
-            --revision "$EXPECTED_COMMIT" > "$RUNNER_TEMP/standalone-probe.json"
+            --revision "$EXPECTED_COMMIT" \
+            --version "$VERSION" > "$RUNNER_TEMP/standalone-probe.json"
           test "$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).version)' "$RUNNER_TEMP/standalone-probe.json")" = "$VERSION"
 
       - name: Write and verify standalone server checksum

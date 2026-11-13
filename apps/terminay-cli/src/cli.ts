@@ -3,6 +3,7 @@ import { ScopeError } from './account.js';
 import { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
 import { runUpgradeCheck } from './commands/check.js';
 import { runContainerUpgrade } from './commands/containerUpgrade.js';
+import { runDoctor } from './commands/doctor.js';
 import { runInstall } from './commands/install.js';
 import {
 	runForegroundStatus,
@@ -122,7 +123,11 @@ async function main(argv: readonly string[]): Promise<number> {
 	assertSupportedHost();
 
 	if (parsed.command === 'install') {
-		const result = await runInstall(parsed.ref, parsed.options, { write });
+		const result = await runInstall(parsed.ref, parsed.options, {
+			write,
+			argv,
+		});
+		if ('elevated' in result) return result.exitCode;
 		return result.ready ? 0 : 1;
 	}
 
@@ -140,6 +145,8 @@ async function main(argv: readonly string[]): Promise<number> {
 		case 'status':
 			await runStatus(context);
 			return 0;
+		case 'doctor':
+			return (await runDoctor(context)).ok ? 0 : 1;
 		case 'uninstall':
 			await runUninstall(parsed.options, context);
 			return 0;
