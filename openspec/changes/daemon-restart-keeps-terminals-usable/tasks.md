@@ -34,12 +34,12 @@
 - [x] 5.1 Write `scripts/standalone-systemd-restart.mjs` and its driver (Debian 12, systemd as PID 1, the archive under test, `timeout`-bounded, a purged fresh install per scenario), with `scripts/standalone-systemd-restart.test.mjs`. Scenario A: S1, two restarts, then S2; both `mkdir /tmp`, judged from shell output. Verified by: passing locally in a container.
 - [x] 5.2 Scenario B: give the unit `PrivateTmp=true` as an older installer wrote it, start on a fresh data root so the holder and S1 are born under the private `/tmp`, and hold the helper's oneshot active for 10 s. Assert that the request came only after the helper went inactive, the unit was repaired, S1's holder was drained and its session marked, S1 cannot `mkdir /tmp` while S2 can, and the drained holder exits after S1 is closed. Verified by: passing, and failing with the helper's watch stopped (`TERMINAY_SYSTEMD_NEGATIVE=1`, negative control).
 - [x] 5.3 Scenario C: a tagged install with a mismatched unit and the release host unreachable. The archive's `terminay daemon upgrade --system` repairs it, restarts once, and reports the network failure. Rollback restoring the unit's bytes stays proven by `commands.test.mjs` (it needs a signed release). Verified by: C passing.
-- [ ] 5.4 Add a `standalone-systemd-restart` job to `.gitea/workflows/ci.yml` that builds this commit's archive in the floor image and runs A, B and C on every pull request. Verified by: its commit status reading `success` on this pull request.
+- [x] 5.4 Add a `standalone-systemd-restart` job to `.gitea/workflows/ci.yml` that builds this commit's archive in the floor image and runs A, B and C on every pull request. Verified by: its commit status reading `success` on this pull request.
 - [x] 5.5 Add a "Restart under PrivateTmp" section to `openspec/adr/evidence/session-holder-survives-update.md` with the commands, results, and negative control. Verified by: the section exists.
 
 ## 6. Close out
 
 - [ ] 6.1 Confirm `terminals-survive-restart` is archived before this change is archived. Verified by: `openspec/specs/persistent-terminal-sessions/spec.md` existing at archive time.
 - [x] 6.2 Run `openspec validate --all` and `openspec validate --all --archived`. Verified by: no new failures attributable to this change or `remote-file-drop`.
-- [ ] 6.3 Open the pull request on Gitea and read back every commit status. Verified by: every status is `success` or `skipped`.
+- [x] 6.3 Open the pull request on Gitea and read back every commit status. Verified by: every status is `success` or `skipped`.
 - [x] 6.4 Propose the follow-up change `restart-terminal-in-place`, covering authorization as both close and open, serialization, the expected panel binding, and failure cleanup. Verified by: the change exists with a proposal.
