@@ -1,0 +1,45 @@
+## 1. Scratch files (must land before the unit change)
+
+- [ ] 1.1 Add `packages/server-core/src/scratchDirectory.ts`. On POSIX it owns `<tmpdir>/terminay-<uid>`: it creates the root with mode 0700, checks with `lstat` before each use that the root is a directory, not a symlink, owned by this uid, with no group or other bits, and opens files with `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600. On Windows it uses `<tmpdir>/terminay` and exclusive creation only. Verified by: unit tests for a fresh create, a root owned by another uid (refused), a symlink root (refused), a group-writable root (refused), a symlink planted at a file name (refused), and file and directory modes. The Windows path is checked with a `platform` injection test and in the Windows CI job.
+- [ ] 1.2 Move `clipboardImage.ts`, `fileDrop.ts` (`terminay-drops`), `appWindows/attachments.ts`, and `parakeetProvider.ts` onto the scratch root. Verified by: their existing tests passing with paths under the root, and a new test per module asserting 0600 files and a refused write when the root is unsafe.
+- [ ] 1.3 Add a test that fails when shipped code under `packages/server-core/src` or `apps/terminay-server/src` joins a fixed name onto `tmpdir()` outside `scratchDirectory.ts` and `controlSocketPlacement.ts`. `mkdtemp` is allowed. Verified by: the test passing, and failing on a planted `join(tmpdir(), 'x')`.
+- [ ] 1.4 Search for hardcoded `terminay-clipboard`, `terminay-drops`, and the attachment directory name in `extensions/`, `src/`, `e2e/`, and `docs/`, and update them, including the `terminay-drops` note in `docs/operations/standalone-server.md`. Verified by: a grep returning only the constants and the updated docs.
+
+## 2. Unit follows the release
+
+- [ ] 2.1 Add `sharedTmpSafe: true` to the standalone archive manifest (`scripts/standalone-artifact.mjs`) and read it in `apps/terminay-cli/src/manifest.ts`, treating it as false when absent. Verified by: manifest tests for present and absent, and `scripts/standalone-artifact.test.mjs` asserting the field.
+- [ ] 2.2 Replace the fixed `PrivateTmp=true` line in `renderUnit` with `unitFor(manifest)`, adding `withPrivateTmp(unit, on)`, with a comment explaining why. Install renders from the manifest it is installing. Verified by: `unit.test.mjs` for safe and unsafe releases, in both system and user scope.
+- [ ] 2.3 In `commands/upgrade.ts`, keep `unitBefore`, write `unitFor(new)` after stop and activate and before start, and restore `unitBefore` with a reload on rollback. Remove the pre-stop rewrite for the unit's `PrivateTmp` (keep `KillMode`). Verified by: `commands.test.mjs` for an upgrade to a safe release (line removed after stop, before start), a rollback (bytes identical to before), a downgrade to an unsafe release (line present at start), and a unit that already matches (byte-for-byte unchanged, no reload).
+- [ ] 2.4 Compute the unit mismatch against the active release before `assertChannelToFollow` and `resolveUpgradeTarget`. On every path where no upgrade runs, repair, reload, restart once, wait for readiness, then return or rethrow. Verified by: tests for already current, offline (resolution throws), source install with no reference, and staging failure, each repairing once and preserving the original exit outcome.
+- [ ] 2.5 Write the outcome record for a repair-only helper run, so the server and `daemon status` can see it. Verified by: a test reading the outcome after a repair-only run.
+- [ ] 2.6 Update the unit listing in `docs/operations/standalone-server.md` and explain why `PrivateTmp` is absent for current releases. Verified by: the listing matching `unitFor(safe)`.
+
+## 3. Server self-repair
+
+- [ ] 3.1 Add `detectPrivateTmp(mountinfo)` in `apps/terminay-server/src`. Verified by: tests on `/proc/self/mountinfo` fixtures captured in the CI container from a `PrivateTmp=true` unit (detected) and a normal unit (not detected).
+- [ ] 3.2 On start-up, when private `/tmp` is detected and a system-scope helper exists: poll `systemctl is-active` on the helper service with a bounded backoff (at most 30 minutes), then write the request file once, and record the attempt by boot id in the data root. Otherwise, report through diagnostics and the health payload. Verified by: tests with an injected systemctl for a helper already inactive (immediate request), a helper active then inactive (request only afterwards), a helper that never goes inactive (report, no request), one request per boot, and the user-scope report text.
+- [ ] 3.3 Show the report in `daemon status`. Verified by: a status test with a health payload carrying the report.
+
+## 4. Holder health and the banner
+
+- [ ] 4.1 Add `packages/server-core/src/sessionHolder/health.ts`. `checkHolderHealth(pid)` returns `{ sameNamespace, tmp, tmpdir }`, each path being `ok | missing | unwritable | unknown`, with a matching self probe. Verified by: tests with an injected procfs reader for same and different namespace, missing `/tmp`, a missing `TMPDIR`, read-only `/tmp`, unreadable `/proc`, and a server whose own `/tmp` fails; plus a real Linux test against a sibling process under the same uid.
+- [ ] 4.2 In `factory.ts` `start()`, on Linux, check every attached holder this server did not launch. It is eligible only if `sameNamespace` holds and both paths are `ok`; otherwise drain it with `{ kind: 'drained', cause: 'unhealthy' | 'health-unknown', facts }`. Verified by: factory tests for a same-build holder that is unhealthy or unknown getting no spawn while a second generation is launched, a healthy holder being reused, and macOS and Windows behaviour unchanged.
+- [ ] 4.3 Set `degraded: 'tmp-unusable'` only when a holder path is `missing` or `unwritable` and the server's own probe passes, and carry it through adopt to the snapshot and client. Verified by: tests where a namespace-only mismatch gives no flag, an unknown result gives no flag, a host-wide failure gives no flag plus a diagnostics report, and a missing holder `/tmp` gives the flag.
+- [ ] 4.4 Confirm that degraded sessions end normally. Verified by: tests where a degraded session's shell exits (normal ended handling), the unattached limit ends it, and project-root removal ends it; and a grep showing that the health code never calls `end`.
+- [ ] 4.5 Show the banner on degraded panels in `src/`: "This terminal's temporary directory is no longer usable. New terminals are not affected." It does not block input. Verified by: a component test for the text, input still enabled, and no banner without the flag.
+- [ ] 4.6 Add the drain causes and facts to local diagnostics. Verified by: `scripts/local-desktop-diagnostics-session-holder.test.mjs`.
+
+## 5. Proof under real systemd
+
+- [ ] 5.1 Write `scripts/standalone-systemd-restart.test.mjs` (Debian 12, systemd as PID 1, linux-x64 archive under test, `timeout`-bounded, fresh data root per scenario). Scenario A: S1, two restarts, then S2; both `mkdir /tmp`, judged from shell output. Verified by: passing locally in Docker.
+- [ ] 5.2 Scenario B: install the pinned pre-change release `PRE_SHARED_TMP_RELEASE` with its real installer and open S1. Stop, stage the archive under test, switch `current`, and start without touching the unit. Hold a fake active helper for 10 s. Assert that the request came only after the helper went inactive, the unit was repaired, S1 is degraded, S2 can `mkdir /tmp`, and the drained holder exits after S1 is closed. Verified by: passing, and failing with 3.2's request disabled (negative control).
+- [ ] 5.3 Scenario C: a current install with a mismatched unit and the network blocked. `daemon upgrade` repairs it, restarts once, and reports the network failure. Scenario D: an upgrade to a build that fails readiness restores the unit's bytes. Verified by: both passing.
+- [ ] 5.4 Add a `standalone-systemd-restart` job to `.gitea/workflows/ci.yml`. It caches the pinned release, is path-filtered on pull requests, and always runs on `main`. Verified by: its commit status reading `success` on this pull request.
+- [ ] 5.5 Add a "Restart under PrivateTmp" section to `openspec/adr/evidence/session-holder-survives-update.md` with the commands, results, and negative control. Verified by: the section exists.
+
+## 6. Close out
+
+- [ ] 6.1 Confirm `terminals-survive-restart` is archived before this change is archived. Verified by: `openspec/specs/persistent-terminal-sessions/spec.md` existing at archive time.
+- [ ] 6.2 Run `openspec validate --all` and `openspec validate --all --archived`. Verified by: no new failures attributable to this change or `remote-file-drop`.
+- [ ] 6.3 Open the pull request on Gitea and read back every commit status. Verified by: every status is `success` or `skipped`.
+- [ ] 6.4 Propose the follow-up change `restart-terminal-in-place`, covering authorization as both close and open, serialization, the expected panel binding, and failure cleanup. Verified by: the change exists with a proposal.
