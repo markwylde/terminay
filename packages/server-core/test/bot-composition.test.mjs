@@ -317,6 +317,37 @@ test('composed Bots server: engine, image, message, Files, Shell, tokens and rev
 	assert.ok(r.calls().some((c) => c.args?.[0] === 'exec' && c.keyPresent));
 	assert.ok(!JSON.stringify(r.calls()).includes('secret'));
 	assert.equal((await c.engine.status()).botContainers, 1);
+	// A helper matching every positive status filter, and another server's bot,
+	// are both left out of the count. The engine never sees a `label!` filter.
+	for (const [id, labels] of [
+		[
+			'b'.repeat(64),
+			{
+				'terminay.server': 'composed-bots',
+				'terminay.bot': bot.id,
+				'terminay.managed': '1',
+				'terminay.helper': 'socket-stat',
+			},
+		],
+		[
+			'c'.repeat(64),
+			{
+				'terminay.server': 'another-server',
+				'terminay.bot': bot.id,
+				'terminay.managed': '1',
+			},
+		],
+	])
+		writeFileSync(
+			join(r.root, `container-${id}.json`),
+			JSON.stringify({
+				Id: id,
+				Name: id,
+				Config: { Labels: labels, Image: 'fake' },
+				State: { Running: true, Status: 'running' },
+			}),
+		);
+	assert.equal((await c.engine.status()).botContainers, 1);
 	const files = await c.io.files(bot.id, 1);
 	assert.equal((await files.list('.')).entries[0].name, 'hello');
 	await files.close();
