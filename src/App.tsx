@@ -71,6 +71,8 @@ import {
 } from './workspace/WorkspaceStatusBar';
 import { PixelCompanion } from './pixel/Pixel';
 import { usePixelServer } from './pixel/usePixelServer';
+import { hostStatsItems } from './workspace/hostStatsModel';
+import { useHostStats } from './workspace/useHostStats';
 import type { TerminalLauncherView } from './types/terminalLaunchers';
 import type {
 	FolderMenuActionId,
@@ -9047,6 +9049,30 @@ function App({
 		useState<HTMLSpanElement | null>(null);
 	const isPixelShown =
 		pixelServer.state?.enabled === true && activeServerId !== undefined;
+	// Host stats describe the machine running the active tab's server, and
+	// are watched only while this device shows them (host-stats-in-status-bar).
+	const hostStatsServer = useHostStats(
+		automationEntries.find((entry) => entry.serverId === activeServerId),
+		{
+			shown: settings.hostStats.enabled && isStatusBarVisible,
+			intervalSeconds: settings.hostStats.intervalSeconds,
+		},
+	);
+	const hostStatsServerLabel = automationEntries.find(
+		(entry) => entry.serverId === activeServerId,
+	)?.label;
+	const hostStatsItemsShown = useMemo(
+		() =>
+			settings.hostStats.enabled && hostStatsServer.supported
+				? hostStatsItems(hostStatsServer.history, hostStatsServerLabel ?? 'Host')
+				: undefined,
+		[
+			hostStatsServer.history,
+			hostStatsServer.supported,
+			hostStatsServerLabel,
+			settings.hostStats.enabled,
+		],
+	);
 	// Likewise one projection of app windows per server; the host below lays
 	// them out over the terminal panes that own them.
 	const serverAppWindows = useServerAppWindows(automationEntries);
@@ -11881,6 +11907,7 @@ function App({
 			</div>
 			{isStatusBarVisible ? (
 				<WorkspaceStatusBar
+					{...(hostStatsItemsShown === undefined ? {} : { hostStats: hostStatsItemsShown })}
 					onToggleConnectionMenu={() => {
 						setIsActivityMenuOpen(false);
 						setConnectionSwitcherError(null);

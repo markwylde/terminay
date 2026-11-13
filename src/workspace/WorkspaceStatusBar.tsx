@@ -2,6 +2,7 @@ import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { Folder, GitBranch, Monitor, Smartphone, Tablet } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useRef, useState } from 'react';
 import { LiveTerminalTitle } from '../shared/useWorkspaceProjection';
+import { type HostStatsItem, hostStatsSparklinePoints } from './hostStatsModel';
 import {
 	firstChangedSegmentIndex,
 	findContainingWorktree,
@@ -30,7 +31,57 @@ type WorkspaceStatusBarProps = {
 	slotRef: Ref<HTMLDivElement>;
 	/** Pixel renders its dock into this slot, before the remote indicator. */
 	pixelSlotRef?: Ref<HTMLDivElement>;
+	/** Host stats of the active tab's server, when the preference is on. */
+	hostStats?: readonly HostStatsItem[];
 };
+
+const SPARKLINE_WIDTH = 32;
+const SPARKLINE_HEIGHT = 12;
+
+/** CPU, memory, network and disk of the active server's host, before Pixel. */
+export function HostStatsStrip({ items }: Readonly<{ items: readonly HostStatsItem[] }>) {
+	return (
+		<div className="workspace-status-bar__host" data-testid="workspace-status-bar-host-stats">
+			{items.map((item) => (
+				<span
+					aria-label={item.detail}
+					className={`workspace-status-bar__host-item workspace-status-bar__host-item--${item.metric}`}
+					data-metric={item.metric}
+					key={item.metric}
+					role="img"
+					title={item.detail}
+				>
+					<span className="workspace-status-bar__host-label" aria-hidden="true">
+						{item.label}
+					</span>
+					<svg
+						aria-hidden="true"
+						className="workspace-status-bar__host-graph"
+						height={SPARKLINE_HEIGHT}
+						viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}
+						width={SPARKLINE_WIDTH}
+					>
+						<polyline
+							fill="none"
+							points={hostStatsSparklinePoints(
+								item.values,
+								item.max,
+								SPARKLINE_WIDTH,
+								SPARKLINE_HEIGHT,
+							)}
+							stroke="currentColor"
+							strokeLinejoin="round"
+							strokeWidth="1.25"
+						/>
+					</svg>
+					<span className="workspace-status-bar__host-figure" aria-hidden="true">
+						{item.figure ?? '–'}
+					</span>
+				</span>
+			))}
+		</div>
+	);
+}
 
 const DEVICE_ICONS: Record<RemoteDeviceKind, typeof Smartphone> = {
 	computer: Monitor,
@@ -39,6 +90,7 @@ const DEVICE_ICONS: Record<RemoteDeviceKind, typeof Smartphone> = {
 };
 
 export function WorkspaceStatusBar({
+	hostStats,
 	onToggleConnectionMenu,
 	pixelSlotRef,
 	remote,
@@ -47,6 +99,7 @@ export function WorkspaceStatusBar({
 	return (
 		<footer className="workspace-status-bar" data-testid="workspace-status-bar">
 			<div className="workspace-status-bar__focused" ref={slotRef} />
+			{hostStats === undefined ? null : <HostStatsStrip items={hostStats} />}
 			<div className="workspace-status-bar__pixel" ref={pixelSlotRef} />
 			<button
 				aria-label={remote.accessibleLabel}

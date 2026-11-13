@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FEATURE_CAPABILITIES, LANGUAGE_OPERATIONS, PROJECT_START_OPERATIONS, SERVER_UPGRADE_OPERATIONS } from "@terminay/protocol";
+import { FEATURE_CAPABILITIES, LANGUAGE_OPERATIONS, PROJECT_START_OPERATIONS, SERVER_UPGRADE_OPERATIONS, HOST_STATS_OPERATIONS } from "@terminay/protocol";
 import {
   ACTIVITY_OPERATIONS,
   NOTIFICATION_OPERATIONS,
@@ -131,6 +131,7 @@ test("a composed server advertises the versioned capability of every service it 
         FEATURE_CAPABILITIES.appWindowMirror,
         FEATURE_CAPABILITIES.appWindows,
         FEATURE_CAPABILITIES.health,
+        FEATURE_CAPABILITIES.hostStats,
         FEATURE_CAPABILITIES.macros,
         FEATURE_CAPABILITIES.mcpApprovals,
         FEATURE_CAPABILITIES.notifications,
@@ -165,6 +166,7 @@ test("every stable operation name in the protocol surface maps to its own capabi
     [PUSH_OPERATIONS, FEATURE_CAPABILITIES.push],
     [TERMINAL_TITLE_OPERATIONS, FEATURE_CAPABILITIES.terminalTitles],
     [SERVER_UPGRADE_OPERATIONS, FEATURE_CAPABILITIES.serverUpgrade],
+    [HOST_STATS_OPERATIONS, FEATURE_CAPABILITIES.hostStats],
     [AGENT_OPERATIONS, FEATURE_CAPABILITIES.agents],
     [SETTINGS_OPERATIONS, FEATURE_CAPABILITIES.settings],
     [SHELL_PROFILE_OPERATIONS, FEATURE_CAPABILITIES.settings],

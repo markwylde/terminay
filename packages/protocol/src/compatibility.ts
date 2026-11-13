@@ -63,6 +63,9 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	 * root (ADR-0066). A connection that does not negotiate it gets a project
 	 * created in the server's default folder instead. */
 	projectStartChoice: 'project-start-choice.v1',
+	/** Live CPU, memory, network and disk figures for the server's own host,
+	 * sampled only while a client watches. */
+	hostStats: 'host-stats.v1',
 	/** Liveness and health are connection mechanics, not features. */
 	heartbeat: 'connection.heartbeat',
 	health: 'server.health',
@@ -119,6 +122,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			// this bundle can present; a server without it creates the project
 			// in its default folder, as before.
 			FEATURE_CAPABILITIES.projectStartChoice,
+			FEATURE_CAPABILITIES.hostStats,
 		]),
 	});
 

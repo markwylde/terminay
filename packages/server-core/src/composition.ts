@@ -54,6 +54,7 @@ import { createPushOperationRegistry } from './push/protocol.js';
 import { PushSender, type PushTransport } from './push/sender.js';
 import { createServerUpgradeOperationRegistry } from './serverUpgrade/protocol.js';
 import { ServerUpgradeService } from './serverUpgrade/service.js';
+import { HostStatsService } from './hostStats/service.js';
 import {
 	type AiService,
 	createAiOperationHandlers,
@@ -427,6 +428,8 @@ export interface ServerCoreCompositionOptions
 	 * Record connection timings setting is on. `file` is where they live;
 	 * absent, they are kept in memory only. */
 	readonly connectionMetrics?: { readonly file?: string };
+	/** Host stats sampling; tests pass one with a fake reader and timer. */
+	readonly hostStats?: HostStatsService;
 	/**
 	 * The terminal launchers this server offers (ADR-0073). Clients list them
 	 * with `terminal.launchers`, hear `terminal.launchers.changed`, and name
@@ -586,6 +589,8 @@ export interface ServerCoreComposition {
 	readonly push?: PushSender;
 	/** Whether a newer release exists, and the upgrade a device may ask for. */
 	readonly serverUpgrade: ServerUpgradeService;
+	/** Live host figures, sampled only while a connection watches. */
+	readonly hostStats: HostStatsService;
 	readonly agentOperations?: AgentOperationRegistry;
 	/** What each terminal displays (ADR-0058); present with a workspace. */
 	readonly terminalTitles?: TerminalTitleService;
@@ -1808,6 +1813,7 @@ export function createServerCoreComposition(
 		service: serverUpgrade,
 		eventJournal,
 	});
+	const hostStats = options.hostStats ?? new HostStatsService({ eventJournal });
 	const activityOperations =
 		options.activity === undefined
 			? undefined
@@ -2035,7 +2041,10 @@ export function createServerCoreComposition(
 									pushOperations?.operations ?? {},
 									mergeOperationRegistries(
 										serverUpgradeOperations.operations,
-										connectionMetrics?.operations() ?? {},
+										mergeOperationRegistries(
+											connectionMetrics?.operations() ?? {},
+											hostStats.operations(),
+										),
 									),
 								),
 							),
@@ -2083,6 +2092,7 @@ export function createServerCoreComposition(
 		terminalOperations.closeConnection(connectionId);
 		push?.connectionClosed(connectionId);
 		serverUpgrade.clientDetached(connectionId);
+		hostStats.closeConnection(connectionId);
 		macroOperations?.closeConnection(connectionId);
 		options.fileObservations?.closeConnection(connectionId);
 		appWindows?.closeConnection(connectionId);
@@ -2414,6 +2424,7 @@ export function createServerCoreComposition(
 				serverUpgradeOperations.close();
 				serverUpgrade.dispose();
 			});
+			await attempt(() => hostStats.dispose());
 			await attempt(() => agentOperations?.close());
 			await attempt(() => options.fileObservations?.close());
 			await attempt(() => options.activity?.shutdown());
@@ -2478,6 +2489,7 @@ export function createServerCoreComposition(
 		...(notifications === undefined ? {} : { notifications }),
 		...(push === undefined ? {} : { push }),
 		serverUpgrade,
+		hostStats,
 		...(agentOperations === undefined ? {} : { agentOperations }),
 		...(terminalTitles === undefined ? {} : { terminalTitles }),
 		terminalOperations,
@@ -2759,6 +2771,8 @@ function uniqueCapabilities(
 			// Every server says whether it has an upgrade to offer; one with no
 			// upgrader says it has none.
 			FEATURE_CAPABILITIES.serverUpgrade,
+			// Every server can describe its own host.
+			FEATURE_CAPABILITIES.hostStats,
 			...(options.connectionMetrics === undefined
 				? []
 				: [CONNECTION_METRICS_CAPABILITY]),

@@ -202,6 +202,7 @@ function setValueAtPath(
 		'dictation',
 		'fileViewer',
 		'gitPushAgent',
+		'hostStats',
 		'keyboardShortcuts',
 		'pixel',
 		'recording',

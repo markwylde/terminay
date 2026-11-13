@@ -444,6 +444,10 @@ export const defaultTerminalSettings: TerminalSettings = {
 	altClickMovesCursor: true,
 	showStatusBar: true,
 	showStatusBarCompact: false,
+	hostStats: {
+		enabled: false,
+		intervalSeconds: 5,
+	},
 	activityIndicators: {
 		amberDelaySeconds: 0,
 		greenDelaySeconds: 1,
@@ -1574,6 +1578,38 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		],
 	},
 	{
+		id: 'status-bar',
+		categoryId: 'appearance',
+		title: 'Status Bar',
+		description:
+			'Live figures for the machine that runs the active tab\'s Terminay Server: the remote host for a remote server, this computer for the local one.',
+		fields: [
+			makeField({
+				key: 'hostStats.enabled',
+				label: 'Show host stats',
+				description:
+					'Show small CPU, memory, network and disk I/O graphs in the status bar on this device. The server samples its host only while a device shows them.',
+				sectionId: 'status-bar',
+				categoryId: 'appearance',
+				input: 'boolean',
+				keywords: ['host', 'stats', 'cpu', 'memory', 'ram', 'network', 'disk', 'io', 'load', 'monitor', 'status bar', 'graph'],
+			}),
+			makeField({
+				key: 'hostStats.intervalSeconds',
+				label: 'Host stats interval',
+				description: 'Seconds between samples, from 1 to 3600.',
+				sectionId: 'status-bar',
+				categoryId: 'appearance',
+				input: 'number',
+				min: 1,
+				max: 3600,
+				step: 1,
+				visibleWhen: { key: 'hostStats.enabled', value: true },
+				keywords: ['host', 'stats', 'interval', 'refresh', 'sample', 'seconds'],
+			}),
+		],
+	},
+	{
 		id: 'tab-indicators',
 		categoryId: 'appearance',
 		title: 'Tab Indicators',
@@ -2674,6 +2710,26 @@ export function normalizeUpdateChannel(
 	return 'stable';
 }
 
+/** Host stats are off until switched on; the interval is whole seconds, 1–3600
+ * (the bounds `@terminay/protocol` enforces on the server as well). */
+function normalizeHostStatsSettings(value: unknown): TerminalSettings['hostStats'] {
+	const input =
+		typeof value === 'object' && value !== null
+			? (value as Partial<Record<keyof TerminalSettings['hostStats'], unknown>>)
+			: {};
+	return {
+		enabled: input.enabled === true,
+		intervalSeconds: Math.round(
+			clampNumber(
+				Number(input.intervalSeconds),
+				defaultTerminalSettings.hostStats.intervalSeconds,
+				1,
+				3600,
+			),
+		),
+	};
+}
+
 export function normalizeTerminalSettings(
 	candidate: unknown,
 ): TerminalSettings {
@@ -2883,6 +2939,7 @@ export function normalizeTerminalSettings(
 			typeof input.showStatusBarCompact === 'boolean'
 				? input.showStatusBarCompact
 				: defaultTerminalSettings.showStatusBarCompact,
+		hostStats: normalizeHostStatsSettings(input.hostStats),
 		activityIndicators: {
 			amberDelaySeconds: clampNumber(
 				Number(activityIndicatorsInput.amberDelaySeconds),

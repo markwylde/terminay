@@ -62,6 +62,7 @@ const OPERATION_NAMESPACES: ReadonlyMap<string, OperationCapability> = new Map<
 	['workspace-view', FEATURE_CAPABILITIES.workspaceView],
 	['mcp', FEATURE_CAPABILITIES.mcpApprovals],
 	['app-windows', FEATURE_CAPABILITIES.appWindows],
+	['host-stats', FEATURE_CAPABILITIES.hostStats],
 	['server', CONNECTION_MECHANICS],
 	['events', CONNECTION_MECHANICS],
 	['connection', CONNECTION_MECHANICS],
