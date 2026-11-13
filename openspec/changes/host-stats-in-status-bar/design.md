@@ -87,7 +87,7 @@ reveal nothing about another project's content.
 |---------|------------------------------------------|-----------------------------------------------------------------|---------------|
 | CPU     | `os.cpus()` tick deltas                  | `os.cpus()` tick deltas                                         | `os.cpus()`   |
 | Memory  | `/proc/meminfo` `MemTotal - MemAvailable`| `os.totalmem()` and `sysctl` free, speculative, purgeable and file-backed page counts | `os.totalmem() - os.freemem()` |
-| Network | `/proc/net/dev`, every interface except `lo` | `netstat -ibn` link rows, every interface except `lo*`      | unavailable   |
+| Network | `/proc/net/dev`, every interface except `lo` | `netstat -ibn` link rows of `en<n>` ports, or every interface except `lo*` when there are none | unavailable   |
 | Disk    | `/proc/diskstats` whole disks (sectors × 512), excluding `loop`, `ram`, `zram`, `dm-`, `md` and `sr` devices and partitions | `ioreg -r -c IOBlockStorageDriver` `Bytes (Read/Write)` | unavailable |
 
 On Linux every sample reads files only, with no process spawn. On macOS
@@ -96,7 +96,11 @@ full. Network and disk have no file source. Each macOS sample therefore runs
 one `/bin/sh -c` that prints `sysctl`, `netstat` and `ioreg` output separated
 by markers. That costs one shell and three short-lived tools per sample. At
 the default 5 s that is acceptable, and it happens only while someone is
-watching (ADR-0021 measures background cost in spawns). If a source fails or
+watching (ADR-0021 measures background cost in spawns). The Linux virtual-interface list is
+re-read on every sample, so an interface created while stats are shown is
+classified correctly. When the last watcher leaves, the read in flight is
+aborted, which kills the macOS shell before it starts its remaining tools.
+If a source fails or
 cannot be parsed, its metric is reported as `null` (unavailable) and the
 other metrics are unaffected.
 

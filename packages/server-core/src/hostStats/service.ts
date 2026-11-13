@@ -87,6 +87,8 @@ export class HostStatsService {
 	private reading = false;
 	/** Bumped when sampling stops, so a read already in flight is discarded. */
 	private generation = 0;
+	/** Cancels the read in flight when sampling stops. */
+	private inFlight: AbortController | undefined;
 	private disposed = false;
 
 	constructor(private readonly options: HostStatsServiceOptions = {}) {
@@ -146,9 +148,11 @@ export class HostStatsService {
 		this.timer = undefined;
 		this.timerIntervalMs = wanted;
 		if (wanted === undefined) {
-			// Nobody is watching: drop the baseline and discard any read in flight.
+			// Nobody is watching: drop the baseline and cancel any read in flight.
 			this.previous = undefined;
 			this.generation += 1;
+			this.inFlight?.abort();
+			this.inFlight = undefined;
 			return;
 		}
 		// An owner-approved poll (ADR-0028). Host CPU, memory, network and disk
@@ -166,8 +170,10 @@ export class HostStatsService {
 		if (this.reading || this.timerIntervalMs === undefined) return;
 		this.reading = true;
 		const generation = this.generation;
+		const controller = new AbortController();
+		this.inFlight = controller;
 		try {
-			const counters = await this.reader.read();
+			const counters = await this.reader.read(controller.signal);
 			if (generation !== this.generation || this.timerIntervalMs === undefined) return;
 			const current = { at: this.now(), counters };
 			const previous = this.previous;
@@ -184,6 +190,7 @@ export class HostStatsService {
 				`host stats read failed: ${error instanceof Error ? error.message : String(error)}`,
 			);
 		} finally {
+			if (this.inFlight === controller) this.inFlight = undefined;
 			this.reading = false;
 		}
 	}

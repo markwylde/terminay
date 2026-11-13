@@ -120,30 +120,38 @@ export function parseDarwinSysctlMemory(text: string, totalBytes: number): Memor
 	};
 }
 
+/** macOS names its Ethernet and Wi-Fi ports `en<n>`; tunnels (`utun`, `ipsec`),
+ * bridges, AWDL and virtual machine interfaces carry traffic that also
+ * crosses one of them. */
+const DARWIN_PHYSICAL_INTERFACE = /^en\d+$/u;
+
 /**
  * `netstat -ibn`: one `<Link#n>` row per interface carries its byte totals in
  * the fifth- and second-last columns (`Ibytes … Obytes Coll`). The address
- * column may be empty, so columns are counted from the right.
+ * column may be empty, so columns are counted from the right. Physical
+ * interfaces are counted, so tunnelled traffic counts once; a host with none
+ * counts every interface but loopback.
  */
 export function parseDarwinNetstat(text: string): NetworkTotals | null {
-	let receivedBytes = 0;
-	let sentBytes = 0;
-	let rows = 0;
 	const lines = text.split('\n');
 	if (!/\bIbytes\b/u.test(lines[0] ?? '')) return null;
+	const links: Array<{ name: string; received: number; sent: number }> = [];
 	for (const line of lines.slice(1)) {
 		const fields = line.trim().split(/\s+/u);
 		if (fields.length < 9 || !fields[2]?.startsWith('<Link#')) continue;
 		const received = whole(fields[fields.length - 5]);
 		const sent = whole(fields[fields.length - 2]);
 		if (received === null || sent === null) continue;
-		rows += 1;
-		const name = fields[0]?.replace(/\*$/u, '') ?? '';
-		if (name.startsWith('lo')) continue;
-		receivedBytes += received;
-		sentBytes += sent;
+		links.push({ name: fields[0]?.replace(/\*$/u, '') ?? '', received, sent });
 	}
-	return rows === 0 ? null : { receivedBytes, sentBytes };
+	if (links.length === 0) return null;
+	const physical = links.filter((link) => DARWIN_PHYSICAL_INTERFACE.test(link.name));
+	const counted =
+		physical.length > 0 ? physical : links.filter((link) => !link.name.startsWith('lo'));
+	return {
+		receivedBytes: counted.reduce((total, link) => total + link.received, 0),
+		sentBytes: counted.reduce((total, link) => total + link.sent, 0),
+	};
 }
 
 /** `ioreg -r -c IOBlockStorageDriver -w 0`: each driver is one whole disk. */

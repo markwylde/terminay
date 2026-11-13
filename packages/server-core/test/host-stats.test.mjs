@@ -73,9 +73,11 @@ test('Linux reader counts physical interfaces, or all but loopback in a containe
 		assert.deepEqual(host.memory, { totalBytes: 102400, usedBytes: 76800 });
 		assert.ok(host.cpu.cores > 0);
 
+		// The same reader sees an interface reclassified between reads.
+		const reader = createLinuxHostCounterReader(proc, sys);
+		assert.deepEqual((await reader.read()).network, { receivedBytes: 2000, sentBytes: 500 });
 		await mkdir(join(sys, 'devices', 'virtual', 'net', 'eth0'), { recursive: true });
-		const container = await createLinuxHostCounterReader(proc, sys).read();
-		assert.deepEqual(container.network, { receivedBytes: 2300, sentBytes: 600 });
+		assert.deepEqual((await reader.read()).network, { receivedBytes: 2300, sentBytes: 600 });
 
 		const missing = await createLinuxHostCounterReader(join(root, 'none'), sys).read();
 		assert.equal(missing.memory, null);
@@ -95,7 +97,7 @@ test('macOS sysctl memory: free, speculative, purgeable and file-backed pages ar
 	assert.equal(parseDarwinSysctlMemory('', 1000), null);
 });
 
-test('macOS netstat -ibn: link rows, counted from the right, without loopback', () => {
+test('macOS netstat -ibn: physical link rows, counted from the right', () => {
 	const text = `Name       Mtu   Network       Address            Ipkts Ierrs     Ibytes    Opkts Oerrs     Obytes  Coll
 lo0        16384 <Link#1>                         1000     0     999999     1000     0     999999     0
 lo0        16384 127           127.0.0.1          1000     -     999999     1000     -     999999     -
@@ -103,8 +105,16 @@ en0        1500  <Link#6>    a4:83:e7:00:00:01    5000     0    2000000     4000
 en0        1500  192.168.1     192.168.1.5        5000     -    2000000     4000     -     300000     -
 utun0      1380  <Link#15>                           10     0       1000       20     0       2000     0
 `;
-	assert.deepEqual(parseDarwinNetstat(text), { receivedBytes: 2001000, sentBytes: 302000 });
+	// The tunnel's traffic also crossed en0, so only en0 counts.
+	assert.deepEqual(parseDarwinNetstat(text), { receivedBytes: 2000000, sentBytes: 300000 });
 	assert.equal(parseDarwinNetstat('nothing here'), null);
+	// With no physical interface, everything but loopback counts.
+	const tunnelsOnly = `Name       Mtu   Network       Address            Ipkts Ierrs     Ibytes    Opkts Oerrs     Obytes  Coll
+lo0        16384 <Link#1>                         1000     0     999999     1000     0     999999     0
+utun0      1380  <Link#15>                           10     0       1000       20     0       2000     0
+bridge0    1500  <Link#9>    36:00:00:00:00:00       5     0        300        5     0        400     0
+`;
+	assert.deepEqual(parseDarwinNetstat(tunnelsOnly), { receivedBytes: 1300, sentBytes: 2400 });
 });
 
 test('macOS ioreg: each block storage driver is a disk', () => {
@@ -286,4 +296,30 @@ test('a composed server serves host stats, and a closed connection stops its sam
 	composition.coreOptions.onConnectionClosed('conn-1', 'client');
 	assert.equal(h.service.intervalMs, undefined);
 	assert.equal(h.timers.size, 0);
+});
+
+test('the last watcher leaving cancels a read in flight', async () => {
+	const signals = [];
+	const timers = new Map();
+	let next = 1;
+	const service = new HostStatsService({
+		reader: {
+			read(signal) {
+				signals.push(signal);
+				return new Promise(() => {});
+			},
+		},
+		setInterval: (handler, ms) => {
+			timers.set(next, { handler, ms });
+			return next++;
+		},
+		clearInterval: (id) => timers.delete(id),
+	});
+	service.watch('c1', 5);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(signals.length, 1);
+	assert.equal(signals[0].aborted, false);
+	service.unwatch('c1');
+	assert.equal(signals[0].aborted, true);
+	assert.equal(timers.size, 0);
 });

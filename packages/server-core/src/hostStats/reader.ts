@@ -24,7 +24,8 @@ export type HostCounters = {
 };
 
 export interface HostCounterReader {
-	read(): Promise<HostCounters>;
+	/** Read every counter once. An aborted read stops any work it started. */
+	read(signal?: AbortSignal): Promise<HostCounters>;
 }
 
 const SOURCE_TIMEOUT_MS = 2_000;
@@ -52,13 +53,13 @@ async function text(path: string): Promise<string | null> {
  * host with none, such as a container, counts everything but loopback.
  */
 export function createLinuxHostCounterReader(procRoot = '/proc', sysRoot = '/sys'): HostCounterReader {
-	let virtual: Promise<ReadonlySet<string> | null> | undefined;
-	const virtualInterfaces = () => {
-		virtual ??= readdir(`${sysRoot}/devices/virtual/net`)
+	// Read on every sample: a bridge or veth created while stats are shown
+	// must not be mistaken for a physical interface. It is a directory read,
+	// never a spawn.
+	const virtualInterfaces = (): Promise<ReadonlySet<string> | null> =>
+		readdir(`${sysRoot}/devices/virtual/net`)
 			.then((names) => new Set(names))
 			.catch(() => null);
-		return virtual;
-	};
 	return {
 		async read() {
 			const [meminfo, netdev, diskstats, virtualNames] = await Promise.all([
@@ -107,12 +108,18 @@ const DARWIN_SCRIPT = [
  */
 export function createDarwinHostCounterReader(): HostCounterReader {
 	return {
-		read: () =>
+		read: (signal) =>
 			new Promise<HostCounters>((resolve) => {
+				// Aborting kills the shell, so a read whose watchers have all left
+				// starts none of the tools still to come.
 				execFile(
 					'/bin/sh',
 					['-c', DARWIN_SCRIPT],
-					{ timeout: SOURCE_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+					{
+						timeout: SOURCE_TIMEOUT_MS,
+						maxBuffer: 4 * 1024 * 1024,
+						...(signal === undefined ? {} : { signal }),
+					},
 					(_error, stdout) => {
 						// A tool that failed leaves its own section empty; the others stand.
 						const [sysctl = '', netstat = '', ioreg = ''] = String(stdout ?? '').split(
