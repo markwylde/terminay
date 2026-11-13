@@ -442,12 +442,7 @@ for (const scenario of SCENARIOS) {
 	if (scenario === 'A') await scenarioA();
 	else if (scenario === 'B') await scenarioB();
 	else if (scenario === 'C') await scenarioC();
-	else if (scenario === 'LIST') {
-		const s1 = await freshInstall();
-		const mcp = mcpAs(s1);
-		write(JSON.stringify(await mcp.call('list_terminals'), null, 2));
-		mcp.close();
-	} else throw new Error(`unknown scenario ${scenario}`);
+	else throw new Error(`unknown scenario ${scenario}`);
 }
 write('SYSTEMD RESTART OK');
 process.exit(0);

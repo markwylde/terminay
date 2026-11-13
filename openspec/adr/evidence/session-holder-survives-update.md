@@ -134,6 +134,39 @@ Not exercised here: a real `daemon upgrade` between two published versions
 (there was only one), a unit written by an older release being repaired by an
 upgrade, an x64 machine, and a user-scope install.
 
+## Restart under PrivateTmp
+
+Recorded 2026-11-13 for ADR-0115. Debian 12 in a privileged Podman container
+with systemd as PID 1, linux-arm64 archive built from this change, system
+scope, `runAs: terminay`, a purged fresh install per scenario:
+
+```sh
+node scripts/standalone-systemd-restart.mjs --archive <terminay-server-*.tar.gz> --scenarios A
+node scripts/standalone-systemd-restart.mjs --archive <terminay-server-*.tar.gz> --scenarios B
+node scripts/standalone-systemd-restart.mjs --archive <terminay-server-*.tar.gz> --scenarios C
+TERMINAY_SYSTEMD_NEGATIVE=1 node scripts/standalone-systemd-restart.mjs --archive <...> --scenarios B
+```
+
+Every verdict about `/tmp` comes from a shell: the driver types
+`mkdir "/tmp/sr-<tag>-$$"` into the terminal through the server's own MCP
+endpoint and reads back an `SR-OK-<tag>` or `SR-FAIL-<tag>` marker that only
+the shell's output, not the echoed command, can contain.
+
+| Scenario | Observed |
+| --- | --- |
+| A: two `systemctl restart`s | the kept shell S1 could `mkdir /tmp` before and after both restarts; a terminal opened afterwards, S2, could too |
+| B: unit given `PrivateTmp=true`, helper oneshot held running | the server asked for the repair only after `terminay-upgrade.service` left `activating`; the unit lost `PrivateTmp` and the server restarted onto the host `/tmp`; S1's holder was drained with `{"sameNamespace":"no","tmp":"missing","tmpdir":"missing"}` and its session marked; S1 could not `mkdir /tmp`, S2 could; the drained holder exited once S1 closed |
+| C: tagged install, release host unreachable | `terminay daemon upgrade --system` removed `PrivateTmp`, restarted the server exactly once, and still failed with `connect ECONNREFUSED 127.0.0.1:443` |
+| Negative control for B | with the helper's path watch stopped, the request file was never acted on and the run failed with `timed out waiting for the unit to be repaired` |
+
+The first B run found a real defect: a oneshot that is still executing reports
+`activating`, so `systemctl is-active --quiet` called the busy helper idle and
+the request was merged into its run and lost. The server now treats
+`activating`, `deactivating`, `reloading` and `refreshing` as busy.
+
+Rollback restoring the unit's previous bytes needs a signed release and is
+covered by `apps/terminay-cli/test/commands.test.mjs`, not here.
+
 ## Not observed
 
 - **Restart to update.** The update was installed by quitting, not through the

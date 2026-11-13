@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import {
 	mkdir,
 	mkdtemp,
@@ -357,6 +357,11 @@ async function closeElectronAppGracefully(
  */
 export async function launchDesktopApp(options: {
 	readonly args?: readonly string[];
+	/**
+	 * The launch's TMP, TEMP and TMPDIR, which every terminal and session
+	 * holder it starts inherits. Defaults to the test's tempDir.
+	 */
+	readonly temporaryDirectory?: string;
 	readonly tempDir: string;
 	readonly userDataDir: string;
 	readonly testInfo: TestInfo;
@@ -366,6 +371,14 @@ export async function launchDesktopApp(options: {
 	readonly close: () => Promise<void>;
 }> {
 	const { tempDir, userDataDir, testInfo } = options;
+	// A holder whose TMPDIR is deleted after it was started is what this spec
+	// is about (ADR-0115): its first launch gets a directory of its own.
+	const temporaryDirectory =
+		options.temporaryDirectory ??
+		(path.basename(testInfo.file) === 'holder-tmp-unusable.spec.ts'
+			? path.join(tempDir, 'first-launch-tmp')
+			: tempDir);
+	mkdirSync(temporaryDirectory, { recursive: true });
 		// The built-in agents extension watches each harness's home. Point the
 		// ones the agent specs drive at isolated fixture homes so the library's
 		// fixture drivers, not the host account, decide what is live.
@@ -392,7 +405,7 @@ export async function launchDesktopApp(options: {
 			env: {
 				...process.env,
 				CI: '1',
-				TEMP: tempDir,
+				TEMP: temporaryDirectory,
 				TERMINAY_E2E_TEMP_DIR: tempDir,
 				TERMINAY_TEST: '1',
 				...agentHomes,
@@ -471,6 +484,7 @@ export async function launchDesktopApp(options: {
 					'terminals-survive-restart.spec.ts',
 					'app-windows-survive-restart.spec.ts',
 					'holder-relaunch.spec.ts',
+					'holder-tmp-unusable.spec.ts',
 					'workflows.spec.ts',
 				].includes(path.basename(testInfo.file))
 					? { TERMINAY_SESSION_HOLDER: '1' }
@@ -492,8 +506,8 @@ export async function launchDesktopApp(options: {
 						}
 					: {}),
 				TERMINAY_USER_DATA_DIR: userDataDir,
-				TMP: tempDir,
-				TMPDIR: tempDir,
+				TMP: temporaryDirectory,
+				TMPDIR: temporaryDirectory,
 				VITE_DEV_SERVER_URL: staticServer.url,
 			},
 		});
