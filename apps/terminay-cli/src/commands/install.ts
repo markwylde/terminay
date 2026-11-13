@@ -3,9 +3,14 @@ import { homedir, hostname } from 'node:os';
 import { dirname } from 'node:path';
 import {
 	assertRootForSystemScope,
+	type ElevationSpawner,
+	elevatedArguments,
+	elevateThroughSudo,
+	ensureLoginShell,
 	prepareDataRoot,
 	selectRunAs,
 	selectScope,
+	shellQuote,
 } from '../account.js';
 import {
 	defaultDirectOrigin,
@@ -14,13 +19,13 @@ import {
 } from '../address.js';
 import { ADVERTISED_PORT_SPAN } from '../advertise.js';
 import type { DaemonOptions, InstallScope } from '../args.js';
+import { type CommandContext, serviceNode } from '../context.js';
 import {
 	discardDownloads,
 	downloadAsset,
 	downloadBytes,
 	downloadText,
 } from '../download.js';
-import { waitForReady } from '../health.js';
 import { installUpgradeHelper } from '../helper.js';
 import {
 	activate,
@@ -28,6 +33,7 @@ import {
 	installedVersions,
 	retain,
 } from '../install.js';
+import { installLauncher } from '../launcher.js';
 import {
 	type InstallLayout,
 	type InstallRecord,
@@ -35,8 +41,13 @@ import {
 	writeInstallRecord,
 } from '../layout.js';
 import { hostArchitecture } from '../platform.js';
-import { defaultStreams, type PromptStreams } from '../prompt.js';
+import {
+	defaultStreams,
+	isInteractive,
+	type PromptStreams,
+} from '../prompt.js';
 import { type ResolvedRef, resolveRef } from '../resolve.js';
+import { approvalSocketPath, sendAsUser } from '../socket.js';
 import { buildFromSource } from '../source.js';
 import { createSystemd } from '../systemd.js';
 import {
@@ -44,7 +55,13 @@ import {
 	renderEnvironmentFile,
 	renderUnit,
 } from '../unit.js';
+import {
+	describeFailures,
+	type UsableReport,
+	verifyUsable,
+} from '../usable.js';
 import { verifyArchive } from '../verify.js';
+import { runPairing } from './pairing.js';
 
 /**
  * `daemon install` — one command from a clean Linux box to a running,
@@ -123,6 +140,20 @@ export interface InstallDependencies {
 	readonly localArchivePath?: string;
 	/** Relocates the system layout for the tests, which cannot write `/opt`. */
 	readonly systemRoot?: string;
+	/** The command line as typed, so a re-run through `sudo` repeats it. */
+	readonly argv?: readonly string[];
+	/** Runs `sudo`. Overridden by tests. */
+	readonly elevate?: ElevationSpawner;
+	/** Decides whether the installed server is usable. Overridden by tests. */
+	readonly verify?: () => Promise<UsableReport>;
+	/** The pairing session an interactive install ends in. Overridden by tests. */
+	readonly pair?: (context: CommandContext) => Promise<unknown>;
+}
+
+/** The install ran again as root, through `sudo`, and this is how it ended. */
+export interface ElevatedInstall {
+	readonly elevated: true;
+	readonly exitCode: number;
 }
 
 export interface InstallResult {
@@ -182,7 +213,7 @@ export async function runInstall(
 	ref: string | undefined,
 	options: DaemonOptions,
 	dependencies: InstallDependencies = {},
-): Promise<InstallResult> {
+): Promise<InstallResult | ElevatedInstall> {
 	if (
 		options.directOrigin !== undefined &&
 		(options.expose ?? DEFAULT_EXPOSE).split(',').includes('direct')
@@ -197,17 +228,35 @@ export async function runInstall(
 		...(options.scope === undefined ? {} : { requested: options.scope }),
 		streams,
 	});
-	if (scope === 'system') {
-		assertRootForSystemScope(
-			`npx terminay daemon install${ref === undefined ? '' : ` ${ref}`} --system`,
-			dependencies.uid ?? process.getuid?.(),
-		);
+	const uid = dependencies.uid ?? process.getuid?.();
+	if (scope === 'system' && uid !== 0) {
+		const elevated = elevatedArguments({
+			argv: dependencies.argv ?? [
+				'daemon',
+				'install',
+				...(ref === undefined ? [] : [ref]),
+			],
+		});
+		const exitCode = await elevateThroughSudo({
+			arguments: elevated,
+			streams,
+			...(dependencies.env === undefined ? {} : { env: dependencies.env }),
+			...(dependencies.elevate === undefined
+				? {}
+				: { spawner: dependencies.elevate }),
+			write,
+		});
+		if (exitCode !== undefined)
+			return Object.freeze({ elevated: true as const, exitCode });
+		assertRootForSystemScope(elevated.map(shellQuote).join(' '), uid);
 	}
 	const selection = await selectRunAs({
 		scope,
 		...(options.runAs === undefined ? {} : { requested: options.runAs }),
 		streams,
 	});
+
+	await ensureLoginShell({ scope, runAs: selection.runAs, write });
 
 	const layout = installLayout(scope, home, dependencies.systemRoot);
 	const architecture = dependencies.architecture ?? hostArchitecture();
@@ -313,6 +362,11 @@ export async function runInstall(
 	await chmod(layout.environmentFile, 0o640);
 
 	await activate(layout, installed.name);
+	await installLauncher({
+		layout,
+		write,
+		...(dependencies.env === undefined ? {} : { env: dependencies.env }),
+	});
 
 	await mkdir(dirname(layout.unitPath), { recursive: true, mode: 0o755 });
 	await writeFile(
@@ -348,11 +402,28 @@ export async function runInstall(
 		await installUpgradeHelper({ layout, runAs: selection.runAs, systemd });
 	}
 
-	const ready =
-		(await waitForReady(
-			DEFAULT_HEALTH_PORT,
-			dependencies.readinessTimeoutMs,
-		)) !== undefined;
+	const report = await (
+		dependencies.verify ??
+		(() =>
+			verifyUsable(
+				{ healthPort: DEFAULT_HEALTH_PORT, runAs: selection.runAs },
+				{
+					send: (request) =>
+						sendAsUser(
+							approvalSocketPath(dataRoot),
+							request,
+							selection.runAs,
+							undefined,
+							undefined,
+							serviceNode(layout),
+						),
+					...(dependencies.readinessTimeoutMs === undefined
+						? {}
+						: { timeoutMs: dependencies.readinessTimeoutMs }),
+				},
+			))
+	)();
+	const ready = report.usable;
 
 	const record: InstallRecord = {
 		schemaVersion: 1,
@@ -389,7 +460,7 @@ export async function runInstall(
 
 	write('');
 	write(
-		`Terminay Server ${installed.manifest.version} is installed and ${ready ? 'running' : 'starting'}.`,
+		`Terminay Server ${installed.manifest.version} is installed${ready ? ' and running' : ', but it is not usable yet'}.`,
 	);
 	write(`  scope        ${scope}`);
 	write(`  runs as      ${selection.runAs}`);
@@ -435,11 +506,44 @@ export async function runInstall(
 	}
 	if (!ready) {
 		write('');
-		write('The server has not reported ready yet. Recent log lines:');
-		write(await systemd.journal(20));
+		write('These checks failed:');
+		for (const line of describeFailures(report)) write(line);
+		if (report.health === undefined) {
+			write('');
+			write('Recent log lines:');
+			write(await systemd.journal(20));
+		}
+		write('');
+		write('Check again with:  terminay daemon doctor');
+		write('Once it passes, pair a device with:  terminay daemon qr-code');
+	} else if (isInteractive(streams)) {
+		// Pairing is the next step anyway, so it follows here rather than
+		// being one more command to find.
+		write('');
+		write(
+			'Pair a device now. Ctrl+C ends pairing; the server keeps running, and `terminay daemon qr-code` brings this back.',
+		);
+		write('');
+		const context: CommandContext = {
+			layout,
+			record,
+			systemd,
+			write,
+		};
+		// The install has succeeded whatever happens here, so a pairing
+		// failure is reported, not turned into a failed install.
+		try {
+			await (dependencies.pair ?? ((ctx) => runPairing(options, ctx)))(context);
+		} catch (error) {
+			write(
+				`Pairing stopped: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			write('Try again with:  terminay daemon qr-code');
+		}
+	} else {
+		write('');
+		write('Pair a device with:  terminay daemon qr-code');
 	}
-	write('');
-	write('Pair a device with:  npx terminay daemon qr-code');
 
 	return Object.freeze({
 		version: installed.manifest.version,

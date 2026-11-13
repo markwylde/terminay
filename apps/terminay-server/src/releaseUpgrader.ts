@@ -221,7 +221,7 @@ export function createReleaseUpgrader(
 				child = spawn(options.upgraderPath, ['daemon', 'upgrade', '--check'], {
 					detached: true,
 					env,
-					stdio: ['ignore', 'pipe', 'ignore'],
+					stdio: ['ignore', 'pipe', 'pipe'],
 				});
 			} catch (error) {
 				reject(error);
@@ -230,6 +230,12 @@ export function createReleaseUpgrader(
 			const chunks: Buffer[] = [];
 			let bytes = 0;
 			let settled = false;
+			// The last of what it said on stderr, so a failed check reaches the
+			// operator with its reason rather than only its exit status.
+			let stderr = '';
+			child.stderr?.on('data', (chunk: Buffer) => {
+				stderr = (stderr + chunk.toString('utf8')).slice(-1024);
+			});
 			// A run that overstays or overflows is ended and answered for at
 			// once, without waiting on whatever still holds its output open.
 			const stop = (error: Error): void => {
@@ -240,6 +246,7 @@ export function createReleaseUpgrader(
 					child.kill('SIGKILL');
 				}
 				child.stdout?.destroy();
+				child.stderr?.destroy();
 				settle(error);
 			};
 			// A one-shot deadline on one run (ADR-0028 decision 3).
@@ -273,13 +280,14 @@ export function createReleaseUpgrader(
 			});
 			child.once('error', (error) => settle(error));
 			child.once('close', (code, signal) => {
-				if (code !== 0)
+				if (code !== 0) {
+					const reason = stderr.trim().split('\n').at(-1)?.trim();
 					settle(
 						new Error(
-							`the upgrader's check ended with ${signal ?? `status ${code}`}`,
+							`the upgrader's check ended with ${signal ?? `status ${code}`}${reason ? `: ${reason}` : ''}`,
 						),
 					);
-				else settle(undefined, Buffer.concat(chunks).toString('utf8'));
+				} else settle(undefined, Buffer.concat(chunks).toString('utf8'));
 			});
 		});
 

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { promisify } from 'node:util';
@@ -14,6 +14,7 @@ import {
 	runPairing,
 	runResolveApproval,
 } from '../dist/commands/pairing.js';
+import { serviceNode } from '../dist/context.js';
 import { installLayout } from '../dist/layout.js';
 import { explainPrivilegeLaunchError, sendAsUser } from '../dist/socket.js';
 
@@ -29,7 +30,7 @@ test('privilege-launch errors name missing sudo and an unreachable Node.js, and 
 			{ code: 1, message: 'sudo: /root/.nvm/bin/node: command not found' },
 			'/root/.nvm/bin/node',
 		),
-		/cannot run Node\.js at \/root\/\.nvm\/bin\/node/u,
+		/cannot run Node\.js at \/root\/\.nvm\/bin\/node\. Run the installed `terminay` command/u,
 	);
 	// A permission error that is not about launching the helper is someone
 	// else's problem to describe: a wrong hint sends the operator the wrong way.
@@ -99,6 +100,47 @@ test('the privilege-dropped client is self-contained, so the service account nee
 		}),
 		/no running server accepts commands/u,
 	);
+});
+
+test('a launch the service account cannot run is named, not reported as a stopped server', async () => {
+	// What `execFile` rejects with when sudo cannot execute an nvm Node.js under
+	// root's home: the message opens with the whole command line, client source
+	// included, and only stderr says what happened.
+	const exec = async (file, args) => {
+		throw Object.assign(
+			new Error(`Command failed: ${file} ${args.join(' ')}\nsudo: /root/.nvm/bin/node: command not found\n`),
+			{ code: 1, stderr: 'sudo: /root/.nvm/bin/node: command not found\n' },
+		);
+	};
+	await assert.rejects(
+		sendAsUser('/var/lib/terminay/approval.sock', { op: 'list' }, 'terminay', 0, exec, '/root/.nvm/bin/node'),
+		(error) => {
+			assert.match(error.message, /cannot run Node\.js at \/root\/\.nvm\/bin\/node/u);
+			assert.doesNotMatch(error.message, /no running server/u);
+			return true;
+		},
+	);
+	// The no-server message still wins when the client itself printed it.
+	await assert.rejects(
+		sendAsUser('/var/lib/terminay/approval.sock', { op: 'list' }, 'terminay', 0, async (file, args) => {
+			throw Object.assign(new Error(`Command failed: ${file} ${args.join(' ')}`), {
+				code: 1,
+				stderr: 'no running server accepts commands at this data root. Start it with `terminay daemon start`.\n',
+			});
+		}),
+		/no running server accepts commands at this data root/u,
+	);
+});
+
+test('the dropped client runs on the installed release\'s own Node.js', async (t) => {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-cli-service-node-'));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const layout = installLayout('system', root, root);
+	assert.equal(serviceNode(layout, '/root/.nvm/bin/node'), '/root/.nvm/bin/node');
+	const bundled = join(layout.currentLink, 'bin', 'node');
+	await mkdir(dirname(bundled), { recursive: true });
+	await writeFile(bundled, '#!/bin/sh\n', { mode: 0o755 });
+	assert.equal(serviceNode(layout, '/root/.nvm/bin/node'), bundled);
 });
 
 const HOSTED_URL = 'https://box.terminay.com/pair#tok_hosted';

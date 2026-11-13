@@ -15,6 +15,7 @@ export type DaemonCommand =
 	| 'start'
 	| 'stop'
 	| 'status'
+	| 'doctor'
 	| 'upgrade'
 	| 'qr-code'
 	| 'approvals'
@@ -64,6 +65,7 @@ const COMMANDS: readonly DaemonCommand[] = [
 	'start',
 	'stop',
 	'status',
+	'doctor',
 	'upgrade',
 	'qr-code',
 	'approvals',
@@ -137,6 +139,7 @@ const ACCEPTED: Readonly<Record<DaemonCommand, readonly string[]>> =
 		start: ['--system', '--user'],
 		stop: ['--system', '--user'],
 		status: ['--system', '--user'],
+		doctor: ['--system', '--user'],
 		'qr-code': ['--system', '--user', '--no-wait', '--mode'],
 		approvals: ['--system', '--user'],
 		approve: ['--system', '--user'],
@@ -467,6 +470,8 @@ Commands:
   uninstall            Stop and remove the service and installed versions.
   start | stop         Start or stop the service.
   status               Report unit state, version, channel, and exposure.
+  doctor               Check the install end to end and print a fix for each
+                       problem. Changes nothing.
   qr-code              Show a scannable pairing code and approve the device
                        that scans it. Alias: pairing-url.
   approvals            List pending device approvals.

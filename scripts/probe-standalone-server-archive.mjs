@@ -23,7 +23,7 @@ const execFileAsync = promisify(execFile)
  * This deliberately never tries to execute Linux ELF binaries on a developer
  * machine: callers must run it on Linux with the matching CPU architecture.
  */
-export async function probeStandaloneServerArchive({ archivePath, target = nativeTarget(), channel, revision }) {
+export async function probeStandaloneServerArchive({ archivePath, target = nativeTarget(), channel, revision, expectedVersion }) {
   if (process.platform !== 'linux') throw new Error('Standalone archive execution requires native Linux.')
   const platform = getPtyRuntimePlatform(target)
   if (process.arch !== platform.architecture) {
@@ -49,6 +49,7 @@ export async function probeStandaloneServerArchive({ archivePath, target = nativ
     if (version !== manifest.version) {
       throw new Error(`standalone archive reports version ${version}; its manifest records ${manifest.version}`)
     }
+    assertExpectedVersion(version, expectedVersion)
     // The archive is upgraded by the CLI inside it. That copy must run on the
     // archive's own Node with nothing else on the machine, and must trust the
     // release key the npm package of this commit trusts.
@@ -182,23 +183,36 @@ function nativeTarget() {
   return `linux-${process.arch}`
 }
 
+/**
+ * A build that knows which version it is making refuses an archive that
+ * reports another, above all the workspace placeholder `0.0.0` a missed
+ * version sync leaves behind.
+ */
+export function assertExpectedVersion(version, expectedVersion) {
+  if (expectedVersion === undefined) return
+  if (version === '0.0.0') throw new Error(`standalone archive reports the placeholder version 0.0.0; this build is ${expectedVersion}`)
+  if (version !== expectedVersion) {
+    throw new Error(`standalone archive reports version ${version}; this build is ${expectedVersion}`)
+  }
+}
+
 function parseArgs(values) {
   const args = {}
   for (let index = 0; index < values.length; index += 2) {
     const key = values[index]
     const value = values[index + 1]
-    if (!key?.startsWith('--') || value === undefined) throw new Error('expected --archive path and optional --target, --channel, and --revision values')
+    if (!key?.startsWith('--') || value === undefined) throw new Error('expected --archive path and optional --target, --channel, --revision, and --version values')
     args[key.slice(2)] = value
   }
-  const allowed = new Set(['archive', 'target', 'channel', 'revision'])
+  const allowed = new Set(['archive', 'target', 'channel', 'revision', 'version'])
   if (!args.archive || Object.keys(args).some((key) => !allowed.has(key))) {
-    throw new Error('expected --archive path and optional --target, --channel, and --revision values')
+    throw new Error('expected --archive path and optional --target, --channel, --revision, and --version values')
   }
   return args
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
   const args = parseArgs(process.argv.slice(2))
-  const result = await probeStandaloneServerArchive({ archivePath: args.archive, target: args.target, channel: args.channel, revision: args.revision })
+  const result = await probeStandaloneServerArchive({ archivePath: args.archive, target: args.target, channel: args.channel, revision: args.revision, expectedVersion: args.version })
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }
