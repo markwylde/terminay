@@ -6,9 +6,11 @@ name: Nightly
 # nothing to Apple.
 on:
   schedule:
-    # 02:00 UTC. GitHub may start a scheduled run late or drop it under load;
-    # the next night builds whatever is unbuilt, and a dispatch builds now.
-    - cron: "0 2 * * *"
+    # 02:23 UTC, off the hour: GitHub drops scheduled runs at the top of the
+    # hour under load, and dropped the first 02:00 Nightly. It may still start
+    # one late or drop it; the next night builds whatever is unbuilt, and a
+    # dispatch builds now.
+    - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

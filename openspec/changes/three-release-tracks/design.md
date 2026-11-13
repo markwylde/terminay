@@ -41,7 +41,7 @@ Decisions already made with the owner: stable stays a fresh build on dispatch; n
 `main-prerelease.yml` becomes a reusable workflow (`on: workflow_call`) taking `track` (`nightly` or `canary`). Two thin callers own the triggers:
 
 - `canary.yml`: `on: push` to `main`, plus the existing dry-run dispatch. Concurrency group `canary`, `cancel-in-progress: false`, so runs publish in order and GitHub keeps only the newest pending run.
-- `nightly.yml`: `on: schedule` at `0 2 * * *` (02:00 UTC), plus dispatch. Concurrency group `nightly`.
+- `nightly.yml`: `on: schedule` at `23 2 * * *` (02:23 UTC, off the hour so GitHub does not drop it under top-of-hour load), plus dispatch. Concurrency group `nightly`.
 
 The track decides the rolling release, asset names, metadata channel, notarization, and image tags. Everything else (floor image, Windows probe, checksum and signature verification, swap-then-verify publication) is shared.
 
