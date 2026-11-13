@@ -51,7 +51,8 @@ export default defineExtension({
 			readFile: (path) => readFile(path, 'utf8'),
 			watch: (path, onChange) => {
 				const watcher = watch(path, { persistent: false }, onChange);
-				watcher.on('error', () => watcher.close());
+				// A dead watch can't guard the cached logins; the store drops both.
+				watcher.on('error', onChange);
 				return watcher;
 			},
 		});
