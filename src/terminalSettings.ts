@@ -480,6 +480,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	macOptionIsMeta: false,
 	macOptionClickForcesSelection: false,
 	minimumContrastRatio: 1,
+	programClipboardWrite: true,
 	rescaleOverlappingGlyphs: false,
 	rightClickSelectsWord: false,
 	screenReaderMode: false,
@@ -2000,6 +2001,15 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'boolean',
 			}),
 			makeField({
+				key: 'programClipboardWrite',
+				label: 'Programs can copy to the clipboard',
+				description:
+					'Let programs in a terminal, including ones on a remote server, put text on this device\'s clipboard (OSC 52). Programs can never read the clipboard.',
+				sectionId: 'selection',
+				categoryId: 'interaction',
+				input: 'boolean',
+			}),
+			makeField({
 				key: 'wordSeparator',
 				label: 'Word separators',
 				description:
@@ -3020,6 +3030,10 @@ export function normalizeTerminalSettings(
 			typeof input.macOptionClickForcesSelection === 'boolean'
 				? input.macOptionClickForcesSelection
 				: defaultTerminalSettings.macOptionClickForcesSelection,
+		programClipboardWrite:
+			typeof input.programClipboardWrite === 'boolean'
+				? input.programClipboardWrite
+				: defaultTerminalSettings.programClipboardWrite,
 		minimumContrastRatio: clampNumber(
 			Number(input.minimumContrastRatio),
 			defaultTerminalSettings.minimumContrastRatio,

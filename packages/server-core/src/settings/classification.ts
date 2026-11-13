@@ -60,6 +60,8 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
 	macOptionClickForcesSelection: 'connection-host',
 	macOptionIsMeta: 'connection-host',
 	minimumContrastRatio: 'connection-host',
+	// Whether programs may write this device's clipboard is the device's call.
+	programClipboardWrite: 'connection-host',
 	rescaleOverlappingGlyphs: 'connection-host',
 	screenReaderMode: 'connection-host',
 	sidebar: 'connection-host',

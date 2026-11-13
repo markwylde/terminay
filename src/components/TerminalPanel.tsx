@@ -94,6 +94,7 @@ import {
 	shouldClearTerminalForSession,
 } from './terminalClearInteraction';
 import { copyTerminalSelection } from './terminalClipboardInteraction';
+import { createTerminalOsc52Handler } from './terminalOsc52';
 import {
 	escapeTerminalPathForShell,
 	getTerminalDropText,
@@ -1201,6 +1202,19 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		terminal.loadAddon(searchAddon);
 		terminal.loadAddon(unicode11Addon);
 
+		// OSC 52 is how a program, often one on a remote server, copies to the
+		// clipboard of the device showing it. Only live output may do that:
+		// history replayed on attach or reconnect would otherwise copy again.
+		let parsingLiveOutput = false;
+		terminal.parser.registerOscHandler(
+			52,
+			createTerminalOsc52Handler({
+				isEnabled: () => settingsRef.current.programClipboardWrite,
+				isLiveOutput: () => parsingLiveOutput,
+				writeClipboardText,
+			}),
+		);
+
 		const announceTerminalUserInput = () => {
 			window.dispatchEvent(
 				new CustomEvent('terminay-terminal-user-input', {
@@ -1784,9 +1798,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			bytes: Uint8Array,
 			nextPosition: number,
 			attachment: TerminalPanelAttachment,
+			live: boolean,
 		) =>
 			new Promise<void>((resolve) => {
+				// The render queue awaits each write, so this flag covers exactly
+				// the bytes of this event while xterm parses them.
+				parsingLiveOutput = live;
 				terminal.write(bytes, () => {
+					parsingLiveOutput = false;
 					renderedPositionRef.current = nextPosition;
 					window.dispatchEvent(
 						new CustomEvent(TERMINAL_PANEL_OUTPUT_EVENT, {
@@ -1906,6 +1925,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						}
 
 						panelAttachment = attachment;
+						// Everything up to here was delivered with the attach: history,
+						// a checkpoint tail, or output merged into that batch. Only
+						// output the server streams after it is live.
+						const liveOutputFrom = attachment.position;
 						let currentPresentation = attachment.presentation;
 						const applyPresentation = (state: TerminalPresentationState) => {
 							if (!bindingFence.isCurrent(binding)) return;
@@ -2050,6 +2073,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 											event.bytes,
 											event.nextPosition,
 											attachment,
+											!event.replay && event.position >= liveOutputFrom,
 										);
 									} else if (event.type === 'exit') {
 										renderTerminalExit(event.exitCode, event.signal);
