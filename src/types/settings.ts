@@ -259,6 +259,8 @@ export type TerminalSettings = {
 	macOptionIsMeta: boolean;
 	macOptionClickForcesSelection: boolean;
 	minimumContrastRatio: number;
+	/** Device setting: whether programs in a terminal may write this device's clipboard with OSC 52. */
+	programClipboardWrite: boolean;
 	rescaleOverlappingGlyphs: boolean;
 	rightClickSelectsWord: boolean;
 	screenReaderMode: boolean;
