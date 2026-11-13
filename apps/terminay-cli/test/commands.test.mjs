@@ -2478,3 +2478,224 @@ test('install does not call a server running whose terminals cannot start', asyn
 		},
 	);
 });
+
+// ADR-0115: the unit's PrivateTmp follows the release that runs, changes only
+// between the stop and the start, and is repaired even when nothing upgrades.
+
+const UNSAFE_THEN_SAFE = [
+	{
+		tag: 'v4.1.0',
+		version: '4.1.0',
+		revision: 'a'.repeat(40),
+		publishedAt: '2026-09-01T00:00:00Z',
+	},
+	{
+		tag: 'v4.1.1',
+		version: '4.1.1',
+		revision: 'b'.repeat(40),
+		latest: true,
+		publishedAt: '2026-09-08T00:00:00Z',
+		sharedTmpSafe: true,
+	},
+];
+
+const RESTART = 'systemctl --user restart terminay-server.service';
+const RELOAD = 'systemctl --user daemon-reload';
+
+function upgradeContext(layout, fake, write, record) {
+	return {
+		layout,
+		record,
+		systemd: createSystemd({ scope: 'user', env: fake.env() }),
+		write,
+	};
+}
+
+function upgradeDependenciesFor(installDependencies, extra = {}) {
+	return {
+		apiBase: installDependencies.apiBase,
+		webBase: installDependencies.webBase,
+		architecture: 'x64',
+		releasePublicKeyPem: installDependencies.releasePublicKeyPem,
+		readinessTimeoutMs: 5_000,
+		...extra,
+	};
+}
+
+async function breakUnit(layout) {
+	const good = await readFile(layout.unitPath, 'utf8');
+	await writeFile(
+		layout.unitPath,
+		good.replace('NoNewPrivileges=true\n', 'NoNewPrivileges=true\nPrivateTmp=true\n'),
+	);
+	return good;
+}
+
+test('install writes PrivateTmp only for a release that has not declared it may share /tmp', async () => {
+	await withMachine({ releases: UNSAFE_THEN_SAFE }, async ({ layout, installDependencies }) => {
+		await runInstall('v4.1.0', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+		assert.match(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=true$/mu);
+	});
+	await withMachine({ releases: UNSAFE_THEN_SAFE }, async ({ layout, installDependencies }) => {
+		await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+		assert.doesNotMatch(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=/mu);
+	});
+});
+
+test('upgrading to a release that may share /tmp drops PrivateTmp between the stop and the start', async () => {
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ health, fake, layout, installDependencies, write, lines }) => {
+			await runInstall('v4.1.0', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port);
+			const before = fake.invocations().length;
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+				upgradeDependenciesFor(installDependencies),
+			);
+			assert.doesNotMatch(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=/mu);
+			const calls = fake.invocations().slice(before);
+			const stop = calls.indexOf('systemctl --user stop terminay-server.service');
+			const reload = calls.lastIndexOf(RELOAD);
+			const start = calls.indexOf('systemctl --user start terminay-server.service');
+			assert.ok(stop >= 0 && reload > stop && start > reload, calls.join('\n'));
+			assert.ok(lines.some((line) => /keep a working \/tmp/u.test(line)));
+			assert.equal(await activeVersion(layout), '4.1.1');
+		},
+	);
+});
+
+test('a rollback puts the unit back exactly as it was', async () => {
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ fake, layout, installDependencies, write }) => {
+			await runInstall('v4.1.0', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, 1);
+			const unitBefore = await readFile(layout.unitPath, 'utf8');
+			await assert.rejects(
+				runUpgrade(
+					undefined,
+					OPTIONS,
+					upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+					upgradeDependenciesFor(installDependencies, { readinessTimeoutMs: 200 }),
+				),
+				/did not become ready/u,
+			);
+			assert.equal(await activeVersion(layout), '4.1.0');
+			assert.equal(await readFile(layout.unitPath, 'utf8'), unitBefore);
+		},
+	);
+});
+
+test('a downgrade to a release that has not declared it puts PrivateTmp back', async () => {
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port);
+			assert.doesNotMatch(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=/mu);
+			await runUpgrade(
+				'v4.1.0',
+				{ ...OPTIONS, allowDowngrade: true },
+				upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+				upgradeDependenciesFor(installDependencies),
+			);
+			assert.equal(await activeVersion(layout), '4.1.0');
+			assert.match(await readFile(layout.unitPath, 'utf8'), /^NoNewPrivileges=true\nPrivateTmp=true$/mu);
+		},
+	);
+});
+
+test('an install already current repairs a faulty unit, restarts once, and leaves the outcome alone', async () => {
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ health, fake, layout, installDependencies, write, lines }) => {
+			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port);
+			const good = await breakUnit(layout);
+			await writeFile(layout.resultPath, '{"kept":true}\n');
+			const before = fake.invocations().length;
+			const result = await runUpgrade(
+				undefined,
+				OPTIONS,
+				upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+				upgradeDependenciesFor(installDependencies),
+			);
+			assert.equal(result.upToDate, true);
+			assert.equal(await readFile(layout.unitPath, 'utf8'), good);
+			const calls = fake.invocations().slice(before);
+			assert.equal(calls.filter((call) => call === RESTART).length, 1);
+			assert.ok(calls.indexOf(RELOAD) < calls.indexOf(RESTART));
+			assert.equal(await readFile(layout.resultPath, 'utf8'), '{"kept":true}\n');
+			assert.ok(lines.some((line) => /keep a working \/tmp/u.test(line)));
+		},
+	);
+});
+
+test('a faulty unit is repaired when the release server cannot be reached, and the failure is still reported', async () => {
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port);
+			const good = await breakUnit(layout);
+			const before = fake.invocations().length;
+			await assert.rejects(
+				runUpgrade(
+					undefined,
+					OPTIONS,
+					upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+					upgradeDependenciesFor(installDependencies, {
+						apiBase: 'http://127.0.0.1:1',
+						webBase: 'http://127.0.0.1:1',
+					}),
+				),
+			);
+			assert.equal(await readFile(layout.unitPath, 'utf8'), good);
+			assert.equal(fake.invocations().slice(before).filter((call) => call === RESTART).length, 1);
+		},
+	);
+});
+
+test('a source install with a faulty unit is repaired before it is told it needs a reference', async () => {
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port);
+			const good = await breakUnit(layout);
+			const record = { ...(await readInstallRecord(layout)), channel: 'source' };
+			await assert.rejects(
+				runUpgrade(undefined, OPTIONS, upgradeContext(layout, fake, write, record), {
+					readinessTimeoutMs: 5_000,
+				}),
+				(error) => error instanceof UpgradeError && /no channel to follow/u.test(error.message),
+			);
+			assert.equal(await readFile(layout.unitPath, 'utf8'), good);
+		},
+	);
+});
+
+test('a unit that already matches its release is not touched by an upgrade with nothing to do', async () => {
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ health, fake, layout, installDependencies, write }) => {
+			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port);
+			const good = await readFile(layout.unitPath, 'utf8');
+			const before = fake.invocations().length;
+			await runUpgrade(
+				undefined,
+				OPTIONS,
+				upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+				upgradeDependenciesFor(installDependencies),
+			);
+			assert.equal(await readFile(layout.unitPath, 'utf8'), good);
+			const calls = fake.invocations().slice(before);
+			assert.equal(calls.includes(RELOAD), false);
+			assert.equal(calls.includes(RESTART), false);
+		},
+	);
+});

@@ -10,6 +10,8 @@ import {
 	renderUnit,
 	renderUpgradePathUnit,
 	renderUpgradeServiceUnit,
+	unitForRelease,
+	unitMatchesRelease,
 	withUnitKillMode,
 } from '../dist/unit.js';
 
@@ -27,6 +29,7 @@ const configuration = {
 
 test('the system unit is the runbook unit, hardened, and started from current', () => {
 	const unit = renderUnit({
+		sharedTmpSafe: true,
 		layout: installLayout('system'),
 		runAs: 'terminay',
 		workingDirectory: '/var/lib/terminay',
@@ -52,7 +55,6 @@ KillSignal=SIGTERM
 KillMode=process
 TimeoutStopSec=15s
 NoNewPrivileges=true
-PrivateTmp=true
 StandardOutput=journal
 StandardError=journal
 
@@ -65,6 +67,7 @@ WantedBy=multi-user.target
 test('stopping the unit signals the server only, so held terminals keep running', () => {
 	for (const scope of ['system', 'user']) {
 		const unit = renderUnit({
+			sharedTmpSafe: true,
 			layout: installLayout(scope, '/home/ada'),
 			runAs: 'ada',
 			workingDirectory: '/home/ada',
@@ -78,6 +81,7 @@ test('stopping the unit signals the server only, so held terminals keep running'
 
 test('an older unit gains the kill mode once, and a kill mode already chosen stands', () => {
 	const older = renderUnit({
+		sharedTmpSafe: true,
 		layout: installLayout('system'),
 		runAs: 'terminay',
 		workingDirectory: '/var/lib/terminay',
@@ -110,6 +114,7 @@ test('an older unit gains the kill mode once, and a kill mode already chosen sta
 
 test('the user unit runs as its owner and never sets User=', () => {
 	const unit = renderUnit({
+		sharedTmpSafe: true,
 		layout: installLayout('user', '/home/ada'),
 		runAs: 'ada',
 		workingDirectory: '/home/ada',
@@ -130,6 +135,7 @@ test('the user unit runs as its owner and never sets User=', () => {
 test('every version is reached through current, never a versioned path', () => {
 	for (const scope of ['system', 'user']) {
 		const unit = renderUnit({
+			sharedTmpSafe: true,
 			layout: installLayout(scope, '/home/ada'),
 			runAs: 'ada',
 			workingDirectory: '/home/ada',
@@ -181,6 +187,7 @@ test('a direct origin is omitted rather than left empty when it is not set', () 
 test('no secret is ever written to the environment file or the unit', () => {
 	const environment = renderEnvironmentFile(configuration);
 	const unit = renderUnit({
+		sharedTmpSafe: true,
 		layout: installLayout('system'),
 		runAs: 'terminay',
 		workingDirectory: '/var/lib/terminay',
@@ -368,4 +375,75 @@ test('a user-scope install has no upgrade helper', () => {
 	assert.equal(layout.upgradeHelper, undefined);
 	assert.throws(() => renderUpgradePathUnit(layout), /system-scope/u);
 	assert.throws(() => renderUpgradeServiceUnit(layout), /system-scope/u);
+});
+
+test('a release that may share /tmp runs without PrivateTmp, and an older one keeps it', () => {
+	for (const scope of ['system', 'user']) {
+		const base = {
+			layout: installLayout(scope, '/home/ada'),
+			runAs: 'ada',
+			workingDirectory: '/home/ada',
+		};
+		// A private /tmp is deleted on every stop, and the terminals that
+		// outlive the stop would keep the deleted one (ADR-0115).
+		assert.doesNotMatch(
+			renderUnit({ ...base, sharedTmpSafe: true }),
+			/^PrivateTmp=/mu,
+		);
+		assert.match(
+			renderUnit({ ...base, sharedTmpSafe: false }),
+			/^NoNewPrivileges=true\nPrivateTmp=true\nStandardOutput=journal$/mu,
+		);
+	}
+});
+
+test('a unit is changed only when its PrivateTmp does not match the release', () => {
+	const base = {
+		layout: installLayout('system'),
+		runAs: 'terminay',
+		workingDirectory: '/var/lib/terminay',
+	};
+	const shared = renderUnit({ ...base, sharedTmpSafe: true });
+	const isolated = renderUnit({ ...base, sharedTmpSafe: false });
+
+	assert.equal(unitMatchesRelease(shared, true), true);
+	assert.equal(unitMatchesRelease(isolated, false), true);
+	assert.equal(unitMatchesRelease(isolated, true), false);
+	assert.equal(unitMatchesRelease(shared, false), false);
+
+	assert.equal(
+		unitForRelease(isolated, true),
+		shared,
+		'the line is removed and nothing else changes',
+	);
+	assert.equal(
+		unitForRelease(shared, false),
+		isolated,
+		'the line comes back where it was',
+	);
+	assert.equal(
+		unitForRelease(shared, true),
+		shared,
+		'a matching unit is returned as it was',
+	);
+	assert.equal(unitForRelease(isolated, false), isolated);
+
+	// An operator's spelling still counts as private and is replaced for a safe release.
+	const spelled = isolated.replace('PrivateTmp=true', 'PrivateTmp=yes');
+	assert.equal(unitMatchesRelease(spelled, false), false);
+	assert.equal(unitForRelease(spelled, true), shared);
+});
+
+test('the runbook unit agrees with the generated one about /tmp and the kill mode', async () => {
+	const runbook = await readFile(
+		resolve(
+			new URL('../../..', import.meta.url).pathname,
+			'docs/operations/standalone-server.md',
+		),
+		'utf8',
+	);
+	const listing = /```ini\n(\[Unit\][\s\S]*?)```/u.exec(runbook)?.[1];
+	assert.ok(listing, 'the runbook shows a unit');
+	assert.match(listing, /^KillMode=process$/mu);
+	assert.doesNotMatch(listing, /^PrivateTmp=/mu);
 });

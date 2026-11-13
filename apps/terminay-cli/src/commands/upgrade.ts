@@ -18,7 +18,8 @@ import {
 } from '../helper.js';
 import { activate, activeVersion, installArchive, retain } from '../install.js';
 import { installLauncher } from '../launcher.js';
-import { stagedName, writeInstallRecord } from '../layout.js';
+import { stagedName, versionDirectory, writeInstallRecord } from '../layout.js';
+import { readArchiveManifest, releaseSharesTmpSafely } from '../manifest.js';
 import { releaseLabel, writeUpgradeOutcome } from '../outcome.js';
 import {
 	assertChannelToFollow,
@@ -29,7 +30,12 @@ import {
 import { hostArchitecture } from '../platform.js';
 import type { ResolvedRef } from '../resolve.js';
 import { buildFromSource } from '../source.js';
-import { withEnvironmentValue, withUnitKillMode } from '../unit.js';
+import {
+	unitForRelease,
+	unitMatchesRelease,
+	withEnvironmentValue,
+	withUnitKillMode,
+} from '../unit.js';
 import { describeFailures, serverFailed, verifyUsable } from '../usable.js';
 import { verifyArchive } from '../verify.js';
 
@@ -123,11 +129,91 @@ function reasonOf(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/** Whether the active release declares it may share the host's `/tmp`. */
+async function activeReleaseSharesTmp(
+	layout: CommandContext['layout'],
+): Promise<boolean> {
+	const name = await activeVersion(layout);
+	if (name === undefined) return false;
+	const manifest = await readArchiveManifest(
+		versionDirectory(layout, name),
+	).catch(() => undefined);
+	return manifest !== undefined && releaseSharesTmpSafely(manifest);
+}
+
+/**
+ * Put the unit's temporary-directory setting right for the release that is
+ * already running, and restart it once so the running service has it.
+ *
+ * This is the path for every run that does not move to another release:
+ * already current, nothing to follow, offline, or a release that could not be
+ * staged. It needs nothing from the network, so the server's own repair
+ * request (it found itself under a private `/tmp` after an older CLI upgraded
+ * it) is honoured whatever else goes wrong.
+ */
+async function repairUnitInPlace(
+	context: CommandContext,
+	unit: string,
+	sharedTmpSafe: boolean,
+	dependencies: UpgradeDependencies,
+): Promise<void> {
+	const { layout, record, systemd, write } = context;
+	await writeFile(layout.unitPath, unitForRelease(unit, sharedTmpSafe), {
+		mode: 0o644,
+	});
+	await systemd.daemonReload();
+	write(
+		sharedTmpSafe
+			? 'Updated the service unit so terminals keep a working /tmp across restarts.'
+			: 'Updated the service unit to give this release a private /tmp.',
+	);
+	await systemd.restart();
+	// Not an upgrade, so no upgrade outcome is written: the server sees the
+	// repair for itself, by starting with the host's /tmp.
+	if (
+		(await waitForReady(record.healthPort, dependencies.readinessTimeoutMs)) ===
+		undefined
+	)
+		write('The service was restarted but has not reported ready yet.');
+}
+
 export async function runUpgrade(
 	ref: string | undefined,
 	options: DaemonOptions,
 	context: CommandContext,
 	dependencies: UpgradeDependencies = {},
+): Promise<UpgradeResult> {
+	// Checked before anything that needs a channel or the network: a unit
+	// whose temporary-directory setting does not match the running release is
+	// repaired even when there is nothing to upgrade to.
+	const unit = await readFile(context.layout.unitPath, 'utf8').catch(() => '');
+	const activeSafe = await activeReleaseSharesTmp(context.layout);
+	const repair = unit !== '' && !unitMatchesRelease(unit, activeSafe);
+	const progress = { switched: false };
+	try {
+		const result = await upgradeRelease(
+			ref,
+			options,
+			context,
+			dependencies,
+			progress,
+		);
+		if (repair && !progress.switched)
+			await repairUnitInPlace(context, unit, activeSafe, dependencies);
+		return result;
+	} catch (error) {
+		if (repair && !progress.switched)
+			await repairUnitInPlace(context, unit, activeSafe, dependencies);
+		throw error;
+	}
+}
+
+async function upgradeRelease(
+	ref: string | undefined,
+	options: DaemonOptions,
+	context: CommandContext,
+	dependencies: UpgradeDependencies,
+	progress: { switched: boolean },
 ): Promise<UpgradeResult> {
 	const { layout, record, systemd, write } = context;
 
@@ -291,8 +377,25 @@ export async function runUpgrade(
 			'Updated the service unit so terminals keep running across restarts.',
 		);
 	}
+	progress.switched = true;
 	await systemd.stop();
 	await activate(layout, installed.name);
+	// Changed only now, between the stop and the start, and put back exactly
+	// on rollback: the release that runs decides whether it may share /tmp
+	// (ADR-0115), so an older one never runs without its private /tmp.
+	const unitForNew = unitForRelease(
+		unitAfter,
+		releaseSharesTmpSafely(installed.manifest),
+	);
+	if (unitForNew !== unitAfter) {
+		await writeFile(layout.unitPath, unitForNew, { mode: 0o644 });
+		await systemd.daemonReload();
+		write(
+			releaseSharesTmpSafely(installed.manifest)
+				? 'Updated the service unit so terminals keep a working /tmp across restarts.'
+				: 'Updated the service unit to give this release a private /tmp.',
+		);
+	}
 	// A unit that will not start is the same failure as one that starts and
 	// never reports ready: either way the previous version goes back.
 	const started = await systemd.start().then(
@@ -317,6 +420,10 @@ export async function runUpgrade(
 		if (usable !== undefined)
 			for (const line of describeFailures(usable)) write(line);
 		await systemd.stop().catch(() => undefined);
+		if (unitForNew !== unitAfter) {
+			await writeFile(layout.unitPath, unitAfter, { mode: 0o644 });
+			await systemd.daemonReload().catch(() => undefined);
+		}
 		await activate(layout, previous);
 		const restarted = await systemd.start().then(
 			() => true,

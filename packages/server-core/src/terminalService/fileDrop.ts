@@ -152,7 +152,10 @@ export class TerminalFileDrops {
 			(offset as number) < 0
 		) {
 			await this.abandon(upload);
-			throw new TerminalServiceError('invalid_bytes', 'file drop part is invalid');
+			throw new TerminalServiceError(
+				'invalid_bytes',
+				'file drop part is invalid',
+			);
 		}
 		clearTimeout(upload.timer);
 		try {
@@ -260,7 +263,10 @@ function parseFiles(value: unknown): AppWindowAttachment[] {
 			!Number.isSafeInteger(size) ||
 			(size as number) < 0
 		)
-			throw new TerminalServiceError('invalid_bytes', 'dropped file is invalid');
+			throw new TerminalServiceError(
+				'invalid_bytes',
+				'dropped file is invalid',
+			);
 		return { name, size: size as number };
 	});
 }

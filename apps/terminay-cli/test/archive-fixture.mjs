@@ -73,6 +73,9 @@ export async function buildArchiveFixture(options) {
 		version,
 		node: { version: '24.15.0' },
 		entrypoints: { server: 'bin/terminay-server' },
+		...(options.sharedTmpSafe === undefined
+			? {}
+			: { sharedTmpSafe: options.sharedTmpSafe }),
 		files,
 	};
 	await writeFile(

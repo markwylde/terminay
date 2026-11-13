@@ -88,12 +88,16 @@ export class AppWindowAttachmentWriter {
 		random: () => string = () => randomBytes(8).toString('hex'),
 		options: AttachmentWriterOptions = {},
 	) {
-		this.maxPartBytes = options.maxPartBytes ?? MAX_APP_WINDOW_ATTACHMENT_PART_BYTES;
+		this.maxPartBytes =
+			options.maxPartBytes ?? MAX_APP_WINDOW_ATTACHMENT_PART_BYTES;
 		const fileName =
 			options.fileName ?? ((kept: string) => `${random()}-${kept}`);
 		this.files = attachments.map((attachment, index) => ({
 			size: attachment.size,
-			path: join(directory, fileName(keptAttachmentName(attachment.name), index)),
+			path: join(
+				directory,
+				fileName(keptAttachmentName(attachment.name), index),
+			),
 			written: 0,
 			created: false,
 		}));
@@ -105,13 +109,22 @@ export class AppWindowAttachmentWriter {
 	}
 
 	/** Append one part. Parts arrive in order: file by file, start to end. */
-	async write(index: number, offset: number, bytes: Uint8Array): Promise<number> {
+	async write(
+		index: number,
+		offset: number,
+		bytes: Uint8Array,
+	): Promise<number> {
 		return this.exclusively(async () => {
 			const file = this.files[index];
 			if (file === undefined) throw new RangeError('no such attachment');
-			if (this.files.slice(0, index).some((earlier) => earlier.written !== earlier.size))
+			if (
+				this.files
+					.slice(0, index)
+					.some((earlier) => earlier.written !== earlier.size)
+			)
 				throw new RangeError('an earlier attachment is not complete');
-			if (offset !== file.written) throw new RangeError('attachment part is out of order');
+			if (offset !== file.written)
+				throw new RangeError('attachment part is out of order');
 			if (
 				bytes.byteLength === 0 ||
 				bytes.byteLength > this.maxPartBytes ||
@@ -153,7 +166,8 @@ export class AppWindowAttachmentWriter {
 
 	private async exclusively<T>(task: () => Promise<T>): Promise<T> {
 		if (this.ended) throw new RangeError('this upload has ended');
-		if (this.busy) throw new RangeError('an attachment part is already being written');
+		if (this.busy)
+			throw new RangeError('an attachment part is already being written');
 		this.busy = true;
 		try {
 			return await task();
