@@ -26,10 +26,10 @@ import { basename, dirname, resolve } from 'node:path';
  */
 
 // Docker Hub rate-limits the Gitea runners, which take its images from the
-// internal mirror instead.
+// internal mirror instead, which holds Debian 12 as `bookworm-slim` only.
 export const DEFAULT_IMAGE = process.env.TERMINAY_DOCKER_HUB_MIRROR
-	? `${process.env.TERMINAY_DOCKER_HUB_MIRROR}/debian:12-slim`
-	: 'docker.io/library/debian:12-slim';
+	? `${process.env.TERMINAY_DOCKER_HUB_MIRROR}/debian:bookworm-slim`
+	: 'docker.io/library/debian:bookworm-slim';
 export const SCENARIOS = Object.freeze(['A', 'B', 'C']);
 
 function argument(name, fallback) {
