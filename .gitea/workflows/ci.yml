@@ -205,6 +205,64 @@ jobs:
         if: ${{ always() }}
         run: sh scripts/prune-ci-docker-images.sh
 
+  # ADR-0115: restart this commit's standalone archive under a real systemd and
+  # read from shell output that kept and new terminals can still use /tmp.
+  standalone-systemd-restart:
+    name: Standalone systemd restart (linux-x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 60
+
+    steps:
+      - name: Arm the timeout watchdog
+        run: echo "TERMINAY_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+
+      - name: Require an x64 Docker daemon
+        run: test "$(docker info --format '{{.Architecture}}')" = x86_64
+
+      - name: Build this commit's standalone archive in the floor image
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        env:
+          TERMINAY_REVISION: ${{ github.sha }}
+        run: |
+          test ! -e release
+          sh scripts/run-in-linux-floor.sh --output release --env TERMINAY_REVISION -- \
+            sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && sh scripts/build-linux-standalone-archive.sh linux-x64 main "$TERMINAY_REVISION" release/standalone/terminay-server-main-linux-x64.tar.gz'
+
+      - name: Install dependencies and build the CLI that drives the install
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        env:
+          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+        run: |
+          npm install --global npm@12.2.1
+          npm ci
+          npm run build --workspace apps/terminay-cli
+
+      - name: Restart under systemd (scenarios A, B, C)
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        run: node scripts/standalone-systemd-restart.mjs --archive release/standalone/terminay-server-main-linux-x64.tar.gz
+
+      - name: Free this job's Docker images
+        if: ${{ always() }}
+        run: sh scripts/prune-ci-docker-images.sh
+
   build-and-test:
     name: Build, lint, and unit tests
     runs-on: ubuntu-latest

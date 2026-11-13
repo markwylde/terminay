@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
 	detectPrivateTmp,
+	helperBusy,
 	requestUnitRepairIfNeeded,
 	UPGRADE_HELPER_WAIT_MS,
 } from '../dist/unitRepair.js';
@@ -160,4 +161,11 @@ test('a failure while asking is reported, never thrown', async (t) => {
 		'needed',
 	);
 	assert.match(h.diagnostics.at(-1), /could not be requested/u);
+});
+
+test('a oneshot that is still running counts as busy, as systemctl reports it', () => {
+	for (const state of ['active', 'activating\n', 'deactivating', 'reloading', 'refreshing'])
+		assert.equal(helperBusy(state), true, state);
+	for (const state of ['inactive\n', 'failed', 'unknown', ''])
+		assert.equal(helperBusy(state), false, state);
 });

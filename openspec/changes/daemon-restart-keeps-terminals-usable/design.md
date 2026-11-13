@@ -155,28 +155,47 @@ project's root all end a degraded session exactly as they end any other.
 
 ### 7. The CI gate
 
-A `standalone-systemd-restart` job runs in a Debian 12 container with systemd
-as PID 1, bounded with `timeout`. Each scenario starts on a fresh data root
-after `terminay-server end-sessions`.
+A `standalone-systemd-restart` job builds this commit's linux-x64 archive in
+the floor image and restarts it under a Debian 12 container with systemd as
+PID 1 (`scripts/standalone-systemd-restart.mjs`), bounded with `timeout`. The
+CLI under test installs the archive with its local-archive seam, and each
+scenario starts from a purged, fresh install.
 
-- **A (restarts):** install the archive under test. Open S1. Restart twice.
-  Open S2. Both S1 and S2 must `mkdir /tmp/x-$$`.
-- **B (older upgrader):** install a pinned pre-change release
-  (`PRE_SHARED_TMP_RELEASE` in the job) with the real installer, so it writes
-  its own `PrivateTmp` unit. Open S1. Then stop the service, stage the archive
-  under test, switch `current`, and start, without touching the unit, which is
-  exactly what the older upgrader does. Hold a fake active helper for 10 s
-  before releasing it, to cover the wait. Then assert: the repair was requested
-  only after the helper was inactive, the unit has no `PrivateTmp`, S1 is
-  `degraded`, a new S2 can `mkdir /tmp`, and the drained holder exits once S1
-  is closed.
-- **C (already current, offline):** a current install with a mismatched unit
-  and no network. `daemon upgrade` repairs the unit, restarts once, then
-  reports the network failure.
-- **D (rollback):** upgrade to a build that fails readiness. The unit's bytes
-  are restored.
+Every verdict is read from shell output. The driver takes S1's own control
+socket and token from its environment and runs `terminay-server mcp` as the
+run-as account, so `run_command` and `open_terminal` go through the real
+server and the real holder. The shell assembles the marker it prints, so an
+echo of the typed command cannot pass.
 
-Survival is judged only from shell output.
+- **A (restarts):** S1, two restarts, then a new S2. Both S1 and S2 must
+  `mkdir /tmp`.
+- **B (older unit, older upgrader still running):** the unit is given
+  `PrivateTmp=true` as an older release's installer wrote it, and the server
+  starts on a fresh data root, so its holder and S1 are born under the private
+  `/tmp`. The upgrade helper's oneshot is held active for 10 s with a drop-in,
+  which is what an older upgrader's readiness wait looks like to systemd. The
+  driver asserts that the request is written only after the helper finished,
+  that the helper's run repaired the unit and restarted the server onto the
+  host `/tmp`, that S1's holder was drained as `unhealthy` with `tmp: missing`
+  and its session marked, that S1 itself cannot `mkdir /tmp` while a new S2
+  can, and that the drained holder exits once S1 closes.
+  `TERMINAY_SYSTEMD_NEGATIVE=1` stops the helper's watch first; the scenario
+  must then fail.
+- **C (offline):** a tagged install with a `PrivateTmp` unit and the release
+  host unreachable. `terminay daemon upgrade --system`, the archive's own CLI,
+  repairs the unit, restarts once, and still reports the network failure.
+
+The holder in B is this build's, not a pinned pre-change release's. What
+broke the incident host was a holder of the same build reused across a
+restart, which the build-mismatch drain never caught, so B covers the harder
+case. A pinned release would also need the release host and that release's
+own installer on every run. A rollback restoring the unit's bytes is proven
+by the CLI suite against a stub `systemctl` (`commands.test.mjs`), because
+an upgrade that fails readiness needs a signed release, which the shipped CLI
+accepts only from the real release host.
+
+The job builds its own archive rather than taking `linux-glibc-floor`'s:
+Gitea's runners cannot download artifacts between jobs.
 
 ## Risks / Trade-offs
 
@@ -188,8 +207,6 @@ Survival is judged only from shell output.
 - [`unknown` on hardened hosts adds a holder on every restart] → sessions
   survive in the drained holder, which exits as they close. Diagnostics say
   why.
-- [The pinned pre-change release disappears from the release server] → the job
-  caches it as a CI artifact, and the pin is updated deliberately.
 - [The scratch path changes for agents that expect `/tmp/terminay-clipboard`]
   → the path is always handed to the terminal. Task 1.4 searches for hardcoded
   uses.

@@ -50,9 +50,10 @@ that the shell process was still alive, not that it still worked.
   ends a session.
 - A CI job runs under real systemd. On fresh data roots it proves that a
   surviving shell and a new shell can `mkdir` in the literal `/tmp` across
-  several restarts. It reproduces this incident by starting from a pinned
-  pre-change release that is switched the way the older upgrader does it, and
-  proves self-repair. It also covers offline repair and rollback.
+  several restarts. It reproduces this incident with a `PrivateTmp` unit as
+  an older installer wrote it and an older upgrader's oneshot still running,
+  and proves self-repair. It also covers offline repair. Rollback is proven
+  by the CLI suite.
 
 Out of scope, as a follow-up change: a **Restart terminal** action that
 replaces a damaged session in place. Closing the panel and opening a new

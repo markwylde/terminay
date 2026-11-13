@@ -78,5 +78,5 @@ The release gate for persistent terminal sessions SHALL include a test under a r
 
 #### Scenario: Gate reproducing the incident
 
-- **WHEN** the test installs a pinned release from before this requirement, with its own `PrivateTmp=true` unit, opens a session there, then stops the service, switches to the release under test, and starts it without touching the unit, as the older upgrader does
-- **THEN** it passes only if the unit is repaired with no operator command, the surviving session is flagged degraded, and a new terminal creates a directory in `/tmp`
+- **WHEN** the test gives the installed unit `PrivateTmp=true`, as an older release's installer wrote it, opens a session whose holder is born under that private `/tmp`, and holds the upgrade helper's oneshot active as an older upgrader's readiness wait does
+- **THEN** it passes only if the repair is requested after the helper finishes, the unit is repaired with no operator command, the surviving session is flagged degraded and cannot create a directory in `/tmp`, and a new terminal can

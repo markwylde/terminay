@@ -80,10 +80,28 @@ export interface UnitRepairDependencies {
 	readonly onDiagnostic?: (message: string) => void;
 }
 
+/**
+ * States in which the helper's oneshot is still running. A oneshot that is
+ * executing reports `activating`, not `active`, so `is-active --quiet` alone
+ * would call it idle.
+ */
+const BUSY_STATES = new Set([
+	'active',
+	'activating',
+	'deactivating',
+	'reloading',
+	'refreshing',
+]);
+
+export function helperBusy(isActiveOutput: string): boolean {
+	return BUSY_STATES.has(isActiveOutput.trim());
+}
+
 async function systemctlIsActive(unit: string): Promise<boolean> {
 	return new Promise((resolve) => {
-		execFile('systemctl', ['is-active', '--quiet', unit], (error) =>
-			resolve(error === null),
+		// Exits non-zero for anything but `active`; the state is on stdout.
+		execFile('systemctl', ['is-active', unit], (_error, stdout) =>
+			resolve(helperBusy(String(stdout ?? ''))),
 		);
 	});
 }
