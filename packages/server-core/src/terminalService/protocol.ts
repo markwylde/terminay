@@ -17,6 +17,11 @@ import {
 } from './clipboardImage.js';
 import { TerminalServiceError } from './errors.js';
 import {
+	MAX_TERMINAL_FILE_DROP_PART_BYTES,
+	TERMINAL_FILE_DROP_OPERATIONS,
+	TerminalFileDrops,
+} from './fileDrop.js';
+import {
 	type TerminalInputSource,
 	TerminalInputSourceAdapter,
 } from './inputSources.js';
@@ -107,6 +112,9 @@ export interface TerminalOperationRegistryOptions {
 	readonly retainsExitedSession?: (identity: TerminalIdentity) => boolean;
 	/** Server-owned clipboard scratch directory. Defaults to os.tmpdir(). */
 	readonly clipboardScratchDirectory?: string;
+	/** Server-owned file drop scratch directory (ADR-0113). Defaults to
+	 * `terminay-drops` under os.tmpdir(). */
+	readonly fileDropDirectory?: string;
 	/**
 	 * The launchers this server offers (ADR-0073). Without it a create that
 	 * names a launcher is refused and the launcher list is empty.
@@ -227,6 +235,11 @@ export function createTerminalOperationRegistry(
 	);
 
 	const protocolAttachments = new Map<string, ProtocolAttachment>();
+	const fileDrops = new TerminalFileDrops(
+		options.fileDropDirectory === undefined
+			? {}
+			: { directory: options.fileDropDirectory },
+	);
 	const byClientSession = new Map<string, string>();
 	const initialPresentationReservations = new Map<
 		string,
@@ -251,6 +264,14 @@ export function createTerminalOperationRegistry(
 		[TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION]: (
 			request: CommandRequest,
 		) => materializeClipboardImage(request),
+		[TERMINAL_FILE_DROP_OPERATIONS.begin]: (request: CommandRequest) =>
+			beginFileDrop(request),
+		[TERMINAL_FILE_DROP_OPERATIONS.part]: (request: CommandRequest) =>
+			fileDropPart(request),
+		[TERMINAL_FILE_DROP_OPERATIONS.finish]: (request: CommandRequest) =>
+			finishFileDrop(request),
+		[TERMINAL_FILE_DROP_OPERATIONS.cancel]: (request: CommandRequest) =>
+			cancelFileDrop(request),
 	};
 	const queries = {
 		'terminal.list': (request: QueryRequest) => list(request),
@@ -286,6 +307,10 @@ export function createTerminalOperationRegistry(
 				'terminal.kill': { scope: 'write' },
 				'terminal.detach': { scope: 'read' },
 				[TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION]: { scope: 'write' },
+				[TERMINAL_FILE_DROP_OPERATIONS.begin]: { scope: 'write' },
+				[TERMINAL_FILE_DROP_OPERATIONS.part]: { scope: 'write' },
+				[TERMINAL_FILE_DROP_OPERATIONS.finish]: { scope: 'write' },
+				[TERMINAL_FILE_DROP_OPERATIONS.cancel]: { scope: 'write' },
 			},
 		},
 		presentationHolder: (identity) => {
@@ -308,6 +333,7 @@ export function createTerminalOperationRegistry(
 					};
 		},
 		closeConnection: (connectionId) => {
+			fileDrops.closeConnection(connectionId);
 			const released: ProtocolAttachment[] = [];
 			for (const [id, value] of protocolAttachments) {
 				if (value.connectionId !== connectionId) continue;
@@ -1494,7 +1520,28 @@ export function createTerminalOperationRegistry(
 					'clipboard image payload contains an unsupported field',
 				);
 		}
-		const identity = parseIdentity(payload.identity, options.service.serverId);
+		writableSession(request, payload.identity);
+		if (typeof payload.mimeType !== 'string')
+			throw new TerminalServiceError(
+				'invalid_bytes',
+				'clipboard image type is not supported',
+			);
+		const path = await writeClipboardImage({
+			bytes: request.body,
+			mimeType: payload.mimeType,
+			...(options.clipboardScratchDirectory === undefined
+				? {}
+				: { directory: options.clipboardScratchDirectory }),
+		});
+		return { path };
+	}
+
+	/** The live session a request may write to: the clipboard image rule. */
+	function writableSession(
+		request: CommandRequest,
+		identityValue: JsonValue | undefined,
+	): TerminalIdentity {
+		const identity = parseIdentity(identityValue, options.service.serverId);
 		authorize(identity, request, 'write');
 		assertProjectClaim(request, identity.projectId);
 		const session = options.service.getSession(identity);
@@ -1512,19 +1559,62 @@ export function createTerminalOperationRegistry(
 					sessionId: identity.sessionId,
 				},
 			);
-		if (typeof payload.mimeType !== 'string')
+		return identity;
+	}
+
+	function fileDropOwner(request: CommandRequest) {
+		return {
+			clientId: request.context.clientId,
+			connectionId: request.context.connectionId,
+		};
+	}
+
+	async function beginFileDrop(request: CommandRequest): Promise<JsonValue> {
+		const payload = objectPayload(request.envelope.payload);
+		const identity = writableSession(request, payload.identity);
+		const uploadId = await fileDrops.begin(
+			fileDropOwner(request),
+			identity,
+			payload.files,
+		);
+		return { uploadId };
+	}
+
+	async function fileDropPart(request: CommandRequest): Promise<JsonValue> {
+		const payload = objectPayload(request.envelope.payload);
+		if (request.body.byteLength > MAX_TERMINAL_FILE_DROP_PART_BYTES)
 			throw new TerminalServiceError(
 				'invalid_bytes',
-				'clipboard image type is not supported',
+				'file drop part is too large',
+				{ max: MAX_TERMINAL_FILE_DROP_PART_BYTES },
 			);
-		const path = await writeClipboardImage({
-			bytes: request.body,
-			mimeType: payload.mimeType,
-			...(options.clipboardScratchDirectory === undefined
-				? {}
-				: { directory: options.clipboardScratchDirectory }),
-		});
-		return { path };
+		const owner = fileDropOwner(request);
+		// The session must still accept writes from this client for every part.
+		const upload = fileDrops.owned(owner, payload.uploadId);
+		writableSession(request, identityJson(upload.identity));
+		const received = await fileDrops.part(
+			owner,
+			payload.uploadId,
+			payload.file,
+			payload.offset,
+			request.body,
+		);
+		return { received };
+	}
+
+	async function finishFileDrop(request: CommandRequest): Promise<JsonValue> {
+		const payload = objectPayload(request.envelope.payload);
+		const owner = fileDropOwner(request);
+		const upload = fileDrops.owned(owner, payload.uploadId);
+		writableSession(request, identityJson(upload.identity));
+		const paths = await fileDrops.finish(owner, payload.uploadId);
+		return { paths: [...paths] };
+	}
+
+	async function cancelFileDrop(request: CommandRequest): Promise<JsonValue> {
+		const payload = objectPayload(request.envelope.payload);
+		await fileDrops.cancel(fileDropOwner(request), payload.uploadId);
+		return { cancelled: true };
 	}
 
 	function list(request: QueryRequest): JsonValue {
@@ -1880,6 +1970,14 @@ function assertClient(
 			'terminal client identity mismatch',
 		);
 	return payloadClientId;
+}
+
+function identityJson(identity: TerminalIdentity): JsonValue {
+	return {
+		serverId: identity.serverId,
+		projectId: identity.projectId,
+		sessionId: identity.sessionId,
+	};
 }
 
 function parseIdentity(

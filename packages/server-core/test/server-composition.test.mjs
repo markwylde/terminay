@@ -17,6 +17,7 @@ import {
  * (ADR-0108), so every server advertises them. */
 const ALWAYS_COMPOSED_CAPABILITIES = [
   "mcp-approvals.v1", "workspace-view.v1", "app-windows.v1", "app-window-mirror.v1", "app-window-attachments.v1",
+  "terminal-file-drop.v1",
 ];
 const ALWAYS_COMPOSED_QUERIES = [
   "app-windows.content", "app-windows.list", "app-windows.mirror.status", "app-windows.view-response", "mcp.approvals.get",
@@ -245,6 +246,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       "terminal.create", "terminal.attach", "terminal.resume", "terminal.ack",
       "terminal.input", "terminal.presentation", "terminal.resize", "terminal.kill", "terminal.detach",
       "terminal.materialize-clipboard-image",
+      "terminal.drop-begin", "terminal.drop-part", "terminal.drop-finish", "terminal.drop-cancel",
       ...ALWAYS_COMPOSED_COMMANDS,
     ];
     assert.deepEqual([...composition.operations.queries.keys()].sort(), expectedQueries.sort());

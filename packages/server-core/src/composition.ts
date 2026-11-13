@@ -2814,6 +2814,8 @@ function uniqueCapabilities(
 			FEATURE_CAPABILITIES.appWindows,
 			FEATURE_CAPABILITIES.appWindowMirror,
 			FEATURE_CAPABILITIES.appWindowAttachments,
+			// Every server composes the terminal registry, and with it file drops.
+			FEATURE_CAPABILITIES.terminalFileDrop,
 			...(options.ai === undefined ? [] : [FEATURE_CAPABILITIES.dictation]),
 			...(options.git === undefined ? [] : [FEATURE_CAPABILITIES.git]),
 			...(options.forge === undefined ? [] : [FEATURE_CAPABILITIES.forge]),

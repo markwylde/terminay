@@ -139,6 +139,7 @@ test("a composed server advertises the versioned capability of every service it 
         FEATURE_CAPABILITIES.serverUpgrade,
         FEATURE_CAPABILITIES.settings,
         FEATURE_CAPABILITIES.terminal,
+        FEATURE_CAPABILITIES.terminalFileDrop,
         FEATURE_CAPABILITIES.terminalTitles,
         FEATURE_CAPABILITIES.workspace,
         FEATURE_CAPABILITIES.workspaceChanges,

@@ -5,6 +5,7 @@ export * from './commandDefaults.js';
 export * from './commandSubmission.js';
 export * from './consumers.js';
 export * from './errors.js';
+export * from './fileDrop.js';
 export * from './inputSources.js';
 export * from './launchers.js';
 export * from './launchResolver.js';

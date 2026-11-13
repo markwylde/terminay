@@ -438,7 +438,11 @@ function terminalServiceError(error: TerminalServiceError): ProtocolError {
 		case 'session_exited':
 		case 'session_interrupted':
 		case 'session_not_found':
+		case 'upload_not_found':
 			return { code: 'not_found', message: error.message, retryable: false };
+		case 'upload_limit':
+		case 'upload_failed':
+			return { code: 'resource', message: error.message, retryable: false };
 		case 'forbidden':
 			return { code: 'forbidden', message: error.message, retryable: false };
 		case 'project_awaiting_start':

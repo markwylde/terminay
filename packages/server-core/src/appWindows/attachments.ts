@@ -54,6 +54,18 @@ export function keptAttachmentName(offered: string): string {
 	return `${safe.slice(0, MAX_KEPT_NAME_CHARS - extension.length)}${extension}`;
 }
 
+/** How a writer names its files and how large one part may be. */
+export interface AttachmentWriterOptions {
+	/** The largest part `write` accepts. Defaults to the window-message part size. */
+	readonly maxPartBytes?: number;
+	/**
+	 * The file name for each attachment, given its kept name and index. Defaults
+	 * to a random prefix and the kept name, which is unique in a shared directory.
+	 * A caller that names files itself must keep them unique in `directory`.
+	 */
+	readonly fileName?: (keptName: string, index: number) => string;
+}
+
 interface WrittenFile {
 	readonly size: number;
 	readonly path: string;
@@ -68,18 +80,28 @@ export class AppWindowAttachmentWriter {
 	private ready = false;
 	private ended = false;
 	private busy = false;
+	private readonly maxPartBytes: number;
 
 	constructor(
 		private readonly directory: string,
 		attachments: readonly AppWindowAttachment[],
 		random: () => string = () => randomBytes(8).toString('hex'),
+		options: AttachmentWriterOptions = {},
 	) {
-		this.files = attachments.map((attachment) => ({
+		this.maxPartBytes = options.maxPartBytes ?? MAX_APP_WINDOW_ATTACHMENT_PART_BYTES;
+		const fileName =
+			options.fileName ?? ((kept: string) => `${random()}-${kept}`);
+		this.files = attachments.map((attachment, index) => ({
 			size: attachment.size,
-			path: join(directory, `${random()}-${keptAttachmentName(attachment.name)}`),
+			path: join(directory, fileName(keptAttachmentName(attachment.name), index)),
 			written: 0,
 			created: false,
 		}));
+	}
+
+	/** Bytes taken so far, across every file. */
+	get receivedBytes(): number {
+		return this.files.reduce((sum, file) => sum + file.written, 0);
 	}
 
 	/** Append one part. Parts arrive in order: file by file, start to end. */
@@ -92,7 +114,7 @@ export class AppWindowAttachmentWriter {
 			if (offset !== file.written) throw new RangeError('attachment part is out of order');
 			if (
 				bytes.byteLength === 0 ||
-				bytes.byteLength > MAX_APP_WINDOW_ATTACHMENT_PART_BYTES ||
+				bytes.byteLength > this.maxPartBytes ||
 				file.written + bytes.byteLength > file.size
 			)
 				throw new RangeError('attachment part is the wrong size');
@@ -143,7 +165,7 @@ export class AppWindowAttachmentWriter {
 	private async handle(file: WrittenFile): Promise<FileHandle> {
 		if (file.handle !== undefined) return file.handle;
 		if (!this.ready) {
-			await ownedDirectory(this.directory);
+			await ownedScratchDirectory(this.directory);
 			this.ready = true;
 		}
 		// Created, never opened: a name that exists is not ours to write to.
@@ -165,7 +187,7 @@ export class AppWindowAttachmentWriter {
  * directory of this user: the temporary directory can be shared, and a link or
  * another user's directory there would decide where attachments land.
  */
-async function ownedDirectory(directory: string): Promise<void> {
+export async function ownedScratchDirectory(directory: string): Promise<void> {
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	const stat = await lstat(directory);
 	const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
