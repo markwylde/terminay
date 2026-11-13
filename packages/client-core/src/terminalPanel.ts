@@ -24,6 +24,8 @@ export interface TerminalPanelAttachment {
   readonly position: number;
   readonly closed: boolean;
   readonly presentation: TerminalPresentationState;
+  /** The session's temporary directory is unusable (ADR-0115). */
+  readonly degraded?: TerminalClientAttachment["degraded"];
   readonly onEvent: (listener: (event: TerminalStreamEvent) => void) => () => void;
   readonly onOutput: (listener: (event: TerminalStreamOutputEvent) => void) => () => void;
   readonly onExit: (listener: (event: TerminalStreamExitEvent) => void) => () => void;
@@ -82,6 +84,7 @@ class PanelAttachmentView implements TerminalPanelAttachment {
   get position(): number { return this.attachment.position; }
   get closed(): boolean { return this.attachment.closed; }
   get presentation(): TerminalPresentationState { return this.attachment.presentation; }
+  get degraded(): TerminalClientAttachment["degraded"] { return this.attachment.degraded; }
 
   onEvent(listener: (event: TerminalStreamEvent) => void): () => void {
     if (typeof listener !== "function") throw new TypeError("terminal event listener must be a function");

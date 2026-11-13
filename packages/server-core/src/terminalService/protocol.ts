@@ -1184,6 +1184,10 @@ export function createTerminalOperationRegistry(
 				clientId,
 				attachment.attachmentId,
 			),
+			// ADR-0115: the panel says so; input is unaffected.
+			...(snapshot?.degraded === undefined
+				? {}
+				: { degraded: snapshot.degraded }),
 		};
 	}
 
@@ -1664,6 +1668,9 @@ export function createTerminalOperationRegistry(
 						: { launch: { ...session.launch } }),
 					...(session.pid === undefined ? {} : { pid: session.pid }),
 					...(session.exit === undefined ? {} : { exit: { ...session.exit } }),
+					...(session.degraded === undefined
+						? {}
+						: { degraded: session.degraded }),
 				})),
 		};
 	}

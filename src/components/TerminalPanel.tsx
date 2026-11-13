@@ -109,6 +109,7 @@ import {
 	type TerminalDropItems,
 	uploadTerminalDropFiles,
 } from './terminalDropInteraction';
+import { degradedTerminalBanner } from './degradedTerminalBanner';
 import { endedTerminalNotice, replayEndedTerminal } from './endedTerminalReplay';
 import {
 	formatTerminalExitNotice,
@@ -811,6 +812,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		null,
 	);
 	const [terminalInputNotice, setTerminalInputNotice] = useState<TerminalInputNotice | null>(null);
+	// ADR-0115: the server found this shell's temporary directory unusable.
+	const [degraded, setDegraded] = useState<string | undefined>(undefined);
 	const resumeTerminalInputRef = useRef<() => boolean>(() => false);
 	const [presentationUnavailable, setPresentationUnavailable] = useState(false);
 	// An exited or interrupted terminal has nothing to retry; a refused
@@ -1974,6 +1977,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						}
 
 						panelAttachment = attachment;
+						setDegraded(attachment.degraded);
 						// Everything up to here was delivered with the attach: history,
 						// a checkpoint tail, or output merged into that batch. Only
 						// output the server streams after it is live.
@@ -3579,6 +3583,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					Copy
 				</button>
 			) : null}
+			{degradedTerminalBanner(degraded)}
 			{terminalInputNotice ? (
 				<div className="terminal-input-notice" role="alert">
 					<span>{terminalInputNotice.message}</span>

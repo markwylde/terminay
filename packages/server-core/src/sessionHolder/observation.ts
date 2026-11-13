@@ -1,3 +1,4 @@
+import type { HolderHealthFacts, OwnHealthFacts } from './health.js';
 import type { HolderCloseNotice, HolderCloseReason } from './protocol.js';
 
 /**
@@ -56,7 +57,18 @@ export type SessionHolderObservationReport =
 	| {
 			readonly kind: 'drained';
 			readonly holder: SessionHolderIdentity;
-			readonly cause: 'build-mismatch';
+			/** Another build launched it, or its environment failed, or could
+			 * not be, checked (ADR-0115). */
+			readonly cause: 'build-mismatch' | 'unhealthy' | 'health-unknown';
+			readonly facts?: HolderHealthFacts;
+			/** Its sessions are shown as having lost their temporary directory. */
+			readonly degraded?: true;
+	  }
+	| {
+			/** This server's own temporary directories fail: a host problem,
+			 * which no holder can fix, so new holders are launched anyway. */
+			readonly kind: 'host-tmp-unusable';
+			readonly facts: OwnHealthFacts;
 	  }
 	| {
 			readonly kind: 'limit-set';

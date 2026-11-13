@@ -239,5 +239,7 @@ declare module 'node:fs/promises' {
 		options: { readonly withFileTypes: true },
 	): Promise<Dirent[]>;
 	export function realpath(path: string): Promise<string>;
+	export function mkdtemp(prefix: string): Promise<string>;
+	export function rmdir(path: string): Promise<void>;
 	export function stat(path: string): Promise<Stats>;
 }
