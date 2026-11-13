@@ -200,7 +200,8 @@ test('a connection row is named by its server label alone', async () => {
 test('per-server surfaces select a connection instead of merging servers', async () => {
 	const workspace = await read('src/web/ConnectedWebRendererWorkspace.tsx')
 	assert.match(workspace, /useSelectedServerConnection\(\)/u)
-	assert.match(workspace, /<ServerSelector/u)
+	// Settings picks a server on its places rail, one tile per attached connection.
+	assert.match(workspace, /places=\{settingsPlaces\}/u)
 	// Every per-server client comes from the selected connection.
 	assert.match(
 		workspace,

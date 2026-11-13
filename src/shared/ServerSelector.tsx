@@ -61,37 +61,3 @@ export function useSelectedServerConnection(
 		});
 	}, [connections, fallback, requested, select]);
 }
-
-export type ServerSelectorProps = Readonly<{
-	/** What the surface is scoped to, for the accessible name. */
-	label: string;
-	connections: readonly WorkspaceConnection[];
-	selectedServerId?: string;
-	onSelect: (serverId: string) => void;
-}>;
-
-export function ServerSelector({
-	connections,
-	label,
-	onSelect,
-	selectedServerId,
-}: ServerSelectorProps) {
-	// One server is not a choice, and a control that offers none is clutter.
-	if (connections.length < 2) return null;
-	return (
-		<label className="server-selector">
-			<span className="server-selector__label">{label}</span>
-			<select
-				className="server-selector__select"
-				value={selectedServerId ?? ''}
-				onChange={(event) => onSelect(event.target.value)}
-			>
-				{connections.map((connection) => (
-					<option key={connection.profileId} value={connection.serverId ?? ''}>
-						{connection.label}
-					</option>
-				))}
-			</select>
-		</label>
-	);
-}

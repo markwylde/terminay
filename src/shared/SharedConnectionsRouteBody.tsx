@@ -2,7 +2,7 @@ import type {
 	ConnectionProfile,
 	ConnectionProfileStore,
 } from '@terminay/client-core';
-import { type ReactNode, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import {
 	PAIRING_CONNECTION_LOST_COPY,
 	PairingAttemptStatus,
@@ -105,12 +105,21 @@ export interface SharedConnectionsRouteBodyProps {
 }
 
 export type ConnectionsSettingsParts = Readonly<{
-	list: ReactNode;
+	/** Absent for the exposure page, which has no list column. */
+	list?: ReactNode;
 	detail: ReactNode;
 	detailTitle: ReactNode;
 }>;
 
 export type ConnectionsSettingsPresentation = Readonly<{
+	/**
+	 * Which Settings category this is (ADR-0115): a server's Remote Access
+	 * page, which is its exposure alone, or this device's Servers list, which
+	 * is the saved servers. Both, as one list, when absent.
+	 */
+	part?: 'exposure' | 'servers';
+	/** Each new value opens the Add server form. */
+	addRequest?: number;
 	/** The selected server's name; its exposure item is named after it. */
 	exposureLabel: string;
 	exposureStatus?: string;
@@ -171,6 +180,14 @@ export function SharedConnectionsRouteBody({
 	const activePairingAttempt = useRef<string | null>(null);
 	const cancelledPairingAttempts = useRef(new Set<string>());
 	const exposureId = REMOTE_ACCESS_EXPOSURE_ID;
+	// Connect a server, or an Add server command, asks for the form.
+	const addRequest = settings?.addRequest;
+	useEffect(() => {
+		if (addRequest === undefined || addRequest === 0) return;
+		setShowPair(true);
+		setRename(undefined);
+		setConfirm(undefined);
+	}, [addRequest]);
 	const snapshot = profileStore?.snapshot();
 	const visibleConnections: readonly ServerRow[] =
 		snapshot !== undefined
@@ -595,8 +612,22 @@ export function SharedConnectionsRouteBody({
 		</>
 	);
 
+	if (presentation === 'settings' && settings?.part === 'exposure') {
+		return settings.render({
+			detail: (
+				<div className="shared-connections" data-shared-route-body="connections">
+					<div className="remote-control-notices">{statusBlocks}</div>
+					{exposurePanel}
+					{settings.exposureDetail}
+				</div>
+			),
+			detailTitle: settings.exposureLabel,
+		});
+	}
+
 	if (presentation === 'settings' && settings !== undefined) {
-		const exposureAvailable = exposurePanel !== undefined;
+		const exposureAvailable =
+			exposurePanel !== undefined && settings.part !== 'servers';
 		const requested = settings.selectedId;
 		const selectedId = showPair
 			? undefined
@@ -655,7 +686,7 @@ export function SharedConnectionsRouteBody({
 		];
 		const list = (
 			<SettingsListColumn
-				title="Remote Access"
+				title={settings.part === 'servers' ? 'Servers' : 'Remote Access'}
 				action={
 					canShowPair ? (
 						<AddServerButton
@@ -669,7 +700,7 @@ export function SharedConnectionsRouteBody({
 				}
 			>
 				<SettingsListSections
-					label="Remote Access"
+					label={settings.part === 'servers' ? 'Servers' : 'Remote Access'}
 					sections={sections}
 					selectedId={selectedId}
 					onSelect={select}
@@ -828,7 +859,8 @@ export function SharedConnectionsRouteBody({
 				? 'Add server'
 				: selectedId === exposureId
 					? settings.exposureLabel
-					: (inspected?.label ?? 'Remote Access'),
+					: (inspected?.label ??
+							(settings.part === 'servers' ? 'Servers' : 'Remote Access')),
 		});
 	}
 

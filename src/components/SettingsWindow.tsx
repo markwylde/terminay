@@ -60,6 +60,23 @@ import { useWorkflowSettingsClient } from './workflows/useWorkflowSettingsClient
 import { templateSearchText } from './workflows/workflowLibraryModel';
 import { groupSettingsCategories } from './settings/settingsCategoryGroups';
 import {
+	categoryAfterPlaceChange,
+	categoryBelongsToPlace,
+	DEVICE_PLACE_ID,
+	type DeviceHostKind,
+	devicePlaceName,
+	type PlacedSection,
+	placeForCategory,
+	leavesServerPlace,
+	placeOnOpen,
+	placeScopeLine,
+	placementCategoryId,
+	sectionsForPlace,
+	type SettingsPlaceKind,
+} from './settings/settingsPlaces';
+import { SettingsPlacesRail, type SettingsRailServer } from './settings/SettingsPlacesRail';
+import { DeviceUpdatesNote, DeviceUpdateVersions } from './settings/UpdatesPages';
+import {
 	type CollectionSelection,
 	rememberSelection,
 } from './settings/settingsSelection';
@@ -116,7 +133,106 @@ type CategoryId =
 	| 'diagnostics'
 	| 'macros'
 	| 'workflows'
-	| 'import-export';
+	| 'import-export'
+	| 'servers';
+
+/** Each place's sections, holding only the fields that place stores. */
+const DEVICE_SECTIONS = sectionsForPlace(terminalSettingsSections, 'device');
+const SERVER_SECTIONS = sectionsForPlace(terminalSettingsSections, 'server');
+
+/** The ids a Settings request may name besides a field section. */
+const REQUESTABLE_CATEGORY_IDS: ReadonlySet<string> = new Set([
+	'extensions',
+	'diagnostics',
+	'macros',
+	'workflows',
+	'remote',
+	'import-export',
+	'servers',
+]);
+
+/** The category a request for a section or category id opens, if any. */
+function requestedCategoryId(sectionOrCategory: string | null | undefined): CategoryId | undefined {
+	if (sectionOrCategory === null || sectionOrCategory === undefined) return undefined;
+	if (REQUESTABLE_CATEGORY_IDS.has(sectionOrCategory)) return sectionOrCategory as CategoryId;
+	const section = terminalSettingsSections.find((candidate) => candidate.id === sectionOrCategory);
+	if (section !== undefined) return placementCategoryId(section) as CategoryId;
+	return terminalSettingsCategories.some((category) => category.id === sectionOrCategory)
+		? (sectionOrCategory as CategoryId)
+		: undefined;
+}
+
+/** Whether each place has what a request names: a section's own fields, or a category. */
+function requestPlaces(sectionOrCategory: string, categoryId: CategoryId) {
+	const isSection = terminalSettingsSections.some((section) => section.id === sectionOrCategory);
+	const has = (place: SettingsPlaceKind, sections: readonly PlacedSection[]) =>
+		isSection
+			? sections.some((section) => section.id === sectionOrCategory)
+			: categoryBelongsToPlace(categoryId, place, { desktop: true }, sections);
+	return {
+		deviceHasCategory: has('device', DEVICE_SECTIONS),
+		serverHasCategory: has('server', SERVER_SECTIONS),
+	};
+}
+
+const LAST_PLACE_KEY = 'terminay.settings.last-place.v1';
+
+type LastPlace = Readonly<{ placeId: string; categoryId: string }>;
+
+function readLastPlace(): LastPlace | undefined {
+	try {
+		const parsed = JSON.parse(window.localStorage.getItem(LAST_PLACE_KEY) ?? 'null') as unknown;
+		if (
+			typeof parsed === 'object' &&
+			parsed !== null &&
+			typeof (parsed as LastPlace).placeId === 'string' &&
+			typeof (parsed as LastPlace).categoryId === 'string'
+		)
+			return parsed as LastPlace;
+	} catch {
+		// No remembered place: Settings opens on its default.
+	}
+	return undefined;
+}
+
+function writeLastPlace(value: LastPlace): void {
+	try {
+		window.localStorage.setItem(LAST_PLACE_KEY, JSON.stringify(value));
+	} catch {
+		// Remembering the place is a convenience only.
+	}
+}
+
+/** The places rail of Settings: this device and every attached server. */
+export type SettingsPlacesProps = Readonly<{
+	deviceKind: DeviceHostKind;
+	/** Terminay Desktop: device Updates, Diagnostics and Import & Export. */
+	desktop: boolean;
+	deviceSubtitle?: string;
+	servers: readonly (SettingsRailServer &
+		Readonly<{
+			subtitle?: string;
+			/** The connection's state while it cannot answer: nothing is asked of it. */
+			unavailable?: 'reconnecting' | 'unreachable' | 'incompatible';
+		}>)[];
+	/** The server the window's server-scoped clients are pointed at. */
+	selectedServerId?: string;
+	/** The server that owns the active project tab. */
+	activeServerId?: string;
+	onSelectServer: (id: string) => void;
+}>;
+
+const NO_PLACES: SettingsPlacesProps = Object.freeze({
+	deviceKind: 'browser',
+	desktop: false,
+	servers: [],
+	onSelectServer: () => {},
+});
+
+const serversSettingsCategory = Object.freeze({
+	id: 'servers' as const,
+	label: 'Servers',
+});
 
 const macrosSettingsCategory = Object.freeze({
 	id: 'macros' as const,
@@ -422,6 +538,16 @@ function renderCategoryIcon(title: string, children: ReactNode) {
 
 function getCategoryIcon(id: CategoryId) {
 	switch (id) {
+		case 'servers':
+			return renderCategoryIcon(
+				'Servers',
+				<>
+					<rect x="4" y="4" width="16" height="6" rx="1.5" />
+					<rect x="4" y="14" width="16" height="6" rx="1.5" />
+					<path d="M8 7h.01" />
+					<path d="M8 17h.01" />
+				</>,
+			);
 		case 'macros':
 			return renderCategoryIcon(
 				'Macros',
@@ -586,7 +712,8 @@ export function SettingsWindow({
 	settingsClient: settingsClientOverride,
 	shellProfilesClient,
 	serverIdentity = 'Connected server',
-	renderServerSelector,
+	places = NO_PLACES,
+	renderServerUpdates,
 	macroSettingsClient,
 	renderRemoteAccess,
 	initialItemId,
@@ -598,8 +725,10 @@ export function SettingsWindow({
 	settingsClient?: TerminalSettingsClient;
 	shellProfilesClient?: ShellProfilesClient;
 	serverIdentity?: string;
-	/** Draws the server selector above the search field; it calls `beforeSelect` first. */
-	renderServerSelector?: (beforeSelect: () => Promise<boolean>) => ReactNode;
+	/** This device and the attached servers, for the places rail. */
+	places?: SettingsPlacesProps;
+	/** The selected server's Updates page; absent where it cannot be shown. */
+	renderServerUpdates?: (controls: Readonly<{ openDeviceUpdates: () => void }>) => ReactNode;
 	/** The selected server's macros; absent when its connection is unavailable. */
 	macroSettingsClient?: MacroSettingsClient;
 	/** Draws the Remote Access category; absent where the host cannot manage it. */
@@ -643,20 +772,59 @@ export function SettingsWindow({
 	const searchParams = new URLSearchParams(window.location.search);
 	const initialSectionFromUrl = initialSectionId ?? searchParams.get('section');
 	const initialItemFromUrl = initialItemId ?? searchParams.get('item');
-	const initialCategoryFromUrl: CategoryId =
-		initialSectionFromUrl === 'extensions' ||
-		initialSectionFromUrl === 'diagnostics' ||
-		initialSectionFromUrl === 'macros' ||
-		initialSectionFromUrl === 'workflows' ||
-		initialSectionFromUrl === 'remote' ||
-		initialSectionFromUrl === 'import-export'
-			? initialSectionFromUrl
-			: (terminalSettingsSections.find(
-						(section) => section.id === initialSectionFromUrl,
-					)?.categoryId ?? 'appearance');
+	const desktopFromHook = useIsDesktopHost();
+	const desktop = places.desktop || desktopFromHook;
+	const serverPlaceIds = places.servers.map((server) => server.id);
+	const requestedCategory = requestedCategoryId(initialSectionFromUrl);
+	// A request opens the place that has what it names; a plain open returns
+	// to where Settings was last left, while that place is still attached.
+	const [initialPlace] = useState(() => {
+		if (requestedCategory !== undefined && initialSectionFromUrl != null) {
+			const placeId = placeForCategory(requestedCategory, {
+				...requestPlaces(initialSectionFromUrl, requestedCategory),
+				...(places.activeServerId === undefined
+					? {}
+					: { activeServerPlaceId: places.activeServerId }),
+				serverPlaceIds,
+			});
+			return { placeId, categoryId: requestedCategory };
+		}
+		const last = readLastPlace();
+		const placeId = placeOnOpen({
+			...(last === undefined ? {} : { lastPlaceId: last.placeId }),
+			...(places.activeServerId === undefined
+				? {}
+				: { activeServerPlaceId: places.activeServerId }),
+			serverPlaceIds,
+		});
+		return {
+			placeId,
+			categoryId: (last?.placeId === placeId ? last.categoryId : 'appearance') as CategoryId,
+		};
+	});
+	const initialCategoryFromUrl: CategoryId = initialPlace.categoryId;
+	const [placeKind, setPlaceKind] = useState<SettingsPlaceKind>(
+		initialPlace.placeId === DEVICE_PLACE_ID ? 'device' : 'server',
+	);
+	// Settings opened for a server other than the one selected selects it.
+	useEffect(() => {
+		if (
+			initialPlace.placeId !== DEVICE_PLACE_ID &&
+			initialPlace.placeId !== places.selectedServerId
+		)
+			places.onSelectServer(initialPlace.placeId);
+		// Only the opening request selects; later selections are the user's.
+	}, []);
+	const selectedServerPlaceId = places.selectedServerId ?? serverPlaceIds[0];
+	const selectedPlaceId =
+		placeKind === 'device' ? DEVICE_PLACE_ID : (selectedServerPlaceId ?? DEVICE_PLACE_ID);
+	const placedSections = placeKind === 'device' ? DEVICE_SECTIONS : SERVER_SECTIONS;
+	const deviceName = devicePlaceName(places.deviceKind);
+	const selectedServer = places.servers.find((server) => server.id === selectedServerPlaceId);
 	const {
 		settings: persistedSettings,
 		isLoading,
+		error: settingsError,
 		settingsClient,
 	} = useTerminalSettings(settingsClientOverride);
 	const [draft, setDraft] = useState<TerminalSettings>(defaultTerminalSettings);
@@ -682,19 +850,24 @@ export function SettingsWindow({
 		readonly ExtensionSummaryDto[] | undefined
 	>();
 	const extensionCount = knownExtensions?.length;
+	// Each place keeps its own selection in each collection category.
 	const [collectionSelection, setCollectionSelection] =
 		useState<CollectionSelection>(() =>
 			initialItemFromUrl === null || initialItemFromUrl === undefined
 				? {}
-				: { [initialCategoryFromUrl]: initialItemFromUrl },
+				: { [`${initialPlace.placeId}:${initialCategoryFromUrl}`]: initialItemFromUrl },
 		);
+	const selectionFor = (categoryId: CategoryId) =>
+		collectionSelection[`${selectedPlaceId}:${categoryId}`];
 	const selectCollectionItem = useCallback(
 		(categoryId: CategoryId, itemId: string | undefined) =>
 			setCollectionSelection((current) =>
-				rememberSelection(current, categoryId, itemId),
+				rememberSelection(current, `${selectedPlaceId}:${categoryId}`, itemId),
 			),
-		[],
+		[selectedPlaceId],
 	);
+	// Connect a server, and every Add server request, open the Servers form.
+	const [addServerRequest, setAddServerRequest] = useState(0);
 	// The macro change set lives as long as Settings, not as long as the
 	// Macros category is in view.
 	const macroEditor = useMacroEditor(
@@ -716,17 +889,18 @@ export function SettingsWindow({
 			return;
 		lastRequest.current = { section: initialSectionId, item: initialItemId };
 		if (initialSectionId === undefined) return;
-		const categoryId =
-			initialSectionId === 'extensions' ||
-			initialSectionId === 'diagnostics' ||
-			initialSectionId === 'macros' ||
-			initialSectionId === 'workflows' ||
-			initialSectionId === 'remote' ||
-			initialSectionId === 'import-export'
-				? initialSectionId
-				: terminalSettingsSections.find((section) => section.id === initialSectionId)
-						?.categoryId;
+		const categoryId = requestedCategoryId(initialSectionId);
 		if (categoryId === undefined) return;
+		const placeId = placeForCategory(categoryId, {
+			...requestPlaces(initialSectionId, categoryId),
+			...(places.activeServerId === undefined
+				? {}
+				: { activeServerPlaceId: places.activeServerId }),
+			serverPlaceIds,
+		});
+		setPlaceKind(placeId === DEVICE_PLACE_ID ? 'device' : 'server');
+		if (placeId !== DEVICE_PLACE_ID && placeId !== places.selectedServerId)
+			places.onSelectServer(placeId);
 		setQuery('');
 		setActiveCategoryId(categoryId);
 		if (initialItemId !== undefined) {
@@ -736,7 +910,10 @@ export function SettingsWindow({
 				else pendingMacroId.current = initialItemId;
 			}
 			else if (categoryId === 'workflows') workflowEditor.select(initialItemId);
-			else setCollectionSelection((current) => rememberSelection(current, categoryId, initialItemId));
+			else
+				setCollectionSelection((current) =>
+					rememberSelection(current, `${placeId}:${categoryId}`, initialItemId),
+				);
 		}
 		if (categoryId !== initialSectionId) {
 			setActiveSectionId(initialSectionId);
@@ -809,7 +986,7 @@ export function SettingsWindow({
 	}, [anyEditorDirty]);
 	const [diagnosticsAvailable, setDiagnosticsAvailable] = useState(false);
 	// Copying between servers needs every attached connection: Desktop only.
-	const importExportAvailable = useIsDesktopHost();
+	const importExportAvailable = desktop;
 	const [performanceLoggingEnabled, setPerformanceLoggingEnabled] =
 		useState(false);
 	const [isSaving, setIsSaving] = useState(false);
@@ -1038,7 +1215,7 @@ export function SettingsWindow({
 	const normalizedQuery = query.trim().toLowerCase();
 
 	const filteredSections = useMemo(() => {
-		return terminalSettingsSections.filter((section) => {
+		return placedSections.filter((section) => {
 			const sectionMatches =
 				section.title.toLowerCase().includes(normalizedQuery) ||
 				section.description.toLowerCase().includes(normalizedQuery);
@@ -1055,7 +1232,7 @@ export function SettingsWindow({
 
 			return !normalizedQuery || sectionMatches || fieldMatches;
 		});
-	}, [normalizedQuery]);
+	}, [normalizedQuery, placedSections]);
 
 	const importExportQueryMatches =
 		normalizedQuery.length > 0 &&
@@ -1068,7 +1245,7 @@ export function SettingsWindow({
 			normalizedQuery,
 		);
 
-	const macrosAvailable = macroSettingsClient !== undefined;
+	const macrosAvailable = macroSettingsClient !== undefined && placeKind === 'server';
 	const { profiles: savedServers } = useConnections();
 	// Search reaches into collections: macro names, descriptions and script
 	// text, and saved server names.
@@ -1085,7 +1262,7 @@ export function SettingsWindow({
 				.includes(normalizedQuery),
 		);
 	}, [macroEditor.draft.macros, macrosAvailable, normalizedQuery]);
-	const workflowsAvailable = applicationClient !== undefined;
+	const workflowsAvailable = applicationClient !== undefined && placeKind === 'server';
 	const workflowMatches = useMemo(() => {
 		if (!normalizedQuery || workflowSettings.unavailable !== undefined) return [];
 		return workflowEditor.draft.templates.filter((template) =>
@@ -1099,62 +1276,85 @@ export function SettingsWindow({
 		workflowMatches.length > 0;
 	const serverMatches = useMemo(
 		() =>
-			!normalizedQuery || renderRemoteAccess === undefined
+			!normalizedQuery || renderRemoteAccess === undefined || placeKind !== 'device'
 				? []
 				: savedServers.filter((profile) =>
 						profile.label.toLowerCase().includes(normalizedQuery),
 					),
-		[normalizedQuery, renderRemoteAccess, savedServers],
+		[normalizedQuery, placeKind, renderRemoteAccess, savedServers],
 	);
 	const extensionMatches = useMemo(
 		() =>
-			!normalizedQuery
+			!normalizedQuery || placeKind !== 'server'
 				? []
 				: (knownExtensions ?? []).filter((extension) =>
 						`${extension.displayName} ${extension.packageName}`
 							.toLowerCase()
 							.includes(normalizedQuery),
 					),
-		[knownExtensions, normalizedQuery],
+		[knownExtensions, normalizedQuery, placeKind],
 	);
 	const macrosQueryMatches =
 		'macros automation snippets'.includes(normalizedQuery) ||
 		macroMatches.length > 0;
 
 	const visibleCategories = useMemo(() => {
+		// Only the selected place's categories: a category is listed under a
+		// place when that place stores something in it (ADR-0115).
+		const inPlace = (id: string) =>
+			categoryBelongsToPlace(id, placeKind, { desktop }, placedSections);
+		const placeCategories = terminalSettingsCategories.filter(
+			(category) =>
+				inPlace(category.id) &&
+				(category.id !== 'remote' || renderRemoteAccess !== undefined) &&
+				(category.id !== 'updates' ||
+					placeKind === 'device' ||
+					renderServerUpdates !== undefined),
+		);
+		const serversAvailable = placeKind === 'device' && renderRemoteAccess !== undefined;
 		const extra = [
+			...(serversAvailable ? [serversSettingsCategory] : []),
 			...(macrosAvailable ? [macrosSettingsCategory] : []),
 			...(workflowsAvailable ? [workflowsSettingsCategory] : []),
-			...(importExportAvailable ? [importExportSettingsCategory] : []),
-			...(diagnosticsAvailable ? [diagnosticsSettingsCategory] : []),
-			extensionSettingsCategory,
+			...(importExportAvailable && inPlace('import-export')
+				? [importExportSettingsCategory]
+				: []),
+			...(diagnosticsAvailable && inPlace('diagnostics')
+				? [diagnosticsSettingsCategory]
+				: []),
+			...(placeKind === 'server' ? [extensionSettingsCategory] : []),
 		];
-		if (!normalizedQuery) return [...terminalSettingsCategories, ...extra];
+		if (!normalizedQuery) return [...placeCategories, ...extra];
 		const categoryIds = new Set(
 			filteredSections.map((section) => section.categoryId),
 		);
-		const settingsCategories = terminalSettingsCategories.filter(
-			(category) =>
-				categoryIds.has(category.id) ||
-				(category.id === 'remote' && serverMatches.length > 0),
+		const settingsCategories = placeCategories.filter((category) =>
+			categoryIds.has(category.id),
 		);
 		return [
 			...settingsCategories,
+			...(serversAvailable && serverMatches.length > 0 ? [serversSettingsCategory] : []),
 			...(macrosAvailable && macrosQueryMatches ? [macrosSettingsCategory] : []),
 			...(workflowsAvailable && workflowsQueryMatches
 				? [workflowsSettingsCategory]
 				: []),
-			...(importExportAvailable && importExportQueryMatches
+			...(importExportAvailable && inPlace('import-export') && importExportQueryMatches
 				? [importExportSettingsCategory]
 				: []),
-			...(diagnosticsAvailable && diagnosticsQueryMatches
+			...(diagnosticsAvailable && inPlace('diagnostics') && diagnosticsQueryMatches
 				? [diagnosticsSettingsCategory]
 				: []),
-			...(extensionsQueryMatches || extensionMatches.length > 0
+			...(placeKind === 'server' &&
+			(extensionsQueryMatches || extensionMatches.length > 0)
 				? [extensionSettingsCategory]
 				: []),
 		];
 	}, [
+		desktop,
+		placeKind,
+		placedSections,
+		renderRemoteAccess,
+		renderServerUpdates,
 		diagnosticsAvailable,
 		diagnosticsQueryMatches,
 		importExportAvailable,
@@ -1270,7 +1470,7 @@ export function SettingsWindow({
 				}
 
 				const nextSectionId = nextEntry.target.id.replace(/^section-/, '');
-				const nextCategoryId = terminalSettingsSections.find(
+				const nextCategoryId = placedSections.find(
 					(section) => section.id === nextSectionId,
 				)?.categoryId;
 
@@ -1297,7 +1497,7 @@ export function SettingsWindow({
 		return () => {
 			observer.disconnect();
 		};
-	}, [displayedCategories, filteredSections]);
+	}, [displayedCategories, filteredSections, placedSections]);
 
 	const runSettingsMutation = useCallback(
 		async (
@@ -1333,16 +1533,20 @@ export function SettingsWindow({
 		[settingsClient],
 	);
 
+	// A change is written only to the place it was made in: a device change
+	// never reaches a server, and a server change never rewrites the device.
 	const saveDraft = useCallback(
 		(nextDraft: TerminalSettings, optimistic = true) =>
 			runSettingsMutation(
-				() =>
-					settingsClient.update<TerminalSettings>(
-						nextDraft as unknown as import('@terminay/protocol').JsonValue,
-					),
+				() => {
+					const value = nextDraft as unknown as import('@terminay/protocol').JsonValue;
+					return settingsClient.updatePlace === undefined
+						? settingsClient.update<TerminalSettings>(value)
+						: settingsClient.updatePlace<TerminalSettings>(placeKind, value);
+				},
 				optimistic ? nextDraft : undefined,
 			),
-		[runSettingsMutation, settingsClient],
+		[placeKind, runSettingsMutation, settingsClient],
 	);
 
 	const updateField = async (
@@ -1454,10 +1658,14 @@ export function SettingsWindow({
 	};
 
 	const resetAll = async () => {
-		if (!confirm('Are you sure you want to reset all settings to default?'))
+		const placeName = placeKind === 'device' ? deviceName : serverIdentity;
+		if (!confirm(`Reset every setting saved on ${placeName} to its default?`))
 			return;
 		await runSettingsMutation(async () => {
-			const saved = await settingsClient.reset<TerminalSettings>();
+			const saved =
+				settingsClient.resetPlace === undefined
+					? await settingsClient.reset<TerminalSettings>()
+					: await settingsClient.resetPlace<TerminalSettings>(placeKind);
 			setQuery('');
 			return saved;
 		});
@@ -2505,6 +2713,113 @@ export function SettingsWindow({
 		</section>
 	);
 
+	/** A place's categories, in sidebar order, while no search is active. */
+	const categoryIdsFor = (kind: SettingsPlaceKind): string[] => {
+		const sections = kind === 'device' ? DEVICE_SECTIONS : SERVER_SECTIONS;
+		const ids = [
+			...terminalSettingsCategories.map((category) => category.id as string),
+			'servers',
+			'macros',
+			'workflows',
+			'extensions',
+			'import-export',
+			'diagnostics',
+		]
+			.filter((id, index, all) => all.indexOf(id) === index)
+			.filter((id) => categoryBelongsToPlace(id, kind, { desktop }, sections))
+			.filter((id) => (id !== 'remote' && id !== 'servers') || renderRemoteAccess !== undefined)
+			.filter((id) => id !== 'macros' || macroSettingsClient !== undefined)
+			.filter((id) => id !== 'workflows' || applicationClient !== undefined)
+			.filter((id) => id !== 'diagnostics' || diagnosticsAvailable)
+			.filter((id) => !(id === 'updates' && kind === 'server' && renderServerUpdates === undefined));
+		return groupSettingsCategories(ids.map((id) => ({ id, label: id }))).flatMap((group) =>
+			group.categories.map((category) => category.id),
+		);
+	};
+
+	/** Moves to another place, keeping the category when that place has it. */
+	const selectPlace = (placeId: string) => {
+		if (placeId === selectedPlaceId) return;
+		void confirmLeave().then((proceed) => {
+			if (!proceed) return;
+			const nextKind: SettingsPlaceKind = placeId === DEVICE_PLACE_ID ? 'device' : 'server';
+			const next = categoryAfterPlaceChange(activeCategoryId, categoryIdsFor(nextKind));
+			if (next !== undefined) setActiveCategoryId(next as CategoryId);
+			setPlaceKind(nextKind);
+			if (nextKind === 'server' && placeId !== places.selectedServerId)
+				places.onSelectServer(placeId);
+		});
+	};
+
+	/** Connect a server: this device's Servers list with its Add server form open. */
+	const connectServer = () => {
+		void confirmLeave().then((proceed) => {
+			if (!proceed) return;
+			setPlaceKind('device');
+			setQuery('');
+			setActiveCategoryId('servers');
+			setAddServerRequest((count) => count + 1);
+		});
+	};
+
+	// The selected server detaching leaves its place: Settings moves to this
+	// device rather than quietly showing another server.
+	const serverPlaceKey = serverPlaceIds.join('\n');
+	const previousServerPlaceId = useRef(selectedServerPlaceId);
+	useEffect(() => {
+		const previous = previousServerPlaceId.current;
+		previousServerPlaceId.current = selectedServerPlaceId;
+		if (placeKind !== 'server') return;
+		if (
+			leavesServerPlace({
+				...(previous === undefined ? {} : { previousServerPlaceId: previous }),
+				serverPlaceIds,
+			})
+		)
+			setPlaceKind('device');
+	}, [serverPlaceKey, selectedServerPlaceId]);
+
+	// A category the place does not have is replaced by the place's first.
+	const placeCategoryKey = categoryIdsFor(placeKind).join('\n');
+	useEffect(() => {
+		if (normalizedQuery) return;
+		const ids = placeCategoryKey.split('\n').filter((id) => id.length > 0);
+		if (ids.length === 0 || ids.includes(activeCategoryId)) return;
+		const next = categoryAfterPlaceChange(activeCategoryId, ids);
+		if (next !== undefined) setActiveCategoryId(next as CategoryId);
+	}, [activeCategoryId, normalizedQuery, placeCategoryKey]);
+
+	// Settings reopens where it was left.
+	useEffect(() => {
+		writeLastPlace({ placeId: selectedPlaceId, categoryId: activeCategoryId });
+	}, [activeCategoryId, selectedPlaceId]);
+
+	// Device settings stay readable and editable while the server cannot
+	// answer: they come from this device's own store.
+	useEffect(() => {
+		if (placeKind !== 'device' || settingsError === null) return undefined;
+		const readDevice = settingsClient.getDevice;
+		if (readDevice === undefined) return undefined;
+		let current = true;
+		void readDevice
+			.call(settingsClient)
+			.then((device) => {
+				if (!current) return;
+				const observed = device as TerminalSettings;
+				draftRef.current = observed;
+				setDraft(observed);
+			})
+			.catch(() => undefined);
+		return () => {
+			current = false;
+		};
+	}, [placeKind, settingsClient, settingsError]);
+
+	// Another server's extensions never stand in for this one's.
+	useEffect(() => {
+		setKnownExtensions(undefined);
+	}, [applicationClient]);
+
 	const leavePrompt =
 		leaveRequest === null ? undefined : (
 			<InPageWindow
@@ -2573,7 +2888,7 @@ export function SettingsWindow({
 			setActiveSectionId(categoryId);
 			return;
 		}
-		const firstSection = terminalSettingsSections.find(
+		const firstSection = placedSections.find(
 			(s) => s.categoryId === categoryId,
 		);
 		if (firstSection) {
@@ -2584,7 +2899,7 @@ export function SettingsWindow({
 
 	/** Opens a collection category with one of its items selected. */
 	const openCollectionItem = (
-		categoryId: 'macros' | 'workflows' | 'remote' | 'extensions',
+		categoryId: 'macros' | 'workflows' | 'servers' | 'extensions',
 		itemId: string,
 	) => {
 		openCategory(categoryId);
@@ -2593,22 +2908,44 @@ export function SettingsWindow({
 		else selectCollectionItem(categoryId, itemId);
 	};
 
+	const rail = (
+		<SettingsPlacesRail
+			deviceName={deviceName}
+			servers={places.servers}
+			selectedId={selectedPlaceId}
+			deviceId={DEVICE_PLACE_ID}
+			onSelect={selectPlace}
+			onConnectServer={connectServer}
+		/>
+	);
+	const placeTitle = placeKind === 'device' ? deviceName : (selectedServer?.name ?? serverIdentity);
+	const serverUnavailable = placeKind === 'server' ? selectedServer?.unavailable : undefined;
+	const placeSubtitle =
+		placeKind === 'device' ? places.deviceSubtitle : selectedServer?.subtitle;
 	const renderShell = (
 		children: ReactNode,
 		parts?: Omit<SettingsCategoryParts, 'detail'>,
 		listTitle?: string,
 	) => (
 		<SharedSettingsRouteBody
+			title={placeTitle}
+			{...(placeSubtitle === undefined ? {} : { subtitle: placeSubtitle })}
+			rail={rail}
+			{...(normalizedQuery
+				? {}
+				: {
+						scopeLine: placeScopeLine({
+							place: placeKind,
+							categoryId: activeCategoryId,
+							deviceName,
+							serverName: placeTitle,
+						}),
+					})}
 			query={query}
 			categories={[]}
-			categorySections={categoryGroups}
+			categorySections={serverUnavailable === undefined ? categoryGroups : []}
 			activeCategoryId={activeCategoryId}
 			status={statusText}
-			sidebarAction={
-				activeCategoryId === 'import-export'
-					? undefined
-					: renderServerSelector?.(confirmLeave)
-			}
 			modal={leavePrompt}
 			onQueryChange={setQuery}
 			onCategorySelect={openCategory}
@@ -2617,7 +2954,9 @@ export function SettingsWindow({
 				activeCategoryId === 'macros' ||
 				activeCategoryId === 'workflows' ||
 				activeCategoryId === 'remote' ||
-				activeCategoryId === 'import-export'
+				activeCategoryId === 'servers' ||
+				activeCategoryId === 'import-export' ||
+				(activeCategoryId === 'updates' && placeKind === 'server')
 					? undefined
 					: activeCategoryId === 'diagnostics'
 						? () => void resetDiagnostics()
@@ -2645,6 +2984,22 @@ export function SettingsWindow({
 			{children}
 		</SharedSettingsRouteBody>
 	);
+
+	// A server that cannot answer shows its state, and is asked nothing.
+	if (serverUnavailable !== undefined) {
+		return renderShell(
+			<section className="settings-section" aria-label="Server unavailable" role="status">
+				<p className="settings-section-desc" data-settings-server-unavailable={serverUnavailable}>
+					{placeTitle}{' '}
+					{serverUnavailable === 'incompatible'
+						? 'runs a version this app cannot talk to. Upgrade it or this app, then its settings appear here.'
+						: serverUnavailable === 'unreachable'
+							? 'cannot be reached. Its settings appear here once it reconnects.'
+							: 'is reconnecting. Its settings appear here once it is back.'}
+				</p>
+			</section>,
+		);
+	}
 
 	if (!normalizedQuery && activeCategoryId === 'macros' && macrosAvailable) {
 		return (
@@ -2677,13 +3032,38 @@ export function SettingsWindow({
 
 	if (
 		!normalizedQuery &&
+		activeCategoryId === 'servers' &&
+		placeKind === 'device' &&
+		renderRemoteAccess !== undefined
+	) {
+		return (
+			<>
+				{renderRemoteAccess({
+					part: 'servers',
+					addRequest: addServerRequest,
+					exposureLabel: serverIdentity,
+					...(selectionFor('servers') === undefined
+						? {}
+						: { selectedId: selectionFor('servers') }),
+					onSelect: (id) => selectCollectionItem('servers', id),
+					render: ({ detail, list, detailTitle }) =>
+						renderShell(detail, { list, detailTitle }, 'Servers'),
+				})}
+			</>
+		);
+	}
+
+	if (
+		!normalizedQuery &&
 		activeCategoryId === 'remote' &&
+		placeKind === 'server' &&
 		renderRemoteAccess !== undefined
 	) {
 		const trustedCount = remoteStatus?.pairedDevices.length ?? 0;
 		return (
 			<>
 				{renderRemoteAccess({
+					part: 'exposure',
 					exposureLabel: serverIdentity,
 					exposureStatus: remoteStatus?.isRunning
 						? `Exposed · ${trustedCount} trusted`
@@ -2692,10 +3072,9 @@ export function SettingsWindow({
 					exposureDetail: filteredSections
 						.filter((section) => section.categoryId === 'remote')
 						.map(renderSettingsSection),
-					selectedId: collectionSelection.remote ?? REMOTE_ACCESS_EXPOSURE_ID,
-					onSelect: (id) => selectCollectionItem('remote', id),
-					render: ({ detail, ...parts }) =>
-						renderShell(detail, parts, 'Remote Access'),
+					selectedId: REMOTE_ACCESS_EXPOSURE_ID,
+					onSelect: () => {},
+					render: ({ detail }) => renderShell(detail),
 				})}
 			</>
 		);
@@ -2728,9 +3107,9 @@ export function SettingsWindow({
 				harnessSwitches={draft.agentIntegration.harnesses}
 				onHarnessSwitchChange={onHarnessSwitchChange}
 				collection={{
-					...(collectionSelection.extensions === undefined
+					...(selectionFor('extensions') === undefined
 						? {}
-						: { selectedId: collectionSelection.extensions }),
+						: { selectedId: selectionFor('extensions') }),
 					onSelect: (id) => selectCollectionItem('extensions', id),
 					onExtensionsChange: setKnownExtensions,
 					render: ({ detail, ...parts }) =>
@@ -2781,13 +3160,11 @@ export function SettingsWindow({
 								key={`server:${profile.id}`}
 								type="button"
 								className="settings-row settings-row--button"
-								onClick={() => openCollectionItem('remote', profile.id)}
+								onClick={() => openCollectionItem('servers', profile.id)}
 							>
 								<span className="settings-row-info">
 									<span className="settings-row-label">{profile.label}</span>
-									<span className="settings-row-description">
-										Remote Access · Saved servers
-									</span>
+									<span className="settings-row-description">Servers</span>
 								</span>
 							</button>
 						))}
@@ -2849,10 +3226,32 @@ export function SettingsWindow({
 			{displayedCategories.map((cat) => {
 				if (cat.id === 'extensions' || cat.id === 'diagnostics' || cat.id === 'macros' || cat.id === 'workflows')
 					return null;
+				// A server's Updates page is its release track, not settings fields.
+				if (cat.id === 'updates' && placeKind === 'server')
+					return (
+						<div key={cat.id}>
+							{renderServerUpdates?.({
+								openDeviceUpdates: () => selectPlace(DEVICE_PLACE_ID),
+							})}
+						</div>
+					);
 				const sections = filteredSections.filter(
 					(s) => s.categoryId === cat.id,
 				);
 				if (sections.length === 0) return null;
+				if (cat.id === 'updates')
+					return (
+						<div key={cat.id}>
+							{query && (
+								<h3 className="settings-section-title settings-search-category-title">
+									{cat.label}
+								</h3>
+							)}
+							<DeviceUpdatesNote deviceName={deviceName} />
+							{sections.map(renderSettingsSection)}
+							<DeviceUpdateVersions channel={draft.updateChannel} />
+						</div>
+					);
 
 				return (
 					<div key={cat.id}>

@@ -132,7 +132,8 @@ test('opens the settings window', async ({ electronApp, mainWindow }) => {
     await presentNativeRoute(mainWindow, '/?auxiliary=settings', 'settings')
   })
 
-  await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  // The header names the place shown: this device or a server.
+  await expect(settingsWindow.getByRole('heading', { level: 1 })).toHaveText(/^(This (Mac|PC)|Local)$/u)
   await expect(settingsWindow.getByPlaceholder('Search settings...')).toBeVisible()
 })
 

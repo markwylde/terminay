@@ -30,19 +30,17 @@ test('every Command Bar entry for Import & Export is gated on a Desktop host', (
 
 test('Settings offers the Import & Export category only on a Desktop host', () => {
 	const settings = read('src/components/SettingsWindow.tsx');
-	assert.match(settings, /const importExportAvailable = useIsDesktopHost\(\);/);
+	assert.match(settings, /const desktopFromHook = useIsDesktopHost\(\);/);
+	assert.match(settings, /const desktop = places\.desktop \|\| desktopFromHook;/);
+	assert.match(settings, /const importExportAvailable = desktop;/);
 	assert.match(
 		settings,
-		/\.\.\.\(importExportAvailable \? \[importExportSettingsCategory\] : \[\]\)/,
+		/\.\.\.\(importExportAvailable && inPlace\('import-export'\)/,
+		'listed only on Desktop, and only under the place that holds it',
 	);
 	assert.match(
 		settings,
 		/activeCategoryId === 'import-export' &&\s*importExportAvailable/,
 		'the page itself is drawn only on Desktop',
-	);
-	assert.match(
-		settings,
-		/activeCategoryId === 'import-export'\s*\?\s*undefined\s*:\s*renderServerSelector/,
-		'the category spans every server, so the server selector is hidden',
 	);
 });

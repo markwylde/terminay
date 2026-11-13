@@ -123,6 +123,7 @@ test('Add server pairs Desktop with a standalone server over loopback HTTP', asy
 				.getByRole('button', { name: 'Manage connections' })
 				.click();
 		});
+		// Manage connections opens this device's saved servers.
 		await manager.getByRole('button', { name: 'Add server…' }).click();
 		await manager.getByLabel('Pairing URL').fill(server.pairingUrl);
 		await manager
@@ -130,7 +131,7 @@ test('Add server pairs Desktop with a standalone server over loopback HTTP', asy
 			.click();
 
 		// Pairing takes you there: the workspace window now shows the new
-		// server, and Settings › Remote Access lists it as a saved server.
+		// server, and Settings › This device › Servers lists it as a saved server.
 		const openMenu = async () => {
 			await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 			if (!(await menu.isVisible().catch(() => false)))
@@ -152,11 +153,11 @@ test('Add server pairs Desktop with a standalone server over loopback HTTP', asy
 		}).toPass({ timeout: 45_000 });
 		await expect(row('Local')).toHaveAttribute('aria-checked', 'false');
 		await expect(
-			manager.getByRole('heading', { name: 'Settings', level: 1 }),
+			manager.getByRole('heading', { name: /^This (Mac|PC)$/u, level: 1 }),
 		).toBeVisible();
 		await expect(
 			manager
-				.getByRole('navigation', { name: 'Remote Access' })
+				.getByRole('navigation', { name: 'Servers' })
 				.locator('.settings-list-section')
 				.filter({ hasText: 'Saved servers' })
 				.locator('.settings-list-item-label', { hasText: serverHost }),

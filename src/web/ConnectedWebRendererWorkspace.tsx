@@ -19,7 +19,7 @@ import '@xterm/xterm/css/xterm.css';
 import '../index.css';
 import { PerformanceLogWindow } from '../components/PerformanceLogWindow';
 import { RecordingsWindow } from '../components/RecordingsWindow';
-import { SettingsWindow } from '../components/SettingsWindow';
+import { type SettingsPlacesProps, SettingsWindow } from '../components/SettingsWindow';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import {
 	createServerTerminalSettingsClient,
@@ -40,10 +40,11 @@ import {
 } from '../shared/auxiliaryRoutes';
 import { openApplicationMenu } from '../host/nativeActions';
 import { ConnectedRendererWorkspace } from '../shared/ConnectedRendererWorkspace';
-import {
-	ServerSelector,
-	useSelectedServerConnection,
-} from '../shared/ServerSelector';
+import { useSelectedServerConnection } from '../shared/ServerSelector';
+import { useConnections } from '../shared/connections/ConnectionsContext';
+import { deviceHostKind } from '../components/settings/settingsPlaces';
+import { isLocalConnection } from '../workspace/serverUpgradeModel.ts';
+import { SettingsServerUpdates } from '../workspace/SettingsServerUpdates';
 import {
 	ResponsiveWorkspaceEntry,
 	sharedRouteForView,
@@ -240,23 +241,99 @@ export function ConnectedWebRendererWorkspace({
 	// to one server. They select a connection — defaulting to the active tab's
 	// — and show only that server's state; they never merge two servers' rows.
 	const selectedServer = useSelectedServerConnection();
-	// Settings asks before the selector moves, so pending macro edits are
-	// never carried to another server.
-	const renderServerSelector = (beforeSelect: () => Promise<boolean>) =>
-		selectedServer.showsSelector ? (
-			<ServerSelector
-				label="Server"
-				connections={selectedServer.connections}
-				onSelect={(serverId) => {
-					void beforeSelect().then((proceed) => {
-						if (proceed) selectedServer.select(serverId);
-					});
-				}}
-				{...(selectedServer.connection?.serverId === undefined
-					? {}
-					: { selectedServerId: selectedServer.connection.serverId })}
+	// Settings' places rail lists every attached connection, ready or not. A
+	// tile chosen while its connection cannot answer stays chosen and shows
+	// that connection's state; nothing is asked of it (ADR-0115).
+	const {
+		activeServerId: workingServerId,
+		connections: attachedConnections,
+		profiles: connectionProfiles,
+	} = useConnections();
+	const [settingsServerPlaceId, setSettingsServerPlaceId] = useState<string>();
+	const settingsPlaceConnection = attachedConnections.find(
+		(connection) => connection.profileId === settingsServerPlaceId,
+	);
+	// The rail's choice is the selector's choice whenever that connection can
+	// answer, even after the active tab moves to another server.
+	useEffect(() => {
+		const serverId = settingsPlaceConnection?.serverId;
+		if (
+			settingsPlaceConnection?.context !== undefined &&
+			serverId !== undefined &&
+			selectedServer.connection?.serverId !== serverId
+		)
+			selectedServer.select(serverId);
+	}, [selectedServer, settingsPlaceConnection]);
+	const isDesktopHost = hostContext?.hostKind === 'desktop';
+	const settingsPlaces = useMemo((): SettingsPlacesProps => {
+		const activeConnection = attachedConnections.find(
+			(connection) => connection.serverId === workingServerId,
+		);
+		const selectedProfileId =
+			settingsPlaceConnection?.profileId ?? selectedServer.connection?.profileId;
+		return {
+			deviceKind: deviceHostKind(
+				isDesktopHost,
+				typeof navigator === 'undefined' ? '' : navigator.platform,
+			),
+			desktop: isDesktopHost,
+			deviceSubtitle: isDesktopHost ? 'Terminay Desktop' : 'This browser',
+			servers: attachedConnections.map((connection) => {
+				const local = isLocalConnection(connection, connectionProfiles);
+				const state =
+					connection.phase === 'ready'
+						? undefined
+						: connection.phase === 'incompatible'
+							? 'incompatible'
+							: connection.phase === 'unreachable'
+								? 'unreachable'
+								: 'reconnecting';
+				return {
+					id: connection.profileId,
+					name: connection.label,
+					identity: connection.serverId ?? connection.profileId,
+					online: connection.phase === 'ready',
+					subtitle: local
+						? 'Built into Terminay Desktop'
+						: (connection.serverId ?? connection.origin ?? 'Server'),
+					...(connection.context === undefined && state !== undefined
+						? { unavailable: state }
+						: {}),
+				};
+			}),
+			...(selectedProfileId === undefined ? {} : { selectedServerId: selectedProfileId }),
+			...(activeConnection === undefined
+				? {}
+				: { activeServerId: activeConnection.profileId }),
+			onSelectServer: (profileId: string) => {
+				setSettingsServerPlaceId(profileId);
+				const connection = attachedConnections.find(
+					(candidate) => candidate.profileId === profileId,
+				);
+				if (connection?.context !== undefined && connection.serverId !== undefined)
+					selectedServer.select(connection.serverId);
+			},
+		};
+	}, [
+		attachedConnections,
+		connectionProfiles,
+		isDesktopHost,
+		selectedServer,
+		settingsPlaceConnection,
+		workingServerId,
+	]);
+	const renderSettingsServerUpdates = (controls: { openDeviceUpdates: () => void }) => {
+		const connection = settingsPlaceConnection ?? selectedServer.connection;
+		if (connection === undefined) return null;
+		return (
+			<SettingsServerUpdates
+				key={connection.profileId}
+				connection={connection}
+				isLocal={isLocalConnection(connection, connectionProfiles)}
+				onOpenDeviceUpdates={controls.openDeviceUpdates}
 			/>
-		) : null;
+		);
+	};
 	const applicationClient =
 		selectedServer.connection?.context?.applicationClient ??
 		terminalClientContext.applicationClient;
@@ -476,7 +553,8 @@ export function ConnectedWebRendererWorkspace({
 						aiTabMetadataClient={aiMetadataClient}
 						initialSectionId={route.sectionId}
 						initialItemId={route.itemId}
-						renderServerSelector={renderServerSelector}
+						places={settingsPlaces}
+						renderServerUpdates={renderSettingsServerUpdates}
 						macroSettingsClient={macroSettingsClient}
 						renderRemoteAccess={renderRemoteAccess}
 						remoteAccessStatusClient={remoteAccessStatusClient}
@@ -503,7 +581,7 @@ export function ConnectedWebRendererWorkspace({
 	const sharedRouteContent = (() => {
 		switch (requestedView) {
 			case 'connections':
-				return auxiliaryContent({ kind: 'settings', sectionId: 'remote' });
+				return auxiliaryContent({ kind: 'settings', sectionId: 'servers' });
 			case 'git':
 				return (
 					<SharedGitRouteBody
@@ -555,8 +633,10 @@ export function ConnectedWebRendererWorkspace({
 						host={Object.freeze({
 							auxiliaryRoutes,
 							onDisconnect: onBack,
+							// The connection menu manages saved servers: This
+							// device › Servers, not a server's exposure.
 							onOpenConnectionManager: () => {
-								void auxiliaryRoutes.openSettings('remote');
+								void auxiliaryRoutes.openSettings('servers');
 							},
 							onSwitchConnections:
 								hostContext === undefined && canLeaveManagerSession()
