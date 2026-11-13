@@ -11,8 +11,8 @@
 
 - [x] 3.1 Add `e2e/terminal-osc52-clipboard.spec.ts`: a live copy reaches the Electron clipboard; a reload does not copy again; a query, an empty request and escape-carrying text leave the clipboard alone; the setting turns copies off. Verified by `npm run test:e2e -- e2e/terminal-osc52-clipboard.spec.ts`.
 - [x] 3.2 Run lint on the changed files and `openspec validate terminal-osc52-clipboard --strict`. Verified by clean runs.
-- [ ] 3.3 Pull-request CI on `origin` reports every status `success` or `skipped`. Verified by reading the head commit's statuses.
+- [x] 3.3 Pull-request CI on `origin` reports every status `success` or `skipped`. Verified by reading the head commit's statuses. Result: all 25 statuses on 6b931e1c were `success`.
 
 ## 4. Archive
 
-- [ ] 4.1 Archive the change after verification so its deltas fold into `terminal-workspace` and `settings-shortcuts-and-desktop-integration`. Verified by `openspec validate --all`.
+- [x] 4.1 Archive the change after verification so its deltas fold into `terminal-workspace` and `settings-shortcuts-and-desktop-integration`. Verified by `openspec validate --all`.
