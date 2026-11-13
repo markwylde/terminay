@@ -25,6 +25,9 @@ export interface TreeWatchFs {
 		isDirectory(): boolean;
 		readonly dev: number;
 		readonly ino: number;
+		/** When the filesystem reports it: tells a recreated directory from the
+		 * one before it when the inode number is reused. */
+		readonly birthtimeMs?: number;
 	}>;
 	opendir(path: string, options: { bufferSize: number }): Promise<Dir>;
 }
@@ -67,6 +70,7 @@ interface WatchedDirectory {
 	readonly watcher: FSWatcher;
 	dev: number;
 	ino: number;
+	birth: number;
 	/** Child names the filter (or a nested `.git`) excluded. */
 	readonly excluded: Set<string>;
 	closing: boolean;
@@ -87,6 +91,24 @@ interface Listing {
 	readonly children: string[];
 	sawGit: boolean;
 	readonly report: boolean;
+}
+
+/**
+ * Whether a stat is still the directory being watched. A directory removed and
+ * made again at once often gets the same inode number back, so its birth time
+ * tells them apart where the filesystem reports one.
+ */
+function isSameDirectory(
+	stat: { isDirectory(): boolean; dev: number; ino: number; birthtimeMs?: number } | undefined,
+	entry: WatchedDirectory,
+): boolean {
+	return (
+		stat !== undefined &&
+		stat.isDirectory() &&
+		stat.dev === entry.dev &&
+		stat.ino === entry.ino &&
+		(stat.birthtimeMs ?? 0) === entry.birth
+	);
 }
 
 function isCode(error: unknown, ...codes: string[]): boolean {
@@ -261,12 +283,7 @@ export function createTreeWatch(
 			if (entry === undefined || entry.dev === -1) continue;
 			if (error !== undefined) {
 				if (!isCode(error, 'ENOENT', 'ENOTDIR')) throw error;
-			} else if (
-				stat?.isDirectory() &&
-				stat.dev === entry.dev &&
-				stat.ino === entry.ino
-			)
-				continue;
+			} else if (isSameDirectory(stat, entry)) continue;
 			closeSubtree(rel);
 			if (rel !== '') deliver(rel);
 		}
@@ -284,11 +301,7 @@ export function createTreeWatch(
 		fs.lstat(abs(rel)).then(
 			(stat) => {
 				if (signal.aborted || dirs.get(rel) !== entry) return;
-				if (
-					stat.isDirectory() &&
-					stat.dev === entry.dev &&
-					stat.ino === entry.ino
-				)
+				if (isSameDirectory(stat, entry))
 					fail(
 						error ??
 							new TreeWatchError('EWATCHCLOSED', 'a directory watch stopped'),
@@ -329,11 +342,7 @@ export function createTreeWatch(
 				if (error !== undefined) {
 					if (!isCode(error, 'ENOENT', 'ENOTDIR')) throw error;
 					closeSubtree(rel);
-				} else if (
-					!stat?.isDirectory() ||
-					stat.dev !== watched.dev ||
-					stat.ino !== watched.ino
-				) {
+				} else if (!isSameDirectory(stat, watched)) {
 					// Replaced at the same path: what we watch is not what is there.
 					closeSubtree(rel);
 					if (stat?.isDirectory())
@@ -441,6 +450,7 @@ export function createTreeWatch(
 				watcher,
 				dev: -1,
 				ino: -1,
+				birth: -1,
 				excluded: new Set(),
 				closing: false,
 			};
@@ -469,6 +479,7 @@ export function createTreeWatch(
 			}
 			entry.dev = stat.dev;
 			entry.ino = stat.ino;
+			entry.birth = stat.birthtimeMs ?? 0;
 			lists.push({ rel, report });
 		}
 	};
