@@ -215,6 +215,16 @@ export type HomeDashboardSettings = {
 	widgets: HomeDashboardWidgetEntry[];
 };
 
+/**
+ * Device setting: live CPU, memory, network and disk figures for the host of
+ * the active tab's server, shown in the status bar. Off by default; the
+ * interval is whole seconds from 1 to 3600.
+ */
+export type HostStatsSettings = {
+	enabled: boolean;
+	intervalSeconds: number;
+};
+
 export type TerminalSettings = {
 	agentIntegration: AgentIntegrationSettings;
 	homeDashboard: HomeDashboardSettings;
@@ -269,6 +279,8 @@ export type TerminalSettings = {
 	showStatusBar: boolean;
 	/** Device setting: whether the status bar is shown in compact chrome. */
 	showStatusBarCompact: boolean;
+	/** Device setting: host stats in the status bar. */
+	hostStats: HostStatsSettings;
 	scrollOnEraseInDisplay: boolean;
 	scrollOnUserInput: boolean;
 	scrollSensitivity: number;

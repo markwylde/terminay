@@ -37,3 +37,34 @@ test('the status bar sits below the workspace and never polls the working direct
 	const statusBar = await read('src/workspace/WorkspaceStatusBar.tsx');
 	assert.doesNotMatch(statusBar, /setInterval/u);
 });
+
+test('host stats sit before Pixel and are watched only while shown and visible', async () => {
+	const bar = await read('src/workspace/WorkspaceStatusBar.tsx');
+	const render = bar.slice(bar.indexOf('<footer className="workspace-status-bar"'));
+	const host = render.indexOf('<HostStatsStrip');
+	assert.ok(host > render.indexOf('workspace-status-bar__focused'));
+	assert.ok(host < render.indexOf('workspace-status-bar__pixel'));
+
+	const hook = await read('src/workspace/useHostStats.ts');
+	assert.match(hook, /options\.shown && visible && facade !== undefined/u);
+	assert.match(hook, /visibilitychange/u);
+	assert.match(hook, /HOST_STATS_OPERATIONS\.unwatch/u);
+	// The client never samples on a timer of its own: the server pushes.
+	assert.doesNotMatch(hook, /setInterval|setTimeout/u);
+
+	const app = await read('src/App.tsx');
+	assert.match(app, /shown: settings\.hostStats\.enabled && isStatusBarVisible/u);
+});
+
+test('the server sampler cites its owner approval (ADR-0028)', async () => {
+	const service = await read('packages/server-core/src/hostStats/service.ts');
+	assert.match(service, /owner-approved poll \(ADR-0028\)/u);
+	assert.match(service, /host-stats-in-status-bar/u);
+});
+
+test('the Settings window can change the nested host stats setting', async () => {
+	const source = await read('src/components/SettingsWindow.tsx');
+	const start = source.indexOf('const allowedRoots');
+	const roots = source.slice(start, source.indexOf(']);', start));
+	assert.match(roots, /'hostStats'/u);
+});

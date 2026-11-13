@@ -42,6 +42,7 @@ export const SETTING_AUTHORITY: Readonly<Record<string, SettingAuthority>> = {
 	// Native accelerators, renderer appearance, and sidebar/window state are
 	// deliberately local to the connection host.
 	allowTransparency: 'connection-host',
+	hostStats: 'connection-host',
 	altClickMovesCursor: 'connection-host',
 	customGlyphs: 'connection-host',
 	cursorBlink: 'connection-host',

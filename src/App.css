@@ -3262,6 +3262,53 @@ body.project-tabbar-reordering .project-tabbar {
   color: #a8ccff;
 }
 
+.workspace-status-bar__host {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.workspace-status-bar__host-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-status-bar__host-label {
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+
+.workspace-status-bar__host-graph {
+  flex: none;
+  display: block;
+  overflow: visible;
+  opacity: 0.9;
+}
+
+.workspace-status-bar__host-item--cpu .workspace-status-bar__host-graph { color: #7fd1ff; }
+.workspace-status-bar__host-item--memory .workspace-status-bar__host-graph { color: #c3a6ff; }
+.workspace-status-bar__host-item--network .workspace-status-bar__host-graph { color: #7ee2a8; }
+.workspace-status-bar__host-item--disk .workspace-status-bar__host-graph { color: #f3cf5f; }
+
+.workspace-status-bar__host-figure {
+  min-width: 4.5ch;
+  text-align: right;
+  opacity: 0.85;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-status-bar__host-item--network .workspace-status-bar__host-figure,
+.workspace-status-bar__host-item--disk .workspace-status-bar__host-figure {
+  min-width: 8ch;
+}
+
 .workspace-status-bar__pixel {
   flex: none;
   display: flex;
