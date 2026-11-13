@@ -778,33 +778,43 @@ export function SettingsWindow({
 	const requestedCategory = requestedCategoryId(initialSectionFromUrl);
 	// A request opens the place that has what it names; a plain open returns
 	// to where Settings was last left, while that place is still attached.
-	const [initialPlace] = useState(() => {
+	// Where Settings opens, given the servers attached so far.
+	const openingPlace = (attached: readonly string[], activeServerId: string | undefined) => {
 		if (requestedCategory !== undefined && initialSectionFromUrl != null) {
+			const has = requestPlaces(initialSectionFromUrl, requestedCategory);
 			const placeId = placeForCategory(requestedCategory, {
-				...requestPlaces(initialSectionFromUrl, requestedCategory),
-				...(places.activeServerId === undefined
-					? {}
-					: { activeServerPlaceId: places.activeServerId }),
-				serverPlaceIds,
+				...has,
+				...(activeServerId === undefined ? {} : { activeServerPlaceId: activeServerId }),
+				serverPlaceIds: attached,
 			});
-			return { placeId, categoryId: requestedCategory };
+			return {
+				placeId,
+				categoryId: requestedCategory,
+				needsServer: has.serverHasCategory && !has.deviceHasCategory,
+			};
 		}
 		const last = readLastPlace();
 		const placeId = placeOnOpen({
 			...(last === undefined ? {} : { lastPlaceId: last.placeId }),
-			...(places.activeServerId === undefined
-				? {}
-				: { activeServerPlaceId: places.activeServerId }),
-			serverPlaceIds,
+			...(activeServerId === undefined ? {} : { activeServerPlaceId: activeServerId }),
+			serverPlaceIds: attached,
 		});
 		return {
 			placeId,
 			categoryId: (last?.placeId === placeId ? last.categoryId : 'appearance') as CategoryId,
+			needsServer: last !== undefined && last.placeId !== DEVICE_PLACE_ID,
 		};
-	});
+	};
+	const [initialPlace] = useState(() => openingPlace(serverPlaceIds, places.activeServerId));
+	// A window's connections can attach after Settings first draws. Until one
+	// does, a request for a server's page waits for it rather than settling on
+	// this device and losing what it asked for.
+	const [awaitingServers, setAwaitingServers] = useState(
+		() => serverPlaceIds.length === 0 && initialPlace.needsServer,
+	);
 	const initialCategoryFromUrl: CategoryId = initialPlace.categoryId;
 	const [placeKind, setPlaceKind] = useState<SettingsPlaceKind>(
-		initialPlace.placeId === DEVICE_PLACE_ID ? 'device' : 'server',
+		initialPlace.placeId === DEVICE_PLACE_ID && !awaitingServers ? 'device' : 'server',
 	);
 	// Settings opened for a server other than the one selected selects it.
 	useEffect(() => {
@@ -2769,7 +2779,7 @@ export function SettingsWindow({
 	useEffect(() => {
 		const previous = previousServerPlaceId.current;
 		previousServerPlaceId.current = selectedServerPlaceId;
-		if (placeKind !== 'server') return;
+		if (placeKind !== 'server' || awaitingServers) return;
 		if (
 			leavesServerPlace({
 				...(previous === undefined ? {} : { previousServerPlaceId: previous }),
@@ -2777,17 +2787,40 @@ export function SettingsWindow({
 			})
 		)
 			setPlaceKind('device');
-	}, [serverPlaceKey, selectedServerPlaceId]);
+	}, [serverPlaceKey, selectedServerPlaceId, awaitingServers]);
+
+	// The first servers to attach settle where a waiting request opens. If none
+	// attaches in time, Settings opens on this device instead.
+	useEffect(() => {
+		if (!awaitingServers) return undefined;
+		if (serverPlaceIds.length > 0) {
+			const opening = openingPlace(serverPlaceIds, places.activeServerId);
+			setAwaitingServers(false);
+			setActiveCategoryId(opening.categoryId);
+			if (opening.placeId === DEVICE_PLACE_ID) {
+				setPlaceKind('device');
+				return undefined;
+			}
+			setPlaceKind('server');
+			if (opening.placeId !== places.selectedServerId) places.onSelectServer(opening.placeId);
+			return undefined;
+		}
+		const timer = window.setTimeout(() => {
+			setAwaitingServers(false);
+			setPlaceKind('device');
+		}, 10_000);
+		return () => window.clearTimeout(timer);
+	}, [awaitingServers, serverPlaceKey]);
 
 	// A category the place does not have is replaced by the place's first.
 	const placeCategoryKey = categoryIdsFor(placeKind).join('\n');
 	useEffect(() => {
-		if (normalizedQuery) return;
+		if (normalizedQuery || awaitingServers) return;
 		const ids = placeCategoryKey.split('\n').filter((id) => id.length > 0);
 		if (ids.length === 0 || ids.includes(activeCategoryId)) return;
 		const next = categoryAfterPlaceChange(activeCategoryId, ids);
 		if (next !== undefined) setActiveCategoryId(next as CategoryId);
-	}, [activeCategoryId, normalizedQuery, placeCategoryKey]);
+	}, [activeCategoryId, normalizedQuery, placeCategoryKey, awaitingServers]);
 
 	// Settings reopens where it was left.
 	useEffect(() => {
@@ -2943,7 +2976,9 @@ export function SettingsWindow({
 					})}
 			query={query}
 			categories={[]}
-			categorySections={serverUnavailable === undefined ? categoryGroups : []}
+			categorySections={
+				serverUnavailable === undefined && !awaitingServers ? categoryGroups : []
+			}
 			activeCategoryId={activeCategoryId}
 			status={statusText}
 			modal={leavePrompt}
@@ -2984,6 +3019,16 @@ export function SettingsWindow({
 			{children}
 		</SharedSettingsRouteBody>
 	);
+
+	if (awaitingServers) {
+		return renderShell(
+			<section className="settings-section" aria-label="Connecting" role="status">
+				<p className="settings-section-desc" data-settings-awaiting-servers="true">
+					Connecting to the server…
+				</p>
+			</section>,
+		);
+	}
 
 	// A server that cannot answer shows its state, and is asked nothing.
 	if (serverUnavailable !== undefined) {

@@ -69,7 +69,17 @@ names a category that only servers have SHALL open on a server even when no
 project tab is active. When Settings is opened with no category named, it SHALL
 show the place and category it last showed while that place is still attached.
 Otherwise it SHALL show the server that owns the active project tab, or this
-device when no project tab is active.
+device when no project tab is active. When the place it would open on is a
+server and the window's connections have not attached yet, Settings SHALL wait
+for them, showing that it is connecting, and then open on that server; if none
+attaches within ten seconds, it SHALL open on this device.
+
+#### Scenario: Opening before the connections attach
+
+- **WHEN** Settings opens at Extensions in a new window whose connections are
+  still attaching
+- **THEN** it shows that it is connecting, then opens at Local › Extensions
+  once Local attaches
 
 #### Scenario: Macros from Home
 
