@@ -161,6 +161,10 @@ export type TerminayHostRouteDisposition =
 	| 'native-window'
 	| 'browser-tab';
 
+/** A bundle file is at most 4 MiB, so its base64 is at most this long. */
+export const TERMINAY_BUNDLE_SAVE_MAX_BYTES = 4 * 1024 * 1024;
+const TERMINAY_BUNDLE_SAVE_MAX_BASE64 = 4 * Math.ceil(TERMINAY_BUNDLE_SAVE_MAX_BYTES / 3);
+
 export const TERMINAY_HOST_MENU_COMMANDS = [
 	'clear-terminal',
 	'close-active',
@@ -170,6 +174,7 @@ export const TERMINAY_HOST_MENU_COMMANDS = [
 	'new-terminal',
 	'open-command-bar',
 	'open-extensions',
+	'open-import-export',
 	'open-macros',
 	'open-performance-log',
 	'open-recordings',
@@ -342,6 +347,12 @@ export type TerminayHostAction =
 			type: 'preview.download';
 			filename: string;
 			mimeType: string;
+			bytesBase64: string;
+	  }>
+	| Readonly<{
+			/** An Import & Export bundle. The host alone chooses its destination. */
+			type: 'import-export.bundle.save';
+			filename: string;
 			bytesBase64: string;
 	  }>
 	| Readonly<{ type: 'os.open-external'; url: string }>
@@ -1284,6 +1295,29 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				bytesBase64: action.bytesBase64,
 			});
 		}
+		case 'import-export.bundle.save': {
+			exactKeys(
+				action,
+				['type', 'filename', 'bytesBase64'],
+				'bundle save action',
+			);
+			const filename = boundedText(action.filename, 'bundle filename', 128);
+			if (!/^[^/\\:\p{Cc}]+\.json$/u.test(filename) || filename.startsWith('.'))
+				throw new TypeError('bundle filename is invalid');
+			if (
+				typeof action.bytesBase64 !== 'string' ||
+				action.bytesBase64.length === 0 ||
+				action.bytesBase64.length > TERMINAY_BUNDLE_SAVE_MAX_BASE64 ||
+				action.bytesBase64.length % 4 !== 0 ||
+				!/^[A-Za-z0-9+/]*={0,2}$/u.test(action.bytesBase64)
+			)
+				throw new TypeError('bundle payload is invalid');
+			return Object.freeze({
+				type: 'import-export.bundle.save',
+				filename,
+				bytesBase64: action.bytesBase64,
+			});
+		}
 		case 'os.open-external':
 			exactKeys(action, ['type', 'url'], 'external URL action');
 			return Object.freeze({
@@ -1491,6 +1525,7 @@ export function requiredTerminayHostCapability(
 		case 'updater.install':
 			return 'updater';
 		case 'preview.download':
+		case 'import-export.bundle.save':
 			return 'osIntegration';
 		case 'os.open-external':
 		case 'os.reveal':

@@ -462,6 +462,36 @@ test('preview downloads are bounded opaque host payloads', () => {
 		);
 });
 
+test('Import & Export bundle saves are bounded and name no path', () => {
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'import-export.bundle.save',
+			filename: 'terminay-export.json',
+			bytesBase64: 'e30=',
+		}),
+		{
+			type: 'import-export.bundle.save',
+			filename: 'terminay-export.json',
+			bytesBase64: 'e30=',
+		},
+	);
+	for (const action of [
+		{ type: 'import-export.bundle.save', filename: '../x.json', bytesBase64: 'e30=' },
+		{ type: 'import-export.bundle.save', filename: '/etc/x.json', bytesBase64: 'e30=' },
+		{ type: 'import-export.bundle.save', filename: 'C:\\x.json', bytesBase64: 'e30=' },
+		{ type: 'import-export.bundle.save', filename: 'x.sh', bytesBase64: 'e30=' },
+		{ type: 'import-export.bundle.save', filename: '.x.json', bytesBase64: 'e30=' },
+		{ type: 'import-export.bundle.save', filename: 'x.json', bytesBase64: '' },
+		{
+			type: 'import-export.bundle.save',
+			filename: 'x.json',
+			bytesBase64: 'A'.repeat(4 * Math.ceil((4 * 1024 * 1024) / 3) + 4),
+		},
+		{ type: 'import-export.bundle.save', filename: 'x.json', bytesBase64: 'e30=', path: '/tmp' },
+	])
+		assert.throws(() => parseTerminayHostAction(action), /bundle|invalid|unexpected|field/iu);
+});
+
 test('native menu accelerator updates are bounded and immutable', () => {
 	const action = parseTerminayHostAction({
 		type: 'menu.accelerators.update',

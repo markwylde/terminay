@@ -41,6 +41,7 @@ test('macOS: the Terminay menu holds About, Settings, creation, and the system i
 		'About Terminay',
 		'-',
 		'Settings…',
+		'Import & Export…',
 		'-',
 		'New Terminal Tab',
 		'New Project',
@@ -67,6 +68,7 @@ for (const platform of ['linux', 'win32']) {
 			'New Project',
 			'-',
 			'Settings…',
+			'Import & Export…',
 			'-',
 			'role:quit',
 		]);
@@ -114,10 +116,12 @@ for (const platform of ['darwin', 'linux']) {
 		byLabel(menu, 'New Terminal Tab').click();
 		byLabel(menu, 'New Project').click();
 		byLabel(menu, 'Settings…').click();
+		byLabel(menu, 'Import & Export…').click();
 		assert.deepEqual(dispatched, [
 			'new-terminal',
 			'new-project',
 			'open-settings',
+			'open-import-export',
 		]);
 	});
 }

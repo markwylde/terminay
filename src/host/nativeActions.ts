@@ -140,6 +140,35 @@ export async function openExternalUrl(url: string): Promise<void> {
 	window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+/** Hands an Import & Export bundle to Desktop, which asks the user where to
+ * save it. The renderer never names a path. Resolves false when cancelled. */
+export async function saveImportExportBundle(input: {
+	readonly text: string;
+	readonly filename: string;
+}): Promise<boolean> {
+	const bytes = new TextEncoder().encode(input.text);
+	if (bytes.byteLength === 0 || bytes.byteLength > 4 * 1024 * 1024)
+		throw new Error('Bundles are limited to 4 MiB.');
+	const response = await request({
+		type: 'import-export.bundle.save',
+		filename: safeBundleFilename(input.filename),
+		bytesBase64: base64(bytes),
+	});
+	if (!response.handled) throw new Error('This host cannot save files.');
+	const result = response.result as { canceled?: boolean } | undefined;
+	return result?.canceled !== true;
+}
+
+function safeBundleFilename(name: string): string {
+	const base = name
+		.replace(/[/\\:\p{Cc}]+/gu, '-')
+		.replace(/^\.+/u, '')
+		.replace(/\.json$/iu, '')
+		.slice(0, 100)
+		.trim();
+	return `${base || 'terminay-export'}.json`;
+}
+
 /** Preview content never receives a filesystem path. Desktop receives only a
  * capped byte payload and asks the user for a destination; browser clients use
  * the ordinary, user-visible Blob download flow. */

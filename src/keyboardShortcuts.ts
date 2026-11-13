@@ -82,6 +82,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'extensions plugins npm providers',
   },
   {
+    command: 'open-import-export',
+    title: 'Import & Export',
+    description: 'Copy macros, workflows, profiles, automations, and settings between servers.',
+    keywords: 'import export copy sync servers remotes macros workflows bundle backup settings',
+  },
+  {
     command: 'split-horizontal',
     title: 'Split horizontally',
     description: 'Open a new terminal below the active tab.',
@@ -160,6 +166,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'open-performance-log': '',
   'open-remote-control': '',
   'open-extensions': '',
+  'open-import-export': '',
   'save-active': 'CmdOrCtrl+S',
   'split-horizontal': 'CmdOrCtrl+Shift+-',
   'split-vertical': 'CmdOrCtrl+Shift+\\',

@@ -31,6 +31,7 @@ import {
 	type ByteTransport,
 	createTerminayHostBytePacket,
 	parseTerminayHostBytePacket,
+	TERMINAY_BUNDLE_SAVE_MAX_BYTES,
 	type TerminayHostActionRequest,
 	type TerminayHostConnectionProfile,
 	type TerminayHostContext,
@@ -1135,6 +1136,38 @@ async function savePreviewDownload(
 	const bytes = Buffer.from(action.bytesBase64, 'base64');
 	if (bytes.byteLength === 0 || bytes.byteLength > 16 * 1024 * 1024)
 		throw new Error('Preview download payload is invalid.');
+	const temporary = path.join(
+		path.dirname(result.filePath),
+		`.${path.basename(result.filePath)}.${randomUUID()}.download`,
+	);
+	try {
+		await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600 });
+		await rename(temporary, result.filePath);
+		return { canceled: false };
+	} finally {
+		await rm(temporary, { force: true }).catch(() => undefined);
+	}
+}
+
+/** An Import & Export bundle: bounded bytes and a plain .json name, never a
+ * path. The user picks the destination in the save dialog. */
+async function saveImportExportBundle(
+	window: BrowserWindow,
+	action: Extract<
+		TerminayHostActionRequest['action'],
+		{ type: 'import-export.bundle.save' }
+	>,
+): Promise<{ canceled: boolean }> {
+	const bytes = Buffer.from(action.bytesBase64, 'base64');
+	if (bytes.byteLength === 0 || bytes.byteLength > TERMINAY_BUNDLE_SAVE_MAX_BYTES)
+		throw new Error('Bundle payload is invalid.');
+	const result = await dialog.showSaveDialog(window, {
+		defaultPath: path.basename(action.filename),
+		title: 'Export Terminay bundle',
+		filters: [{ name: 'Terminay bundle', extensions: ['json'] }],
+	});
+	if (result.canceled || result.filePath === undefined)
+		return { canceled: true };
 	const temporary = path.join(
 		path.dirname(result.filePath),
 		`.${path.basename(result.filePath)}.${randomUUID()}.download`,
@@ -4424,6 +4457,8 @@ function createWindow(options?: {
 						return;
 					case 'preview.download':
 						return savePreviewDownload(window, action);
+					case 'import-export.bundle.save':
+						return saveImportExportBundle(window, action);
 					case 'os.open-external':
 						await openInBrowser(action.url);
 						return;

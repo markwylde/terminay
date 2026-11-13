@@ -5,7 +5,7 @@ import { groupSettingsCategories } from './settingsCategoryGroups.ts';
 const all = [
 	'ai', 'recording', 'remote', 'shell', 'files', 'appearance', 'cursor',
 	'interaction', 'keyboard', 'scrolling', 'accessibility', 'theme', 'updates',
-	'macros', 'workflows', 'extensions', 'diagnostics',
+	'macros', 'workflows', 'extensions', 'diagnostics', 'import-export',
 ].map((id) => ({ id, label: id }));
 
 test('groups are drawn in their fixed order', () => {
@@ -15,21 +15,31 @@ test('groups are drawn in their fixed order', () => {
 	);
 });
 
-test('Remote Access sits under Connections, and Macros, Workflows and Recording under Automation', () => {
+test('Remote Access and Import & Export sit under Connections, and Macros, Workflows and Recording under Automation', () => {
 	const groups = groupSettingsCategories(all);
 	const ids = (label: string) =>
 		groups.find((group) => group.label === label)?.categories.map((category) => category.id);
-	assert.deepEqual(ids('Connections'), ['remote']);
+	assert.deepEqual(ids('Connections'), ['remote', 'import-export']);
 	assert.deepEqual(ids('Automation'), ['macros', 'workflows', 'recording']);
 	assert.deepEqual(ids('System'), ['updates', 'diagnostics']);
 });
 
 test('an unavailable category is omitted, and an emptied group with it', () => {
-	const groups = groupSettingsCategories(all.filter((category) => category.id !== 'remote' && category.id !== 'diagnostics'));
+	const groups = groupSettingsCategories(
+		all.filter((category) => !['remote', 'import-export', 'diagnostics'].includes(category.id)),
+	);
 	assert.equal(groups.some((group) => group.label === 'Connections'), false);
 	assert.deepEqual(
 		groups.find((group) => group.label === 'System')?.categories.map((category) => category.id),
 		['updates'],
+	);
+});
+
+test('Import & Export is left out where the host does not offer it, keeping Remote Access', () => {
+	const groups = groupSettingsCategories(all.filter((category) => category.id !== 'import-export'));
+	assert.deepEqual(
+		groups.find((group) => group.label === 'Connections')?.categories.map((category) => category.id),
+		['remote'],
 	);
 });
 
