@@ -366,7 +366,8 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 	const settings = await nextWindow;
 	captureRendererFailures(settings, failures);
 	try {
-		await settings.getByRole('heading', { name: 'Settings', exact: true, level: 1 }).waitFor();
+		// Extensions are the server's: Settings opens on the Local server, named in its header.
+		await settings.getByRole('heading', { name: 'Local', exact: true, level: 1 }).waitFor();
 		for (const [packageName, displayName] of [
 			['terminay-builtin-agents', 'Built-in Agents'],
 			['terminay-language-typescript', 'TypeScript'],
