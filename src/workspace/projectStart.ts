@@ -180,7 +180,7 @@ export const RECENT_FOLDERS_COLLAPSED = 5;
 export function recentFoldersSearchable(
 	rows: readonly RecentFolderRow[],
 ): boolean {
-	return rows.length > RECENT_FOLDERS_COLLAPSED;
+	return rows.length > 0;
 }
 
 /** The recent folders matching `query`: every whitespace-separated term
