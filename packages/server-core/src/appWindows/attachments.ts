@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { type FileHandle, lstat, mkdir, open, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { type FileHandle, open, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ensureScratchDirectory, scratchRoot } from '../scratchDirectory.js';
 
 /**
  * Files a person attaches to a window message (ADR-0046).
@@ -30,7 +30,7 @@ export interface AppWindowAttachment {
 	readonly size: number;
 }
 
-export function appWindowAttachmentDirectory(root = tmpdir()): string {
+export function appWindowAttachmentDirectory(root = scratchRoot()): string {
 	return join(root, APP_WINDOW_ATTACHMENT_DIRECTORY_NAME);
 }
 
@@ -183,14 +183,10 @@ export class AppWindowAttachmentWriter {
 }
 
 /**
- * The scratch directory, made if missing and refused unless it is a real
- * directory of this user: the temporary directory can be shared, and a link or
- * another user's directory there would decide where attachments land.
+ * The scratch directory, made if missing and refused unless it is safe: the
+ * temporary directory can be shared, and a link or another user's directory
+ * there would decide where attachments land (see `scratchDirectory.ts`).
  */
 export async function ownedScratchDirectory(directory: string): Promise<void> {
-	await mkdir(directory, { recursive: true, mode: 0o700 });
-	const stat = await lstat(directory);
-	const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-	if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid))
-		throw new Error('the attachment directory is not a directory this server owns');
+	await ensureScratchDirectory(directory);
 }

@@ -216,7 +216,7 @@ export interface AppWindowServiceOptions {
 			text: string,
 			signal: AbortSignal,
 		) => Promise<void>;
-		/** Server-owned attachment scratch directory. Defaults to one under os.tmpdir(). */
+		/** Server-owned attachment scratch directory. Defaults to `terminay-attachments` under the per-account scratch root. */
 		readonly directory?: string;
 	};
 	/**

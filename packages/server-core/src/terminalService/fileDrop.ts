@@ -1,12 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { mkdir, rmdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
 	type AppWindowAttachment,
 	AppWindowAttachmentWriter,
 	ownedScratchDirectory,
 } from '../appWindows/attachments.js';
+import { scratchRoot } from '../scratchDirectory.js';
 import { TerminalServiceError } from './errors.js';
 import type { TerminalIdentity } from './types.js';
 
@@ -36,7 +36,7 @@ export const MAX_TERMINAL_FILE_DROPS_PER_CONNECTION = 4;
 export const TERMINAL_FILE_DROP_IDLE_MS = 2 * 60 * 1000;
 const MAX_NAME_CHARS = 255;
 
-export function terminalFileDropDirectory(root = tmpdir()): string {
+export function terminalFileDropDirectory(root = scratchRoot()): string {
 	return join(root, TERMINAL_FILE_DROP_DIRECTORY_NAME);
 }
 
@@ -56,7 +56,7 @@ export interface TerminalFileDropOwner {
 }
 
 export interface TerminalFileDropsOptions {
-	/** The scratch directory. Defaults to `terminay-drops` under os.tmpdir(). */
+	/** The scratch directory. Defaults to `terminay-drops` under the per-account scratch root. */
 	readonly directory?: string;
 	readonly idleMs?: number;
 	readonly random?: () => string;

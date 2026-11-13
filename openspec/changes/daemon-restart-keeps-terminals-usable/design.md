@@ -66,7 +66,7 @@ exclusively.
 
 Not covered: `mkdtemp` call sites, which already get a fresh 0700 directory,
 and the socket runtime directory, which ADR-0054 validates.
-`parakeetProvider.ts` writes fixed-name files, so it also moves under the root.
+`parakeetProvider.ts` writes only inside a fresh `mkdtemp` directory, so it stays where it is.
 
 **Boundary:** the server's file-write boundary on a multi-user host.
 

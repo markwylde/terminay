@@ -139,6 +139,7 @@ declare module 'node:fs' {
 		isSymbolicLink(): boolean;
 		readonly size: number;
 		readonly uid: number;
+		readonly mode: number;
 		readonly birthtimeMs: number;
 		isFile(): boolean;
 		isDirectory(): boolean;
@@ -194,6 +195,7 @@ declare module 'node:fs/promises' {
 		readonly nlink: number;
 		readonly size: number;
 		readonly uid: number;
+		readonly mode: number;
 		readonly mtimeMs: number;
 		readonly birthtimeMs: number;
 		isDirectory(): boolean;

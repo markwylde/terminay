@@ -171,6 +171,7 @@ export * from './recordingService/index.js';
 export * from './remote/index.js';
 export * from './runtime.js';
 export * from './serverUpgrade/index.js';
+export * from './scratchDirectory.js';
 export * from './sessionHolder/index.js';
 export * from './settings/index.js';
 export * from './shellProfiles/index.js';

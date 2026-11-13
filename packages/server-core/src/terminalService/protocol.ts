@@ -110,10 +110,10 @@ export interface TerminalOperationRegistryOptions {
 	 * replays its bounded retained output and its exit and never controls it.
 	 */
 	readonly retainsExitedSession?: (identity: TerminalIdentity) => boolean;
-	/** Server-owned clipboard scratch directory. Defaults to os.tmpdir(). */
+	/** Server-owned clipboard scratch directory. Defaults to `terminay-clipboard` under the per-account scratch root. */
 	readonly clipboardScratchDirectory?: string;
 	/** Server-owned file drop scratch directory (ADR-0113). Defaults to
-	 * `terminay-drops` under os.tmpdir(). */
+	 * `terminay-drops` under the per-account scratch root. */
 	readonly fileDropDirectory?: string;
 	/**
 	 * The launchers this server offers (ADR-0073). Without it a create that
