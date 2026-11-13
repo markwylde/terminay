@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { basename, dirname, resolve } from 'node:path';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 
 /**
  * Restart a real standalone server under a real systemd and prove, from shell
@@ -44,11 +46,45 @@ function run(command, args, options = {}) {
 	return result;
 }
 
+/**
+ * The CLI's built code and the packages it needs at run time, laid out as
+ * /cli with its own node_modules. Copied in rather than bind-mounted: on the
+ * CI runners the Docker daemon is the host's, and paths inside the job
+ * container mean nothing to it.
+ */
+function stageCli(repositoryRoot, into) {
+	const cliRoot = resolve(repositoryRoot, 'apps/terminay-cli');
+	if (!existsSync(join(cliRoot, 'dist/commands/install.js')))
+		throw new Error('build the CLI first: npm run build --workspace terminay');
+	cpSync(join(cliRoot, 'dist'), join(into, 'dist'), { recursive: true });
+	cpSync(join(cliRoot, 'package.json'), join(into, 'package.json'));
+	const seen = new Set();
+	const visit = (name) => {
+		if (seen.has(name)) return;
+		seen.add(name);
+		const found = [join(cliRoot, 'node_modules', name), join(repositoryRoot, 'node_modules', name)].find((path) =>
+			existsSync(join(path, 'package.json')),
+		);
+		if (found === undefined) throw new Error(`the CLI needs ${name}, which is not installed`);
+		// Its own nested node_modules come with it.
+		cpSync(found, join(into, 'node_modules', name), { recursive: true, dereference: true });
+		const manifest = JSON.parse(readFileSync(join(found, 'package.json'), 'utf8'));
+		for (const dependency of Object.keys(manifest.dependencies ?? {})) visit(dependency);
+	};
+	const manifest = JSON.parse(readFileSync(join(cliRoot, 'package.json'), 'utf8'));
+	for (const dependency of Object.keys(manifest.dependencies ?? {})) visit(dependency);
+}
+
 export function runSystemdRestart({ archive, scenarios = SCENARIOS, image = DEFAULT_IMAGE, negative = false }) {
 	const repositoryRoot = resolve(new URL('..', import.meta.url).pathname);
 	const container = `terminay-systemd-restart-${randomUUID().slice(0, 8)}`;
 	const archivePath = resolve(archive);
+	const stage = mkdtempSync(join(tmpdir(), 'terminay-systemd-restart-'));
 	try {
+		stageCli(repositoryRoot, join(stage, 'cli'));
+		cpSync(resolve(repositoryRoot, 'scripts/standalone-systemd-restart'), join(stage, 'driver'), { recursive: true });
+		mkdirSync(join(stage, 'archive'));
+		cpSync(archivePath, join(stage, 'archive', basename(archivePath)));
 		run('docker', [
 			'run',
 			'--detach',
@@ -59,19 +95,12 @@ export function runSystemdRestart({ archive, scenarios = SCENARIOS, image = DEFA
 			'/run',
 			'--tmpfs',
 			'/run/lock',
-			'-v',
-			`${resolve(repositoryRoot, 'apps/terminay-cli')}:/cli:ro`,
-			'-v',
-			`${resolve(repositoryRoot, 'node_modules')}:/cli/node_modules:ro`,
-			'-v',
-			`${resolve(repositoryRoot, 'scripts/standalone-systemd-restart')}:/driver:ro`,
-			'-v',
-			`${dirname(archivePath)}:/archive:ro`,
 			image,
 			'/bin/sh',
 			'-c',
 			'apt-get update -qq && apt-get install -y -qq systemd systemd-sysv nodejs procps util-linux sudo >/dev/null 2>&1 && exec /lib/systemd/systemd',
 		]);
+		for (const part of ['cli', 'driver', 'archive']) run('docker', ['cp', join(stage, part), `${container}:/${part}`]);
 		let booted = false;
 		for (let attempt = 0; attempt < 120 && !booted; attempt += 1) {
 			const probe = spawnSync('docker', ['exec', container, 'systemctl', 'is-system-running'], {
@@ -96,6 +125,7 @@ export function runSystemdRestart({ archive, scenarios = SCENARIOS, image = DEFA
 			scenarios.join(','),
 		]);
 	} finally {
+		rmSync(stage, { recursive: true, force: true });
 		if (process.env.TERMINAY_SYSTEMD_KEEP !== '1')
 			spawnSync('docker', ['rm', '-f', container], { stdio: 'ignore' });
 		else process.stderr.write(`kept container ${container}\n`);
