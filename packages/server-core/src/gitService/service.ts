@@ -10,10 +10,14 @@ import {
 	attributeWorkingTreeChange,
 	classifyGitDirEntry,
 	type GitChangeScope,
+	gitDirectoryWatchFilter,
+	gitDirIgnoreInput,
+	isIgnoreRuleChange,
 	linkedGitDirName,
 	type ObservedRepositoryLayout,
 	type ObservedWorktree,
 	scopeName,
+	unquoteGitPath,
 	workingTreeWatchRoots,
 } from './observation.js';
 import {
@@ -80,6 +84,7 @@ import {
 	type GitWorktreeRemoveRequest,
 	type GitWorktreeRemoveResult,
 	type GitWorktreeSummary,
+	type GitWatchDirectoryFilter,
 	type GitWatchHandle,
 } from './types.js';
 import { NodeGitStateWatcher } from './watcher.js';
@@ -276,7 +281,10 @@ export class GitService {
 		this.onObservation = options.onObservation;
 		this.observationFlushMs = options.observationFlushMs ?? 5_000;
 		this.timers = options.timers ?? HOST_TIMERS;
-		if (!Number.isFinite(this.observationFlushMs) || this.observationFlushMs < 0)
+		if (
+			!Number.isFinite(this.observationFlushMs) ||
+			this.observationFlushMs < 0
+		)
 			throw new RangeError('observationFlushMs must be non-negative');
 	}
 
@@ -1194,7 +1202,10 @@ export class GitService {
 			args = ['worktree', 'add', '--', path, branch];
 		} else {
 			if (remote === null)
-				return fail('remoteMissing', 'no remote of this project belongs to the repository');
+				return fail(
+					'remoteMissing',
+					'no remote of this project belongs to the repository',
+				);
 			const base =
 				trackBranch ?? (await this.remoteDefaultBranch(remote, cwd, signal));
 			if (base === null)
@@ -1220,8 +1231,26 @@ export class GitService {
 				);
 			args =
 				trackBranch === undefined
-					? ['worktree', 'add', '--no-track', '-b', branch, '--', path, `${remote}/${base}`]
-					: ['worktree', 'add', '--track', '-b', branch, '--', path, `${remote}/${base}`];
+					? [
+							'worktree',
+							'add',
+							'--no-track',
+							'-b',
+							branch,
+							'--',
+							path,
+							`${remote}/${base}`,
+						]
+					: [
+							'worktree',
+							'add',
+							'--track',
+							'-b',
+							branch,
+							'--',
+							path,
+							`${remote}/${base}`,
+						];
 		}
 		const pathExisted = await filesystemPathExists(path);
 		if (pathExisted) return fail('addFailed', `${path} already exists`);
@@ -1273,7 +1302,10 @@ export class GitService {
 		const listed = await this.runGit(['remote'], cwd, signal);
 		const present = new Set(
 			listed.exitCode === 0
-				? listed.stdout.split('\n').map((line) => line.trim()).filter(Boolean)
+				? listed.stdout
+						.split('\n')
+						.map((line) => line.trim())
+						.filter(Boolean)
 				: [],
 		);
 		const candidates = claimed.filter((name) => present.has(name));
@@ -1822,7 +1854,9 @@ export class GitService {
 		for (const name of names) {
 			let gitdir: string;
 			try {
-				gitdir = (await readFile(join(registry, name, 'gitdir'), 'utf8')).trim();
+				gitdir = (
+					await readFile(join(registry, name, 'gitdir'), 'utf8')
+				).trim();
 			} catch {
 				continue;
 			}
@@ -3184,11 +3218,87 @@ export class GitService {
 			return;
 		}
 		if (observation.closed || observation.unavailable) return;
-		this.addWatch(observation, commonDir, true, 'git-directory', (entry) => ({
-			scope: attributeGitDirChange(entry, observation.layout),
-			entryClass: classifyGitDirEntry(entry, observation.layout),
-		}));
+		this.addWatch(
+			observation,
+			commonDir,
+			true,
+			'git-directory',
+			(entry) => ({
+				scope: attributeGitDirChange(entry, observation.layout),
+				entryClass: classifyGitDirEntry(entry, observation.layout),
+			}),
+			{
+				filterDirectories: async (dirs) => gitDirectoryWatchFilter(dirs),
+				onEntry: (entry) => {
+					const input = gitDirIgnoreInput(entry);
+					if (input !== null) this.refilterWorkingTrees(observation, input);
+				},
+			},
+		);
 		observation.commonDir = commonDir;
+	}
+
+	/** Ignore inputs changed: built-up working-tree watches re-ask what they exclude. */
+	private refilterWorkingTrees(
+		observation: RepositoryObservation,
+		kind: 'rules' | 'tracking',
+	): void {
+		for (const [path, handle] of observation.watches)
+			if (observation.watchKinds.get(path)?.kind === 'working-tree')
+				handle.refilter?.(kind);
+	}
+
+	/**
+	 * The directories a built-up watch on the working tree at `root` descends
+	 * into: not `.git`, not another worktree's root (it has its own watch), and
+	 * not what Git ignores. Git answers through the bounded runner; any answer
+	 * other than "these are ignored" or "none are" rejects, failing the watch.
+	 */
+	private workingTreeFilter(
+		observation: RepositoryObservation,
+		root: string,
+	): GitWatchDirectoryFilter {
+		return async (dirs, signal) => {
+			const otherRoots = new Set(
+				observation.layout.worktrees
+					.filter((worktree) => worktree.hasWorkingTree)
+					.map((worktree) => resolve(worktree.path))
+					.filter((path) => path !== root),
+			);
+			const asked = dirs.filter(
+				(dir) =>
+					!dir.split(/[\\/]+/u).includes('.git') &&
+					!otherRoots.has(resolve(root, dir)),
+			);
+			if (asked.length === 0) return [];
+			const result = await this.runGit(
+				['-c', 'core.quotePath=false', 'check-ignore', '--', ...asked],
+				root,
+				signal,
+			);
+			signal.throwIfAborted();
+			if (result.exitCode === 1 && !result.truncated) return asked;
+			if (result.exitCode !== 0 || result.truncated)
+				throw Object.assign(
+					new Error(
+						`git check-ignore failed: ${result.stderr.trim() || `exit ${String(result.exitCode)}`}`,
+					),
+					{ code: 'EGITIGNORE' },
+				);
+			const ignored = new Set(
+				result.stdout
+					.split('\n')
+					.filter((line) => line.length > 0)
+					.map(unquoteGitPath),
+			);
+			for (const path of ignored)
+				if (!asked.includes(path))
+					throw Object.assign(
+						new Error('git check-ignore named a path it was not asked about'),
+						{ code: 'EGITIGNORE' },
+					);
+			return asked.filter((dir) => !ignored.has(dir));
+		};
 	}
 
 	private addWatch(
@@ -3200,11 +3310,17 @@ export class GitService {
 			scope: GitChangeScope;
 			entryClass: GitObservationEntryClass;
 		},
+		extras: {
+			readonly filterDirectories?: GitWatchDirectoryFilter;
+			readonly onEntry?: (entry: string | null) => void;
+		} = {},
 	): void {
 		const handle = this.watcher.watch(path, {
 			recursive,
+			filterDirectories: extras.filterDirectories,
 			onChange: (entry) => {
 				if (observation.watches.get(path) !== handle) return;
+				extras.onEntry?.(entry);
 				const { scope, entryClass } = attribute(entry);
 				this.observedChange(observation, scope, entryClass);
 			},
@@ -3245,7 +3361,15 @@ export class GitService {
 	): readonly string[] {
 		const added: string[] = [];
 		if (observation.closed || observation.unavailable) return added;
-		const wanted = new Set(workingTreeWatchRoots(observation.layout));
+		// A built-up watch skips ignored directories, where nested worktrees
+		// usually live, so each worktree root gets its own watch (design 7).
+		const wanted = new Set(
+			this.watcher.buildsRecursiveWatches === true
+				? observation.layout.worktrees
+						.filter((worktree) => worktree.hasWorkingTree)
+						.map((worktree) => resolve(worktree.path))
+				: workingTreeWatchRoots(observation.layout),
+		);
 		for (const path of [...observation.watches.keys()]) {
 			if (path === observation.commonDir || wanted.has(path)) continue;
 			this.closeWatch(observation, path);
@@ -3253,10 +3377,23 @@ export class GitService {
 		for (const root of wanted) {
 			if (observation.watches.has(root)) continue;
 			added.push(root);
-			this.addWatch(observation, root, true, 'working-tree', (entry) => ({
-				scope: attributeWorkingTreeChange(root, entry, observation.layout),
-				entryClass: 'working-tree',
-			}));
+			this.addWatch(
+				observation,
+				root,
+				true,
+				'working-tree',
+				(entry) => ({
+					scope: attributeWorkingTreeChange(root, entry, observation.layout),
+					entryClass: 'working-tree',
+				}),
+				{
+					filterDirectories: this.workingTreeFilter(observation, root),
+					onEntry: (entry) => {
+						if (isIgnoreRuleChange(entry))
+							this.refilterWorkingTrees(observation, 'rules');
+					},
+				},
+			);
 		}
 		return added;
 	}

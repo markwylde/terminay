@@ -6,9 +6,9 @@ import { createRepository, eventually, git, settle } from "./fixtures/git-observ
 
 /** The real host watch, against a real repository, filtered by the same
  *  attribution the service uses. */
-async function watchRepository(t) {
+async function watchRepository(t, platform) {
   const { NodeGitStateWatcher } = await import("../dist/gitService/index.js");
-  const { attributeGitDirChange, attributeWorkingTreeChange } = await import("../dist/gitService/observation.js");
+  const { attributeGitDirChange, attributeWorkingTreeChange, gitDirectoryWatchFilter } = await import("../dist/gitService/observation.js");
   const fixture = await createRepository("terminay-node-watch-");
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
   const layout = {
@@ -18,10 +18,11 @@ async function watchRepository(t) {
   };
   const scopes = [];
   const errors = [];
-  const watcher = new NodeGitStateWatcher();
+  const watcher = new NodeGitStateWatcher({ platform });
   const handles = [
     watcher.watch(fixture.gitDir, {
       recursive: true,
+      filterDirectories: async (dirs) => gitDirectoryWatchFilter(dirs),
       onChange: (entry) => scopes.push({ from: "git", entry, scope: attributeGitDirChange(entry, layout) }),
       onError: (error) => errors.push(error),
     }),
@@ -38,15 +39,20 @@ async function watchRepository(t) {
   return { fixture, scopes, errors, attributed };
 }
 
-test("a file save is observed as a change to its worktree", async (t) => {
-  const context = await watchRepository(t);
+for (const platform of [process.platform, "linux"]) {
+const built = platform === "linux" ? " (built-up watch)" : "";
+// Built-up watches are inotify-only; elsewhere the variant is skipped.
+const only = platform === "linux" && process.platform !== "linux" ? { skip: "built-up watches run only on Linux (inotify)" } : {};
+
+test(`a file save is observed as a change to its worktree${built}`, only, async (t) => {
+  const context = await watchRepository(t, platform);
   await writeFile(join(context.fixture.main, "a.txt"), "edited\n");
   await eventually(() => context.attributed().some((item) => item.from === "tree"), "the save was not observed");
   assert.deepEqual(context.errors, []);
 });
 
-test("a commit and a branch switch are observed in the Git directory", async (t) => {
-  const context = await watchRepository(t);
+test(`a commit and a branch switch are observed in the Git directory${built}`, only, async (t) => {
+  const context = await watchRepository(t, platform);
   await writeFile(join(context.fixture.main, "a.txt"), "edited\n");
   await git(["commit", "-am", "second"], context.fixture.main);
   await eventually(() => context.attributed().some((item) => item.from === "git"), "the commit was not observed");
@@ -59,8 +65,8 @@ test("a commit and a branch switch are observed in the Git directory", async (t)
   );
 });
 
-test("writing objects alone is observed but attributes nothing", async (t) => {
-  const context = await watchRepository(t);
+test(`writing objects alone is observed but attributes nothing${built}`, only, async (t) => {
+  const context = await watchRepository(t, platform);
   await git(["hash-object", "-w", "a.txt"], context.fixture.main);
   await settle(500);
   assert.deepEqual(
@@ -70,10 +76,10 @@ test("writing objects alone is observed but attributes nothing", async (t) => {
   );
 });
 
-test("a watch on a missing path reports an error rather than a silent gap", async (t) => {
+test(`a watch on a missing path reports an error rather than a silent gap${built}`, only, async (t) => {
   const { NodeGitStateWatcher } = await import("../dist/gitService/index.js");
   const errors = [];
-  const handle = new NodeGitStateWatcher().watch("/definitely/not/here/terminay", {
+  const handle = new NodeGitStateWatcher({ platform }).watch("/definitely/not/here/terminay", {
     recursive: true,
     onChange: () => {},
     onError: (error) => errors.push(error),
@@ -81,3 +87,4 @@ test("a watch on a missing path reports an error rather than a silent gap", asyn
   t.after(() => handle.close());
   await eventually(() => errors.length === 1, "the failed watch was not reported");
 });
+}

@@ -131,3 +131,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0110](./0110-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md) | Publish three release tracks from `main`, with a canary that is signed but not notarized | accepted, supersedes 0016 and 0027 in part | 2026-11-11 |
 | [0112](./0112-terminal-output-may-write-but-never-read-the-viewing-devices-clipboard.md) | Live terminal output may write the viewing device's clipboard, and never read it | accepted | 2026-11-13 |
 | [0113](./0113-dropped-files-are-a-streamed-scratch-write-on-the-terminals-own-server.md) | A dropped file becomes a path on the terminal's own server, through a third named scratch write | accepted | 2026-11-13 |
+| [0114](./0114-git-watches-never-walk-a-tree-on-the-event-loop-and-skip-what-git-ignores.md) | Git watches never walk a tree on the event loop, and skip what Git ignores | accepted | 2026-11-13 |

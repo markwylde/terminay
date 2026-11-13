@@ -218,3 +218,96 @@ export function linkedGitDirName(gitFileContents: string): string | null {
 		? (parts[index + 1] ?? null)
 		: null;
 }
+
+/**
+ * Which directories a built-up Git-directory watch descends into: everything
+ * observation does not already call inert. `info` stays watched because
+ * `info/exclude` is an ignore input; its events still classify as inert.
+ */
+export function gitDirectoryWatchFilter(
+	relativeDirs: readonly string[],
+): string[] {
+	return relativeDirs.filter((relativeDir) => {
+		const [head = '', second = '', third = ''] = segments(relativeDir);
+		if (head === 'info') return true;
+		if (INERT_GIT_DIR_ENTRIES.has(head)) return false;
+		if (head === 'refs' && (second === 'tags' || second === 'stash'))
+			return false;
+		if (head === 'worktrees' && INERT_GIT_DIR_ENTRIES.has(third)) return false;
+		return true;
+	});
+}
+
+/**
+ * Whether a change in the common Git directory alters what a working tree
+ * ignores (`rules`) or tracks (`tracking`), so built-up working-tree watches
+ * must re-ask which directories they exclude.
+ */
+export function gitDirIgnoreInput(
+	relativePath: string | null,
+): 'rules' | 'tracking' | null {
+	if (relativePath === null) return null;
+	const parts = segments(relativePath);
+	if (isLockFile(parts)) return null;
+	const [head = '', second = '', third = ''] = parts;
+	if (parts.length === 1 && (head === 'config' || head === 'config.worktree'))
+		return 'rules';
+	if (parts.length === 2 && head === 'info' && second === 'exclude')
+		return 'rules';
+	if (parts.length === 1 && head === 'index') return 'tracking';
+	if (parts.length === 3 && head === 'worktrees') {
+		if (third === 'index') return 'tracking';
+		if (third === 'config.worktree') return 'rules';
+	}
+	return null;
+}
+
+/** Whether a working-tree change names an ignore-rule file. */
+export function isIgnoreRuleChange(relativePath: string | null): boolean {
+	if (relativePath === null) return false;
+	const parts = segments(relativePath);
+	return parts[parts.length - 1] === '.gitignore';
+}
+
+/**
+ * Undo Git's C-style path quoting (`core.quotePath`): a path containing a
+ * double quote, backslash or control character is printed in double quotes
+ * with backslash escapes and octal bytes.
+ */
+export function unquoteGitPath(line: string): string {
+	if (line.length < 2 || !line.startsWith('"') || !line.endsWith('"'))
+		return line;
+	const body = line.slice(1, -1);
+	const escapes: Readonly<Record<string, number>> = {
+		a: 7,
+		b: 8,
+		t: 9,
+		n: 10,
+		v: 11,
+		f: 12,
+		r: 13,
+		'"': 34,
+		'\\': 92,
+	};
+	const bytes: number[] = [];
+	let run = 0;
+	const flush = (end: number) => {
+		if (end > run) bytes.push(...Buffer.from(body.slice(run, end), 'utf8'));
+	};
+	for (let index = 0; index < body.length; index++) {
+		if (body[index] !== '\\') continue;
+		flush(index);
+		const octal = /^[0-3][0-7]{2}/u.exec(body.slice(index + 1, index + 4));
+		const next = body[index + 1] ?? '';
+		if (octal !== null) {
+			bytes.push(Number.parseInt(octal[0], 8));
+			index += 3;
+		} else if (escapes[next] !== undefined) {
+			bytes.push(escapes[next]);
+			index += 1;
+		} else bytes.push(92);
+		run = index + 1;
+	}
+	flush(body.length);
+	return Buffer.from(bytes).toString('utf8');
+}
