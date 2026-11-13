@@ -70,6 +70,10 @@ export const SETTINGS_SIDEBAR_WIDTH = 232
 export const SETTINGS_LIST_WIDTH = 264
 export const SETTINGS_DETAIL_MIN_WIDTH = 420
 export const SETTINGS_RAIL_WIDTH = 72
+/** With the rail beside them, the sidebar and detail give back its width, so a
+ * window that held three columns without the rail still holds them with it. */
+export const SETTINGS_RAIL_SIDEBAR_WIDTH = 200
+export const SETTINGS_RAIL_DETAIL_MIN_WIDTH = 380
 
 type NarrowStage = 'sidebar' | 'list' | 'detail'
 
@@ -140,10 +144,12 @@ export function SharedSettingsRouteBody({
   const [shellRef, width] = useElementWidth<HTMLDivElement>()
   const hasList = listColumn !== undefined
   const neededWidth =
-    (rail === undefined ? 0 : SETTINGS_RAIL_WIDTH) +
-    SETTINGS_SIDEBAR_WIDTH +
-    (hasList ? SETTINGS_LIST_WIDTH : 0) +
-    SETTINGS_DETAIL_MIN_WIDTH
+    rail === undefined
+      ? SETTINGS_SIDEBAR_WIDTH + (hasList ? SETTINGS_LIST_WIDTH : 0) + SETTINGS_DETAIL_MIN_WIDTH
+      : SETTINGS_RAIL_WIDTH +
+        SETTINGS_RAIL_SIDEBAR_WIDTH +
+        (hasList ? SETTINGS_LIST_WIDTH : 0) +
+        SETTINGS_RAIL_DETAIL_MIN_WIDTH
   const narrow = width !== null && width < neededWidth
   const [stage, setStage] = useState<NarrowStage>('detail')
 

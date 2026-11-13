@@ -2783,6 +2783,11 @@
   background: var(--settings-border);
 }
 
+/* Beside the rail the sidebar is narrower (SETTINGS_RAIL_SIDEBAR_WIDTH). */
+.settings-shell[data-settings-rail='true'] {
+  --settings-sidebar-width: 200px;
+}
+
 /* Too narrow for the rail beside the list: it becomes a row above it. */
 .settings-shell[data-settings-layout='narrow'][data-settings-rail='true'] {
   flex-direction: column;
