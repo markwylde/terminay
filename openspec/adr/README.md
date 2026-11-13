@@ -130,3 +130,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0109](./0109-terminay-reports-execution-failures-as-facts-and-the-bot-judges-them.md) | Terminay reports execution failures as facts, retries only before task hand-over, and the bot judges what they mean | accepted, supersedes 0099 in part | 2026-11-11 |
 | [0110](./0110-three-release-tracks-and-a-canary-that-is-signed-but-not-notarized.md) | Publish three release tracks from `main`, with a canary that is signed but not notarized | accepted, supersedes 0016 and 0027 in part | 2026-11-11 |
 | [0112](./0112-terminal-output-may-write-but-never-read-the-viewing-devices-clipboard.md) | Live terminal output may write the viewing device's clipboard, and never read it | accepted | 2026-11-13 |
+| [0113](./0113-git-watches-never-walk-a-tree-on-the-event-loop-and-skip-what-git-ignores.md) | Git watches never walk a tree on the event loop, and skip what Git ignores | accepted | 2026-11-13 |

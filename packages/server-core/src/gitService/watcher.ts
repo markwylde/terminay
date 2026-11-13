@@ -1,18 +1,50 @@
 import { type FSWatcher, watch } from 'node:fs';
+import {
+	createTreeWatch,
+	type TreeWatchFs,
+	type TreeWatchLimits,
+} from './treeWatch.js';
 import type {
 	GitStateWatcher,
 	GitWatchHandle,
 	GitWatchOptions,
 } from './types.js';
 
+export interface NodeGitStateWatcherOptions {
+	/** The host platform; tests inject `linux` to run the built-up watch anywhere. */
+	readonly platform?: NodeJS.Platform;
+	/** Filesystem and limits for the built-up watch, for tests. */
+	readonly treeWatch?: {
+		readonly fs?: TreeWatchFs;
+		readonly limits?: Partial<TreeWatchLimits>;
+	};
+}
+
 /**
- * `fs.watch` for the Git service. Recursive watches use FSEvents on macOS,
- * ReadDirectoryChangesW on Windows, and one inotify watch per directory on
- * Linux, where a large tree can exhaust `max_user_watches`; that surfaces as
- * `onError`, never as a silent gap.
+ * `fs.watch` for the Git service. Recursive watches use FSEvents on macOS and
+ * ReadDirectoryChangesW on Windows. On Linux, where Node emulates recursion by
+ * re-walking trees synchronously on the event loop, a recursive watch is built
+ * from per-directory watches that skip what `filterDirectories` excludes
+ * (ADR-0113). Any failure surfaces as `onError`, never as a silent gap.
  */
 export class NodeGitStateWatcher implements GitStateWatcher {
+	readonly #buildsRecursiveWatches: boolean;
+	readonly #treeWatch: NodeGitStateWatcherOptions['treeWatch'];
+
+	constructor(options: NodeGitStateWatcherOptions = {}) {
+		this.#buildsRecursiveWatches =
+			(options.platform ?? process.platform) === 'linux';
+		this.#treeWatch = options.treeWatch;
+	}
+
+	/** Whether recursive watches are built from per-directory watches here. */
+	get buildsRecursiveWatches(): boolean {
+		return this.#buildsRecursiveWatches;
+	}
+
 	watch(path: string, options: GitWatchOptions): GitWatchHandle {
+		if (options.recursive && this.#buildsRecursiveWatches)
+			return createTreeWatch(path, options, this.#treeWatch);
 		let watcher: FSWatcher | undefined;
 		let closed = false;
 		let failed = false;

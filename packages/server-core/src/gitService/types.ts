@@ -657,7 +657,25 @@ export type GitObservationReport =
 /** One live filesystem watch. `close` is idempotent. */
 export interface GitWatchHandle {
 	close(): void;
+	/**
+	 * Re-ask `filterDirectories` about what the watch excludes. `tracking`
+	 * re-checks only the excluded directories (the index changed, so one may
+	 * now be tracked); `rules` also re-checks every watched directory (ignore
+	 * rules changed). Only built-up watches implement it; native recursive
+	 * watches have nothing to re-filter.
+	 */
+	refilter?(kind: 'rules' | 'tracking'): void;
 }
+
+/**
+ * Decide which candidate directories a built-up watch descends into. Receives
+ * at most 64 paths relative to the watched root and returns the subset to
+ * watch. Rejecting fails the watch: a built-up watch never guesses.
+ */
+export type GitWatchDirectoryFilter = (
+	relativeDirs: readonly string[],
+	signal: AbortSignal,
+) => Promise<readonly string[]>;
 
 export interface GitWatchOptions {
 	/** Watch the whole tree beneath `path`, not only its direct entries. */
@@ -668,10 +686,22 @@ export interface GitWatchOptions {
 	/** Called once when the watch can no longer be trusted: it failed to start,
 	 *  the host reported an error, or the watched path went away. */
 	readonly onError: (error: unknown) => void;
+	/**
+	 * Consulted only where the host has no kernel recursive watch (Linux) and
+	 * the watcher builds one from per-directory watches. Native recursive
+	 * watches ignore it. Omitted, every directory is watched.
+	 */
+	readonly filterDirectories?: GitWatchDirectoryFilter;
 }
 
 /** Host filesystem watch used by the Git service. */
 export interface GitStateWatcher {
+	/**
+	 * True where recursive watches are built from per-directory watches
+	 * (Linux): they honour `filterDirectories`, so a root nested inside an
+	 * excluded directory needs a watch of its own. Absent means native.
+	 */
+	readonly buildsRecursiveWatches?: boolean;
 	watch(path: string, options: GitWatchOptions): GitWatchHandle;
 }
 
