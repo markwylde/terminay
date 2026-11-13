@@ -40,12 +40,12 @@
     "@terminay/extension-api": "^3.4.0",
     "@terminay/protocol": "1.0.0",
     "@terminay/ui-bundle": "1.0.0",
-    "@xterm/addon-serialize": "0.15.0-beta.299",
-    "@xterm/headless": "6.1.0-beta.301",
+    "@xterm/addon-serialize": "0.15.0-beta.331",
+    "@xterm/headless": "6.1.0-beta.335",
     "esbuild": "0.28.2",
     "pacote": "22.0.1",
     "tar": "^7.5.22",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "optionalDependencies": {
     "koffi": "2.16.3"

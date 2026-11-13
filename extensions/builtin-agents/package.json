@@ -53,7 +53,7 @@
 	},
 	"devDependencies": {
 		"@terminay/extension-api": "^3.7.0",
-		"@types/node": "^24.0.0",
+		"@types/node": "^24.19.2",
 		"typescript": "^7.0.2"
 	},
 	"terminay": {
