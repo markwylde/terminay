@@ -21,6 +21,42 @@ const query = (values: Record<string, unknown>) =>
 			]),
 	).toString();
 
+/** Splits `container ls --filter` arguments into the filters sent to the
+ * engine and label exclusions applied here. Docker rejects Podman's `label!`
+ * filter key with HTTP 400, so negation never reaches the engine. Excluding
+ * `key` omits any container with that label; `key=value` omits only that
+ * value (split on the first `=`). A container matching any exclusion is
+ * omitted. */
+export function containerListFilters(args: readonly string[]): {
+	filters: Record<string, string[]>;
+	excluded: ((labels: Readonly<Record<string, string>>) => boolean)[];
+} {
+	const filters: Record<string, string[]> = {};
+	const excluded: ((labels: Readonly<Record<string, string>>) => boolean)[] =
+		[];
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] !== '--filter') continue;
+		const value = args[++i]!;
+		const n = value.indexOf('=');
+		const key = value.slice(0, n);
+		const operand = value.slice(n + 1);
+		if (key === 'label!') {
+			const at = operand.indexOf('=');
+			const name = at < 0 ? operand : operand.slice(0, at);
+			const wanted = at < 0 ? undefined : operand.slice(at + 1);
+			excluded.push(
+				(labels) =>
+					Object.hasOwn(labels, name) &&
+					(wanted === undefined || labels[name] === wanted),
+			);
+			continue;
+		}
+		filters[key] ??= [];
+		filters[key].push(operand);
+	}
+	return { filters, excluded };
+}
+
 /** Parses only Terminay's private operation vocabulary. No text is ever passed
  * to a shell or executable. Unknown options fail closed. */
 function createSpec(args: readonly string[]): {
@@ -325,22 +361,19 @@ export class SocketDriver implements EngineDriver {
 			});
 		}
 		if (kind === 'container' && action === 'ls') {
-			const filters: Record<string, string[]> = {};
-			for (let i = 0; i < rest.length; i++)
-				if (rest[i] === '--filter') {
-					const value = rest[++i]!;
-					const n = value.indexOf('=');
-					const key = value.slice(0, n);
-					filters[key] ??= [];
-					filters[key].push(value.slice(n + 1));
-				}
-			const list = await this.transport.json<{ Id: string }[]>(
+			const { filters, excluded } = containerListFilters(rest);
+			const list = await this.transport.json<
+				{ Id: string; Labels?: Record<string, string> | null }[]
+			>(
 				'GET',
 				`/containers/json?${query({ all: rest.some((v) => /^-[a-z]*a/.test(v)), filters })}`,
 				undefined,
 				options,
 			);
-			return list.map((c) => c.Id).join('\n');
+			return list
+				.filter((c) => !excluded.some((match) => match(c.Labels ?? {})))
+				.map((c) => c.Id)
+				.join('\n');
 		}
 		if (kind === 'container' && action === 'create') {
 			const spec = createSpec(rest);
