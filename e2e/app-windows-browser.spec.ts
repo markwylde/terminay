@@ -904,12 +904,18 @@ test('a view cannot take the keyboard: keys typed for the terminal stay with the
 	expect(await focused()).toBe('terminal');
 	const id = await add(page, { title: 'Thief', html: FOCUS_THIEF });
 	const thief = card(page, 'Thief');
-	// The view took the focus, and it was given back. (Nothing here looks
-	// inside the frame yet: to the browser that would be someone using it.)
-	await expect(thief.locator('.app-window__frame')).toBeVisible();
-	// The workspace asked the proxy whether a person had acted, heard no, and
-	// took the focus back.
-	await expect.poll(activations).toContainEqual({ active: false });
+	// The view tried to take the focus. (Nothing here looks inside the frame
+	// yet: to the browser that would be someone using it.) Its document has
+	// run once the frame has loaded, nested frames included.
+	const frame = thief.locator('.app-window__frame');
+	await expect(frame).toBeVisible();
+	await (await (await frame.elementHandle())?.contentFrame())?.waitForLoadState('load');
+	// A browser that lets a frame take the focus unprompted has the workspace
+	// ask the proxy whether a person had acted, hear no, and take the focus
+	// back. One that refuses it never moves the focus from the terminal.
+	await expect
+		.poll(async () => (await activations()).some(({ active }) => !active) || (await focused()) === 'terminal')
+		.toBe(true);
 	await expect.poll(focused).toBe('terminal');
 	await page.keyboard.type('hunter2');
 	expect(await typed()).toBe('hunter2');
