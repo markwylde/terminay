@@ -416,7 +416,8 @@ test('the chooser shows five recent folders, and Show more reveals the rest', ()
 	assert.equal(expanded.rows.length, 12);
 	assert.equal(expanded.hidden, 0);
 	assert.equal(recentFoldersSearchable(rows), true);
-	assert.equal(recentFoldersSearchable(rows.slice(0, 5)), false);
+	assert.equal(recentFoldersSearchable(rows.slice(0, 1)), true);
+	assert.equal(recentFoldersSearchable([]), false);
 });
 
 test('a search matches every term in the name or path, ignoring case, in recency order', () => {
