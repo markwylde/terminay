@@ -136,18 +136,18 @@ export function usePixelServer(
 		};
 	}, [ready, state?.provider, transport]);
 
-	// The agents on offer, for the first-click question. They are asked for
-	// again each time the question is shown: extensions start after the
-	// window does, and an agent may have been installed meanwhile.
-	const onboarding =
-		state?.enabled === true && state.provider === PIXEL_PROVIDER_UNSET;
+	// The agents on offer, for the first-click question and to tell the user
+	// when the chosen agent is not installed. They are asked for again each
+	// time the balloon opens: extensions start after the window does, and an
+	// agent may have been installed meanwhile.
+	const enabled = state?.enabled === true;
 	const refreshProviders = useCallback(() => {
-		if (transport === undefined || !onboarding) return;
+		if (transport === undefined || !enabled) return;
 		void transport.chats
 			.providers()
 			.then(setProviders)
 			.catch(() => undefined);
-	}, [onboarding, transport]);
+	}, [enabled, transport]);
 	useEffect(refreshProviders, [refreshProviders]);
 
 	const withChat = useCallback(

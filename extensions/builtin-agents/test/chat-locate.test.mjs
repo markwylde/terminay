@@ -90,3 +90,15 @@ test('a non-executable file is not an agent', async (t) => {
 	});
 	assert.equal(await locator.locate('codex'), undefined);
 });
+
+test('an agent installed after a miss is found without restarting', async (t) => {
+	const root = await home(t);
+	const locator = createAgentLocator({
+		env: { PATH: join(root, 'bin') },
+		homeDirectory: root,
+		loginShellPath: async () => undefined,
+	});
+	assert.equal(await locator.locate('claude'), undefined);
+	const claude = await executable(join(root, 'bin', 'claude'));
+	assert.equal(await locator.locate('claude'), claude);
+});

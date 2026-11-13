@@ -7,12 +7,15 @@ import {
 import { PetIcon } from '@markwylde/pet/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { openExternalUrl } from '../host/nativeActions';
 import './pixel.css';
 import {
+	installGuideFor,
 	onboardingGreeting,
 	onboardingSuggestions,
 	PIXEL_PROVIDER_UNSET,
 	pixelDockLabel,
+	pixelInstallHelp,
 	pixelMessages,
 	pixelNeedsAttention,
 	pixelStatus,
@@ -79,6 +82,11 @@ export function PixelCompanion({
 
 	const { chat, state, providers, problem } = server;
 	const onboarding = state?.provider === PIXEL_PROVIDER_UNSET;
+	const installHelp = useMemo(
+		() =>
+			state === null ? undefined : pixelInstallHelp(providers, state.provider),
+		[providers, state],
+	);
 	const attention = pixelNeedsAttention(chat);
 	const working = chat !== undefined && chat.status !== 'idle';
 	const dockState = attention ? 'attention' : working ? 'working' : 'idle';
@@ -104,6 +112,11 @@ export function PixelCompanion({
 			serverRef.current.refreshProviders();
 		});
 		const offAction = instance.on('chat:action', ({ message, action }) => {
+			const guide = installGuideFor(action.id);
+			if (guide !== undefined) {
+				void openExternalUrl(guide);
+				return;
+			}
 			const entry = serverRef.current.chat?.entries.find(
 				(candidate) => candidate.id === message.id,
 			);
@@ -187,9 +200,18 @@ export function PixelCompanion({
 				text: problem,
 				createdAt: Date.now(),
 			});
+		// The chosen agent is missing: say so kindly, with its install guide.
+		if (installHelp !== undefined)
+			messages.push({
+				id: 'pixel-install-help',
+				role: 'assistant',
+				text: installHelp.text,
+				createdAt: Date.now(),
+				actions: installHelp.actions,
+			});
 		pet.chat.setMessages(messages);
 		pet.chat.setStatus(pixelStatus(chat));
-	}, [chat, pet, problem]);
+	}, [chat, installHelp, pet, problem]);
 
 	// Pixel comes out to ask when an approval arrives while it is docked.
 	const askedRef = useRef(false);

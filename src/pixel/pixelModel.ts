@@ -152,10 +152,88 @@ export function onboardingGreeting(
 	const reasons = providers.map((provider) =>
 		[
 			`${provider.displayName} ${UNAVAILABLE[provider.reason ?? ''] ?? 'is unavailable'}.`,
-			provider.detail,
+			// A missing agent's install guide is a button, not a line of text.
+			installGuide(provider) === undefined ? provider.detail : undefined,
 		]
 			.filter(Boolean)
 			.join(' '),
 	);
 	return `Hi! I'm Pixel. I need Claude Code or Codex on this server. ${reasons.join(' ')}`;
+}
+
+/** The official install guide for each agent Pixel can use. */
+export const PIXEL_INSTALL_GUIDES: Readonly<Record<string, string>> =
+	Object.freeze({
+		'com.terminay.builtin-agents/claude-code':
+			'https://code.claude.com/docs/en/setup',
+		'com.terminay.builtin-agents/codex':
+			'https://learn.chatgpt.com/docs/codex/cli',
+	});
+
+/** The prefix of a balloon action that opens an agent's install guide. */
+const INSTALL_GUIDE_ACTION = 'install-guide:';
+
+/** The install guide for an agent that is missing, if Pixel knows one. */
+function installGuide(provider: AgentChatProvider): string | undefined {
+	return !provider.available && provider.reason === 'not_installed'
+		? PIXEL_INSTALL_GUIDES[provider.id]
+		: undefined;
+}
+
+export type PixelInstallHelp = Readonly<{
+	text: string;
+	actions: ChatAction[];
+}>;
+
+/**
+ * What Pixel says when the agent it needs is not installed, with a button to
+ * each official install guide; undefined when nothing needs installing.
+ * Before an agent is chosen it speaks only when none is available; after,
+ * only when the chosen one is missing.
+ */
+export function pixelInstallHelp(
+	providers: readonly AgentChatProvider[],
+	providerId: string,
+): PixelInstallHelp | undefined {
+	const onboarding = providerId === PIXEL_PROVIDER_UNSET;
+	const missing = providers.filter(
+		(provider) =>
+			installGuide(provider) !== undefined &&
+			(onboarding || provider.id === providerId),
+	);
+	if (missing.length === 0) return undefined;
+	if (onboarding && providers.some((provider) => provider.available))
+		return undefined;
+	const actions = missing.map(
+		(provider, index): ChatAction => ({
+			id: `${INSTALL_GUIDE_ACTION}${provider.id}`,
+			label: `Install ${provider.displayName}`,
+			...(index === 0 ? { kind: 'primary' as const } : {}),
+		}),
+	);
+	const guides =
+		missing.length === 1
+			? 'The button below opens its official install guide.'
+			: 'The buttons below open their official install guides.';
+	if (onboarding)
+		return {
+			text: `${onboardingGreeting(providers)} ${guides} Once one is installed, open me again.`,
+			actions,
+		};
+	const chosen = missing[0];
+	const other = providers.find((provider) => provider.available);
+	const switchHint =
+		other === undefined
+			? ''
+			: ` Or switch me to ${other.displayName} in Settings > AI > Pixel.`;
+	return {
+		text: `Hi! I'm Pixel. I'm set up to use ${chosen.displayName}, but it isn't installed on this server yet. ${guides} Once it's installed, open me again.${switchHint}`,
+		actions,
+	};
+}
+
+/** The install guide a balloon action opens, if it is one. */
+export function installGuideFor(actionId: string): string | undefined {
+	if (!actionId.startsWith(INSTALL_GUIDE_ACTION)) return undefined;
+	return PIXEL_INSTALL_GUIDES[actionId.slice(INSTALL_GUIDE_ACTION.length)];
 }
