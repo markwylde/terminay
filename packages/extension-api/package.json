@@ -38,6 +38,6 @@
 		"node": ">=22"
 	},
 	"devDependencies": {
-		"@types/node": "^24.0.0"
+		"@types/node": "^24.19.2"
 	}
 }
