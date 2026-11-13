@@ -11,7 +11,7 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Unit: install help for a missing chosen agent and for onboarding with none installed
-- [ ] 3.2 Unit: an agent installed after a miss is found
-- [ ] 3.3 Render: the balloon shows the help with its button
+- [x] 3.1 Unit: install help for a missing chosen agent and for onboarding with none installed
+- [x] 3.2 Unit: an agent installed after a miss is found
+- [x] 3.3 End-to-end: with Codex chosen and not installed, the balloon shows the help and "Install Codex"
 - [ ] 3.4 Pull request checks green
