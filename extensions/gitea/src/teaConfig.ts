@@ -109,35 +109,62 @@ export interface TeaTokenStore {
 }
 
 /**
- * Tea logins held in memory. The file is read once and re-read only when it
- * changes on disk, so a refresh never touches the file and never runs `tea`.
+ * Tea logins held in memory. They are kept only while a watch on the file is
+ * live, and the watch is set up before the file is read, so no change is
+ * missed. A failed read is never kept: a file that is missing now, such as
+ * before `tea login` has run, is read again on the next lookup. Nothing here
+ * runs `tea`.
  */
 export function createTeaTokenStore(options: {
 	path: string;
 	readFile: (path: string) => Promise<string>;
+	/** Watch the file; call `onChange` on any change or watcher error. */
 	watch?: (path: string, onChange: () => void) => { close(): void } | undefined;
 }): TeaTokenStore {
 	let logins: Promise<TeaLogin[]> | undefined;
 	const rejected = new Set<string>();
 	let watcher: { close(): void } | undefined;
 	let disposed = false;
+	const dropWatch = () => {
+		const current = watcher;
+		watcher = undefined;
+		try {
+			current?.close();
+		} catch {
+			/* already closed */
+		}
+	};
+	// The file changed, was replaced, or can no longer be watched: forget what
+	// was read, and the watch that guarded it, and give rejected origins a
+	// chance with whatever the file now holds.
+	const invalidate = () => {
+		logins = undefined;
+		rejected.clear();
+		dropWatch();
+	};
+	const ensureWatch = () => {
+		if (watcher !== undefined || disposed || options.watch === undefined) return;
+		try {
+			watcher = options.watch(options.path, invalidate);
+		} catch {
+			// Typically the file does not exist yet.
+			watcher = undefined;
+		}
+	};
 	const load = (): Promise<TeaLogin[]> => {
-		logins ??= options
-			.readFile(options.path)
-			.then((text) => {
-				if (watcher === undefined && !disposed && options.watch !== undefined)
-					try {
-						watcher = options.watch(options.path, () => {
-							logins = undefined;
-							rejected.clear();
-						});
-					} catch {
-						/* without a watch the logins read at start stay in use */
-					}
-				return parseTeaLogins(text);
-			})
-			.catch(() => []);
-		return logins;
+		if (logins !== undefined) return logins;
+		ensureWatch();
+		const read = options.readFile(options.path).then(parseTeaLogins);
+		const result = read.catch((): TeaLogin[] => []);
+		if (watcher !== undefined) {
+			logins = result;
+			// A failed read is not kept; an event during the read has already
+			// cleared `logins`, so a stale result is not kept either.
+			read.catch(() => {
+				if (logins === result) logins = undefined;
+			});
+		}
+		return result;
 	};
 	return {
 		async token(origin) {
@@ -163,8 +190,8 @@ export function createTeaTokenStore(options: {
 		},
 		dispose() {
 			disposed = true;
-			watcher?.close();
-			watcher = undefined;
+			logins = undefined;
+			dropWatch();
 		},
 	};
 }

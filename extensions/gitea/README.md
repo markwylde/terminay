@@ -28,15 +28,19 @@ The extension never runs `tea`. It looks for a token in this order:
    own config file (`$XDG_CONFIG_HOME/tea/config.yml`, otherwise
    `~/Library/Application Support/tea/config.yml` on macOS and
    `~/.config/tea/config.yml` elsewhere). The file is read once and held in
-   memory. It is read again only when it changes on disk.
+   memory while a watch on it is live, and read again when it changes on
+   disk. If it is missing or can't be watched, as before `tea login` has run,
+   every lookup reads it again, so a login made after Terminay started is
+   picked up on the next refresh or **Check again** without a restart.
 2. A token the user stored for that origin through Terminay's sign-in prompt.
    Terminay keeps it in the server vault.
 3. Neither: the extension asks Terminay to show the sign-in prompt, with a
    link to `<origin>/user/settings/applications`, where a token with
    `read:repository` scope can be created.
 
-When Gitea answers `401`, the extension stops using that token. A stored token
-is reported rejected, so Terminay forgets it and can prompt again.
+When Gitea answers `401`, the extension stops using that token. A `tea` token
+stays unused until `tea`'s config file changes. A stored token is reported
+rejected, so Terminay forgets it and can prompt again.
 
 ## Refresh cadence
 
