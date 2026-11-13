@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
@@ -674,6 +674,64 @@ test('Desktop reopens straight onto the server its window last showed', async ({
 	} finally {
 		for (const launched of launches)
 			await launched.close().catch(() => undefined);
+		await server.stop();
+	}
+});
+
+test('a file dropped on a terminal of another server is copied there, not given its Desktop path', async ({
+	appHarness,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	try {
+		await pairAndLand(appHarness, mainWindow, server);
+		await mainWindow.keyboard.press('Escape');
+		if ((await projectIds(mainWindow)).length === 0) {
+			await createStartedProject(mainWindow);
+			await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+		}
+		const nativePath = path.join(tempDir, 'desktop-only', 'dropped notes.txt');
+		await mkdir(path.dirname(nativePath), { recursive: true });
+		await writeFile(nativePath, 'dropped-on-the-server-42\n');
+
+		await mainWindow.evaluate(() => {
+			const input = document.createElement('input');
+			input.id = 'terminal-remote-drop-source';
+			input.type = 'file';
+			document.body.append(input);
+		});
+		await mainWindow
+			.locator('#terminal-remote-drop-source')
+			.setInputFiles(nativePath);
+		const terminal = mainWindow.locator(
+			'.project-workspace--active .terminal-panel:visible',
+		);
+		// The drop inserts the path as the argument of a command already typed.
+		await terminal.locator('.xterm-helper-textarea').focus();
+		await mainWindow.keyboard.type('cat ');
+		await terminal.evaluate((element) => {
+			const file = (
+				document.querySelector('#terminal-remote-drop-source') as HTMLInputElement
+			).files?.[0];
+			if (!file) throw new Error('The native drop fixture is unavailable.');
+			const transfer = new DataTransfer();
+			transfer.items.add(file);
+			element.dispatchEvent(
+				new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }),
+			);
+		});
+
+		const rows = terminal.locator('.xterm-rows');
+		await expect(rows).toContainText('terminay-drops', { timeout: 15_000 });
+		await expect(rows).toContainText('dropped_notes.txt');
+		await expect(rows).not.toContainText('desktop-only');
+		await terminal.locator('.xterm-helper-textarea').focus();
+		await mainWindow.keyboard.press('Enter');
+		await expect(rows).toContainText('dropped-on-the-server-42', { timeout: 15_000 });
+	} finally {
 		await server.stop();
 	}
 });

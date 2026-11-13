@@ -353,7 +353,7 @@ test.describe('terminal behavior', () => {
 		const output = terminal.locator('.xterm-rows');
 		await expect(output).toContainText(`'${screenshotPath}'`);
 		await expect(output).not.toContainText(
-			'[file drop failed: the file could not be uploaded]',
+			'[file drop failed:',
 		);
 	});
 

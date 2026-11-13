@@ -16,6 +16,7 @@ import type {
 import { presentationRefusalSkip } from './terminalPresentationRefusal';
 import {
 	isRecoverableSkip,
+	TERMINAL_FILE_DROP_CAPABILITY,
 	TerminalRecoveryController,
 	TerminayTerminalClient,
 	TerminayTerminalPanelClient,
@@ -54,7 +55,10 @@ import {
 	writeClipboardText,
 } from '../host/nativeActions';
 import { subscribeTerminalZoom } from '../host/nativeEvents';
-import { useServerConnection } from '../shared/connections/ConnectionsContext';
+import {
+	useConnections,
+	useServerConnection,
+} from '../shared/connections/ConnectionsContext';
 import { isConnectionReconnecting } from '../shared/connections/connectionRegistry';
 import { recordRendererDiagnostic } from '../shared/rendererDiagnostics';
 import { isTouchTextSelectionEnabled } from '../shared/touchTextSelectionPreference';
@@ -72,6 +76,7 @@ import { DictationOverlay } from './DictationOverlay';
 import { useTerminalMcpApprovals } from '../workspace/mcpApprovals/useServerMcpApprovals';
 import { McpApprovalStrip } from './McpApprovalStrip';
 import { registerAppWindowPane } from '../workspace/appWindows/appWindowPanes';
+import { isLocalConnection } from '../workspace/serverUpgradeModel';
 import { appWindowPaneKey } from '../workspace/appWindows/useServerAppWindows';
 import { useTerminalWorkflow } from '../workspace/workflows/useServerWorkflows';
 import { WorkflowPanel } from '../workspace/workflows/WorkflowPanel';
@@ -96,10 +101,13 @@ import {
 import { copyTerminalSelection } from './terminalClipboardInteraction';
 import { createTerminalOsc52Handler } from './terminalOsc52';
 import {
+	droppedFileSources,
 	escapeTerminalPathForShell,
 	getTerminalDropText,
 	shouldInterceptTerminalDrop,
-	uploadBrowserTerminalDrop,
+	type TerminalDroppedFileUploader,
+	type TerminalDropItems,
+	uploadTerminalDropFiles,
 } from './terminalDropInteraction';
 import { endedTerminalNotice, replayEndedTerminal } from './endedTerminalReplay';
 import {
@@ -315,6 +323,15 @@ export const TERMINAL_PANEL_INPUT_EVENT = 'terminay-terminal-panel-input';
 export const TERMINAL_PANEL_OUTPUT_EVENT = 'terminay-terminal-panel-output';
 export const TERMINAL_PANEL_EXIT_EVENT = 'terminay-terminal-panel-exit';
 const TERMINAL_CONTEXT_MAX_LINES = 200;
+/** A drop upload's progress as a whole percentage; an all-empty drop is done. */
+function dropPercent(progress: {
+	readonly sentBytes: number;
+	readonly totalBytes: number;
+}): number {
+	if (progress.totalBytes === 0) return 100;
+	return Math.round((progress.sentBytes / progress.totalBytes) * 100);
+}
+
 function mobileTerminalModifierKeyClassName(
 	latch: TerminalMobileModifierLatch,
 ): string {
@@ -567,6 +584,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	);
 	const pasteTerminalTextRef = useRef<(text: string) => void>(() => {});
 	const cancelTerminalPasteRef = useRef<() => void>(() => {});
+	// The drop upload in progress, which its Stop control aborts.
+	const fileDropAbortRef = useRef<AbortController | null>(null);
 	const mobileTerminalModifiersRef = useRef<TerminalMobileModifiers>(
 		EMPTY_TERMINAL_MOBILE_MODIFIERS,
 	);
@@ -585,13 +604,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	// This belongs to the mounted xterm, rather than to a connection attempt.
 	// A retry can therefore resume a display that still contains its prior bytes.
 	const renderedPositionRef = useRef<number | null>(null);
-	const browserFileDropContextRef = useRef<
-		| Pick<
-				TerminalPanelClientContextValue,
-				'fileViewerClient' | 'projectId' | 'projectRoot'
-		  >
-		| undefined
-	>(undefined);
+	/**
+	 * How this terminal serves a File drop (ADR-0113): Desktop's native path
+	 * only when the terminal runs on this machine's own Local server; otherwise
+	 * an upload to the terminal's server, when that server accepts one.
+	 */
+	const fileDropRouteRef = useRef<{
+		readonly resolveNativePath: typeof resolveDesktopDroppedFilePath | undefined;
+		readonly upload: TerminalDroppedFileUploader | undefined;
+	}>({ resolveNativePath: undefined, upload: undefined });
 	const browserClipboardContextRef = useRef<
 		| Readonly<{
 				client: TerminayTerminalClient;
@@ -654,9 +675,20 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	// An attach or renewal that failed on the dying transport is the reconnect's
 	// story, and the workspace overlay is already telling it. The rebind onto
 	// the replacement connection clears the error either way.
-	const connectionReconnecting = isConnectionReconnecting(
-		useServerConnection(terminalClientContext?.serverId)?.phase,
+	const terminalServerConnection = useServerConnection(
+		terminalClientContext?.serverId,
 	);
+	const connectionReconnecting = isConnectionReconnecting(
+		terminalServerConnection?.phase,
+	);
+	const { profiles: connectionProfiles } = useConnections();
+	const terminalServerIsLocal =
+		terminalServerConnection !== undefined &&
+		isLocalConnection(terminalServerConnection, connectionProfiles);
+	const terminalServerAcceptsFileDrops =
+		terminalServerConnection?.hello?.capabilities.includes(
+			TERMINAL_FILE_DROP_CAPABILITY,
+		) === true;
 	const connectionActionsRef = useRef(terminalClientContext);
 	connectionActionsRef.current = terminalClientContext;
 	const boundTerminalClientRef = useRef(terminalClientContext?.client);
@@ -670,14 +702,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		terminalClientContext === null
 			? undefined
 			: new TerminayTerminalPanelClient(terminalClientContext.client);
-	browserFileDropContextRef.current =
-		terminalClientContext === null
-			? undefined
-			: {
-					fileViewerClient: terminalClientContext.fileViewerClient,
-					projectId: terminalClientContext.projectId,
-					projectRoot: terminalClientContext.projectRoot,
-				};
 	browserClipboardContextRef.current =
 		terminalClientContext === null
 			? undefined
@@ -689,6 +713,33 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						sessionId: props.params.sessionId,
 					},
 				};
+	fileDropRouteRef.current = {
+		resolveNativePath:
+			window.terminayHost?.resolveDroppedFilePath !== undefined &&
+			terminalServerIsLocal
+				? resolveDesktopDroppedFilePath
+				: undefined,
+		upload:
+			terminalClientContext === null || !terminalServerAcceptsFileDrops
+				? undefined
+				: (files, readPart) =>
+						terminalClientContext.client.uploadDroppedFiles(
+							{
+								serverId: terminalClientContext.serverId,
+								projectId: terminalClientContext.projectId,
+								sessionId: props.params.sessionId,
+							},
+							files,
+							readPart,
+							{
+								...(fileDropAbortRef.current === null
+									? {}
+									: { signal: fileDropAbortRef.current.signal }),
+								onProgress: (sentBytes, totalBytes) =>
+									setFileDropProgress({ sentBytes, totalBytes }),
+							},
+						),
+	};
 	const contextPanelClient = useMemo(() => {
 		if (terminalClientContext === null) return undefined;
 		return createReplaceableTerminalPanelClient(
@@ -746,6 +797,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [isRemoteSizeOverrideActive, setIsRemoteSizeOverrideActive] =
 		useState(false);
 	const [isTerminalHydrating, setIsTerminalHydrating] = useState(true);
+	const [fileDropProgress, setFileDropProgress] = useState<{
+		readonly sentBytes: number;
+		readonly totalBytes: number;
+	} | null>(null);
+	// A drop still uploading when the pane goes away has nowhere to land.
+	useEffect(() => () => fileDropAbortRef.current?.abort(), []);
 	const [terminalPasteProgress, setTerminalPasteProgress] = useState<Pick<
 		TerminalPasteProgress,
 		'completedBytes' | 'totalBytes'
@@ -1271,14 +1328,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		const terminalSessionUnavailable =
 			props.params.terminalSessionStatus !== undefined &&
 			props.params.terminalSessionStatus !== 'running';
-		const canUploadBrowserFiles = () => {
-			const browserDropContext = browserFileDropContextRef.current;
-			return (
-				window.terminayHost?.resolveDroppedFilePath === undefined &&
-				browserDropContext?.fileViewerClient !== undefined &&
-				browserDropContext.projectRoot !== undefined
-			);
-		};
 		let serverAttachmentFailed = false;
 		// Set when the server refused the last attach's position, so Retry asks
 		// for a fresh presentation instead of the same refused resume.
@@ -2739,8 +2788,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				!event.dataTransfer ||
 				!shouldInterceptTerminalDrop(
 					event.dataTransfer,
-					resolveDesktopDroppedFilePath,
-					canUploadBrowserFiles(),
+					fileDropRouteRef.current.resolveNativePath,
 				)
 			) {
 				return;
@@ -2756,8 +2804,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				!event.dataTransfer ||
 				!shouldInterceptTerminalDrop(
 					event.dataTransfer,
-					resolveDesktopDroppedFilePath,
-					canUploadBrowserFiles(),
+					fileDropRouteRef.current.resolveNativePath,
 				)
 			) {
 				return;
@@ -2773,8 +2820,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				!event.dataTransfer ||
 				!shouldInterceptTerminalDrop(
 					event.dataTransfer,
-					resolveDesktopDroppedFilePath,
-					canUploadBrowserFiles(),
+					fileDropRouteRef.current.resolveNativePath,
 				)
 			) {
 				return;
@@ -2785,35 +2831,63 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			event.preventDefault();
 			event.stopPropagation();
 
-			let droppedText = getTerminalDropText(
-				event.dataTransfer,
-				resolveDesktopDroppedFilePath,
-			);
-			const browserDropContext = browserFileDropContextRef.current;
+			const route = fileDropRouteRef.current;
+			const dataTransfer = event.dataTransfer;
+			let droppedText: string | null = null;
+			// A remote terminal never receives a path from this machine: its File
+			// drops are uploaded instead, whatever text the drag also carries.
 			if (
-				!droppedText &&
-				canUploadBrowserFiles() &&
-				browserDropContext?.fileViewerClient &&
-				browserDropContext.projectRoot
+				dataTransfer.files.length === 0 ||
+				route.resolveNativePath !== undefined ||
+				dataTransfer.types.includes('terminay/path')
 			) {
-				try {
-					droppedText = await uploadBrowserTerminalDrop(
-						event.dataTransfer.files,
-						browserDropContext.projectRoot,
-						(path, bytes) =>
-							browserDropContext.fileViewerClient!.createFile(
-								path,
-								bytes,
-								browserDropContext.projectId,
-							),
-					);
-				} catch (error) {
-					console.error('Browser file drop upload failed', error);
+				droppedText = getTerminalDropText(dataTransfer, route.resolveNativePath);
+			}
+			if (!droppedText && dataTransfer.files.length > 0) {
+				// Read before the first await: the browser empties the drop's items
+				// once this handler yields.
+				const dropped = droppedFileSources(
+					dataTransfer.files,
+					dataTransfer.items as unknown as TerminalDropItems,
+				);
+				const failDrop = (reason: string) =>
 					terminal.write(
-						'\r\n\x1b[31m[file drop failed: the file could not be uploaded]\x1b[0m\r\n',
+						`\r\n\x1b[31m[file drop failed: ${reason}]\x1b[0m\r\n`,
 					);
+				if (dropped.hasFolder) {
+					failDrop('folders cannot be copied to this terminal’s server');
 					return;
 				}
+				if (route.upload === undefined) {
+					failDrop('this terminal’s server cannot receive dropped files');
+					return;
+				}
+				if (fileDropAbortRef.current !== null) {
+					failDrop('another drop is still uploading');
+					return;
+				}
+				const controller = new AbortController();
+				fileDropAbortRef.current = controller;
+				setFileDropProgress({
+					sentBytes: 0,
+					totalBytes: dropped.files.reduce((sum, file) => sum + file.size, 0),
+				});
+				try {
+					droppedText = await uploadTerminalDropFiles(
+						dropped.files,
+						route.upload,
+					);
+				} catch (error) {
+					if (!controller.signal.aborted) {
+						console.error('Terminal file drop upload failed', error);
+						failDrop('the file could not be copied to the server');
+					}
+					return;
+				} finally {
+					fileDropAbortRef.current = null;
+					setFileDropProgress(null);
+				}
+				if (controller.signal.aborted) return;
 			}
 			if (!droppedText) return;
 
@@ -3513,6 +3587,31 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						setTerminalInputNotice(null);
 						terminalRef.current?.focus();
 					}}>{!terminalInputNotice.canContinue ? 'Waiting for terminal' : terminalInputNotice.kind === 'overflow' ? 'Continue typing' : 'Dismiss'}</button>
+				</div>
+			) : null}
+			{fileDropProgress ? (
+				<div className="terminal-paste-progress">
+					<span
+						role="status"
+						aria-live="polite"
+						aria-label={`Copying dropped files to the server: ${dropPercent(fileDropProgress)}%`}
+					>
+						Uploading {dropPercent(fileDropProgress)}%
+					</span>
+					<progress
+						max={Math.max(fileDropProgress.totalBytes, 1)}
+						value={fileDropProgress.sentBytes}
+					/>
+					<button
+						type="button"
+						onMouseDown={(event) => event.preventDefault()}
+						onClick={() => {
+							fileDropAbortRef.current?.abort();
+							terminalRef.current?.focus();
+						}}
+					>
+						Stop
+					</button>
 				</div>
 			) : null}
 			{terminalPasteProgress ? (

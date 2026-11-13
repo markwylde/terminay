@@ -531,7 +531,7 @@ markwylde/terminay` to add tools. The image runs with `--cap-drop=ALL`,
 `--security-opt no-new-privileges`, and `--read-only` given a writable
 `/var/lib/terminay` and `/tmp`.
 
-### Files attached in app windows
+### Files attached in app windows or dropped on a terminal
 
 When a person attaches a file to a message they send from an app window, the
 server writes it to `terminay-attachments` under its temporary directory
@@ -550,6 +550,15 @@ the directory grows until the operating system clears it. Two things follow:
   ```sh
   find "${TMPDIR:-/tmp}/terminay-attachments" -type f -mtime +7 -delete
   ```
+
+Files dropped onto a terminal from another machine, whether from Desktop or a
+browser, follow the same rules. The server writes them to `terminay-drops`, in a
+new folder for each drop, keeps each file's name, and types the paths into the
+terminal. The same `tmpfs` limits and clean-up apply:
+
+```sh
+find "${TMPDIR:-/tmp}/terminay-drops" -mindepth 1 -mtime +7 -delete
+```
 
 The image declares a health check against the server's readiness endpoint,
 which listens on loopback inside the container and returns lifecycle status

@@ -21,6 +21,30 @@ export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = 'terminal.presentation
 export const TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION =
 	'terminal.materialize-clipboard-image';
 
+/** Files dropped on a terminal, streamed to its server's scratch (ADR-0113). */
+export const TERMINAL_FILE_DROP_OPERATIONS = Object.freeze({
+	begin: 'terminal.drop-begin',
+	part: 'terminal.drop-part',
+	finish: 'terminal.drop-finish',
+	cancel: 'terminal.drop-cancel',
+} as const);
+/** The capability a server advertises when it accepts terminal file drops. */
+export const TERMINAL_FILE_DROP_CAPABILITY = 'terminal-file-drop.v1' as const;
+export const MAX_TERMINAL_FILE_DROP_FILES = 64;
+export const MAX_TERMINAL_FILE_DROP_PART_BYTES = 1024 * 1024;
+
+/** A file offered to a terminal drop: a name for the server to keep, and its size. */
+export interface TerminalDroppedFile {
+	readonly name: string;
+	readonly size: number;
+}
+
+export interface TerminalFileDropOptions {
+	readonly signal?: AbortSignal;
+	/** Called after each part is acknowledged, with the bytes the server has taken so far. */
+	readonly onProgress?: (sentBytes: number, totalBytes: number) => void;
+}
+
 /**
  * A bounded amount of raw PTY output may arrive after an attachment is
  * subscribed but before its binary checkpoint has been written to xterm.
@@ -1154,6 +1178,116 @@ export class TerminayTerminalClient {
 		return (result as { path: string }).path;
 	}
 
+	/**
+	 * Copy dropped files to the terminal's server and return their server paths,
+	 * in order. Each file goes in parts, the next read only once the last is
+	 * acknowledged, so nothing here holds a whole file. On any failure or abort
+	 * the server is told to remove what arrived.
+	 */
+	async uploadDroppedFiles(
+		identity: TerminalClientIdentity,
+		files: readonly TerminalDroppedFile[],
+		readPart: (
+			file: number,
+			offset: number,
+			length: number,
+		) => Promise<Uint8Array>,
+		options: TerminalFileDropOptions = {},
+	): Promise<readonly string[]> {
+		const commandWithBody = this.transport.commandWithBody;
+		if (typeof commandWithBody !== 'function')
+			throw new Error(
+				'the connected server transport does not support file drops',
+			);
+		if (
+			files.length === 0 ||
+			files.length > MAX_TERMINAL_FILE_DROP_FILES ||
+			files.some(
+				(file) =>
+					typeof file.name !== 'string' ||
+					file.name.length === 0 ||
+					!Number.isSafeInteger(file.size) ||
+					file.size < 0,
+			)
+		)
+			throw new TypeError('dropped files are invalid');
+		const signal = options.signal;
+		const command = signal === undefined ? {} : { signal };
+		signal?.throwIfAborted();
+		const begun = await this.invoke<JsonValue>(
+			TERMINAL_FILE_DROP_OPERATIONS.begin,
+			{
+				identity: identityPayload(identity),
+				files: files.map(({ name, size }) => ({ name, size })),
+			},
+			command,
+		);
+		const uploadId =
+			typeof begun === 'object' && begun !== null && !Array.isArray(begun)
+				? (begun as { uploadId?: unknown }).uploadId
+				: undefined;
+		if (typeof uploadId !== 'string' || uploadId.length === 0)
+			throw new Error('file drop upload returned no upload id');
+		const total = files.reduce((sum, file) => sum + file.size, 0);
+		let sent = 0;
+		try {
+			for (const [file, { size }] of files.entries()) {
+				for (let offset = 0; offset < size; ) {
+					signal?.throwIfAborted();
+					const part = await readPart(
+						file,
+						offset,
+						Math.min(MAX_TERMINAL_FILE_DROP_PART_BYTES, size - offset),
+					);
+					if (
+						!(part instanceof Uint8Array) ||
+						part.byteLength === 0 ||
+						part.byteLength > MAX_TERMINAL_FILE_DROP_PART_BYTES ||
+						offset + part.byteLength > size
+					)
+						throw new Error('the dropped file changed while it was being read');
+					signal?.throwIfAborted();
+					const response = await commandWithBody.call(
+						this.transport,
+						TERMINAL_FILE_DROP_OPERATIONS.part,
+						{ uploadId, file, offset },
+						Uint8Array.from(part),
+						command,
+					);
+					throwIfCommandFailed(TERMINAL_FILE_DROP_OPERATIONS.part, response);
+					offset += part.byteLength;
+					sent += part.byteLength;
+					options.onProgress?.(sent, total);
+				}
+			}
+			signal?.throwIfAborted();
+			const finished = await this.invoke<JsonValue>(
+				TERMINAL_FILE_DROP_OPERATIONS.finish,
+				{ uploadId },
+				command,
+			);
+			const paths =
+				typeof finished === 'object' &&
+				finished !== null &&
+				!Array.isArray(finished)
+					? (finished as { paths?: unknown }).paths
+					: undefined;
+			if (
+				!Array.isArray(paths) ||
+				paths.length !== files.length ||
+				paths.some((path) => typeof path !== 'string' || path.length === 0)
+			)
+				throw new Error('file drop upload returned no paths');
+			return paths as string[];
+		} catch (error) {
+			// Best effort and unsignalled: the reason for stopping is often that `signal` aborted.
+			await this.transport
+				.command(TERMINAL_FILE_DROP_OPERATIONS.cancel, { uploadId })
+				.catch(() => undefined);
+			throw error;
+		}
+	}
+
 	async write(
 		mutable: MutableAttachment,
 		data: Uint8Array | string,
@@ -1242,6 +1376,7 @@ export class TerminayTerminalClient {
 			options,
 		);
 		if (isCommandEnvelope(response)) {
+			throwIfCommandFailed(operation, response);
 			if (response.result === undefined)
 				throw new Error(`terminal operation ${operation} returned no result`);
 			return response.result as T;
@@ -1268,6 +1403,16 @@ export class TerminayTerminalClient {
 			throw new Error(`terminal operation ${operation} failed${detail}`);
 		}
 	}
+}
+
+function throwIfCommandFailed(operation: string, response: unknown): void {
+	if (!isCommandEnvelope(response) || response.ok !== false) return;
+	const detail =
+		typeof response.error?.message === 'string' &&
+		response.error.message.length > 0
+			? `: ${response.error.message}`
+			: '';
+	throw new Error(`terminal operation ${operation} failed${detail}`);
 }
 
 class AttachmentView implements TerminalClientAttachment {
