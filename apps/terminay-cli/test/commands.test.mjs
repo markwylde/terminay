@@ -113,13 +113,21 @@ const openSockets = [];
  * home is too deep for a Unix socket path on macOS, so the record's data root
  * is pointed at a short directory holding a fake one.
  */
-async function pointHealthAtFixture(layout, port, probe = { ok: true, shell: '/bin/sh' }) {
+async function pointHealthAtFixture(
+	layout,
+	port,
+	probe = { ok: true, shell: '/bin/sh' },
+	statusExtra = {},
+) {
 	const recordPath = layout.recordPath;
 	const record = JSON.parse(await readFile(recordPath, 'utf8'));
 	const dataRoot = await mkdtemp(join(tmpdir(), 'tsock-'));
 	const socket = await startFakeApprovalSocket(dataRoot, (request) =>
 		request.op === 'status'
-			? { ok: true, status: { ready: true, version: 'fake', exposeModes: [] } }
+			? {
+					ok: true,
+					status: { ready: true, version: 'fake', exposeModes: [], ...statusExtra },
+				}
 			: request.op === 'probe-terminal'
 				? { ok: true, terminal: probe }
 				: { ok: false, error: 'not faked' },
@@ -2696,6 +2704,36 @@ test('a unit that already matches its release is not touched by an upgrade with 
 			const calls = fake.invocations().slice(before);
 			assert.equal(calls.includes(RELOAD), false);
 			assert.equal(calls.includes(RESTART), false);
+		},
+	);
+});
+
+test('status says when the server runs under a private /tmp, and what is being done about it', async () => {
+	for (const [unitRepair, expected] of [
+		['requested', /^unit {9}repair requested from the upgrade helper/mu],
+		['needed', /^unit {9}needs repair: run `terminay daemon upgrade`/mu],
+	]) {
+		await withMachine(
+			{ releases: UNSAFE_THEN_SAFE },
+			async ({ health, fake, layout, installDependencies, write, lines }) => {
+				await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+				await pointHealthAtFixture(layout, health.port, undefined, { unitRepair });
+				lines.length = 0;
+				const report = await runStatus(upgradeContext(layout, fake, write, await readInstallRecord(layout)));
+				assert.equal(report.unitRepair, unitRepair);
+				assert.match(lines.join('\n'), expected);
+			},
+		);
+	}
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ health, fake, layout, installDependencies, write, lines }) => {
+			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port);
+			lines.length = 0;
+			const report = await runStatus(upgradeContext(layout, fake, write, await readInstallRecord(layout)));
+			assert.equal(report.unitRepair, undefined);
+			assert.doesNotMatch(lines.join('\n'), /repair/u);
 		},
 	);
 });

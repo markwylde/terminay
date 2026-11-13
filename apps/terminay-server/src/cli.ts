@@ -146,6 +146,10 @@ import { createCompositionTerminalOpener } from './mcp/openTerminal.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 import { releaseUpgraderFromEnvironment } from './releaseUpgrader.js';
+import {
+	requestUnitRepairIfNeeded,
+	type UnitRepairState,
+} from './unitRepair.js';
 import { assertAdvertisedPortIsBindable } from './remote/advertisedIcePort.js';
 import {
 	approvalSocketPath,
@@ -441,6 +445,9 @@ else if (options.command === 'mcp') {
 								? {}
 								: { host: options.healthHost }),
 						});
+			// ADR-0115: what this server knows about its own unit's /tmp, for
+			// `daemon status`. Settled in the background after start-up.
+			let unitRepair: UnitRepairState = 'not-needed';
 			const start = async (): Promise<void> => {
 				try {
 					const healthAddress = await healthServer?.start();
@@ -487,6 +494,7 @@ else if (options.command === 'mcp') {
 									...(options.publicHost === undefined
 										? {}
 										: { publicHost: options.publicHost.host }),
+									...(unitRepair === 'not-needed' ? {} : { unitRepair }),
 									...(advertised === undefined
 										? {}
 										: {
@@ -521,6 +529,26 @@ else if (options.command === 'mcp') {
 								}),
 						},
 					});
+					// Only a release's standalone server on Linux can be under a
+					// unit's private /tmp. Not awaited: it may wait for a running
+					// upgrade helper, and the server serves meanwhile.
+					if (options.command === 'start' && process.platform === 'linux') {
+						const upgrader = releaseUpgraderFromEnvironment(process.env);
+						void requestUnitRepairIfNeeded({
+							dataRoot: options.dataRoot,
+							requestFile: async () => {
+								if (upgrader === undefined) return undefined;
+								const report = await upgrader.check();
+								return report.trigger.kind === 'request-file'
+									? report.trigger.path
+									: undefined;
+							},
+							onDiagnostic: (message) =>
+								process.stderr.write(`[terminay-server] unit: ${message}\n`),
+						}).then((state) => {
+							unitRepair = state;
+						});
+					}
 					const rendererDirectory = process.env.TERMINAY_UI_RENDERER_DIRECTORY;
 					// A server nobody exposed may legitimately have no workspace UI: it
 					// is a protocol-only deployment. An exposed one may not. Without

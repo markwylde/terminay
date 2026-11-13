@@ -107,7 +107,7 @@ At start-up, a safe-release server reads `/proc/self/mountinfo`. A private
 `/systemd-private-`.
 
 - **System scope:** the server polls
-  `systemctl is-active terminay-server-upgrade.service` with a bounded backoff,
+  `systemctl is-active terminay-upgrade.service` with a bounded backoff,
   up to the helper's 30-minute `TimeoutStartSec`. Once the helper is inactive,
   it writes the existing request file that `PathChanged` watches. This
   matters because an older upgrader may still be running its readiness wait,

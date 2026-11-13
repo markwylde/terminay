@@ -51,6 +51,8 @@ export interface ServerStatus {
 	readonly exposeModes: readonly string[];
 	readonly publicHost?: string;
 	readonly advertiseAddress?: string;
+	/** The unit gives the server a private /tmp (ADR-0115). */
+	readonly unitRepair?: 'requested' | 'needed';
 }
 
 export type ApprovalResponse =

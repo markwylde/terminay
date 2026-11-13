@@ -16,9 +16,9 @@
 
 ## 3. Server self-repair
 
-- [ ] 3.1 Add `detectPrivateTmp(mountinfo)` in `apps/terminay-server/src`. Verified by: tests on `/proc/self/mountinfo` fixtures captured in the CI container from a `PrivateTmp=true` unit (detected) and a normal unit (not detected).
-- [ ] 3.2 On start-up, when private `/tmp` is detected and a system-scope helper exists: poll `systemctl is-active` on the helper service with a bounded backoff (at most 30 minutes), then write the request file once, and record the attempt by boot id in the data root. Otherwise, report through diagnostics and the health payload. Verified by: tests with an injected systemctl for a helper already inactive (immediate request), a helper active then inactive (request only afterwards), a helper that never goes inactive (report, no request), one request per boot, and the user-scope report text.
-- [ ] 3.3 Show the report in `daemon status`. Verified by: a status test with a health payload carrying the report.
+- [x] 3.1 Add `detectPrivateTmp(mountinfo)` in `apps/terminay-server/src`. Verified by: tests on `/proc/self/mountinfo` fixtures captured in the CI container from a `PrivateTmp=true` unit (detected) and a normal unit (not detected).
+- [x] 3.2 On start-up, when private `/tmp` is detected and a system-scope helper exists: poll `systemctl is-active` on the helper service with a bounded backoff (at most 30 minutes), then write the request file once, and record the attempt by boot id in the data root. Otherwise, report through diagnostics and the health payload. Verified by: tests with an injected systemctl for a helper already inactive (immediate request), a helper active then inactive (request only afterwards), a helper that never goes inactive (report, no request), one request per boot, and the user-scope report text.
+- [x] 3.3 Show the report in `daemon status`. Verified by: a status test with a health payload carrying the report.
 
 ## 4. Holder health and the banner
 

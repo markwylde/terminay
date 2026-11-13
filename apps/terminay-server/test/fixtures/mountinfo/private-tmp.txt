@@ -1,0 +1,7 @@
+24 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw,errors=remount-ro
+25 24 0:22 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+26 24 0:23 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw
+27 24 0:5 / /dev rw,nosuid,relatime shared:2 - devtmpfs udev rw,size=8126464k,nr_inodes=2031616,mode=755
+31 24 0:26 / /run rw,nosuid,nodev,noexec,relatime shared:5 - tmpfs tmpfs rw,size=1631216k,mode=755
+812 24 259:2 /tmp/systemd-private-5b1e7f0c2a3d4e9f8a7b6c5d4e3f2a1b-terminay-server.service-Xq3Lp2/tmp /tmp rw,relatime shared:418 master:1 - ext4 /dev/nvme0n1p2 rw,errors=remount-ro
+813 24 259:2 /var/tmp/systemd-private-5b1e7f0c2a3d4e9f8a7b6c5d4e3f2a1b-terminay-server.service-B7kQw9/tmp /var/tmp rw,relatime shared:419 master:1 - ext4 /dev/nvme0n1p2 rw,errors=remount-ro
