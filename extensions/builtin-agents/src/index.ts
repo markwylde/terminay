@@ -93,7 +93,7 @@ export function createBuiltInAgentsExtension(
 					createSessionSource(options.source),
 				),
 			);
-			// A fresh locator per activation: CLIs are looked up once, then cached.
+			// A fresh locator per activation: a found CLI is cached, a missing one is looked up again.
 			const locator = createAgentLocator(options.locator);
 			context.subscriptions.add(
 				context.agents.registerChatProvider(

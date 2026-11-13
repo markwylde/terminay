@@ -19,7 +19,7 @@ const INTERRUPT_ACK_MS = 2_000;
 const NOT_SIGNED_IN =
 	'Claude Code is not signed in. Run `claude` in a terminal to sign in.';
 const NOT_INSTALLED =
-	'Claude Code is not installed. Install it, or set TERMINAY_CLAUDE_CODE_COMMAND to its path.';
+	'Install it from https://code.claude.com/docs/en/setup, or set TERMINAY_CLAUDE_CODE_COMMAND to its path.';
 
 export type ClaudeCodeChatOptions = {
 	/** Resolves the `claude` executable; undefined when it is not installed. */
