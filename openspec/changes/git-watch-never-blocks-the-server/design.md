@@ -232,7 +232,7 @@ behaviour), and the remaining project keeps its observation.
 ### 10. Evidence
 
 The inspector stack samples and the timeline are recorded in
-`openspec/adr/evidence/linux-recursive-watch-stall.md` for ADR-0113.
+`openspec/adr/evidence/linux-recursive-watch-stall.md` for ADR-0114.
 
 ## Risks / Trade-offs
 
@@ -263,4 +263,4 @@ release.
 ## Open Questions
 
 None. ADR-0028 (no polling without owner approval, which supersedes ADR-0022)
-stays in force and is honoured. ADR-0113 records the new commitment.
+stays in force and is honoured. ADR-0114 records the new commitment.

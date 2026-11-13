@@ -10,7 +10,7 @@ import type { GitWatchHandle, GitWatchOptions } from './types.js';
  * Node's own `recursive: true` on Linux re-walks the changed folder with
  * `readdirSync` on the main thread for every event, and descends into every
  * ignored tree. A build churning `dist/` in a large repository then holds the
- * event loop for minutes (ADR-0113). This watch never walks synchronously:
+ * event loop for minutes (ADR-0114). This watch never walks synchronously:
  * all discovery runs from a queue, one bounded step per macrotask, and the
  * caller's `filterDirectories` keeps it out of ignored trees.
  */

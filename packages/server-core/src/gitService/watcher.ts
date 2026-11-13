@@ -25,7 +25,7 @@ export interface NodeGitStateWatcherOptions {
  * ReadDirectoryChangesW on Windows. On Linux, where Node emulates recursion by
  * re-walking trees synchronously on the event loop, a recursive watch is built
  * from per-directory watches that skip what `filterDirectories` excludes
- * (ADR-0113). Any failure surfaces as `onError`, never as a silent gap.
+ * (ADR-0114). Any failure surfaces as `onError`, never as a silent gap.
  */
 export class NodeGitStateWatcher implements GitStateWatcher {
 	readonly #buildsRecursiveWatches: boolean;

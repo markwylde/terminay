@@ -13,7 +13,7 @@ const linuxOnly = process.platform === "linux" ? {} : { skip: "built-up watches 
 
 /**
  * The Git service with the built-up (Linux) recursive watch, against real
- * repositories, on any OS. Proves what ADR-0113 promises at the service
+ * repositories, on any OS. Proves what ADR-0114 promises at the service
  * boundary: ignored churn schedules nothing, Git decides what is ignored,
  * ignore inputs re-filter, nested worktrees keep their own watch, and any
  * failure falls into on-demand measurement.

@@ -1,4 +1,4 @@
-# ADR-0113: Git watches never walk a tree on the event loop, and skip what Git ignores
+# ADR-0114: Git watches never walk a tree on the event loop, and skip what Git ignores
 
 Status: accepted
 Date: 2026-11-13

@@ -13,7 +13,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0113-git-watches-never-walk-a-tree-on-the-event-loop-and-skip-what-git-ignores.md - no watch walks a tree synchronously on the server event loop; built-up (Linux) watches skip Git-ignored and inert directories, are bounded by a directory ceiling, and fail into on-demand measurement.
+- openspec/adr/0114-git-watches-never-walk-a-tree-on-the-event-loop-and-skip-what-git-ignores.md - no watch walks a tree synchronously on the server event loop; built-up (Linux) watches skip Git-ignored and inert directories, are bounded by a directory ceiling, and fail into on-demand measurement.
 
 ## Notes
 
