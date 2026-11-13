@@ -1,8 +1,9 @@
 /**
  * Terminal drop handling deliberately distinguishes portable text/path drops
- * from Desktop File-object drops. Browsers do not expose an absolute path for
- * File objects, so resolving one is a privileged Desktop compatibility
- * capability, never part of a server-backed terminal attachment.
+ * from File-object drops. A native path is inserted only when Desktop can
+ * resolve one and the terminal runs on this machine's own Local server; every
+ * other File drop is copied to the terminal's server, which answers with paths
+ * valid there (ADR-0113).
  */
 export interface TerminalDropData {
   readonly types: readonly string[]
@@ -11,8 +12,19 @@ export interface TerminalDropData {
 }
 
 export type TerminalDroppedFilePathResolver = (file: unknown) => string | undefined
-export type TerminalDroppedFileUploader = (path: string, bytes: Uint8Array<ArrayBuffer>) => Promise<void>
-export const MAX_TERMINAL_DROP_UPLOAD_BYTES = 4 * 1024 * 1024
+
+/** A File as a drop hands it over: enough to name it and read it in parts. */
+export interface TerminalDroppedFileSource {
+  readonly name: string
+  readonly size: number
+  slice(start: number, end: number): { arrayBuffer(): Promise<ArrayBuffer> }
+}
+
+/** Streams named files to the terminal's server and answers with their server paths. */
+export type TerminalDroppedFileUploader = (
+  files: readonly { readonly name: string; readonly size: number }[],
+  readPart: (file: number, offset: number, length: number) => Promise<Uint8Array>,
+) => Promise<readonly string[]>
 
 function hasControlCharacters(value: string): boolean {
   return Array.from(value).some(character => {
@@ -133,45 +145,70 @@ function getNativeFilePath(
 export function shouldInterceptTerminalDrop(
   dataTransfer: TerminalDropData,
   resolveDesktopFilePath?: TerminalDroppedFilePathResolver,
-  canUploadBrowserFiles = false,
 ): boolean {
   if (dataTransfer.types.includes('terminay/path')) {
     return true
   }
 
-  // Desktop resolves a native path; web clients must have a server-scoped
-  // uploader before claiming a browser-local File drop.
-  if (dataTransfer.types.includes('Files') && (resolveDesktopFilePath || canUploadBrowserFiles)) {
+  // Claim every OS file drop: a native path or an upload serves it, and one
+  // that neither can serve fails visibly rather than letting the browser open
+  // the file in place of the app.
+  if (dataTransfer.types.includes('Files')) {
     return true
   }
 
   return getTerminalDropText(dataTransfer, resolveDesktopFilePath) !== null
 }
 
-export async function uploadBrowserTerminalDrop(
+/** The item list a drop event carries, as far as telling folders apart needs. */
+export interface TerminalDropItems {
+  readonly length: number
+  readonly [index: number]: { readonly kind: string; webkitGetAsEntry?: () => { readonly isDirectory: boolean } | null } | undefined
+}
+
+/**
+ * The dropped files, and whether any is a folder. Must be called during the
+ * drop event itself: a browser empties `items` once the handler yields.
+ */
+export function droppedFileSources(
   files: ArrayLike<unknown>,
-  projectRoot: string,
+  items?: TerminalDropItems,
+): { readonly files: readonly TerminalDroppedFileSource[]; readonly hasFolder: boolean } {
+  let hasFolder = false
+  if (items !== undefined) {
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]
+      if (item?.kind === 'file' && item.webkitGetAsEntry?.()?.isDirectory === true) hasFolder = true
+    }
+  }
+  const sources = Array.from(files).filter((value): value is TerminalDroppedFileSource => {
+    const file = value as Partial<TerminalDroppedFileSource>
+    return typeof file.name === 'string' && typeof file.size === 'number' && typeof file.slice === 'function'
+  })
+  return { files: sources, hasFolder }
+}
+
+/**
+ * Copy dropped files to the terminal's server and return the shell-escaped
+ * server paths, space-separated, ready to insert. Files are read part by part.
+ */
+export async function uploadTerminalDropFiles(
+  files: readonly TerminalDroppedFileSource[],
   upload: TerminalDroppedFileUploader,
 ): Promise<string | null> {
-  const prepared: Array<{ name: string; bytes: Uint8Array<ArrayBuffer> }> = []
-  for (const value of Array.from(files)) {
-    const file = value as { name?: unknown; size?: unknown; arrayBuffer?: unknown }
-    if (
-      typeof file.name !== 'string' || file.name.length === 0 || file.name.length > 255 ||
-      file.name === '.' || file.name === '..' || file.name.includes('/') || file.name.includes('\\') || hasControlCharacters(file.name) ||
-      typeof file.size !== 'number' || file.size < 0 || file.size > MAX_TERMINAL_DROP_UPLOAD_BYTES ||
-      typeof file.arrayBuffer !== 'function'
-    ) {
-      throw new Error('Dropped file cannot be uploaded (maximum 4 MB per file).')
+  if (files.length === 0) return null
+  for (const file of files) {
+    if (file.name.length === 0 || hasControlCharacters(file.name) || !Number.isSafeInteger(file.size) || file.size < 0) {
+      throw new Error('A dropped file has no usable name.')
     }
-    const bytes = new Uint8Array(await (file.arrayBuffer as () => Promise<ArrayBuffer>)())
-    if (bytes.byteLength !== file.size || bytes.byteLength > MAX_TERMINAL_DROP_UPLOAD_BYTES) {
-      throw new Error('Dropped file changed or exceeded the upload limit while being read.')
-    }
-    prepared.push({ name: file.name, bytes })
   }
-  if (prepared.length === 0) return null
-  for (const file of prepared) await upload(file.name, file.bytes)
-  const separator = projectRoot.endsWith('/') || projectRoot.endsWith('\\') ? '' : '/'
-  return prepared.map(file => escapeTerminalPathForShell(`${projectRoot}${separator}${file.name}`)).join(' ')
+  const paths = await upload(
+    files.map(({ name, size }) => ({ name, size })),
+    async (index, offset, length) => {
+      const file = files[index]
+      if (file === undefined) throw new RangeError('no such dropped file')
+      return new Uint8Array(await file.slice(offset, offset + length).arrayBuffer())
+    },
+  )
+  return paths.length > 0 ? paths.map(escapeTerminalPathForShell).join(' ') : null
 }

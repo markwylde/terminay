@@ -28,7 +28,13 @@ export type TerminalServiceErrorCode =
 	| 'launcher_unavailable'
 	| 'unsupported_startup_mode'
 	| 'invalid_environment'
-	| 'service_shutdown';
+	| 'service_shutdown'
+	/** A file drop upload that does not exist or belongs to another connection. */
+	| 'upload_not_found'
+	/** Too many file drop uploads are in progress on this connection. */
+	| 'upload_limit'
+	/** The server could not write a dropped file. */
+	| 'upload_failed';
 
 export interface TerminalServiceErrorDetails {
 	readonly serverId?: string;
