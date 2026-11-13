@@ -200,6 +200,13 @@ jobs:
         run: |
           node scripts/prove-secure-werift-offline-rebuild.mjs --prove-mirror "$RUNNER_TEMP/secure-werift-source-mirror"
 
+      - name: Sync package version to the prerelease version
+        env:
+          # The archive's launchers bake in the server package's version, so
+          # without this every Nightly and Canary server reports 0.0.0.
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: node scripts/sync-package-version.mjs "$VERSION"
+
       - name: Build self-contained rolling channel archive
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
@@ -227,12 +234,14 @@ jobs:
           EXPECTED_COMMIT: ${{ github.sha }}
           TARGET: ${{ matrix.target }}
           CHANNEL: ${{ needs.plan.outputs.channel }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           node scripts/probe-standalone-server-archive.mjs \
             --archive "release/server/terminay-server-$CHANNEL-$TARGET.tar.gz" \
             --target "$TARGET" \
             --channel "$CHANNEL" \
-            --revision "$EXPECTED_COMMIT" > "$RUNNER_TEMP/standalone-probe.json"
+            --revision "$EXPECTED_COMMIT" \
+            --version "$VERSION" > "$RUNNER_TEMP/standalone-probe.json"
 
       - name: Write and verify rolling channel checksum
         env:

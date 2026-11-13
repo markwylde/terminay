@@ -21,7 +21,7 @@ const INTERRUPT_ACK_MS = 2_000;
 const NOT_SIGNED_IN =
 	'Codex is not signed in. Run `codex login` in a terminal to sign in.';
 const NOT_INSTALLED =
-	'Codex is not installed. Install it, or set TERMINAY_CODEX_COMMAND to its path.';
+	'Install it from https://learn.chatgpt.com/docs/codex/cli, or set TERMINAY_CODEX_COMMAND to its path.';
 
 /** Features that reach beyond the MCP server, switched off for every session. */
 export const CODEX_ARGUMENTS: readonly string[] = Object.freeze([

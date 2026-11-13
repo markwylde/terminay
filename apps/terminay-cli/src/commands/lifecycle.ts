@@ -1,17 +1,13 @@
 import {
 	type CommandContext,
 	type ForegroundContext,
+	sendToInstalledServer,
 	socketSender,
 } from '../context.js';
-import { probeHealth, waitForReady } from '../health.js';
+import { probeHealth } from '../health.js';
 import { activeVersion } from '../install.js';
-import {
-	approvalSocketPath,
-	requireOk,
-	type ServerStatus,
-	SocketError,
-	sendAsUser,
-} from '../socket.js';
+import { requireOk, type ServerStatus, SocketError } from '../socket.js';
+import { describeFailures, verifyUsable } from '../usable.js';
 
 /**
  * `daemon start`, `daemon stop`, and `daemon status`.
@@ -23,19 +19,27 @@ import {
  * ends up pasted into an issue.
  */
 
-export async function runStart(context: CommandContext): Promise<boolean> {
+export async function runStart(
+	context: CommandContext,
+	dependencies: { readonly timeoutMs?: number } = {},
+): Promise<boolean> {
 	await context.systemd.start();
-	const snapshot = await waitForReady(context.record.healthPort);
-	if (snapshot !== undefined) {
+	const report = await verifyUsable(context.record, {
+		send: (request) => sendToInstalledServer(context, request),
+		...dependencies,
+	});
+	if (report.usable) {
 		context.write(
-			`Terminay Server ${snapshot.version ?? context.record.version} is ready.`,
+			`Terminay Server ${report.health?.version ?? context.record.version} is ready.`,
 		);
 		return true;
 	}
-	context.write(
-		'The server started but has not reported ready. Recent log lines:',
-	);
-	context.write(await context.systemd.journal(20));
+	context.write('The server started, but it is not usable yet:');
+	for (const line of describeFailures(report)) context.write(line);
+	if (report.health === undefined) {
+		context.write('Recent log lines:');
+		context.write(await context.systemd.journal(20));
+	}
 	return false;
 }
 
@@ -59,10 +63,18 @@ export interface StatusReport {
 export async function runStatus(
 	context: CommandContext,
 ): Promise<StatusReport> {
-	const [unit, enabled, snapshot, active] = await Promise.all([
+	const [unit, enabled, usable, active] = await Promise.all([
 		context.systemd.state(),
 		context.systemd.isEnabled(),
-		probeHealth(context.record.healthPort),
+		// Asked once, not waited for: status describes, it does not wait.
+		verifyUsable(context.record, {
+			send: (request) => sendToInstalledServer(context, request),
+			waitForHealth: async (port) => {
+				const snapshot = await probeHealth(port);
+				return snapshot?.ready === true ? snapshot : undefined;
+			},
+			timeoutMs: 0,
+		}),
 		activeVersion(context.layout),
 	]);
 
@@ -73,11 +85,7 @@ export async function runStatus(
 		.filter((mode) => mode.length > 0);
 	try {
 		const response = requireOk(
-			await sendAsUser(
-				approvalSocketPath(context.record.dataRoot),
-				{ op: 'pairing' },
-				context.record.runAs,
-			),
+			await sendToInstalledServer(context, { op: 'pairing' }),
 		);
 		if ('exposure' in response) exposure = response.exposure;
 	} catch {
@@ -90,7 +98,7 @@ export async function runStatus(
 		version: context.record.version,
 		channel: context.record.channel,
 		revision: context.record.revision,
-		ready: snapshot?.ready === true,
+		ready: usable.usable,
 		exposure,
 		...(active === undefined ? {} : { activeVersion: active }),
 		...(context.record.advertiseAddress === undefined
@@ -105,6 +113,8 @@ export async function runStatus(
 	context.write(`channel      ${report.channel}`);
 	context.write(`revision     ${report.revision.slice(0, 12)}`);
 	context.write(`ready        ${report.ready ? 'yes' : 'no'}`);
+	if (!report.ready && usable.health !== undefined)
+		for (const line of describeFailures(usable)) context.write(line);
 	context.write(
 		`exposure     ${report.exposure === 'off' ? 'off' : report.exposure.join(', ') || 'off'}`,
 	);

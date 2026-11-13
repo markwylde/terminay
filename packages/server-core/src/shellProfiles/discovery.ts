@@ -357,9 +357,18 @@ export class ShellProfileDiscoveryService {
 	private async discoverPosix(): Promise<ShellDiscoveryResult> {
 		const platform = this.host.platform as 'darwin' | 'linux';
 		const candidates: Candidate[] = [];
-		if (isAbsoluteSafePath(this.host.accountShell))
+		// A service account is often given a shell that exists to refuse a
+		// login. As a terminal program it exits at once, so it is no candidate
+		// and discovery falls through to a real shell.
+		if (
+			isAbsoluteSafePath(this.host.accountShell) &&
+			!refusesLogin(this.host.accountShell)
+		)
 			addCandidate(candidates, this.host.accountShell, 'account', true);
-		if (isAbsoluteSafePath(this.host.environmentShell))
+		if (
+			isAbsoluteSafePath(this.host.environmentShell) &&
+			!refusesLogin(this.host.environmentShell)
+		)
 			addCandidate(candidates, this.host.environmentShell, 'environment', true);
 
 		const rawShellsText =
@@ -371,7 +380,8 @@ export class ShellProfileDiscoveryService {
 					);
 		const shellsText = typeof rawShellsText === 'string' ? rawShellsText : null;
 		for (const path of parseEtcShells(shellsText))
-			addCandidate(candidates, path, 'etc-shells', true);
+			if (!refusesLogin(path))
+				addCandidate(candidates, path, 'etc-shells', true);
 		for (const path of POSIX_FALLBACKS[platform])
 			addCandidate(candidates, path, 'fallback', true);
 
@@ -1060,4 +1070,10 @@ function issue(
 	message: string,
 ): ShellProfileValidationIssue {
 	return Object.freeze({ code, field, message });
+}
+
+/** `nologin` and `false` exist to refuse a login, wherever they are installed. */
+export function refusesLogin(path: string): boolean {
+	const name = path.slice(path.lastIndexOf('/') + 1);
+	return name === 'nologin' || name === 'false';
 }

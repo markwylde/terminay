@@ -262,3 +262,27 @@ test('on a phone Pixel docks in the header in place of the connection glyph', as
 	await expect(dock(mainWindow)).toHaveCount(0);
 	await expect(row.locator('[data-compact-connection="true"]')).toBeVisible();
 });
+
+test('when its chosen agent is not installed, Pixel says so and links the official install guide', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	// No `codex` is installed in the test container; the fake `claude` is.
+	await setPixel(appHarness, mainWindow, true);
+	const settings = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'pixel' });
+	await settings.getByLabel('Pixel agent').selectOption('Codex');
+	await expect(settings.locator('.settings-status')).toContainText('Saved');
+	await settings.close();
+
+	const statusBarDock = mainWindow.locator('.workspace-status-bar .pixel-dock--status-bar');
+	const install = balloon(mainWindow).getByRole('button', { name: 'Install Codex' });
+	// The built-in agents extension can start after the window, so the
+	// providers are asked for again each time the balloon opens.
+	await expect(async () => {
+		if (await balloon(mainWindow).isVisible()) await statusBarDock.click();
+		await statusBarDock.click();
+		await expect(install).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	await expect(balloon(mainWindow)).toContainText("I'm set up to use Codex, but it isn't installed");
+	await expect(balloon(mainWindow)).toContainText('switch me to Claude Code in Settings > AI > Pixel');
+});

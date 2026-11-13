@@ -1,5 +1,6 @@
+import { accessSync, constants } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 import type { DaemonCommand, DaemonOptions, InstallScope } from './args.js';
 import {
@@ -113,9 +114,43 @@ export function socketSender(
 		const message = noForegroundServerMessage(context.dataRoot);
 		return (request) => sendApprovalRequest(socketPath, request, message);
 	}
-	const socketPath = approvalSocketPath(context.record.dataRoot);
-	const runAs = context.record.runAs;
-	return (request) => sendAsUser(socketPath, request, runAs);
+	return (request) => sendToInstalledServer(context, request);
+}
+
+/**
+ * The Node.js the run-as account executes the dropped socket client with.
+ *
+ * The installed release carries its own runtime, which the service already
+ * runs on, so the account can always execute it. The CLI's own Node.js is
+ * often an nvm or fnm install inside a private home directory the account
+ * cannot enter; it is used only when the release has no runtime to offer.
+ */
+export function serviceNode(
+	layout: InstallLayout,
+	fallback: string = process.execPath,
+): string {
+	const bundled = join(layout.currentLink, 'bin', 'node');
+	try {
+		accessSync(bundled, constants.X_OK);
+		return bundled;
+	} catch {
+		return fallback;
+	}
+}
+
+/** One request to an installed server's socket, as its run-as account. */
+export function sendToInstalledServer(
+	context: CommandContext,
+	request: ApprovalRequest,
+): Promise<ApprovalResponse> {
+	return sendAsUser(
+		approvalSocketPath(context.record.dataRoot),
+		request,
+		context.record.runAs,
+		undefined,
+		undefined,
+		serviceNode(context.layout),
+	);
 }
 
 export interface ResolveContextOptions {

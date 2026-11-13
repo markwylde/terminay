@@ -24,7 +24,10 @@ import { readUpgradeOutcome } from '../dist/outcome.js';
 import { createSystemd } from '../dist/systemd.js';
 import { parseEnvironmentFile } from '../dist/unit.js';
 import { createFakeBin } from './fake-bin.mjs';
-import { startFakeHealthServer } from './fake-server.mjs';
+import {
+	startFakeApprovalSocket,
+	startFakeHealthServer,
+} from './fake-server.mjs';
 import { startReleaseFixture } from './release-fixture.mjs';
 
 const OPTIONS = { allowDowngrade: false, purge: false, yes: false, wait: true };
@@ -88,6 +91,10 @@ async function withMachine(options, run) {
 			},
 		});
 	} finally {
+		for (const { socket, dataRoot } of openSockets.splice(0)) {
+			await socket.close();
+			await rm(dataRoot, { recursive: true, force: true });
+		}
 		await health.close();
 		await releases.close();
 		await fake.close();
@@ -95,13 +102,32 @@ async function withMachine(options, run) {
 	}
 }
 
-/** The health port is fixed in the record, so it is pointed at the fixture. */
-async function pointHealthAtFixture(layout, port) {
+/** Fake approval sockets started for a machine, closed with it. */
+const openSockets = [];
+
+/**
+ * The health port is fixed in the record, so it is pointed at the fixture.
+ *
+ * Ready means usable, so a server whose health answers also needs a socket
+ * that answers status and a terminal probe. The data root under the temporary
+ * home is too deep for a Unix socket path on macOS, so the record's data root
+ * is pointed at a short directory holding a fake one.
+ */
+async function pointHealthAtFixture(layout, port, probe = { ok: true, shell: '/bin/sh' }) {
 	const recordPath = layout.recordPath;
 	const record = JSON.parse(await readFile(recordPath, 'utf8'));
+	const dataRoot = await mkdtemp(join(tmpdir(), 'tsock-'));
+	const socket = await startFakeApprovalSocket(dataRoot, (request) =>
+		request.op === 'status'
+			? { ok: true, status: { ready: true, version: 'fake', exposeModes: [] } }
+			: request.op === 'probe-terminal'
+				? { ok: true, terminal: probe }
+				: { ok: false, error: 'not faked' },
+	);
+	openSockets.push({ socket, dataRoot });
 	await writeFile(
 		recordPath,
-		`${JSON.stringify({ ...record, healthPort: port }, null, 2)}\n`,
+		`${JSON.stringify({ ...record, healthPort: port, dataRoot }, null, 2)}\n`,
 	);
 }
 
@@ -181,7 +207,7 @@ test('install resolves, verifies, unpacks, writes the unit, and starts the servi
 			const output = lines.join('\n');
 			assert.match(output, /Checksum and signature verified\./u);
 			assert.match(output, /direct URL {3}https:\/\/box\.example\.test:8443/u);
-			assert.match(output, /npx terminay daemon qr-code/u);
+			assert.match(output, /terminay daemon qr-code/u);
 			assert.ok(home.length > 0);
 		},
 	);
@@ -2358,6 +2384,97 @@ test('upgrade main moves a canary install to the nightly channel', async () => {
 			const record = await readInstallRecord(machine.layout);
 			assert.equal(record.channel, 'main');
 			assert.equal(record.revision, 'd'.repeat(40));
+		},
+	);
+});
+
+test('start is not ready when health is but terminals cannot start, and says how to fix it', async () => {
+	await withMachine(
+		{ releases: [{ tag: 'v4.1.1', version: '4.1.1', revision: 'a'.repeat(40), latest: true }] },
+		async ({ health, fake, layout, installDependencies, lines, write }) => {
+			await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await pointHealthAtFixture(layout, health.port, {
+				ok: false,
+				shell: '/usr/sbin/nologin',
+				reason: 'exit',
+				exitCode: 1,
+				output: 'This account is currently not available.',
+			});
+			lines.length = 0;
+			const context = {
+				layout,
+				record: await readInstallRecord(layout),
+				systemd: createSystemd({ scope: 'user', env: fake.env() }),
+				write,
+			};
+			assert.equal(await runStart(context), false);
+			const output = lines.join('\n');
+			assert.doesNotMatch(output, /is ready/u);
+			assert.match(output, /\/usr\/sbin\/nologin exited with status 1/u);
+			assert.match(output, /usermod -s \/bin\/bash/u);
+			assert.equal((await runStatus(context)).ready, false);
+		},
+	);
+});
+
+const USABLE = { usable: true, checks: [{ name: 'health', ok: true }, { name: 'socket', ok: true }, { name: 'terminal', ok: true }], health: { status: 'ok', ready: true } };
+
+test('an interactive install ends in pairing; a piped one prints the command', async () => {
+	await withMachine(
+		{ releases: [{ tag: 'v4.1.1', version: '4.1.1', revision: 'a'.repeat(40), latest: true }] },
+		async ({ installDependencies, lines }) => {
+			const paired = [];
+			const tty = { input: Object.assign(new PassThrough(), { isTTY: true }), output: new PassThrough() };
+			const result = await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, {
+				...installDependencies,
+				streams: tty,
+				verify: async () => USABLE,
+				pair: async (context) => {
+					paired.push(context.record.runAs);
+					lines.push('<pairing>');
+				},
+			});
+			assert.equal(result.ready, true);
+			assert.equal(paired.length, 1);
+			const output = lines.join('\n');
+			assert.ok(output.indexOf('installed and running') < output.indexOf('<pairing>'));
+			assert.match(output, /Ctrl\+C ends pairing; the server keeps running/u);
+
+			lines.length = 0;
+			await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, {
+				...installDependencies,
+				verify: async () => USABLE,
+				pair: async () => paired.push('piped'),
+			});
+			assert.equal(paired.length, 1);
+			assert.match(lines.join('\n'), /Pair a device with: {2}terminay daemon qr-code/u);
+		},
+	);
+});
+
+test('install does not call a server running whose terminals cannot start', async () => {
+	await withMachine(
+		{ releases: [{ tag: 'v4.1.1', version: '4.1.1', revision: 'a'.repeat(40), latest: true }] },
+		async ({ installDependencies, lines }) => {
+			const result = await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, {
+				...installDependencies,
+				verify: async () => ({
+					usable: false,
+					health: { status: 'ok', ready: true },
+					checks: [
+						{ name: 'health', ok: true },
+						{ name: 'socket', ok: true },
+						{ name: 'terminal', ok: false, detail: '/usr/sbin/nologin exited with status 1', fix: 'give ada a login shell: sudo usermod -s /bin/bash ada' },
+					],
+				}),
+				pair: async () => assert.fail('an unusable server is not paired with'),
+			});
+			assert.equal(result.ready, false);
+			const output = lines.join('\n');
+			assert.match(output, /installed, but it is not usable yet/u);
+			assert.doesNotMatch(output, /and running/u);
+			assert.match(output, /terminal\s+\/usr\/sbin\/nologin exited with status 1/u);
+			assert.match(output, /fix: give ada a login shell/u);
 		},
 	);
 });

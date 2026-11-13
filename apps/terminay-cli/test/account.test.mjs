@@ -8,11 +8,18 @@ import test from 'node:test';
 import {
 	assertRootForSystemScope,
 	DEDICATED_ACCOUNT,
+	dedicatedLoginShell,
+	ELEVATED_ENV,
+	ensureLoginShell,
+	isRefusingShell,
+	elevatedArguments,
+	elevateThroughSudo,
 	invokingUser,
 	prepareDataRoot,
 	ScopeError,
 	selectRunAs,
 	selectScope,
+	shellQuote,
 } from '../dist/account.js';
 import { createFakeBin } from './fake-bin.mjs';
 
@@ -113,6 +120,9 @@ test('the dedicated account is preselected and created when it is absent', async
 				),
 			'expected the dedicated system account to be created',
 		);
+		const useradd = fake.invocations().find((line) => line.startsWith('useradd'));
+		assert.match(useradd, / --shell \/bin\/(bash|sh) terminay$/u);
+		assert.doesNotMatch(useradd, /nologin/u);
 	} finally {
 		process.env.PATH = originalPath;
 		await fake.close();
@@ -289,4 +299,129 @@ test('an explicit USER still wins, because it is what the operator sees', () => 
 		if (original === undefined) delete process.env.USER;
 		else process.env.USER = original;
 	}
+});
+
+test('a system install re-runs itself through sudo with absolute paths, once', async () => {
+	const argv = elevatedArguments({
+		argv: ['daemon', 'install', 'main'],
+		execPath: '/home/vms/.nvm/versions/node/v26.13.1/bin/node',
+		script: '/home/vms/.npm/_npx/abc/node_modules/terminay/dist/cli.js',
+	});
+	assert.deepEqual(argv, [
+		'/home/vms/.nvm/versions/node/v26.13.1/bin/node',
+		'/home/vms/.npm/_npx/abc/node_modules/terminay/dist/cli.js',
+		'daemon',
+		'install',
+		'main',
+		'--system',
+	]);
+	// A scope already on the command line is not added twice.
+	assert.equal(
+		elevatedArguments({ argv: ['daemon', 'install', '--system'], execPath: '/n', script: '/s' })
+			.filter((arg) => arg === '--system').length,
+		1,
+	);
+
+	const tty = { input: Object.assign(new PassThrough(), { isTTY: true }), output: new PassThrough() };
+	const calls = [];
+	const spawner = async (command, args) => {
+		calls.push([command, ...args]);
+		return 0;
+	};
+	assert.equal(await elevateThroughSudo({ arguments: argv, streams: tty, env: {}, spawner }), 0);
+	assert.deepEqual(calls, [['sudo', '--', 'env', `${ELEVATED_ENV}=1`, ...argv]]);
+
+	// The re-run never re-runs again.
+	assert.equal(
+		await elevateThroughSudo({ arguments: argv, streams: tty, env: { [ELEVATED_ENV]: '1' }, spawner }),
+		undefined,
+	);
+	// Without a terminal, sudo could not ask for a password: explain instead.
+	const piped = { input: new PassThrough(), output: new PassThrough() };
+	assert.equal(await elevateThroughSudo({ arguments: argv, streams: piped, env: {}, spawner }), undefined);
+	// No sudo on the machine: explain instead.
+	assert.equal(
+		await elevateThroughSudo({
+			arguments: argv,
+			streams: tty,
+			env: {},
+			spawner: async () => {
+				throw Object.assign(new Error('spawn sudo ENOENT'), { code: 'ENOENT' });
+			},
+		}),
+		undefined,
+	);
+	assert.equal(calls.length, 1);
+});
+
+test('the refusal prints a sudo command that works without npx on PATH', () => {
+	const command = elevatedArguments({
+		argv: ['daemon', 'install', "it's"],
+		execPath: '/home/vms/.nvm/bin/node',
+		script: '/home/vms/cli.js',
+	})
+		.map(shellQuote)
+		.join(' ');
+	assert.throws(
+		() => assertRootForSystemScope(command, 1000),
+		(error) =>
+			error instanceof ScopeError &&
+			error.message.includes(
+				`sudo /home/vms/.nvm/bin/node /home/vms/cli.js daemon install 'it'\\''s' --system`,
+			),
+	);
+});
+
+test('shells that refuse a login are recognised by name', () => {
+	assert.equal(isRefusingShell('/usr/sbin/nologin'), true);
+	assert.equal(isRefusingShell('/sbin/nologin'), true);
+	assert.equal(isRefusingShell('/bin/false'), true);
+	assert.equal(isRefusingShell('/bin/bash'), false);
+	assert.equal(isRefusingShell(undefined), false);
+	assert.equal(dedicatedLoginShell(() => true), '/bin/bash');
+	assert.equal(dedicatedLoginShell(() => false), '/bin/sh');
+});
+
+async function withPasswdShell(account, shell, run) {
+	const fake = await createFakeBin();
+	fake.install('getent', `echo "${account}:x:999:989::/var/lib/terminay:${shell}"`);
+	fake.install('usermod', '');
+	const originalPath = process.env.PATH;
+	process.env.PATH = `${fake.directory}:${originalPath}`;
+	try {
+		return await run(fake);
+	} finally {
+		process.env.PATH = originalPath;
+		await fake.close();
+	}
+}
+
+test('the dedicated account is given a login shell when it has none', async () => {
+	await withPasswdShell('terminay', '/usr/sbin/nologin', async (fake) => {
+		const lines = [];
+		await ensureLoginShell({ scope: 'system', runAs: 'terminay', write: (line) => lines.push(line) });
+		assert.ok(
+			fake.invocations().some((line) => /^usermod -s \/bin\/(bash|sh) terminay$/u.test(line)),
+			'expected usermod to set a login shell',
+		);
+		assert.match(lines.join('\n'), /from \/usr\/sbin\/nologin to \/bin\/(bash|sh)/u);
+	});
+});
+
+test('an account that already has a shell is left alone', async () => {
+	await withPasswdShell('terminay', '/bin/bash', async (fake) => {
+		const lines = [];
+		await ensureLoginShell({ scope: 'system', runAs: 'terminay', write: (line) => lines.push(line) });
+		assert.ok(!fake.invocations().some((line) => line.startsWith('usermod')));
+		assert.deepEqual(lines, []);
+	});
+});
+
+test('a --run-as account without a shell is warned about, never changed', async () => {
+	await withPasswdShell('ada', '/usr/sbin/nologin', async (fake) => {
+		const lines = [];
+		await ensureLoginShell({ scope: 'system', runAs: 'ada', write: (line) => lines.push(line) });
+		assert.ok(!fake.invocations().some((line) => line.startsWith('usermod')));
+		assert.match(lines.join('\n'), /WARNING: .*ada.*nologin.*usermod -s \/bin\/bash ada/u);
+	});
 });

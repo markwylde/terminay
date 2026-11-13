@@ -147,13 +147,115 @@ test('onboarding offers only the agents this server can run', () => {
 
 test('the first-click greeting says why no agent can be chosen', async () => {
 	const { onboardingGreeting } = await import('./pixelModel.ts');
-	assert.match(onboardingGreeting([{ id: 'c', displayName: 'Claude Code', available: true }]), /Which agent/);
+	assert.match(
+		onboardingGreeting([
+			{ id: 'c', displayName: 'Claude Code', available: true },
+		]),
+		/Which agent/,
+	);
 	assert.match(onboardingGreeting([]), /still looking/);
 	assert.equal(
 		onboardingGreeting([
-			{ id: 'c', displayName: 'Claude Code', available: false, reason: 'not_signed_in', detail: 'Run `claude` to sign in.' },
-			{ id: 'x', displayName: 'Codex', available: false, reason: 'not_installed' },
+			{
+				id: 'c',
+				displayName: 'Claude Code',
+				available: false,
+				reason: 'not_signed_in',
+				detail: 'Run `claude` to sign in.',
+			},
+			{
+				id: 'x',
+				displayName: 'Codex',
+				available: false,
+				reason: 'not_installed',
+			},
 		]),
 		"Hi! I'm Pixel. I need Claude Code or Codex on this server. Claude Code is not signed in. Run `claude` to sign in. Codex is not installed.",
+	);
+});
+
+test('a missing chosen agent gets a friendly message and its official install guide', async () => {
+	const { pixelInstallHelp, installGuideFor } = await import('./pixelModel.ts');
+	const providers = [
+		{
+			id: 'com.terminay.builtin-agents/claude-code',
+			displayName: 'Claude Code',
+			available: false,
+			reason: 'not_installed' as const,
+			detail: 'Install it.',
+		},
+		{
+			id: 'com.terminay.builtin-agents/codex',
+			displayName: 'Codex',
+			available: true,
+		},
+	];
+	const help = pixelInstallHelp(
+		providers,
+		'com.terminay.builtin-agents/claude-code',
+	);
+	assert.match(
+		help?.text ?? '',
+		/set up to use Claude Code, but it isn't installed/,
+	);
+	assert.match(help?.text ?? '', /switch me to Codex in Settings > AI > Pixel/);
+	assert.deepEqual(
+		help?.actions.map((action) => action.label),
+		['Install Claude Code'],
+	);
+	assert.equal(
+		installGuideFor(help?.actions[0]?.id ?? ''),
+		'https://code.claude.com/docs/en/setup',
+	);
+	assert.equal(
+		pixelInstallHelp(providers, 'com.terminay.builtin-agents/codex'),
+		undefined,
+	);
+	assert.equal(installGuideFor('once'), undefined);
+});
+
+test('with no agent installed, onboarding offers both official install guides', async () => {
+	const { pixelInstallHelp, installGuideFor } = await import('./pixelModel.ts');
+	const providers = [
+		{
+			id: 'com.terminay.builtin-agents/claude-code',
+			displayName: 'Claude Code',
+			available: false,
+			reason: 'not_installed' as const,
+			detail: 'Install it.',
+		},
+		{
+			id: 'com.terminay.builtin-agents/codex',
+			displayName: 'Codex',
+			available: false,
+			reason: 'not_installed' as const,
+			detail: 'Install it.',
+		},
+	];
+	const help = pixelInstallHelp(providers, 'unset');
+	assert.equal(
+		help?.text,
+		"Hi! I'm Pixel. I need Claude Code or Codex on this server. Claude Code is not installed. Codex is not installed. The buttons below open their official install guides. Once one is installed, open me again.",
+	);
+	assert.deepEqual(
+		help?.actions.map((action) => installGuideFor(action.id)),
+		[
+			'https://code.claude.com/docs/en/setup',
+			'https://learn.chatgpt.com/docs/codex/cli',
+		],
+	);
+	assert.equal(
+		pixelInstallHelp(
+			[
+				providers[0],
+				{
+					id: 'com.terminay.builtin-agents/codex',
+					displayName: 'Codex',
+					available: true,
+				},
+			],
+			'unset',
+		),
+		undefined,
 	);
 });

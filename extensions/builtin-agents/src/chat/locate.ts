@@ -30,8 +30,8 @@ export type AgentLocator = {
 /**
  * Finds the agent CLIs the user installed. A Desktop launched from the Dock
  * runs with a minimal PATH, so after the server's own PATH this asks the
- * login shell once and then tries the documented per-user locations. Results
- * last for one activation; nothing is polled.
+ * login shell once and then tries the documented per-user locations. Found agents
+ * last for one activation; a miss is looked up again next time. Nothing is polled.
  */
 export function createAgentLocator(options: LocatorOptions = {}): AgentLocator {
 	const env = options.env ?? process.env;
@@ -63,6 +63,12 @@ export function createAgentLocator(options: LocatorOptions = {}): AgentLocator {
 			if (pending === undefined) {
 				pending = search(agent);
 				cache.set(agent, pending);
+				// A miss is not kept, so an agent installed later is found
+				// without restarting.
+				void pending.then((found) => {
+					if (found === undefined && cache.get(agent) === pending)
+						cache.delete(agent);
+				});
 			}
 			return pending;
 		},

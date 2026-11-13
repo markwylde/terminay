@@ -26,7 +26,8 @@ export type ApprovalRequest =
 	| Readonly<{ op: 'approve'; approvalId: string }>
 	| Readonly<{ op: 'deny'; approvalId: string }>
 	| Readonly<{ op: 'pairing'; rotate?: boolean }>
-	| Readonly<{ op: 'status' }>;
+	| Readonly<{ op: 'status' }>
+	| Readonly<{ op: 'probe-terminal' }>;
 
 export interface PendingApproval {
 	readonly approvalId: string;
@@ -66,13 +67,30 @@ export type ApprovalResponse =
 			handoffs: readonly PairingHandoff[];
 	  }>
 	| Readonly<{ ok: true; status: ServerStatus }>
+	| Readonly<{ ok: true; terminal: TerminalProbe }>
 	| Readonly<{ ok: false; error: string }>;
+
+/** Whether the shell a new terminal would start can run at all. */
+export interface TerminalProbe {
+	readonly ok: boolean;
+	readonly shell?: string;
+	readonly exitCode?: number;
+	readonly output?: string;
+	readonly reason?: 'no-shell' | 'exit' | 'timeout' | 'spawn';
+}
 
 export function approvalSocketPath(dataRoot: string): string {
 	return join(dataRoot, APPROVAL_SOCKET_FILENAME);
 }
 
 export class SocketError extends Error {}
+
+/**
+ * The socket could not be asked at all, for a reason on this side of it: no
+ * `sudo` to drop with, or a runtime the service account cannot execute. The
+ * server may be perfectly healthy.
+ */
+export class SocketLaunchError extends SocketError {}
 
 const NO_SERVER_MESSAGE =
 	'no running server accepts commands at this data root. Start it with `terminay daemon start`.';
@@ -88,12 +106,7 @@ export function explainPrivilegeLaunchError(
 	error: unknown,
 	nodePath: string = process.execPath,
 ): string | undefined {
-	const message =
-		error instanceof Error
-			? error.message
-			: typeof error === 'object' && error !== null && 'message' in error
-				? String(error.message)
-				: String(error ?? '');
+	const message = launchFailureText(error);
 	const code =
 		typeof error === 'object' && error !== null && 'code' in error
 			? String((error as { code?: unknown }).code)
@@ -104,7 +117,7 @@ export function explainPrivilegeLaunchError(
 		message.includes(nodePath) &&
 		/permission denied|command not found|EACCES|EPERM/iu.test(message)
 	)
-		return `the service account cannot run Node.js at ${nodePath}. Install Node.js system-wide (not under a home directory), then retry.`;
+		return `the service account cannot run Node.js at ${nodePath}. Run the installed \`terminay\` command instead of npx, or install Node.js system-wide (not under a home directory), then retry.`;
 	return undefined;
 }
 
@@ -199,6 +212,7 @@ export async function sendAsUser(
 	runAs: string,
 	currentUid: number | undefined = process.getuid?.(),
 	exec: ExecFile = execFileAsync,
+	node: string = process.execPath,
 ): Promise<ApprovalResponse> {
 	const needsDrop = currentUid === 0 && runAs !== 'root';
 	if (!needsDrop) return sendApprovalRequest(socketPath, request);
@@ -210,7 +224,7 @@ export async function sendAsUser(
 				'-n',
 				'-u',
 				runAs,
-				process.execPath,
+				node,
 				'-e',
 				SOCKET_CLIENT_SOURCE,
 				socketPath,
@@ -219,11 +233,15 @@ export async function sendAsUser(
 			{ timeout: REQUEST_TIMEOUT_MS + 5_000, maxBuffer: MAX_FRAME_BYTES },
 		));
 	} catch (error) {
-		const detail = error instanceof Error ? error.message : String(error);
+		// Only what the child printed decides this. The error's message starts
+		// with the command line, and the client source in it names the no-server
+		// message too, so matching the message would call every failed launch a
+		// stopped server.
+		const detail = launchFailureText(error);
 		if (detail.includes(NO_SERVER_MESSAGE))
 			throw new SocketError(NO_SERVER_MESSAGE);
-		const hint = explainPrivilegeLaunchError(error);
-		throw new SocketError(
+		const hint = explainPrivilegeLaunchError(error, node);
+		throw new SocketLaunchError(
 			hint === undefined
 				? `could not reach the server's socket as ${runAs}: ${lastLine(detail)}`
 				: `${hint} (${lastLine(detail)})`,
@@ -234,6 +252,19 @@ export async function sendAsUser(
 	} catch {
 		throw new SocketError('the running server returned an unreadable response');
 	}
+}
+
+/**
+ * What a failed launch said about itself: the child's stderr when `execFile`
+ * captured any, otherwise the error's message.
+ */
+function launchFailureText(error: unknown): string {
+	if (typeof error === 'object' && error !== null) {
+		const stderr = (error as { stderr?: unknown }).stderr;
+		if (typeof stderr === 'string' && stderr.trim().length > 0) return stderr;
+		if ('message' in error) return String(error.message);
+	}
+	return String(error ?? '');
 }
 
 /** `execFile` puts the command line first and the child's stderr after it;

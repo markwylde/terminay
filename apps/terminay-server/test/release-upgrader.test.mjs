@@ -531,3 +531,19 @@ test('the embedded server never checks, even when an upgrader leaks into it', as
 		(error) => error.details.reason === 'none-available',
 	);
 });
+
+test('a failed check carries the last line the upgrader wrote to stderr', async (t) => {
+	const failing = await fakeUpgrader(
+		t,
+		'echo "resolving the install" >&2; echo "no Terminay Server is installed here" >&2; exit 1',
+	);
+	await assert.rejects(
+		createReleaseUpgrader({ upgraderPath: failing.path, env: process.env }).check(),
+		/the upgrader's check ended with status 1: no Terminay Server is installed here$/u,
+	);
+	const silent = await fakeUpgrader(t, 'exit 1');
+	await assert.rejects(
+		createReleaseUpgrader({ upgraderPath: silent.path, env: process.env }).check(),
+		/the upgrader's check ended with status 1$/u,
+	);
+});

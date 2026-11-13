@@ -176,6 +176,7 @@ import {
 } from './remote/pairingOperationQueue.js';
 import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
 import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
+import { probeShell } from './remote/terminalProbe.js';
 import {
 	describeUnreadableState,
 	unreadableStateStore,
@@ -498,6 +499,17 @@ else if (options.command === 'mcp') {
 											}),
 								};
 							},
+							// The shell a new system-default terminal would start, found
+							// the same way, then run once and thrown away.
+							probeTerminal: async () =>
+								probeShell(
+									(
+										await new ShellProfileDiscoveryService(
+											await createNodeShellDiscoveryHost(process.env),
+										).discover()
+									).systemExecutable,
+									{ cwd: homedir() },
+								),
 							pairingHandoffs: (rotate) =>
 								pairingOperations.run(async () => {
 									// Minting a replacement room registers it on every mode.

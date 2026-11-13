@@ -1,6 +1,8 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir } from 'node:fs/promises';
 import { userInfo } from 'node:os';
+import { basename } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { InstallScope } from './args.js';
@@ -84,6 +86,83 @@ export function assertRootForSystemScope(
 	);
 }
 
+/** Set on a re-run through `sudo`, so it is never re-run a second time. */
+export const ELEVATED_ENV = 'TERMINAY_ELEVATED';
+
+/**
+ * The command line that runs this same CLI as root.
+ *
+ * Absolute paths to the running Node.js and entry script, never `npx`:
+ * `sudo` replaces `PATH` with its `secure_path`, so a Node.js from nvm or fnm
+ * under the user's home is not found by name once elevated. The scope the
+ * operator already chose is passed as `--system` so it is not asked again.
+ */
+export function elevatedArguments(options: {
+	readonly argv: readonly string[];
+	readonly execPath?: string;
+	readonly script?: string;
+}): readonly string[] {
+	const script = options.script ?? process.argv[1];
+	if (script === undefined)
+		throw new ScopeError('the path of this command could not be determined');
+	const argv = [...options.argv];
+	if (!argv.includes('--system')) argv.push('--system');
+	return [options.execPath ?? process.execPath, script, ...argv];
+}
+
+/** Quote one argument for a POSIX shell, only when it needs it. */
+export function shellQuote(argument: string): string {
+	return /^[A-Za-z0-9_@%+=:,./-]+$/u.test(argument)
+		? argument
+		: `'${argument.replaceAll("'", "'\\''")}'`;
+}
+
+export type ElevationSpawner = (
+	command: string,
+	args: readonly string[],
+) => Promise<number>;
+
+const spawnInherited: ElevationSpawner = (command, args) =>
+	new Promise((resolve, reject) => {
+		const child = spawn(command, args, { stdio: 'inherit' });
+		child.once('error', reject);
+		child.once('exit', (code, signal) =>
+			resolve(code ?? (signal === null ? 1 : 128)),
+		);
+	});
+
+/**
+ * Re-run a system-scope command as root through `sudo`, which asks for the
+ * password itself. Returns the elevated run's exit status, or `undefined`
+ * when it cannot be done here — no terminal to ask on, no `sudo`, or this is
+ * already the re-run — and the caller explains instead.
+ */
+export async function elevateThroughSudo(options: {
+	readonly arguments: readonly string[];
+	readonly streams?: PromptStreams;
+	readonly env?: Readonly<Record<string, string | undefined>>;
+	readonly spawner?: ElevationSpawner;
+	readonly write?: (line: string) => void;
+}): Promise<number | undefined> {
+	const env = options.env ?? process.env;
+	if (env[ELEVATED_ENV] === '1') return undefined;
+	if (!isInteractive(options.streams ?? defaultStreams())) return undefined;
+	options.write?.(
+		'A system-wide install needs root. Re-running through sudo, which may ask for your password.',
+	);
+	try {
+		return await (options.spawner ?? spawnInherited)('sudo', [
+			'--',
+			'env',
+			`${ELEVATED_ENV}=1`,
+			...options.arguments,
+		]);
+	} catch (error) {
+		if ((error as { code?: unknown }).code === 'ENOENT') return undefined;
+		throw error;
+	}
+}
+
 async function userExists(name: string): Promise<boolean> {
 	try {
 		await execFileAsync('id', ['-u', name], { timeout: 30_000 });
@@ -105,6 +184,39 @@ async function homeOf(name: string): Promise<string | undefined> {
 	}
 }
 
+/**
+ * Shells that exist to refuse a login. The server starts the run-as account's
+ * shell for every terminal, so with one of these every terminal exits the
+ * moment it opens.
+ */
+const REFUSING_SHELLS = new Set(['nologin', 'false']);
+
+export function isRefusingShell(shell: string | undefined): boolean {
+	return shell === undefined || shell.length === 0
+		? false
+		: REFUSING_SHELLS.has(basename(shell));
+}
+
+/** The login shell the dedicated account is given. */
+export function dedicatedLoginShell(
+	exists: (path: string) => boolean = existsSync,
+): string {
+	return exists('/bin/bash') ? '/bin/bash' : '/bin/sh';
+}
+
+/** The account's login shell from the passwd database. */
+export async function shellOf(name: string): Promise<string | undefined> {
+	try {
+		const { stdout } = await execFileAsync('getent', ['passwd', name], {
+			timeout: 30_000,
+		});
+		const shell = stdout.split('\n')[0]?.split(':')[6]?.trim();
+		return shell !== undefined && shell.length > 0 ? shell : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 async function createDedicatedAccount(): Promise<void> {
 	await execFileAsync(
 		'useradd',
@@ -114,10 +226,40 @@ async function createDedicatedAccount(): Promise<void> {
 			DEDICATED_HOME,
 			'--create-home',
 			'--shell',
-			'/usr/sbin/nologin',
+			dedicatedLoginShell(),
 			DEDICATED_ACCOUNT,
 		],
 		{ timeout: 60_000 },
+	);
+}
+
+/**
+ * Make sure the run-as account's terminals can start a shell.
+ *
+ * The dedicated account is ours, so a shell that refuses logins is replaced
+ * and the operator is told. An account named with `--run-as` is a person's,
+ * so it is only warned about.
+ */
+export async function ensureLoginShell(options: {
+	readonly scope: InstallScope;
+	readonly runAs: string;
+	readonly write: (line: string) => void;
+}): Promise<void> {
+	if (options.scope !== 'system') return;
+	const shell = await shellOf(options.runAs);
+	if (!isRefusingShell(shell)) return;
+	if (options.runAs === DEDICATED_ACCOUNT) {
+		const replacement = dedicatedLoginShell();
+		await execFileAsync('usermod', ['-s', replacement, DEDICATED_ACCOUNT], {
+			timeout: 60_000,
+		});
+		options.write(
+			`Set the login shell of \`${DEDICATED_ACCOUNT}\` from ${shell} to ${replacement}, so its terminals can start.`,
+		);
+		return;
+	}
+	options.write(
+		`WARNING: the login shell of \`${options.runAs}\` is ${shell}, so its terminals cannot start a shell. Fix it with: sudo usermod -s /bin/bash ${options.runAs}`,
 	);
 }
 
