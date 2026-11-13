@@ -14,6 +14,7 @@ import {
 import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { DockviewReact } from 'dockview-react';
 import {
+	ArrowLeftRight,
 	Bot as BotIcon,
 	CircleStop,
 	Eraser,
@@ -41,6 +42,7 @@ import {
 	Workflow,
 	X,
 } from 'lucide-react';
+import { useIsDesktopHost } from './host/useIsDesktopHost';
 import {
 	CSSProperties,
 	type FormEvent,
@@ -4156,6 +4158,7 @@ const ProjectWorkspace = memo(forwardRef<
 			onError: reportWorkflowError,
 		});
 
+		const isDesktopHost = useIsDesktopHost();
 		const filteredMacros = useMemo(() => {
 			const commandItems: CommandBarItem[] = [
 				{
@@ -4385,6 +4388,29 @@ const ProjectWorkspace = memo(forwardRef<
 						void auxiliaryRoutes.openSettings('extensions');
 					},
 				},
+				...(isDesktopHost
+					? [
+							{
+								group: 'Workspace',
+								icon: <ArrowLeftRight size={18} strokeWidth={2.1} />,
+								id: 'open-import-export',
+								title: 'Import & Export',
+								description:
+									'Copy macros, workflows, profiles, automations, and settings between servers.',
+								searchText: `import export copy sync servers remotes bundle ${getCommandShortcut(settings.keyboardShortcuts, 'open-import-export')}`,
+								shortcutLabel: getCommandShortcutLabel(
+									settings.keyboardShortcuts,
+									'open-import-export',
+									isMac,
+								),
+								onSelect: () => {
+									setIsMacroLauncherOpen(false);
+									setMacroQuery('');
+									void auxiliaryRoutes.openSettings('import-export');
+								},
+							} satisfies CommandBarItem,
+						]
+					: []),
 				{
 					group: 'Workspace',
 					icon: <Settings size={18} strokeWidth={2.1} />,
@@ -4553,6 +4579,7 @@ const ProjectWorkspace = memo(forwardRef<
 			startDictation,
 			toggleFileExplorerSidebar,
 			workflowCommands.items,
+			isDesktopHost,
 		]);
 		const requestClosePanel = useCallback(
 			async (panelId: string, options?: { confirmed?: boolean }) => {
@@ -4751,6 +4778,9 @@ const ProjectWorkspace = memo(forwardRef<
 						break;
 					case 'open-extensions':
 						await auxiliaryRoutes.openSettings('extensions');
+						break;
+					case 'open-import-export':
+						await auxiliaryRoutes.openSettings('import-export');
 						break;
 					case 'toggle-file-explorer-sidebar':
 						toggleFileExplorerSidebar();
@@ -8656,6 +8686,9 @@ function App({
 			if (command === 'open-extensions') {
 				return auxiliaryRouteController.openSettings('extensions');
 			}
+			if (command === 'open-import-export') {
+				return auxiliaryRouteController.openSettings('import-export');
+			}
 			if (command === 'open-settings') {
 				return auxiliaryRouteController.openSettings();
 			}
@@ -10444,6 +10477,7 @@ function App({
 	// The commands that are the workspace view's own. None needs a project, so
 	// these are what the Command Bar lists with Home in front or with no
 	// project in the window.
+	const isDesktopHost = useIsDesktopHost();
 	const viewCommands = useMemo<readonly CommandBarItem[]>(() => {
 		const run = (work: () => void) => () => {
 			setIsViewCommandBarOpen(false);
@@ -10567,8 +10601,30 @@ function App({
 				),
 				onSelect: run(() => void auxiliaryRouteController.openSettings()),
 			},
+			...(isDesktopHost
+				? [
+						{
+							group: 'Workspace',
+							icon: <ArrowLeftRight size={18} strokeWidth={2.1} />,
+							id: 'open-import-export',
+							title: 'Import & Export',
+							description:
+								'Copy macros, workflows, profiles, automations, and settings between servers.',
+							searchText: `import export copy sync servers remotes bundle ${getCommandShortcut(settings.keyboardShortcuts, 'open-import-export')}`,
+							shortcutLabel: getCommandShortcutLabel(
+								settings.keyboardShortcuts,
+								'open-import-export',
+								isMac,
+							),
+							onSelect: run(
+								() => void auxiliaryRouteController.openSettings('import-export'),
+							),
+						} satisfies CommandBarItem,
+					]
+				: []),
 		];
 	}, [
+		isDesktopHost,
 		auxiliaryRouteController,
 		createServerProject,
 		isHomeSidebarVisible,

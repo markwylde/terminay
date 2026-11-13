@@ -240,3 +240,16 @@ test("server UI host keeps privileged navigation and browser permissions denied"
   assert.match(host, /setPermissionCheckHandler\(\(\) => false\)/);
   assert.match(host, /callback\(false\)/);
 });
+
+test("Import & Export bundles reach disk only through the Desktop save dialog", async () => {
+  const main = await readFile(new URL("../electron/main.ts", import.meta.url), "utf8");
+  const start = main.indexOf("async function saveImportExportBundle(");
+  assert.ok(start >= 0, "the bundle save handler exists");
+  const body = main.slice(start, main.indexOf("\n}\n", start));
+  // The destination is the user's choice; the renderer's name is only a default.
+  assert.match(body, /dialog\.showSaveDialog\(/);
+  assert.match(body, /defaultPath: path\.basename\(action\.filename\)/);
+  assert.match(body, /TERMINAY_BUNDLE_SAVE_MAX_BYTES/);
+  assert.doesNotMatch(body, /writeFile\(action\./);
+  assert.match(main, /case 'import-export\.bundle\.save':\n\s*return saveImportExportBundle\(window, action\);/);
+});

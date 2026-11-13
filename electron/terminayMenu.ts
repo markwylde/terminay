@@ -1,6 +1,7 @@
 // The first application menu on every Desktop platform is named after the app
 // and holds workspace creation and Settings. There is no File menu: Terminay
-// opens no documents. Management surfaces (Remote Access, Macros, Extensions)
+// opens no documents. Import & Export sits under Settings and opens Settings at
+// its category. Management surfaces (Remote Access, Macros, Extensions)
 // are Settings categories and Recordings is a Home section, so they have no
 // visible entries here; their accelerators stay registered on hidden items.
 
@@ -13,7 +14,8 @@ export type TerminayMenuCommand =
 	| 'open-macros'
 	| 'open-recordings'
 	| 'open-remote-control'
-	| 'open-extensions';
+	| 'open-extensions'
+	| 'open-import-export';
 
 export interface TerminayMenuOptions {
 	platform: NodeJS.Platform;
@@ -68,6 +70,13 @@ export function buildTerminayMenu(
 		accelerator: 'CmdOrCtrl+,',
 		click: () => options.dispatch('open-settings'),
 	};
+	// Copying between servers is a Settings category (ADR-0111); this entry
+	// opens Settings there.
+	const importExport: MenuItemConstructorOptions = {
+		label: 'Import & Export…',
+		accelerator: options.shortcut('open-import-export'),
+		click: () => options.dispatch('open-import-export'),
+	};
 
 	if (options.platform === 'darwin') {
 		return {
@@ -76,6 +85,7 @@ export function buildTerminayMenu(
 				{ label: 'About Terminay', click: () => options.showAbout() },
 				{ type: 'separator' },
 				settings,
+				importExport,
 				{ type: 'separator' },
 				...create,
 				...hiddenCommandItems(options),
@@ -98,6 +108,7 @@ export function buildTerminayMenu(
 			...hiddenCommandItems(options),
 			{ type: 'separator' },
 			settings,
+			importExport,
 			{ type: 'separator' },
 			{ role: 'quit' },
 		],

@@ -25,6 +25,7 @@ import {
 } from '../hooks/useTerminalSettings';
 import { setDesktopPerformanceLogging } from '../host/nativeActions';
 import { subscribeDesktopPerformanceLogging } from '../host/nativeEvents';
+import { useIsDesktopHost } from '../host/useIsDesktopHost';
 import {
 	acceleratorFromKeyboardEvent,
 	defaultKeyboardShortcuts,
@@ -50,6 +51,7 @@ import {
 	SharedSettingsRouteBody,
 } from '../shared/SharedSettingsRouteBody';
 import { useMacroEditor } from './macros/useMacroEditor';
+import { ImportExportCategory } from './settings/ImportExportCategory';
 import { MacrosCategory } from './settings/MacrosCategory';
 import { ConnectionMetricsSettings } from './settings/ConnectionMetricsSettings';
 import { WorkflowsCategory } from './settings/WorkflowsCategory';
@@ -113,7 +115,8 @@ type CategoryId =
 	| 'extensions'
 	| 'diagnostics'
 	| 'macros'
-	| 'workflows';
+	| 'workflows'
+	| 'import-export';
 
 const macrosSettingsCategory = Object.freeze({
 	id: 'macros' as const,
@@ -129,6 +132,13 @@ const extensionSettingsCategory = Object.freeze({
 	id: 'extensions' as const,
 	label: 'Extensions',
 });
+
+const importExportSettingsCategory = Object.freeze({
+	id: 'import-export' as const,
+	label: 'Import & Export',
+});
+
+const IMPORT_EXPORT_SEARCH_TERMS = 'import export copy sync servers bundle file';
 
 const diagnosticsSettingsCategory = Object.freeze({
 	id: 'diagnostics' as const,
@@ -544,6 +554,16 @@ function getCategoryIcon(id: CategoryId) {
 					<path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
 				</>,
 			);
+		case 'import-export':
+			return renderCategoryIcon(
+				'Import & Export',
+				<>
+					<path d="M4 8h13" />
+					<path d="m14 5 3 3-3 3" />
+					<path d="M20 16H7" />
+					<path d="m10 13-3 3 3 3" />
+				</>,
+			);
 		case 'diagnostics':
 			return renderCategoryIcon(
 				'Diagnostics',
@@ -627,7 +647,8 @@ export function SettingsWindow({
 		initialSectionFromUrl === 'diagnostics' ||
 		initialSectionFromUrl === 'macros' ||
 		initialSectionFromUrl === 'workflows' ||
-		initialSectionFromUrl === 'remote'
+		initialSectionFromUrl === 'remote' ||
+		initialSectionFromUrl === 'import-export'
 			? initialSectionFromUrl
 			: (terminalSettingsSections.find(
 						(section) => section.id === initialSectionFromUrl,
@@ -699,7 +720,8 @@ export function SettingsWindow({
 			initialSectionId === 'diagnostics' ||
 			initialSectionId === 'macros' ||
 			initialSectionId === 'workflows' ||
-			initialSectionId === 'remote'
+			initialSectionId === 'remote' ||
+			initialSectionId === 'import-export'
 				? initialSectionId
 				: terminalSettingsSections.find((section) => section.id === initialSectionId)
 						?.categoryId;
@@ -785,6 +807,8 @@ export function SettingsWindow({
 		return () => window.removeEventListener('beforeunload', onBeforeUnload);
 	}, [anyEditorDirty]);
 	const [diagnosticsAvailable, setDiagnosticsAvailable] = useState(false);
+	// Copying between servers needs every attached connection: Desktop only.
+	const importExportAvailable = useIsDesktopHost();
 	const [performanceLoggingEnabled, setPerformanceLoggingEnabled] =
 		useState(false);
 	const [isSaving, setIsSaving] = useState(false);
@@ -1032,6 +1056,9 @@ export function SettingsWindow({
 		});
 	}, [normalizedQuery]);
 
+	const importExportQueryMatches =
+		normalizedQuery.length > 0 &&
+		IMPORT_EXPORT_SEARCH_TERMS.includes(normalizedQuery);
 	const diagnosticsQueryMatches =
 		normalizedQuery.length > 0 &&
 		DIAGNOSTICS_SEARCH_TERMS.includes(normalizedQuery);
@@ -1097,6 +1124,7 @@ export function SettingsWindow({
 		const extra = [
 			...(macrosAvailable ? [macrosSettingsCategory] : []),
 			...(workflowsAvailable ? [workflowsSettingsCategory] : []),
+			...(importExportAvailable ? [importExportSettingsCategory] : []),
 			...(diagnosticsAvailable ? [diagnosticsSettingsCategory] : []),
 			extensionSettingsCategory,
 		];
@@ -1115,6 +1143,9 @@ export function SettingsWindow({
 			...(workflowsAvailable && workflowsQueryMatches
 				? [workflowsSettingsCategory]
 				: []),
+			...(importExportAvailable && importExportQueryMatches
+				? [importExportSettingsCategory]
+				: []),
 			...(diagnosticsAvailable && diagnosticsQueryMatches
 				? [diagnosticsSettingsCategory]
 				: []),
@@ -1125,6 +1156,8 @@ export function SettingsWindow({
 	}, [
 		diagnosticsAvailable,
 		diagnosticsQueryMatches,
+		importExportAvailable,
+		importExportQueryMatches,
 		extensionMatches.length,
 		extensionsQueryMatches,
 		filteredSections,
@@ -2570,7 +2603,11 @@ export function SettingsWindow({
 			categorySections={categoryGroups}
 			activeCategoryId={activeCategoryId}
 			status={statusText}
-			sidebarAction={renderServerSelector?.(confirmLeave)}
+			sidebarAction={
+				activeCategoryId === 'import-export'
+					? undefined
+					: renderServerSelector?.(confirmLeave)
+			}
 			modal={leavePrompt}
 			onQueryChange={setQuery}
 			onCategorySelect={openCategory}
@@ -2578,7 +2615,8 @@ export function SettingsWindow({
 				activeCategoryId === 'extensions' ||
 				activeCategoryId === 'macros' ||
 				activeCategoryId === 'workflows' ||
-				activeCategoryId === 'remote'
+				activeCategoryId === 'remote' ||
+				activeCategoryId === 'import-export'
 					? undefined
 					: activeCategoryId === 'diagnostics'
 						? () => void resetDiagnostics()
@@ -2614,6 +2652,14 @@ export function SettingsWindow({
 				render={({ detail, ...parts }) => renderShell(detail, parts, 'Macros')}
 			/>
 		);
+	}
+
+	if (
+		!normalizedQuery &&
+		activeCategoryId === 'import-export' &&
+		importExportAvailable
+	) {
+		return renderShell(<ImportExportCategory />);
 	}
 
 	if (!normalizedQuery && activeCategoryId === 'workflows' && workflowsAvailable) {
