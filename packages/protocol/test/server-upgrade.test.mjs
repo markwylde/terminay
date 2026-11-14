@@ -64,12 +64,14 @@ test('every server upgrade operation name can be encoded on the wire', () => {
 		{
 			status: 'server.upgrade.status',
 			start: 'server.upgrade.start',
+			check: 'server.upgrade.check',
 			event: 'server.upgrade',
 		},
 	);
 	for (const operation of [
 		SERVER_UPGRADE_OPERATIONS.status,
 		SERVER_UPGRADE_OPERATIONS.start,
+		SERVER_UPGRADE_OPERATIONS.check,
 	])
 		assert.doesNotThrow(() =>
 			encodeFrame({ type: 'query', queryId: 'q1', operation, payload: {} }),

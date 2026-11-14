@@ -241,7 +241,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       ...Object.keys(gitOperations.commands),
       ...Object.keys(recordingOperations.commands),
       "settings.update", "settings.reset",
-      "server.upgrade.start",
+      "server.upgrade.start", "server.upgrade.check",
       "host-stats.watch", "host-stats.unwatch",
       "terminal.create", "terminal.attach", "terminal.resume", "terminal.ack",
       "terminal.input", "terminal.presentation", "terminal.resize", "terminal.kill", "terminal.detach",
