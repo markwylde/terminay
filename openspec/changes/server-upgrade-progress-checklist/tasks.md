@@ -28,3 +28,8 @@
 
 - [x] 5.1 Remove **Hide** and the board's `hidden` state; the card has no dismiss action until the upgrade ends. Verified by the model and UI unit tests.
 - [x] 5.2 Draw the card in one place only: a fixed, full-window backdrop with the card centred, replacing both the bottom-right card and the card inside the reconnecting overlay. Verified by e2e asserting the card's position is the same while installing, restarting, and after the outcome, and that the backdrop covers the window.
+
+## 6. No ticklist waits for ever
+
+- [x] 6.1 Once following, an outcome the board has already seen, or one stamped before the upgrade's start, no longer leaves the ticklist waiting: the version the server runs decides success or "still on". A restarted server that reports the upgrade in progress again does not move the start. Verified by the model tests "a restarted server that says it is still upgrading does not move the start", "an outcome already seen still ends a followed upgrade by the version it runs", and "a server that moves version without a restart or an outcome is upgraded".
+- [x] 6.2 Every wait (an upgrader that finished without a restart, a returned server still in progress) is held to the reconnect deadline and ends silent. Verified by "a followed upgrade can never wait for ever once the server is back".

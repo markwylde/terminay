@@ -426,9 +426,10 @@ test('a server that returns in time is not reported lost', () => {
 	});
 	board.sync([source('vps', fakeClient(running))]);
 	board.sync([source('vps', undefined, { phase: 'reconnecting' })]);
-	// Back mid-upgrade: still running, and no longer gone.
+	// Back mid-upgrade: still running, and no longer gone. It still has the
+	// one deadline to say how the upgrade ended.
 	board.sync([source('vps', fakeClient(running))]);
-	assert.equal(timers.pending.size, 0);
+	assert.equal(timers.pending.size, 1);
 	assert.equal(board.snapshot.notices.length, 0);
 	assert.equal(
 		serverUpgradeRows(board.snapshot.entries)[0]?.action,
@@ -447,10 +448,11 @@ test('an upgrade that ends without a restart is told, and a later disconnect is 
 			upgrade: { state: 'in-progress', mode: 'in-place', startedAt: 1 },
 		}),
 	);
-	// The upgrader finished while the server stayed up; the outcome follows.
+	// The upgrader finished while the server stayed up; the outcome follows,
+	// within the deadline.
 	client.publish(status(AVAILABLE));
 	board.sync([source('vps', client, { phase: 'reconnecting' })]);
-	assert.equal(timers.pending.size, 0);
+	assert.equal(timers.pending.size, 1);
 	const back = fakeClient();
 	board.sync([source('vps', back)]);
 	back.publish(
@@ -604,15 +606,15 @@ test('a remembered upgrade expires, and never claims an older outcome', () => {
 		client.publish(RUNNING);
 		board.dispose();
 	};
-	const returnWith = (at: number) => {
+	const returnWith = (at: number, version = '5.2.0') => {
 		const board = new ServerUpgradeBoard({ ...fakeTimers(), memory: memory() });
 		board.sync([
 			source(
 				'primary',
 				fakeClient(
 					status({
-						version: '5.2.0',
-						upgrade: { state: 'succeeded', from: '5.1.1', to: '5.2.0', at },
+						version,
+						upgrade: { state: 'succeeded', from: '5.1.0', to: version, at },
 					}),
 				),
 				{ serverId: 'build-box' },
@@ -628,7 +630,7 @@ test('a remembered upgrade expires, and never claims an older outcome', () => {
 		mode: 'in-place',
 	});
 	// An outcome from before this upgrade began belongs to an earlier one.
-	assert.equal(returnWith(999), 0);
+	assert.equal(returnWith(999, '5.1.1'), 0);
 	follow();
 	// A day on, the marker is dropped: a later outcome is someone else's.
 	now += SERVER_UPGRADE_MEMORY_MAX_AGE_MS;
@@ -702,7 +704,9 @@ test('nothing is sent until asked, and a refusal is put into words', async () =>
 	);
 	assert.deepEqual(sent, ['in-place', 'in-place', 'recreate']);
 	assert.equal(
-		await requestServerUpgrade(refusing('already-latest'), 'in-place', { allowOlder: true }),
+		await requestServerUpgrade(refusing('already-latest'), 'in-place', {
+			allowOlder: true,
+		}),
 		'This server already runs the latest release on its channel.',
 	);
 	const options: unknown[] = [];
@@ -1051,4 +1055,123 @@ test('a reload mid-upgrade restores this device’s ticklist with its target and
 		}),
 	]);
 	assert.equal(third.snapshot.progress[0]?.initiatedHere, false);
+});
+
+test('a restarted server that says it is still upgrading does not move the start', () => {
+	const board = new ServerUpgradeBoard(fakeTimers());
+	const before = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', before)]);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	board.sync([source('vps', undefined, { phase: 'reconnecting' })]);
+	// The new process reports the upgrade in progress, stamped after the
+	// outcome it goes on to report.
+	const after = fakeClient(
+		status({
+			...AVAILABLE,
+			upgrade: { state: 'in-progress', mode: 'in-place', startedAt: 200 },
+		}),
+	);
+	board.sync([source('vps', after)]);
+	after.publish(
+		status({
+			version: '5.2.0',
+			upgrade: { state: 'succeeded', from: '5.1.1', to: '5.2.0', at: 150 },
+		}),
+	);
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	assert.equal(ticks(board, 'vps'), 'done done done done');
+});
+
+test('an outcome already seen still ends a followed upgrade by the version it runs', () => {
+	const storage = fakeStorage();
+	storage.setItem(
+		'terminay.view.server-upgrades.v1',
+		JSON.stringify({
+			s: {
+				seen: [400],
+				following: {
+					from: '5.1.1',
+					to: '5.2.0',
+					mode: 'in-place',
+					initiated: true,
+					startedAt: 500,
+					notedAt: Date.now(),
+				},
+			},
+		}),
+	);
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		memory: createServerUpgradeMemory(storage),
+	});
+	board.sync([
+		source(
+			'p',
+			fakeClient(
+				status({
+					version: '5.2.0',
+					upgrade: { state: 'succeeded', from: '5.1.1', to: '5.2.0', at: 400 },
+				}),
+			),
+			{ serverId: 's' },
+		),
+	]);
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	// Still on the old version, the same outcome ends it as not upgraded.
+	const still = fakeStorage();
+	still.setItem(
+		'terminay.view.server-upgrades.v1',
+		JSON.stringify({
+			s: {
+				seen: [400],
+				following: {
+					from: '5.1.1',
+					to: '5.2.0',
+					initiated: true,
+					notedAt: Date.now(),
+				},
+			},
+		}),
+	);
+	const other = new ServerUpgradeBoard({
+		...fakeTimers(),
+		memory: createServerUpgradeMemory(still),
+	});
+	other.sync([
+		source(
+			'p',
+			fakeClient(
+				status({
+					upgrade: { state: 'succeeded', from: '5.1.0', to: '5.1.1', at: 400 },
+				}),
+			),
+			{ serverId: 's' },
+		),
+	]);
+	assert.equal(other.snapshot.progress[0]?.outcome, 'failure');
+});
+
+test('a server that moves version without a restart or an outcome is upgraded', () => {
+	const board = new ServerUpgradeBoard(fakeTimers());
+	const client = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', client)]);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	client.publish(status({ version: '5.2.0' }));
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+});
+
+test('a followed upgrade can never wait for ever once the server is back', () => {
+	const timers = fakeTimers();
+	const board = new ServerUpgradeBoard(timers);
+	const client = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', client)]);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	// Finished without a restart, on the same version, and then silent.
+	client.publish(status(AVAILABLE));
+	assert.equal(board.snapshot.progress[0]?.outcome, undefined);
+	timers.fire();
+	assert.equal(board.snapshot.progress[0]?.outcome, 'failure');
+	assert.equal(ticks(board, 'vps'), 'done done done failed');
+	board.closeProgress('vps');
+	assert.equal(board.snapshot.progress.length, 0);
 });
