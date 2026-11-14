@@ -35,3 +35,23 @@ layered-image, per-test report and independent-verification requirements.
 
 Final delivery requires the final pushed head's thirty statuses to be read back
 as success/skipped. Archive and final-head verification are recorded in the PR.
+
+## Delivery verification
+
+Head `464c7329`, run 25378, passed all thirty required jobs and head statuses.
+Its first attempt failed before lifecycle tests because esbuild postinstall
+returned ETXTBSY; rerunning that single job succeeded. The complete first-attempt
+failure history and original 17:20:16 UTC creation remain captured. Actual
+readiness took 780 seconds. Retry evidence does not establish an execution
+budget result; the report correctly leaves it unknown.
+
+A separate read-only review found no blocking E2E/workspace correctness or
+coverage regressions. Native selection, shared fixture ordering, per-worker
+displays, per-case archive extraction and live retention boundaries remain intact.
+All 56 canonical specs validate. Validation including existing archives reports
+283 passes and the same seven unrelated active-change failures.
+
+The five delta requirements were compared against the synced canonical spec
+and matched before archive. The change is archived with all fifteen tasks
+complete. The archived commit receives a final Gitea status readback before
+the PR is reported ready; that result is recorded in the PR description.

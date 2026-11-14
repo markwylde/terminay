@@ -26,5 +26,5 @@
 
 - [x] 4.1 Update readiness reporting for queue-excluded execution critical paths while retaining original elapsed time, retries and incomplete-status handling; verify synthetic cases and real captures.
 - [x] 4.2 Run appropriate bounded local checks and openspec validation, resolve regressions and review the combined diff.
-- [ ] 4.3 Deliver the Terminay Gitea PR and verify every head check success/skipped; retain the qualifying 25369 execution path of 288s and latest 25375 miss of 391s, with original elapsed times of 1084s and 412s. The owner accepted the disclosed variation and requested wrap-up; final head CI/delivery remains pending, with no consistent sub-300 claim.
-- [ ] 4.4 Verify implementation against artifacts and sync/archive completed change in this same PR.
+- [x] 4.3 Deliver the Terminay Gitea PR and verify every head check success/skipped; retain the qualifying 25369 execution path of 288s and latest 25375 miss of 391s, with original elapsed times of 1084s and 412s. The owner accepted the disclosed variation and requested wrap-up; head 464c7329 passed all thirty required statuses after one lifecycle-install retry, with no consistent sub-300 claim.
+- [x] 4.4 Verify implementation against artifacts and sync/archive completed change in this same PR.
