@@ -702,7 +702,17 @@ test('the standalone server composes the folder wiring into its services', async
 	);
 	assert.match(
 		source,
-		/releaseProject: \(projectId\) => \{[\s\S]{0,200}?folders\.releaseProject\(projectId\);/u,
+		/const releaseProjectBinding = \(projectId: string\) => \{[\s\S]{0,200}?folders\.releaseProject\(projectId\);/u,
+	);
+	// Creating, re-rooting, and restoring a project all bind it the same way.
+	assert.match(
+		source,
+		/\n\t\t\tprepareProjectRootUpdate: prepareProjectBinding,\n/u,
+	);
+	assert.match(source, /\n\t\t\tprepare: bindRestoredProjects,\n/u);
+	assert.match(
+		source,
+		/\(await prepareProjectBinding\(project\.id, project\.root\)\)\.commit\(\);/u,
 	);
 	assert.match(
 		source,
