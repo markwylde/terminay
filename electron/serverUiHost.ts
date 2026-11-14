@@ -26,11 +26,16 @@ import {
 	type DesktopDocumentLifecycleDiagnostic,
 	type DesktopDocumentReleaseReason,
 } from '../apps/terminay-desktop/src/main/documentLifecycle';
+import type { TerminalClipboardForUpload } from './terminalClipboardUpload';
 
 const SERVER_UI_GET_CONTEXT_CHANNEL = 'server-ui-host:get-context';
 const SERVER_UI_REQUEST_ACTION_CHANNEL = 'server-ui-host:request-action';
 const SERVER_UI_READ_TERMINAL_CLIPBOARD_CHANNEL =
 	'server-ui-host:read-terminal-clipboard';
+const SERVER_UI_READ_TERMINAL_CLIPBOARD_FOR_UPLOAD_CHANNEL =
+	'server-ui-host:read-terminal-clipboard-for-upload';
+const SERVER_UI_READ_TERMINAL_CLIPBOARD_FILE_PART_CHANNEL =
+	'server-ui-host:read-terminal-clipboard-file-part';
 const OPAQUE_PARTITION_KEY_PATTERN = /^[a-zA-Z0-9_-]{22,128}$/;
 
 type ServerUiBinding = {
@@ -42,6 +47,13 @@ type ServerUiBinding = {
 		context: TerminayHostContext,
 	) => Promise<unknown> | unknown;
 	readTerminalClipboard?: () => Promise<string> | string;
+	readTerminalClipboardForUpload?: () => Promise<TerminalClipboardForUpload>;
+	readTerminalClipboardFilePart?: (
+		token: unknown,
+		file: unknown,
+		offset: unknown,
+		length: unknown,
+	) => Promise<Uint8Array>;
 	window: BrowserWindow;
 	lifecycle: DesktopDocumentLifecycle;
 };
@@ -54,6 +66,8 @@ export type CreateServerUiWindowOptions = {
 	context: TerminayHostContext;
 	onHostAction?: ServerUiBinding['onHostAction'];
 	readTerminalClipboard?: ServerUiBinding['readTerminalClipboard'];
+	readTerminalClipboardForUpload?: ServerUiBinding['readTerminalClipboardForUpload'];
+	readTerminalClipboardFilePart?: ServerUiBinding['readTerminalClipboardFilePart'];
 	onLifecycleDiagnostic?: (event: DesktopDocumentLifecycleDiagnostic) => void;
 	preloadPath: string;
 	show?: boolean;
@@ -151,6 +165,24 @@ function installIpcHandlers(): void {
 		const binding = bindingForEvent(event);
 		return (await binding.readTerminalClipboard?.()) ?? '';
 	});
+	ipcMain.handle(
+		SERVER_UI_READ_TERMINAL_CLIPBOARD_FOR_UPLOAD_CHANNEL,
+		async (event) => {
+			const binding = bindingForEvent(event);
+			return (
+				(await binding.readTerminalClipboardForUpload?.()) ?? { kind: 'empty' }
+			);
+		},
+	);
+	ipcMain.handle(
+		SERVER_UI_READ_TERMINAL_CLIPBOARD_FILE_PART_CHANNEL,
+		async (event, token: unknown, file: unknown, offset: unknown, length: unknown) => {
+			const binding = bindingForEvent(event);
+			if (binding.readTerminalClipboardFilePart === undefined)
+				throw new Error('Clipboard file reads are unavailable.');
+			return binding.readTerminalClipboardFilePart(token, file, offset, length);
+		},
+	);
 }
 
 function isAllowedNavigation(
@@ -275,6 +307,8 @@ export function bindServerUiWindow(
 		...(allowedFileRoot === undefined ? {} : { allowedFileRoot }),
 		onHostAction: options.onHostAction,
 		readTerminalClipboard: options.readTerminalClipboard,
+		readTerminalClipboardForUpload: options.readTerminalClipboardForUpload,
+		readTerminalClipboardFilePart: options.readTerminalClipboardFilePart,
 		window,
 		lifecycle,
 	};

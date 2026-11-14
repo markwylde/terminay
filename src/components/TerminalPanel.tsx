@@ -49,6 +49,7 @@ import { useTerminalSettings } from '../hooks/useTerminalSettings';
 import {
 	canReadTerminalClipboard,
 	canUseDesktopTerminalClipboard,
+	desktopClipboardUploadRoute,
 	openExternalUrl,
 	readTerminalClipboard,
 	resolveDesktopDroppedFilePath,
@@ -105,6 +106,7 @@ import {
 	escapeTerminalPathForShell,
 	getTerminalDropText,
 	shouldInterceptTerminalDrop,
+	type TerminalDroppedFileSource,
 	type TerminalDroppedFileUploader,
 	type TerminalDropItems,
 	uploadTerminalDropFiles,
@@ -163,6 +165,7 @@ import {
 import type { TerminalClipboardContents } from './terminalPasteInteraction';
 import {
 	createTerminalPasteActivation,
+	pasteDesktopClipboardForUpload,
 	pasteOrMaterializeTerminalClipboard,
 	pasteTerminalClipboard,
 	readBrowserTerminalClipboard,
@@ -804,6 +807,62 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	} | null>(null);
 	// A drop still uploading when the pane goes away has nowhere to land.
 	useEffect(() => () => fileDropAbortRef.current?.abort(), []);
+	const writeFileUploadFailure = useCallback(
+		(label: string, reason: string) => {
+			terminalRef.current?.write(
+				`\r\n\x1b[31m[${label} failed: ${reason}]\x1b[0m\r\n`,
+			);
+		},
+		[],
+	);
+	/**
+	 * Copy files to this terminal's server, behind the upload indicator and its
+	 * Stop control, and answer with their shell-escaped server paths. A drop and
+	 * a Desktop paste into a remote terminal share it. Failures are reported in
+	 * the terminal; a stopped or failed upload answers null.
+	 */
+	const uploadFilesToTerminal = useCallback(
+		async (
+			files: readonly TerminalDroppedFileSource[],
+			label: string,
+		): Promise<string | null> => {
+			const upload = fileDropRouteRef.current.upload;
+			if (upload === undefined) {
+				writeFileUploadFailure(
+					label,
+					'this terminal’s server cannot receive files',
+				);
+				return null;
+			}
+			if (fileDropAbortRef.current !== null) {
+				writeFileUploadFailure(label, 'another upload is still in progress');
+				return null;
+			}
+			const controller = new AbortController();
+			fileDropAbortRef.current = controller;
+			setFileDropProgress({
+				sentBytes: 0,
+				totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+			});
+			try {
+				const text = await uploadTerminalDropFiles(files, upload);
+				return controller.signal.aborted ? null : text;
+			} catch (error) {
+				if (!controller.signal.aborted) {
+					console.error(`Terminal ${label} upload failed`, error);
+					writeFileUploadFailure(
+						label,
+						'the file could not be copied to the server',
+					);
+				}
+				return null;
+			} finally {
+				fileDropAbortRef.current = null;
+				setFileDropProgress(null);
+			}
+		},
+		[writeFileUploadFailure],
+	);
 	const [terminalPasteProgress, setTerminalPasteProgress] = useState<Pick<
 		TerminalPasteProgress,
 		'completedBytes' | 'totalBytes'
@@ -990,14 +1049,57 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		[writeClipboardImageFailure],
 	);
 
+	/**
+	 * Desktop paste. On this machine's Local server copied files paste as their
+	 * native paths; on any other server they are copied there first, and only
+	 * the server's paths are inserted (ADR-0113).
+	 */
+	const pasteFromDesktopClipboard = useCallback(
+		(announceInput: () => void) => {
+			const paste = (text: string) => pasteTerminalTextRef.current(text);
+			const focus = () => terminalRef.current?.focus();
+			const uploadRoute = desktopClipboardUploadRoute();
+			if (
+				fileDropRouteRef.current.resolveNativePath !== undefined ||
+				uploadRoute === undefined
+			) {
+				void pasteTerminalClipboard(readTerminalClipboard, {
+					announceInput,
+					paste,
+					focus,
+				});
+				return;
+			}
+			const context = browserClipboardContextRef.current;
+			void pasteDesktopClipboardForUpload(uploadRoute.read, {
+				announceInput,
+				paste,
+				focus,
+				escapePath: escapeTerminalPathForShell,
+				readFilePart: uploadRoute.readFilePart,
+				uploadFiles: (files) => uploadFilesToTerminal(files, 'paste'),
+				onFailure: (reason) => writeFileUploadFailure('paste', reason),
+				...(context === undefined
+					? {}
+					: {
+							materializeImage: (image) =>
+								context.client.materializeClipboardImage({
+									identity: context.identity,
+									mimeType: image.mimeType,
+									bytes: image.bytes,
+								}),
+						}),
+			});
+		},
+		[uploadFilesToTerminal, writeFileUploadFailure],
+	);
+	const pasteFromDesktopClipboardRef = useRef(pasteFromDesktopClipboard);
+	pasteFromDesktopClipboardRef.current = pasteFromDesktopClipboard;
+
 	const pasteFromFocusedTerminal = useCallback(
 		(announceInput: () => void) => {
 			if (canUseDesktopTerminalClipboard()) {
-				void pasteTerminalClipboard(readTerminalClipboard, {
-					announceInput,
-					paste: (text) => pasteTerminalTextRef.current(text),
-					focus: () => terminalRef.current?.focus(),
-				});
+				pasteFromDesktopClipboard(announceInput);
 				return;
 			}
 			void pasteOrMaterializeTerminalClipboard(
@@ -1011,7 +1113,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				},
 			);
 		},
-		[browserPasteOptions],
+		[browserPasteOptions, pasteFromDesktopClipboard],
 	);
 	const pasteFromFocusedTerminalRef = useRef(pasteFromFocusedTerminal);
 	pasteFromFocusedTerminalRef.current = pasteFromFocusedTerminal;
@@ -2855,44 +2957,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					dataTransfer.files,
 					dataTransfer.items as unknown as TerminalDropItems,
 				);
-				const failDrop = (reason: string) =>
-					terminal.write(
-						`\r\n\x1b[31m[file drop failed: ${reason}]\x1b[0m\r\n`,
-					);
 				if (dropped.hasFolder) {
-					failDrop('folders cannot be copied to this terminal’s server');
-					return;
-				}
-				if (route.upload === undefined) {
-					failDrop('this terminal’s server cannot receive dropped files');
-					return;
-				}
-				if (fileDropAbortRef.current !== null) {
-					failDrop('another drop is still uploading');
-					return;
-				}
-				const controller = new AbortController();
-				fileDropAbortRef.current = controller;
-				setFileDropProgress({
-					sentBytes: 0,
-					totalBytes: dropped.files.reduce((sum, file) => sum + file.size, 0),
-				});
-				try {
-					droppedText = await uploadTerminalDropFiles(
-						dropped.files,
-						route.upload,
+					writeFileUploadFailure(
+						'file drop',
+						'folders cannot be copied to this terminal’s server',
 					);
-				} catch (error) {
-					if (!controller.signal.aborted) {
-						console.error('Terminal file drop upload failed', error);
-						failDrop('the file could not be copied to the server');
-					}
 					return;
-				} finally {
-					fileDropAbortRef.current = null;
-					setFileDropProgress(null);
 				}
-				if (controller.signal.aborted) return;
+				droppedText = await uploadFilesToTerminal(dropped.files, 'file drop');
 			}
 			if (!droppedText) return;
 
@@ -2908,11 +2980,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				// then use the same Desktop smart-paste path as Cmd+V.
 				event.preventDefault();
 				event.stopPropagation();
-				void pasteTerminalClipboard(readTerminalClipboard, {
-					announceInput: announceTerminalUserInput,
-					paste: pasteTerminalText,
-					focus: () => terminal.focus(),
-				});
+				pasteFromDesktopClipboardRef.current(announceTerminalUserInput);
 				return;
 			}
 
@@ -3600,7 +3668,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					<span
 						role="status"
 						aria-live="polite"
-						aria-label={`Copying dropped files to the server: ${dropPercent(fileDropProgress)}%`}
+						aria-label={`Copying files to the server: ${dropPercent(fileDropProgress)}%`}
 					>
 						Uploading {dropPercent(fileDropProgress)}%
 					</span>

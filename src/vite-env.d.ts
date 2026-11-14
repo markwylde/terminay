@@ -31,6 +31,13 @@ declare global {
 			): Promise<unknown>;
 			resolveDroppedFilePath?(file: File): string | undefined;
 			readTerminalClipboard?(): Promise<string>;
+			readTerminalClipboardForUpload?(): Promise<unknown>;
+			readTerminalClipboardFilePart?(
+				token: string,
+				file: number,
+				offset: number,
+				length: number,
+			): Promise<Uint8Array>;
 		};
 		terminayBytes?: {
 			/** Version 2 adds `openConnection`; a version 1 preload carries the

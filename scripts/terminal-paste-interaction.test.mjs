@@ -20,6 +20,7 @@ await build({
 const {
   createTerminalPasteActivation,
   describeClipboardFailure,
+  pasteDesktopClipboardForUpload,
   pasteOrMaterializeTerminalClipboard,
   pasteTerminalClipboard,
   preferTerminalClipboardContents,
@@ -416,4 +417,88 @@ test('a native paste event from the fallback field carries an image through uplo
   )
   assert.equal(handled, true)
   assert.deepEqual(pasted, ["'/tmp/terminay-clipboard/clipboard-9.png'"])
+})
+
+test('a Desktop paste into a remote terminal uploads copied files and inserts only server paths', async () => {
+  const pasted = []
+  const reads = []
+  const bytes = new Uint8Array([1, 2, 3, 4, 5])
+  const handled = await pasteDesktopClipboardForUpload(
+    async () => ({ kind: 'files', token: 't1', files: [{ name: 'shot 1.png', size: 5 }] }),
+    {
+      announceInput: () => {},
+      paste: (text) => pasted.push(text),
+      focus: () => {},
+      escapePath: (path) => `'${path}'`,
+      readFilePart: async (token, file, offset, length) => {
+        reads.push([token, file, offset, length])
+        return bytes.slice(offset, offset + length)
+      },
+      uploadFiles: async (files) => {
+        assert.equal(files.length, 1)
+        assert.equal(files[0].name, 'shot 1.png')
+        assert.equal(files[0].size, 5)
+        const part = new Uint8Array(await files[0].slice(1, 4).arrayBuffer())
+        assert.deepEqual([...part], [2, 3, 4])
+        return "'/tmp/terminay-drops/abc/shot 1.png'"
+      },
+      onFailure: (reason) => assert.fail(reason),
+    },
+  )
+  assert.equal(handled, true)
+  assert.deepEqual(reads, [['t1', 0, 1, 3]])
+  assert.deepEqual(pasted, ["'/tmp/terminay-drops/abc/shot 1.png'"])
+})
+
+test('a Desktop paste into a remote terminal materialises an image on the server', async () => {
+  const pasted = []
+  const handled = await pasteDesktopClipboardForUpload(
+    async () => ({ kind: 'image', bytes: PNG, mimeType: 'image/png' }),
+    {
+      announceInput: () => {},
+      paste: (text) => pasted.push(text),
+      focus: () => {},
+      escapePath: (path) => `'${path}'`,
+      readFilePart: async () => assert.fail('no file read'),
+      uploadFiles: async () => assert.fail('no upload'),
+      materializeImage: async (image) => {
+        assert.deepEqual([...image.bytes], [...PNG])
+        return '/tmp/terminay-clipboard/clipboard-1.png'
+      },
+      onFailure: (reason) => assert.fail(reason),
+    },
+  )
+  assert.equal(handled, true)
+  assert.deepEqual(pasted, ["'/tmp/terminay-clipboard/clipboard-1.png'"])
+})
+
+test('a Desktop paste into a remote terminal refuses a folder and inserts nothing', async () => {
+  const pasted = []
+  const failures = []
+  const handled = await pasteDesktopClipboardForUpload(async () => ({ kind: 'folder' }), {
+    announceInput: () => {},
+    paste: (text) => pasted.push(text),
+    focus: () => {},
+    escapePath: (path) => path,
+    readFilePart: async () => assert.fail('no file read'),
+    uploadFiles: async () => assert.fail('no upload'),
+    onFailure: (reason) => failures.push(reason),
+  })
+  assert.equal(handled, false)
+  assert.deepEqual(pasted, [])
+  assert.equal(failures.length, 1)
+})
+
+test('a Desktop paste into a remote terminal pastes text as text', async () => {
+  const pasted = []
+  await pasteDesktopClipboardForUpload(async () => ({ kind: 'text', text: 'hello' }), {
+    announceInput: () => {},
+    paste: (text) => pasted.push(text),
+    focus: () => {},
+    escapePath: (path) => path,
+    readFilePart: async () => assert.fail('no file read'),
+    uploadFiles: async () => assert.fail('no upload'),
+    onFailure: (reason) => assert.fail(reason),
+  })
+  assert.deepEqual(pasted, ['hello'])
 })
