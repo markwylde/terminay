@@ -12,7 +12,11 @@ import { ServerUpdatesPage } from '../components/settings/UpdatesPages';
 import { serverUpdatesModel } from '../components/settings/updatesPageModel';
 import type { WorkspaceConnection } from '../shared/connections/connectionRegistry';
 import { ServerUpgradeDialog } from './ServerUpgradeDialog';
-import { requestServerUpgrade } from './serverUpgradeModel.ts';
+import {
+	requestServerUpgrade,
+	requestServerUpgradeCheck,
+	upgradeCheckResultText,
+} from './serverUpgradeModel.ts';
 
 type StatusStore = Readonly<{
 	status: ServerUpgradeStatus | undefined;
@@ -64,6 +68,9 @@ export function SettingsServerUpdates({
 	const client = connection.context?.serverUpgradeClient;
 	const status = useUpgradeStatus(client?.store);
 	const [confirming, setConfirming] = useState<'upgrade' | 'install-latest'>();
+	const [check, setCheck] = useState<{ checking: boolean; result?: string }>({
+		checking: false,
+	});
 	const helloVersion = connection.hello?.serverVersion;
 	const desktopVersion = useDesktopVersion(isLocal);
 	const model = serverUpdatesModel({
@@ -79,6 +86,20 @@ export function SettingsServerUpdates({
 				serverName={connection.label}
 				onUpgrade={() => setConfirming('upgrade')}
 				onInstallLatest={() => setConfirming('install-latest')}
+				{...(isLocal || client === undefined
+					? {}
+					: {
+							onCheck: () => {
+								setCheck({ checking: true });
+								void requestServerUpgradeCheck(client).then((result) =>
+									setCheck({
+										checking: false,
+										result: upgradeCheckResultText(result),
+									}),
+								);
+							},
+							check,
+						})}
 				{...(isLocal ? { onOpenDeviceUpdates } : {})}
 			/>
 			{confirming === 'upgrade' && status?.available !== undefined ? (

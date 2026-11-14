@@ -12,6 +12,9 @@ import {
 /** How long a release check's answer is taken to be current. */
 export const SERVER_UPGRADE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
+/** A check a client asks for within this long of a good one answers from it. */
+export const SERVER_UPGRADE_CHECK_NOW_FLOOR_MS = 10_000;
+
 /**
  * When the server looks again soon after it starts, measured from the start.
  * An upgrader that restarted this server records the new release and the
@@ -176,6 +179,8 @@ export class ServerUpgradeService {
 	private current: ServerUpgradeStatus;
 	private checking: Promise<void> | undefined;
 	private lastCheckAt: number | undefined;
+	/** Why the last check could not read the channel, while it could not. */
+	private lastCheckFailure: string | undefined;
 	private checkTimer: unknown;
 	private inProgressTimer: unknown;
 	private settleTimers: unknown[] = [];
@@ -303,8 +308,11 @@ export class ServerUpgradeService {
 		this.lastCheckAt = this.now();
 		const run = (async () => {
 			try {
-				this.accept(await upgrader.check());
+				const report = await upgrader.check();
+				this.accept(report);
+				this.lastCheckFailure = report.checkError;
 			} catch (error) {
+				this.lastCheckFailure = messageOf(error);
 				this.diagnose({ kind: 'check-failed', message: messageOf(error) });
 			}
 		})().finally(() => {
@@ -312,6 +320,38 @@ export class ServerUpgradeService {
 		});
 		this.checking = run;
 		return run;
+	}
+
+	/**
+	 * A client asked to look now. Shares a check already running, answers from
+	 * one that succeeded moments ago, and otherwise reads the channel before it
+	 * replies, so the reply is the status that check produced. A check that
+	 * could not read the channel is refused, not answered with stale news.
+	 */
+	async checkNow(): Promise<ServerUpgradeStatus> {
+		if (this.disposed || this.upgrader === undefined)
+			throw refusal(
+				'cannot-check',
+				'this server has no upgrader to check its release channel',
+			);
+		// Replacing this server is already under way; the status says so.
+		if (this.inProgress !== undefined) return this.current;
+		const fresh =
+			this.checking === undefined &&
+			this.lastCheckAt !== undefined &&
+			this.lastCheckFailure === undefined &&
+			this.now() - this.lastCheckAt < SERVER_UPGRADE_CHECK_NOW_FLOOR_MS;
+		if (!fresh) await this.check();
+		if (this.lastCheckFailure !== undefined)
+			throw protocolError(
+				'unavailable',
+				'the server could not read its release channel',
+				{
+					details: { reason: 'check-failed' satisfies ServerUpgradeRefusal },
+					retryable: true,
+				},
+			);
+		return this.current;
 	}
 
 	/**

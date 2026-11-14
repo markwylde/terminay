@@ -403,3 +403,40 @@ test('a client of a server without the capability receives no status', async (t)
 		client.command(SERVER_UPGRADE_OPERATIONS.start, { mode: 'in-place' }),
 	);
 });
+
+test('a paired device asks the server to check now and every device hears what it found', async (t) => {
+	const upgrader = fakeUpgrader(report({ available: null }));
+	const { connect, start } = await served(t, { upgrader });
+	await start();
+	const first = await connect('first');
+	const second = await connect('second');
+	await first.upgrade.subscribe();
+	await second.upgrade.subscribe();
+	assert.equal(first.upgrade.status.available, undefined);
+	const before = upgrader.checks;
+	upgrader.current = report();
+	// The last check is moments old, so this answers from it.
+	const fromFloor = await first.upgrade.checkForServerUpgrade();
+	assert.equal(fromFloor.available, undefined);
+	assert.equal(upgrader.checks, before);
+	// Anything but an empty request is refused.
+	await assert.rejects(
+		first.client.command(SERVER_UPGRADE_OPERATIONS.check, { version: '9.9.9' }),
+		rejectedWith('validation'),
+	);
+	assert.equal(upgrader.checks, before);
+});
+
+test('only an administrative connection may ask the server to check now', async (t) => {
+	const upgrader = fakeUpgrader(report());
+	const { connect, start } = await served(t, {
+		upgrader,
+		scopeFor: (clientId) => (clientId.startsWith('reader') ? 'read' : 'admin'),
+	});
+	await start();
+	const reader = await connect('reader');
+	await assert.rejects(
+		reader.upgrade.checkForServerUpgrade(),
+		rejectedWith('forbidden'),
+	);
+});

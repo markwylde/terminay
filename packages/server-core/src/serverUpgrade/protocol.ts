@@ -73,10 +73,33 @@ export function createServerUpgradeOperationRegistry(options: {
 						parsed.allowOlder === true ? { allowOlder: true } : {},
 					)) as unknown as JsonValue;
 				},
+				[SERVER_UPGRADE_OPERATIONS.check]: async (request: CommandRequest) => {
+					// Asking the server to reach its release channel is the
+					// paired device's, like starting the upgrade it may lead to.
+					if (request.context.authScope !== 'admin')
+						throw protocolError(
+							'forbidden',
+							'checking for a server upgrade requires a paired device',
+						);
+					const payload = request.envelope.payload;
+					if (
+						payload !== undefined &&
+						payload !== null &&
+						(typeof payload !== 'object' ||
+							Array.isArray(payload) ||
+							Object.keys(payload).length > 0)
+					)
+						throw protocolError(
+							'validation',
+							'a server upgrade check carries nothing',
+						);
+					return (await service.checkNow()) as unknown as JsonValue;
+				},
 			},
 			policies: {
 				[SERVER_UPGRADE_OPERATIONS.status]: { scope: 'read' },
 				[SERVER_UPGRADE_OPERATIONS.start]: { scope: 'admin' },
+				[SERVER_UPGRADE_OPERATIONS.check]: { scope: 'admin' },
 			},
 		},
 		close: () => {

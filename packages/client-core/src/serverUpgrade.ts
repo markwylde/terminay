@@ -143,6 +143,21 @@ export class ServerUpgradeClient {
 		return this.store.status as ServerUpgradeStatus;
 	}
 
+	/**
+	 * Ask the server to read its release channel now. Resolves with the status
+	 * that check produced; a server that could not read it rejects with a
+	 * `check-failed` refusal, and one that predates the request with the
+	 * protocol's unknown-operation error.
+	 */
+	async checkForServerUpgrade(): Promise<ServerUpgradeStatus> {
+		const status = await this.transport.command(
+			SERVER_UPGRADE_OPERATIONS.check,
+			{},
+		);
+		this.store.apply(status);
+		return this.store.status as ServerUpgradeStatus;
+	}
+
 	async subscribe(): Promise<() => void> {
 		if (this.unsubscribe !== undefined) return this.unsubscribe;
 		const refresh = () => void this.refresh().catch(() => undefined);

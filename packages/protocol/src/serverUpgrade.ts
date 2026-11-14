@@ -15,6 +15,8 @@ export const SERVER_UPGRADE_CAPABILITY = 'server.upgrade' as const;
 export const SERVER_UPGRADE_OPERATIONS = Object.freeze({
 	status: 'server.upgrade.status',
 	start: 'server.upgrade.start',
+	/** Read the server's release channel now, not at the next hourly check. */
+	check: 'server.upgrade.check',
 	event: 'server.upgrade',
 } as const);
 
@@ -36,6 +38,10 @@ export const SERVER_UPGRADE_REFUSALS = [
 	'already-latest',
 	/** `allowOlder` asked for a release this server cannot install itself. */
 	'cannot-install-latest',
+	/** A `server.upgrade.check` on a server that has no upgrader to ask. */
+	'cannot-check',
+	/** A `server.upgrade.check` that could not read the release channel. */
+	'check-failed',
 ] as const;
 export type ServerUpgradeRefusal = (typeof SERVER_UPGRADE_REFUSALS)[number];
 

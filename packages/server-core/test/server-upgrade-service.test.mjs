@@ -905,3 +905,46 @@ test('allowOlder installs the latest release in place and is refused otherwise',
 	assert.deepEqual(same.handovers, []);
 	assert.deepEqual(blocked.handovers, []);
 });
+
+test('a check a client asks for reads the channel now and answers with what it found', async (t) => {
+	const upgrader = fakeUpgrader([report({ available: null })]);
+	const { clock, service } = served(t, upgrader);
+	await service.check();
+	assert.equal(service.status.available, undefined);
+	// A release is published after the last check; the hourly one is far off.
+	upgrader.answer(report());
+	clock.advance(60_000);
+	const status = await service.checkNow();
+	assert.equal(upgrader.checks, 2);
+	assert.deepEqual(status.available, { version: '5.2.0' });
+	assert.equal(status, service.status);
+	// Asked again moments later, it answers from that check.
+	assert.deepEqual((await service.checkNow()).available, { version: '5.2.0' });
+	assert.equal(upgrader.checks, 2);
+	clock.advance(20_000);
+	await service.checkNow();
+	assert.equal(upgrader.checks, 3);
+});
+
+test('a check a client asks for that cannot read the channel is refused', async (t) => {
+	const upgrader = fakeUpgrader([new Error('offline')]);
+	const { service } = served(t, upgrader);
+	await assert.rejects(
+		service.checkNow(),
+		refused('check-failed', 'unavailable'),
+	);
+	// Unreachable release metadata is a failed check too.
+	upgrader.answer(report({ checkError: 'metadata unreachable' }));
+	await assert.rejects(
+		service.checkNow(),
+		refused('check-failed', 'unavailable'),
+	);
+	// A failure is never answered from: the next request reads again.
+	upgrader.answer(report());
+	assert.deepEqual((await service.checkNow()).available, { version: '5.2.0' });
+});
+
+test('a server with no upgrader refuses a check it is asked for', async (t) => {
+	const { service } = served(t, undefined);
+	await assert.rejects(service.checkNow(), refused('cannot-check'));
+});

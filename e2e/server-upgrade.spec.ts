@@ -422,7 +422,21 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 		await expect(notice).toHaveCount(0);
 		await mainWindow.keyboard.press('Escape');
 		menu = await openConnectionMenu(mainWindow);
-		await expect(upgradeRow(menu)).toHaveCount(0);
+		// Nothing is on offer any more, but the server can still be asked.
+		await expect(upgradeRow(menu)).toHaveAttribute(
+			'data-server-upgrade-state',
+			'none',
+		);
+		await expect(upgradeRow(menu)).toContainText('Running 5.2.0');
+		await expect(
+			upgradeRow(menu).getByRole('menuitem', { name: 'Upgrade server…' }),
+		).toHaveCount(0);
+		await upgradeRow(menu)
+			.getByRole('menuitem', { name: 'Check for updates' })
+			.click();
+		await expect(upgradeRow(menu).getByRole('status')).toHaveText(
+			'Up to date · 5.2.0',
+		);
 	} finally {
 		await server.stop();
 	}

@@ -27,10 +27,11 @@ async function bundleComponent(entryPoint, outputName) {
 	return require(outputPath);
 }
 
-const { ServerUpgradeMenuRows } = await bundleComponent(
+const ServerUpgradeMenuRowsModule = await bundleComponent(
 	'src/workspace/ServerUpgradeMenuRows.tsx',
 	'server-upgrade-menu-rows.cjs',
 );
+const { ServerUpgradeMenuRows } = ServerUpgradeMenuRowsModule;
 const { ServerUpgradeConfirmation } = await bundleComponent(
 	'src/workspace/ServerUpgradeDialog.tsx',
 	'server-upgrade-dialog.cjs',
@@ -93,6 +94,7 @@ const rows = (list, overrides = {}) =>
 			rows: list,
 			namesServers: false,
 			onUpgrade: noop,
+			onCheck: async () => '',
 			variant: 'menu',
 			...overrides,
 		}),
@@ -113,6 +115,7 @@ test('a server that can upgrade itself is marked with its version and offers the
 test('choosing the action names the server and nothing else', () => {
 	const chosen = [];
 	const tree = ServerUpgradeMenuRows({
+		onCheck: async () => '',
 		rows: [row(), row({ profileId: 'remote:build', label: 'Build box' })],
 		namesServers: true,
 		onUpgrade: (profileId) => chosen.push(profileId),
@@ -577,4 +580,48 @@ test('at phone width the drawer server menu lists the same server updates', asyn
 	assert.match(serverLayer, /if \(props\.serverUpgrades\)/);
 	assert.match(serverLayer, /Server updates<\/p>\s*\{props\.serverUpgrades\}/);
 	assert.equal(typeof CompactSwitcher, 'function');
+});
+
+test('a server with an upgrader offers a check even with nothing on offer', () => {
+	const quiet = rows([
+		row({ available: undefined, action: 'none', checkable: true }),
+	]);
+	assert.match(quiet, /Running 5\.1\.1/);
+	assert.match(quiet, /data-server-upgrade-check[^>]*>(<span>)?Check for updates/);
+	assert.match(quiet, /server-upgrade-row__icon--quiet/);
+	assert.doesNotMatch(quiet, /Upgrade server…/);
+	// Alongside an upgrade on offer too, but never while one runs.
+	assert.match(
+		rows([row({ checkable: true })]),
+		/Upgrade server…[\s\S]*Check for updates/,
+	);
+	assert.doesNotMatch(
+		rows([row({ action: 'upgrading', checkable: true })]),
+		/Check for updates/,
+	);
+	// Unreachable, the check is shown but not live.
+	assert.match(
+		rows([row({ checkable: true, reachable: false })]),
+		/disabled=""[^>]*data-server-upgrade-check|data-server-upgrade-check[^>]*disabled=""/,
+	);
+});
+
+test('the check asks for its own server and shows what it found', async () => {
+	const asked = [];
+	const { ServerUpgradeCheck } = ServerUpgradeMenuRowsModule;
+	assert.equal(typeof ServerUpgradeCheck, 'function');
+	const markup = renderToStaticMarkup(
+		React.createElement(ServerUpgradeCheck, {
+			profileId: 'remote:vps',
+			reachable: true,
+			variant: 'sheet',
+			onCheck: async (profileId) => {
+				asked.push(profileId);
+				return 'Up to date · 5.1.1';
+			},
+		}),
+	);
+	assert.doesNotMatch(markup, /role="menuitem"/);
+	assert.match(markup, /Check for updates/);
+	assert.deepEqual(asked, []);
 });

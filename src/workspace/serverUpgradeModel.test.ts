@@ -114,9 +114,16 @@ test('one server’s status never describes another attached server', () => {
 		activeServerUpgradeVersion(board.snapshot.entries, 'build'),
 		undefined,
 	);
+	// Each keeps its own row: one offers its upgrade, the other only a check.
 	assert.deepEqual(
-		serverUpgradeRows(board.snapshot.entries).map((row) => row.profileId),
-		['vps'],
+		serverUpgradeRows(board.snapshot.entries).map((row) => [
+			row.profileId,
+			row.action,
+		]),
+		[
+			['vps', 'upgrade'],
+			['build', 'none'],
+		],
 	);
 	// A later publication from one changes only its own entry.
 	build.publish(status({ version: '5.2.0', available: { version: '5.3.0' } }));
@@ -213,13 +220,24 @@ test('each status shape gives the menu row its own content', () => {
 			status: next,
 			reachable,
 		});
-	assert.equal(row(status()), undefined);
+	// A server without an upgrader has nothing to say and nothing to check.
+	assert.equal(row(status({ channel: undefined })), undefined);
+	// One with an upgrader keeps a row, so it can be asked to check now.
+	assert.deepEqual(row(status()), {
+		profileId: 'vps',
+		label: 'VPS',
+		version: '5.1.1',
+		action: 'none',
+		reachable: true,
+		checkable: true,
+	});
 	assert.deepEqual(row(status(AVAILABLE)), {
 		profileId: 'vps',
 		label: 'VPS',
 		version: '5.1.1',
 		action: 'upgrade',
 		reachable: true,
+		checkable: true,
 		available: '5.2.0',
 	});
 	const manual = row(
