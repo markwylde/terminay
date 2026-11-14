@@ -958,3 +958,66 @@ test("duplicate operation names are rejected during composition", () => {
     /query operation is registered more than once: terminal\.list/u,
   );
 });
+
+test("startup does not wait for bot reconciliation, and bot triggers start once it finishes", async () => {
+  let finishReconcile;
+  const reconciled = new Promise((resolve) => { finishReconcile = resolve; });
+  const calls = [];
+  // Anything the composition reads that this test does not care about is a
+  // no-op, so the fake stands in for the whole bot service.
+  const inert = () => new Proxy(() => {}, {
+    get: (_target, key) => (key === "then" ? undefined : inert()),
+    apply: () => undefined,
+  });
+  const bots = new Proxy({
+    reconcile: async () => { calls.push("reconcile"); await reconciled; calls.push("reconciled"); },
+    triggers: { start: async () => { calls.push("triggers.start"); }, stop: () => { calls.push("triggers.stop"); } },
+    additionalOperations: () => [],
+    on: () => undefined,
+    off: () => undefined,
+    shutdown: async () => { calls.push("shutdown"); },
+  }, { get: (target, key) => (key in target ? target[key] : key === "then" ? undefined : inert()) });
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: "bot-startup-server", serverVersion: "1.0.0", capabilities: [],
+    ptyFactory: createPtyFactory(), bots,
+  });
+  await composition.start();
+  assert.deepEqual(calls, ["reconcile"], "startup finished while reconciliation was still waiting");
+  finishReconcile();
+  for (let i = 0; i < 50 && !calls.includes("triggers.start"); i++) await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(calls, ["reconcile", "reconciled", "triggers.start"]);
+  await composition.shutdown();
+});
+
+test("shutdown waits for bot reconciliation and never starts triggers after it", async () => {
+  let finishReconcile;
+  const reconciled = new Promise((resolve) => { finishReconcile = resolve; });
+  const calls = [];
+  const inert = () => new Proxy(() => {}, {
+    get: (_target, key) => (key === "then" ? undefined : inert()),
+    apply: () => undefined,
+  });
+  const bots = new Proxy({
+    reconcile: async () => { await reconciled; calls.push("reconciled"); },
+    triggers: { start: async () => { calls.push("triggers.start"); }, stop: () => { calls.push("triggers.stop"); } },
+    additionalOperations: () => [],
+    on: () => undefined,
+    off: () => undefined,
+    shutdown: async () => { calls.push("shutdown"); },
+  }, { get: (target, key) => (key in target ? target[key] : key === "then" ? undefined : inert()) });
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: "bot-shutdown-server", serverVersion: "1.0.0", capabilities: [],
+    ptyFactory: createPtyFactory(), bots,
+  });
+  await composition.start();
+  const stopping = composition.shutdown();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(calls, [], "shutdown is waiting for reconciliation");
+  finishReconcile();
+  await stopping;
+  assert.equal(calls[0], "reconciled");
+  assert.ok(!calls.includes("triggers.start"));
+  assert.ok(calls.includes("shutdown"));
+});
