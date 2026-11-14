@@ -87,7 +87,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   // use, checked against the glibc floor, and run on a clean floor host
   // before a change can merge (ADR-0077).
   const giteaGlibcFloor = job(giteaCi, "linux-glibc-floor");
-  assert.match(giteaGlibcFloor, /^ {4}runs-on: ubuntu-latest$/mu);
+  assert.match(giteaGlibcFloor, /^ {4}runs-on: \$\{\{ vars\.TERMINAY_CI_BUILD_RUNNER \|\| 'ubuntu-latest' \}\}$/mu);
   assert.match(giteaGlibcFloor, /test "\$\(docker info --format '\{\{\.Architecture\}\}'\)" = x86_64/u);
   const producer = job(giteaCi, "linux-artifacts");
   assert.match(producer, /standalone-prebuilt-application\.mjs build linux-x64.*&& sh scripts\/build-linux-standalone-archive\.sh --prebuilt/u);
@@ -278,13 +278,16 @@ test("the server image is published only for a release tag or a dispatched night
   assert.match(decision, /Native arm64 qualification belongs to the manually triggered release/u);
 });
 
-test('all seven Linux dependency installs retain scripts and share only verified tarballs', () => {
+test('all seven Linux dependency installs retain scripts and share only verified tarballs', async () => {
   const names = ['packaged-linux-built-in-lifecycle', 'standalone-systemd-restart', 'build-and-test', 'workspace-tests', 'real-webrtc', 'container-image-smoke', 'bot-mcp-runtime'];
   for (const name of names) {
     const body = job(giteaCi, name);
     assert.match(body, /container:\n {6}image: git\.i\.wylde\.net\/docker\/dind:latest\n {6}volumes:\n {8}- terminay-ci-npm-cache:\/var\/cache\/terminay-npm/u);
     assert.match(body, /npm_config_cache: \/var\/cache\/terminay-npm/u);
-    assert.match(body, /sh scripts\/install-ci-dependencies\.sh/u);
+    if (name === 'standalone-systemd-restart') {
+      assert.match(body, /node scripts\/prepare-systemd-ci\.mjs/u);
+      assert.match(await read('scripts/prepare-systemd-ci.mjs'), /\['sh', \['scripts\/install-ci-dependencies\.sh'\]/u);
+    } else assert.match(body, /sh scripts\/install-ci-dependencies\.sh/u);
     assert.doesNotMatch(body, /--ignore-scripts|node_modules:/u);
   }
   for (const name of ['build-and-test', 'workspace-tests']) assert.match(job(giteaCi, name), /--tmpfs \/test-tmp:rw,exec,size=2g,mode=1777/u);
@@ -364,4 +367,14 @@ test('Linux floor and systemd gates consume one producer directly and verify rev
   assert.match(producer, /appimage-floor-\$\{\{ github.sha \}\}/u);
   assert.ok(floor.indexOf('Verify both transferred artifacts') < floor.indexOf('Check every ELF file'));
   assert.ok(restart.indexOf('Verify the transferred archive') < restart.indexOf('Restart under systemd'));
+});
+
+
+test('only the four critical build jobs opt into the reserved runner pool', () => {
+  const reserved = ['e2e-image', 'linux-artifacts', 'linux-glibc-floor', 'standalone-systemd-restart'];
+  for (const name of reserved) {
+    assert.match(job(giteaCi, name), /^ {4}runs-on: \$\{\{ vars\.TERMINAY_CI_BUILD_RUNNER \|\| 'ubuntu-latest' \}\}$/mu);
+  }
+  assert.equal((giteaCi.match(/vars\.TERMINAY_CI_BUILD_RUNNER/g) ?? []).length, reserved.length);
+  assert.match(job(giteaCi, 'e2e-test'), /^ {4}runs-on: ubuntu-latest$/mu);
 });

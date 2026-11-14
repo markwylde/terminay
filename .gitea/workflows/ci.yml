@@ -33,10 +33,12 @@ concurrency:
 # shell. Shortly before the timeout the watchdog prints the step's processes,
 # the test files still running, and each Node process's JavaScript stack and
 # open handles; it never stops or fails anything.
+# Activate the reserved infrastructure pool only after its runners are online.
+# Clearing this variable restores general-pool scheduling without a code change.
 jobs:
   e2e-image:
     name: Build E2E image
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -139,7 +141,7 @@ jobs:
 
   linux-artifacts:
     name: Build Linux floor artifacts (linux-x64)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 45
@@ -324,7 +326,7 @@ jobs:
   # from each on a clean glibc 2.31 host (ADR-0077).
   linux-glibc-floor:
     name: Linux glibc floor (linux-x64)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
     needs: linux-artifacts
     timeout-minutes: 45
     env:
@@ -393,7 +395,7 @@ jobs:
   # read from shell output that kept and new terminals can still use /tmp.
   standalone-systemd-restart:
     name: Standalone systemd restart (linux-x64)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
     container:
       image: git.i.wylde.net/docker/dind:latest
       volumes:
@@ -442,8 +444,7 @@ jobs:
         env:
           npm_config_cache: /var/cache/terminay-npm
         run: |
-          sh scripts/install-ci-dependencies.sh
-          npm run build --workspace apps/terminay-cli
+          node scripts/prepare-systemd-ci.mjs
 
       - name: Restart under systemd (scenarios A, B, C)
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
