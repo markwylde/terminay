@@ -253,8 +253,8 @@ at any point leaves it pointing at a complete version. Upgrades keep the
 active version and one previous, which is what a rollback restores.
 
 The environment file is readable only by the run-as account and never carries
-a vault passphrase, a device key, or pairing material — those live in the data
-root, which is the trust boundary. The server id is written once and never
+a vault passphrase, a device key, or pairing material — those, and the vault
+key, live in the data root, which is the trust boundary. The server id is written once and never
 rewritten, because it is the identity paired devices know the machine by.
 
 #### Exposure and the direct origin
@@ -746,11 +746,28 @@ notifications turned on. There is nothing to configure on the server.
   and is otherwise unaffected; a failed push is retried a few times and then
   dropped, and never delays a terminal or a connected client.
 
-Standalone vault unlock is an operator action at startup or through the
-configured headless-vault integration. Secret values must only be available to
-the provider callback while unlocked. A vault key, browser credential, or
-provider credential must not be placed in `TERMINAY_*` environment variables,
-service-manager arguments, logs, or support bundles. There is no pairing PIN;
+The standalone vault unlocks itself at startup (ADR-0118). On first start the
+server writes a random key to `<data-root>/vault/headless-v1.key`, readable only
+by its account, and every later start unlocks with it. Nothing needs to be
+configured, and restarts and upgrades keep the vault unlocked.
+
+- **Operator-managed secret.** Pass a passphrase on an inherited descriptor with
+  `--vault-unlock-fd FD` (for example from a service-manager credential). It is
+  tried first, and a vault unlocked that way gets no key file.
+- **Converting a passphrase vault.** Start once with `--vault-unlock-fd FD
+  --vault-convert-to-key-file`. The server writes the key file, and later starts
+  unlock with or without the descriptor. An interrupted conversion is finished
+  or discarded on the next start.
+- **When the vault stays locked.** The server log says why, for example
+  `vault is locked: … does not unlock …`, and how to fix it. A command that needs
+  a secret reports "The server vault is locked" to the client. The server never
+  deletes or rewrites a key file that does not match; restore the right one, or
+  move `vault/headless-v1.json` aside to start an empty vault.
+
+Secret values must only be available to the provider callback while unlocked. A
+vault key, browser credential, or provider credential must not be placed in
+`TERMINAY_*` environment variables, service-manager arguments, logs, or support
+bundles. There is no pairing PIN;
 a leftover `TERMINAY_REMOTE_PAIRING_PIN` variable makes the server refuse to
 start until it is removed.
 
@@ -952,7 +969,9 @@ the server's user can write.
 ## Backup, restore, upgrades, and incidents
 
 Before an upgrade, stop the server, copy the complete data root to a separate
-backup location, and record the artifact version and server identity. Restore
+backup location, and record the artifact version and server identity. The data
+root holds the vault key beside the vault, so a copy of it can read every vault
+secret: store backups where only the operator can read them. Restore
 to a new data root first; never overwrite the only copy of a failed or
 corrupt root. Keep the failed root read-only for diagnosis. A rollback changes
 the server artifact and points it at the validated restored root; it does not

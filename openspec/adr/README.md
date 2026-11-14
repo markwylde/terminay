@@ -30,7 +30,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | --- | --- | --- | --- |
 | [0001](./0001-pinned-node-runtime-baseline.md) | Pin the Node runtime, toolchain, and compile targets across every lane | accepted (superseded by 0033) | 2026-07-27 |
 | [0002](./0002-sqlite-state-repository.md) | Use SQLite through `node:sqlite` for the server state repository | accepted | 2026-07-27 |
-| [0003](./0003-vault-interface-and-key-protectors.md) | Hold server secrets in a vault with AES-256-GCM entries and platform key protectors | accepted | 2026-07-27 |
+| [0003](./0003-vault-interface-and-key-protectors.md) | Hold server secrets in a vault with AES-256-GCM entries and platform key protectors | accepted (superseded by 0118 in part) | 2026-07-27 |
 | [0004](./0004-node-pty-and-supported-distribution-matrix.md) | Keep `node-pty` with one supervised child per PTY, and declare a bounded distribution matrix | accepted (superseded by 0035) | 2026-07-27 |
 | [0005](./0005-sandboxed-origin-bound-client-hosts.md) | Load server UI in a sandboxed, origin-bound partition in both Desktop and browser hosts | accepted | 2026-07-27 |
 | [0006](./0006-terminay-owned-werift-webrtc-runtime.md) | Use a Terminay-owned deterministic Werift ESM artifact as the headless WebRTC runtime | accepted | 2026-07-27 |
@@ -135,3 +135,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0115](./0115-settings-are-organised-by-the-place-that-stores-them.md) | Settings are organised by the place that stores them | accepted, supersedes ADR-0075 in part | 2026-11-13 |
 | [0116](./0116-a-session-holder-takes-new-sessions-only-while-its-environment-is-healthy.md) | A session holder takes new sessions only while its environment is healthy | accepted | 2026-11-13 |
 | [0117](./0117-installing-a-channels-latest-build-may-move-backwards-only-on-explicit-request.md) | Installing a channel's latest build may move backwards, but only on an explicit request | accepted, supersedes 0062 and 0110 in part | 2026-11-14 |
+| [0118](./0118-a-standalone-server-vault-unlocks-from-a-key-file-in-its-data-root.md) | A standalone server's vault unlocks itself from a key file in its data root | accepted, supersedes 0003 in part | 2026-11-14 |
