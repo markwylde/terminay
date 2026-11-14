@@ -8,15 +8,13 @@
  */
 
 import type { ServerUpgradeMode } from '@terminay/client-core';
-import {
-	useCallback,
-	useEffect,
-	useMemo,
-	useState,
-	useSyncExternalStore,
-} from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceConnection } from '../shared/connections/connectionRegistry';
 import type { ConnectionProfileSummary } from '../shared/connections/hostConnections';
+import {
+	useProvidedServerUpgradeBoard,
+	useServerUpgradeBoardSnapshot,
+} from './ServerUpgradeBoardHost.tsx';
 import {
 	activeServerUpgradeVersion,
 	createServerUpgradeMemory,
@@ -24,6 +22,7 @@ import {
 	ServerUpgradeBoard,
 	type ServerUpgradeEntry,
 	type ServerUpgradeNotice,
+	type ServerUpgradeProgressView,
 	type ServerUpgradeRow,
 	serverUpgradeRows,
 	serverUpgradeSources,
@@ -47,6 +46,8 @@ export type ServerUpgrades = Readonly<{
 	/** Open the confirmation. Nothing is sent until it is confirmed. */
 	requestUpgrade: (profileId: string) => void;
 	confirmation?: ServerUpgradeConfirmationState;
+	/** Each followed upgrade's ticklist, by connection. */
+	progress: readonly ServerUpgradeProgressView[];
 }>;
 
 export function useServerUpgrades(
@@ -58,24 +59,25 @@ export function useServerUpgrades(
 	}>,
 ): ServerUpgrades {
 	const { activeProfileId, connections, profiles } = options;
-	// The workspace is unmounted while its server is away, and the outcome
-	// arrives after it is mounted again: what was followed is kept on the device.
-	const [board] = useState(
-		() => new ServerUpgradeBoard({ memory: createServerUpgradeMemory() }),
+	// The window's board outlives this workspace, which is mounted afresh on
+	// every reconnect; without a host to hold it, this workspace keeps its own,
+	// and what was followed is kept on the device.
+	const provided = useProvidedServerUpgradeBoard();
+	const [own] = useState(() =>
+		provided === undefined
+			? new ServerUpgradeBoard({ memory: createServerUpgradeMemory() })
+			: undefined,
 	);
-	const snapshot = useSyncExternalStore(
-		useCallback((listener) => board.subscribe(listener), [board]),
-		useCallback(() => board.snapshot, [board]),
-		useCallback(() => board.snapshot, [board]),
-	);
+	const board = provided ?? (own as ServerUpgradeBoard);
+	const snapshot = useServerUpgradeBoardSnapshot(board);
 	const sources = useMemo(
 		() => serverUpgradeSources(connections, profiles),
 		[connections, profiles],
 	);
 	useEffect(() => {
-		board.sync(sources);
-	}, [board, sources]);
-	useEffect(() => () => board.dispose(), [board]);
+		if (own !== undefined) own.sync(sources);
+	}, [own, sources]);
+	useEffect(() => () => own?.dispose(), [own]);
 	const [confirmingProfileId, setConfirmingProfileId] = useState<string>();
 	const requestUpgrade = useCallback((profileId: string) => {
 		setConfirmingProfileId(profileId);
@@ -85,8 +87,8 @@ export function useServerUpgrades(
 		[board],
 	);
 	const rows = useMemo(
-		() => serverUpgradeRows(snapshot.entries),
-		[snapshot.entries],
+		() => serverUpgradeRows(snapshot.entries, snapshot.progress),
+		[snapshot.entries, snapshot.progress],
 	);
 	const confirmation = useMemo(():
 		| ServerUpgradeConfirmationState
@@ -98,6 +100,7 @@ export function useServerUpgrades(
 		// to confirm.
 		if (entry?.status.available === undefined) return undefined;
 		const { profileId } = entry;
+		const to = entry.status.available.version;
 		return {
 			entry,
 			close: () => setConfirmingProfileId(undefined),
@@ -107,7 +110,7 @@ export function useServerUpgrades(
 						?.context?.serverUpgradeClient,
 					mode,
 				);
-				if (refusal === undefined) board.markStarted(profileId);
+				if (refusal === undefined) board.markStarted(profileId, { mode, to });
 				return refusal;
 			},
 		};
@@ -124,6 +127,7 @@ export function useServerUpgrades(
 	);
 	return {
 		rows,
+		progress: snapshot.progress,
 		namesServers: connections.length > 1,
 		notices: snapshot.notices,
 		dismissNotice,

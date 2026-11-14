@@ -42,6 +42,13 @@ import {
 } from '../shared/pairingAttemptState';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
+import {
+	overlayShowsUpgrade,
+	ServerUpgradeBoardHost,
+	ServerUpgradeFloatingProgress,
+	ServerUpgradeOverlayProgress,
+	useServerUpgradeProgress,
+} from '../workspace/ServerUpgradeBoardHost.tsx';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import { ConnectionStateServers } from './ConnectionStateServers';
 import {
@@ -332,47 +339,50 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					host={connectionHost}
 					registry={registry}
 				>
-					<div
-						className={
-							phase === 'reconnecting'
-								? 'session-workspace session-workspace--reconnecting'
-								: 'session-workspace'
-						}
-					>
-						{phase === 'reconnecting' && (
-							<div
-								className="session-workspace__reconnecting"
-								role="status"
-								aria-live="polite"
-								aria-busy="true"
-							>
-								<LoadingDots />
-								<p>{error ?? 'Terminal stream stalled. Reconnecting…'}</p>
-							</div>
-						)}
-						<ConnectedWebRendererWorkspace
-							connectionRoute={connectionRoute}
-							hostContext={desktopContext}
-							onBack={() => {
-								if (leaveManagerSession()) return;
-								void registry.dispose();
-							}}
-							subscribeAppCommands={
-								desktopContext === undefined ||
-								window.terminayHost === undefined
-									? undefined
-									: (listener: (command: AppCommand) => Promise<void> | void) =>
-											(
-												window.terminayHost as unknown as DesktopHostBridge
-											).subscribeEvent((event) => {
-												if (event.event.type === 'menu.command') {
-													return listener(event.event.command);
-												}
-											})
+					<ServerUpgradeBoardHost>
+						<div
+							className={
+								phase === 'reconnecting'
+									? 'session-workspace session-workspace--reconnecting'
+									: 'session-workspace'
 							}
-							terminalClientContext={terminalClientContext}
-						/>
-					</div>
+						>
+							{phase === 'reconnecting' && (
+								<SessionReconnecting
+									profileId={primary?.profileId}
+									error={error}
+								/>
+							)}
+							<ServerUpgradeFloatingProgress
+								profileId={primary?.profileId}
+								reconnecting={phase === 'reconnecting'}
+							/>
+							<ConnectedWebRendererWorkspace
+								connectionRoute={connectionRoute}
+								hostContext={desktopContext}
+								onBack={() => {
+									if (leaveManagerSession()) return;
+									void registry.dispose();
+								}}
+								subscribeAppCommands={
+									desktopContext === undefined ||
+									window.terminayHost === undefined
+										? undefined
+										: (
+												listener: (command: AppCommand) => Promise<void> | void,
+											) =>
+												(
+													window.terminayHost as unknown as DesktopHostBridge
+												).subscribeEvent((event) => {
+													if (event.event.type === 'menu.command') {
+														return listener(event.event.command);
+													}
+												})
+								}
+								terminalClientContext={terminalClientContext}
+							/>
+						</div>
+					</ServerUpgradeBoardHost>
 				</ConnectionsProvider>
 			</WorkspaceErrorBoundary>
 		);
@@ -421,6 +431,35 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				)}
 			</section>
 		</main>
+	);
+}
+
+/**
+ * The dim over a workspace whose connection is coming back. While the server
+ * restarts for an upgrade this window follows, that is a step of the upgrade,
+ * and its ticklist is shown in place of the stall or connection-lost text.
+ */
+function SessionReconnecting({
+	error,
+	profileId,
+}: Readonly<{ error: string | undefined; profileId: string | undefined }>) {
+	const upgrade = useServerUpgradeProgress(profileId);
+	if (overlayShowsUpgrade(upgrade))
+		return (
+			<div className="session-workspace__reconnecting session-workspace__reconnecting--upgrade">
+				<ServerUpgradeOverlayProgress progress={upgrade} />
+			</div>
+		);
+	return (
+		<div
+			className="session-workspace__reconnecting"
+			role="status"
+			aria-live="polite"
+			aria-busy="true"
+		>
+			<LoadingDots />
+			<p>{error ?? 'Terminal stream stalled. Reconnecting…'}</p>
+		</div>
 	);
 }
 

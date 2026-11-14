@@ -8,6 +8,7 @@ import { friendlyPairingActionError } from '../shared/pairingActionError';
 import { useConnections } from '../shared/connections/ConnectionsContext';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { ConnectionsControl } from './ConnectionsControl';
+import { useServerUpgradeProgress } from './ServerUpgradeBoardHost.tsx';
 import { upgradeAvailableSuffix } from './serverUpgradeModel.ts';
 
 export type ConnectionSwitcherEntry = {
@@ -51,6 +52,7 @@ export function RemoteAccessConnectionMenu(props: {
 		refreshProfiles,
 		selectServer,
 	} = useConnections();
+	const windowUpgrade = useServerUpgradeProgress(connections[0]?.profileId);
 	const [switchingProfileId, setSwitchingProfileId] = useState<string>();
 	const [switchError, setSwitchError] = useState<string>();
 	// A successful switch replaces this document, so only a failure, or opening
@@ -157,6 +159,7 @@ export function RemoteAccessConnectionMenu(props: {
 									: { connection: connections[0] })}
 								{...(currentProfileId === undefined ? {} : { currentProfileId })}
 								currentServerLabel={props.currentServerLabel}
+								upgradeRestarting={windowUpgrade?.restarting === true}
 								{...(selectServer === undefined
 									? {}
 									: {

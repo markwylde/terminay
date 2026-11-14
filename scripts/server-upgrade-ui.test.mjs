@@ -35,6 +35,10 @@ const { ServerUpgradeConfirmation } = await bundleComponent(
 	'src/workspace/ServerUpgradeDialog.tsx',
 	'server-upgrade-dialog.cjs',
 );
+const { ServerUpgradeProgress } = await bundleComponent(
+	'src/workspace/ServerUpgradeProgress.tsx',
+	'server-upgrade-progress.cjs',
+);
 const { TerminalActivityOverview } = await bundleComponent(
 	'src/workspace/TerminalActivityOverview.tsx',
 	'terminal-activity-overview.cjs',
@@ -141,6 +145,89 @@ test('an upgrade in progress says so and offers no action', () => {
 	assert.match(markup, /role="status"[^>]*>Upgrading…/);
 	assert.doesNotMatch(markup, /Upgrade server…/);
 	assert.doesNotMatch(markup, /<button/);
+});
+
+test('an upgrade this window follows names the step it is on', () => {
+	const markup = rows([
+		row({ action: 'upgrading', step: 'Restarting the server' }),
+	]);
+	assert.match(markup, /role="status"[^>]*>Restarting the server…/);
+	assert.doesNotMatch(markup, /Upgrading…/);
+});
+
+function progress(overrides = {}) {
+	return {
+		profileId: 'vps',
+		label: 'VPS',
+		mode: 'in-place',
+		from: '5.1.1',
+		to: '5.2.0',
+		initiatedHere: true,
+		hidden: false,
+		restarting: false,
+		steps: [
+			{ id: 'start', label: 'Starting the upgrade', state: 'done' },
+			{ id: 'install', label: 'Installing 5.2.0', state: 'done' },
+			{ id: 'restart', label: 'Restarting the server', state: 'running' },
+			{ id: 'running', label: 'Running 5.2.0', state: 'waiting' },
+		],
+		...overrides,
+	};
+}
+
+test('the ticklist is a status region that says each step and its state in words', () => {
+	const markup = renderToStaticMarkup(
+		React.createElement(ServerUpgradeProgress, {
+			progress: progress({ restarting: true }),
+			placement: 'overlay',
+		}),
+	);
+	assert.match(markup, /role="status"[^>]*aria-label="Upgrading VPS"/);
+	assert.match(markup, /5\.1\.1 → 5\.2\.0/);
+	assert.match(markup, /<ol/);
+	assert.match(markup, /data-step="install" data-step-state="done"/);
+	assert.match(markup, /Restarting the server<span[^>]*>, In progress</);
+	assert.match(markup, /Running 5\.2\.0<span[^>]*>, Waiting</);
+	assert.match(markup, /Disconnected while the server restarts/);
+	// Nothing to put away while it restarts.
+	assert.doesNotMatch(markup, /<button/);
+});
+
+test('the ticklist offers Hide while it runs and Close once it has ended', () => {
+	const running = renderToStaticMarkup(
+		React.createElement(ServerUpgradeProgress, {
+			progress: progress(),
+			placement: 'floating',
+			onHide: noop,
+		}),
+	);
+	assert.match(running, />Hide</);
+	assert.doesNotMatch(running, />Close</);
+	const failed = renderToStaticMarkup(
+		React.createElement(ServerUpgradeProgress, {
+			progress: progress({
+				outcome: 'failure',
+				steps: [
+					{ id: 'start', label: 'Starting the upgrade', state: 'done' },
+					{ id: 'install', label: 'Installing 5.2.0', state: 'done' },
+					{ id: 'restart', label: 'Restarting the server', state: 'done' },
+					{
+						id: 'running',
+						label: 'Running 5.2.0',
+						state: 'failed',
+						detail: 'Upgrading VPS failed. 5.1.1 is running again.',
+					},
+				],
+			}),
+			placement: 'floating',
+			onClose: noop,
+		}),
+	);
+	assert.match(failed, /aria-label="VPS was not upgraded"/);
+	assert.match(failed, /Running 5\.2\.0<span[^>]*>, Failed</);
+	assert.match(failed, /5\.1\.1 is running again/);
+	assert.match(failed, />Close</);
+	assert.doesNotMatch(failed, />Hide</);
 });
 
 test('a rolled-back upgrade is read from the row, and the action waits for the connection', () => {

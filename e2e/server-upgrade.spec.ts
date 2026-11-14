@@ -240,6 +240,25 @@ const confirmationOf = (window: Page) =>
 	window.locator('[data-server-upgrade-dialog]');
 const notificationsBell = (window: Page) =>
 	window.getByRole('button', { name: /^Notifications/ });
+const progressCard = (window: Page) =>
+	window.locator('[data-server-upgrade-progress]');
+const stepState = (window: Page, step: string) =>
+	progressCard(window).locator(`[data-step="${step}"]`);
+
+/** The ticklist's step states, in order. */
+async function expectTicks(window: Page, states: readonly string[]) {
+	for (const [index, step] of ['start', 'install', 'restart', 'running'].entries())
+		await expect(stepState(window, step)).toHaveAttribute(
+			'data-step-state',
+			states[index] ?? '',
+			{ timeout: 120_000 },
+		);
+}
+
+/** A screenshot for the pull request, kept with the run's artifacts. */
+async function capture(window: Page, name: string) {
+	await window.screenshot({ path: test.info().outputPath(`${name}.png`) });
+}
 
 /** Opens the header Notifications list at the upgrade's outcome. */
 async function openUpgradeNotice(window: Page, tone?: 'success' | 'failure') {
@@ -318,17 +337,41 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 			.getByRole('button', { name: 'Upgrade', exact: true })
 			.click();
 		await expect(confirmation).toHaveCount(0);
+		// The confirmation became the upgrade's ticklist.
+		const card = progressCard(mainWindow);
+		await expect(card).toBeVisible();
+		await expect(card).toHaveAttribute('role', 'status');
+		await expect(card).toHaveAccessibleName(`Upgrading ${serverHost}`);
+		await expect(card).toContainText('5.1.1 → 5.2.0');
+		await expect(stepState(mainWindow, 'install')).toContainText(
+			'Installing 5.2.0',
+		);
+		await expectTicks(mainWindow, ['done', 'running', 'waiting', 'waiting']);
+		await capture(mainWindow, '01-upgrade-installing');
 		await expect
 			.poll(() => upgrader.upgrades(), { timeout: 15_000 })
 			.toEqual(['daemon upgrade --user']);
 
-		// While it runs the row says so and offers no action.
+		// While it runs the row names the step and offers no action.
 		menu = await openConnectionMenu(mainWindow);
-		await expect(upgradeRow(menu)).toContainText('Upgrading…');
+		await expect(upgradeRow(menu)).toContainText(/Installing 5\.2\.0…|Running 5\.2\.0…/);
+		await expect(upgradeRow(menu)).not.toContainText('Upgrading…');
 		await expect(
 			menu.getByRole('menuitem', { name: 'Upgrade server…' }),
 		).toHaveCount(0);
 		await mainWindow.keyboard.press('Escape');
+
+		// The ticklist ends with every step done, and stays until closed.
+		await expect(card).toHaveAttribute(
+			'data-server-upgrade-outcome',
+			'success',
+			{ timeout: 45_000 },
+		);
+		await expectTicks(mainWindow, ['done', 'done', 'done', 'done']);
+		await expect(card).toHaveAccessibleName(`${serverHost} is upgraded`);
+		await capture(mainWindow, '03-upgrade-succeeded');
+		await card.getByRole('button', { name: 'Close' }).click();
+		await expect(card).toHaveCount(0);
 
 		// The outcome is told once, in Notifications, and the warning is gone.
 		// Nothing is drawn over the workspace.
@@ -433,11 +476,28 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 			.getByRole('button', { name: 'Upgrade', exact: true })
 			.click();
 		menu = await openConnectionMenu(mainWindow);
-		await expect(upgradeRow(menu)).toContainText('Upgrading…');
+		await expect(upgradeRow(menu)).toContainText('Installing 5.2.0…');
 		await mainWindow.keyboard.press('Escape');
 
-		// The server goes away mid-upgrade and the previous release comes back.
+		const card = progressCard(mainWindow);
+		await expect(card).toBeVisible();
+		await expect(card.getByRole('button', { name: 'Hide' })).toBeVisible();
+
+		// The server goes away mid-upgrade. The drop is the restart step, not a
+		// stall: the reconnecting overlay holds the ticklist.
 		await server.stop();
+		const overlay = mainWindow.locator(
+			'.session-workspace__reconnecting--upgrade',
+		);
+		await expect(overlay).toBeVisible({ timeout: 60_000 });
+		await expect(overlay.locator('[data-server-upgrade-progress]')).toBeVisible();
+		await expectTicks(mainWindow, ['done', 'done', 'running', 'waiting']);
+		await expect(card).toContainText('Disconnected while the server restarts');
+		await expect(mainWindow.getByText('Terminal stream stalled')).toHaveCount(0);
+		await expect(mainWindow.getByText('Connection lost')).toHaveCount(0);
+		await capture(mainWindow, '02-upgrade-restarting');
+
+		// The previous release comes back.
 		await upgrader.answer(
 			checkAnswer({
 				lastResult: {
@@ -468,6 +528,17 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 		);
 		await expect(notice).toHaveCount(1);
 		await mainWindow.keyboard.press('Escape');
+
+		// The ticklist ends on the failed step, with why and what runs now.
+		await expect(card).toHaveAttribute('data-server-upgrade-outcome', 'failure');
+		await expectTicks(mainWindow, ['done', 'done', 'done', 'failed']);
+		await expect(stepState(mainWindow, 'running')).toContainText(
+			'the new release did not become ready. 5.1.1 is running again.',
+		);
+		await expect(card).toHaveAccessibleName(`${serverHost} was not upgraded`);
+		await capture(mainWindow, '04-upgrade-rolled-back');
+		await card.getByRole('button', { name: 'Close' }).click();
+		await expect(card).toHaveCount(0);
 		await expect(upgradeIndicator(mainWindow)).toHaveAttribute(
 			'data-server-upgrade-indicator',
 			'5.2.0',

@@ -114,7 +114,7 @@ export function ServerUpgradeMenuRows({
 					)}
 					{row.action === 'upgrading' ? (
 						<p className="server-upgrade-row__progress" role="status">
-							Upgrading…
+							{row.step === undefined ? 'Upgrading…' : `${row.step}…`}
 						</p>
 					) : null}
 					{row.action === 'upgrade' ? (

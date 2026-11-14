@@ -624,6 +624,8 @@ test('a remembered upgrade expires, and never claims an older outcome', () => {
 	assert.deepEqual(memory().read('build-box').following, {
 		startedAt: 1_000,
 		from: '5.1.1',
+		to: '5.2.0',
+		mode: 'in-place',
 	});
 	// An outcome from before this upgrade began belongs to an earlier one.
 	assert.equal(returnWith(999), 0);
@@ -739,4 +741,293 @@ test('in place is preselected, and each mode says what it costs', () => {
 		/Every terminal on this server ends/,
 	);
 	assert.doesNotMatch(upgradeConsequenceText('recreate'), /keep running/);
+});
+
+/** The ticklist's states, in order, for one server. */
+function ticks(board: ServerUpgradeBoard, profileId = 'vps') {
+	return board.snapshot.progress
+		.find((progress) => progress.profileId === profileId)
+		?.steps.map((step) => step.state)
+		.join(' ');
+}
+
+function failedDetail(board: ServerUpgradeBoard, profileId = 'vps') {
+	return board.snapshot.progress
+		.find((progress) => progress.profileId === profileId)
+		?.steps.find((step) => step.state === 'failed')?.detail;
+}
+
+const SUCCEEDED = status({
+	version: '5.2.0',
+	upgrade: { state: 'succeeded', from: '5.1.1', to: '5.2.0', at: 5_000 },
+});
+
+/** Start an upgrade from this device and see the server restart for it. */
+function startedAndRestarting(timers = fakeTimers()) {
+	const board = new ServerUpgradeBoard(timers);
+	const before = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', before)]);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	before.publish(RUNNING);
+	board.sync([source('vps', undefined, { phase: 'reconnecting' })]);
+	return { board, timers };
+}
+
+test('a started upgrade is a ticklist from install, through the restart, to running', () => {
+	const timers = fakeTimers();
+	const board = new ServerUpgradeBoard(timers);
+	const before = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', before)]);
+	assert.equal(board.snapshot.progress.length, 0);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	const [progress] = board.snapshot.progress;
+	assert.deepEqual(
+		progress?.steps.map((step) => step.label),
+		[
+			'Starting the upgrade',
+			'Installing 5.2.0',
+			'Restarting the server',
+			'Running 5.2.0',
+		],
+	);
+	assert.equal(progress?.initiatedHere, true);
+	assert.equal(ticks(board), 'done running waiting waiting');
+	before.publish(RUNNING);
+	assert.equal(ticks(board), 'done running waiting waiting');
+	assert.equal(
+		serverUpgradeRows(board.snapshot.entries, board.snapshot.progress)[0]?.step,
+		'Installing 5.2.0',
+	);
+	board.sync([source('vps', undefined, { phase: 'reconnecting' })]);
+	assert.equal(ticks(board), 'done done running waiting');
+	assert.equal(board.snapshot.progress[0]?.restarting, true);
+	assert.equal(
+		serverUpgradeRows(board.snapshot.entries, board.snapshot.progress)[0]?.step,
+		'Restarting the server',
+	);
+	const back = fakeClient();
+	board.sync([source('vps', back)]);
+	assert.equal(board.snapshot.progress[0]?.restarting, false);
+	back.publish(SUCCEEDED);
+	assert.equal(ticks(board), 'done done done done');
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	assert.deepEqual(
+		board.snapshot.notices.map((notice) => notice.text),
+		['vps is now on 5.2.0.'],
+	);
+	assert.equal(timers.pending.size, 0);
+	// Kept until closed; closing takes the ticklist and leaves the notice.
+	board.hideProgress('vps');
+	assert.equal(board.snapshot.progress[0]?.hidden, false);
+	board.closeProgress('vps');
+	assert.equal(board.snapshot.progress.length, 0);
+	assert.equal(board.snapshot.notices.length, 1);
+});
+
+test('the recreate mode names its third step', () => {
+	const board = new ServerUpgradeBoard(fakeTimers());
+	board.sync([source('vps', fakeClient(status(AVAILABLE)))]);
+	board.markStarted('vps', { mode: 'recreate', to: '5.2.0' });
+	assert.equal(
+		board.snapshot.progress[0]?.steps[2]?.label,
+		'Recreating the container',
+	);
+});
+
+test('every ending of a followed upgrade is a final ticklist state', () => {
+	// Rolled back.
+	{
+		const { board } = startedAndRestarting();
+		const back = fakeClient();
+		board.sync([source('vps', back)]);
+		back.publish(
+			status({
+				...AVAILABLE,
+				upgrade: {
+					state: 'failed',
+					from: '5.1.1',
+					to: '5.2.0',
+					reason: 'not ready',
+					restored: true,
+					at: 5_000,
+				},
+			}),
+		);
+		assert.equal(ticks(board), 'done done done failed');
+		assert.equal(
+			failedDetail(board),
+			'Upgrading vps failed: not ready. 5.1.1 is running again.',
+		);
+		assert.equal(board.snapshot.progress[0]?.outcome, 'failure');
+	}
+	// Back on the old version, saying nothing of an outcome.
+	{
+		const { board } = startedAndRestarting();
+		board.sync([source('vps', fakeClient(status(AVAILABLE)))]);
+		assert.equal(ticks(board), 'done done done failed');
+		assert.equal(failedDetail(board), 'vps is still on 5.1.1.');
+		assert.equal(board.snapshot.notices.length, 0);
+	}
+	// Back on the target version, saying nothing of an outcome.
+	{
+		const { board } = startedAndRestarting();
+		board.sync([source('vps', fakeClient(status({ version: '5.2.0' })))]);
+		assert.equal(ticks(board), 'done done done done');
+		assert.equal(board.snapshot.notices.length, 1);
+	}
+	// Back, but silent about its upgrade until the deadline.
+	{
+		const { board, timers } = startedAndRestarting();
+		board.sync([source('vps', fakeClient())]);
+		assert.equal(ticks(board), 'done done running waiting');
+		timers.fire();
+		assert.equal(ticks(board), 'done done done failed');
+		assert.equal(
+			failedDetail(board),
+			'vps came back but did not say how the upgrade ended.',
+		);
+		assert.equal(board.snapshot.notices.length, 0);
+	}
+	// Back as a server this client cannot speak to.
+	{
+		const { board } = startedAndRestarting();
+		board.sync([
+			source('vps', undefined, {
+				phase: 'incompatible',
+				error: 'Update Terminay Desktop to connect.',
+			}),
+		]);
+		assert.equal(ticks(board), 'done done done failed');
+		assert.equal(failedDetail(board), 'Update Terminay Desktop to connect.');
+	}
+	// Never back within the deadline; a later return changes nothing.
+	{
+		const { board, timers } = startedAndRestarting();
+		timers.fire();
+		assert.equal(ticks(board), 'done done failed waiting');
+		assert.equal(
+			failedDetail(board),
+			'vps did not come back after the upgrade.',
+		);
+		board.sync([source('vps', fakeClient(SUCCEEDED))]);
+		assert.equal(ticks(board), 'done done failed waiting');
+	}
+	// The connection layer gives up.
+	{
+		const { board } = startedAndRestarting();
+		board.sync([source('vps', undefined, { phase: 'unreachable' })]);
+		assert.equal(ticks(board), 'done done failed waiting');
+		assert.equal(board.snapshot.notices.length, 1);
+	}
+});
+
+test('an upgrader that finishes without a restart moves straight to running', () => {
+	const board = new ServerUpgradeBoard(fakeTimers());
+	const client = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', client)]);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	client.publish(RUNNING);
+	client.publish(status(AVAILABLE));
+	assert.equal(ticks(board), 'done done done running');
+	client.publish(SUCCEEDED);
+	assert.equal(ticks(board), 'done done done done');
+});
+
+test('another device follows from the status, and keeps nothing once it ends', () => {
+	const board = new ServerUpgradeBoard(fakeTimers());
+	const before = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', before)]);
+	before.publish(RUNNING);
+	const [progress] = board.snapshot.progress;
+	assert.equal(progress?.initiatedHere, false);
+	assert.equal(progress?.to, '5.2.0');
+	assert.equal(progress?.mode, 'in-place');
+	assert.equal(ticks(board), 'done running waiting waiting');
+	board.sync([source('vps', undefined, { phase: 'reconnecting' })]);
+	assert.equal(board.snapshot.progress[0]?.restarting, true);
+	board.sync([source('vps', fakeClient(SUCCEEDED))]);
+	assert.equal(board.snapshot.progress.length, 0);
+	assert.equal(board.snapshot.notices.length, 1);
+});
+
+test('a status that says it began before the reply makes one ticklist, this device’s', () => {
+	const board = new ServerUpgradeBoard(fakeTimers());
+	const client = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', client)]);
+	client.publish(RUNNING);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	assert.equal(board.snapshot.progress.length, 1);
+	assert.equal(board.snapshot.progress[0]?.initiatedHere, true);
+});
+
+test('a hidden ticklist stays hidden through its ending, and shows while restarting', () => {
+	const board = new ServerUpgradeBoard(fakeTimers());
+	const before = fakeClient(status(AVAILABLE));
+	board.sync([source('vps', before)]);
+	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
+	board.hideProgress('vps');
+	assert.equal(board.snapshot.progress[0]?.hidden, true);
+	before.publish(RUNNING);
+	board.sync([source('vps', undefined, { phase: 'reconnecting' })]);
+	// Hidden, and restarting: the shell draws it in the overlay regardless.
+	assert.equal(board.snapshot.progress[0]?.hidden, true);
+	assert.equal(board.snapshot.progress[0]?.restarting, true);
+	// Closing is only for a ticklist that has ended.
+	board.closeProgress('vps');
+	assert.equal(board.snapshot.progress.length, 1);
+	board.sync([source('vps', fakeClient(SUCCEEDED))]);
+	assert.equal(board.snapshot.progress[0]?.hidden, true);
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+});
+
+test('a reload mid-upgrade restores this device’s ticklist with its target and mode', () => {
+	const storage = fakeStorage();
+	const first = new ServerUpgradeBoard({
+		...fakeTimers(),
+		memory: createServerUpgradeMemory(storage),
+	});
+	first.sync([
+		source('primary', fakeClient(status(AVAILABLE)), { serverId: 'build-box' }),
+	]);
+	first.markStarted('primary', { mode: 'recreate', to: '5.2.0' });
+	first.dispose();
+	const second = new ServerUpgradeBoard({
+		...fakeTimers(),
+		memory: createServerUpgradeMemory(storage),
+	});
+	second.sync([
+		source('primary', undefined, {
+			serverId: 'build-box',
+			phase: 'reconnecting',
+		}),
+	]);
+	const [progress] = second.snapshot.progress;
+	assert.equal(progress?.initiatedHere, true);
+	assert.equal(progress?.to, '5.2.0');
+	assert.equal(progress?.mode, 'recreate');
+	assert.equal(progress?.restarting, true);
+	assert.equal(ticks(second, 'primary'), 'done done running waiting');
+
+	// An entry written before targets were remembered restores as watched.
+	const older = fakeStorage();
+	older.setItem(
+		'terminay.view.server-upgrades.v1',
+		JSON.stringify({
+			'build-box': {
+				seen: [],
+				following: { from: '5.1.1', notedAt: Date.now() },
+			},
+		}),
+	);
+	const third = new ServerUpgradeBoard({
+		...fakeTimers(),
+		memory: createServerUpgradeMemory(older),
+	});
+	third.sync([
+		source('primary', undefined, {
+			serverId: 'build-box',
+			phase: 'reconnecting',
+		}),
+	]);
+	assert.equal(third.snapshot.progress[0]?.initiatedHere, false);
 });
