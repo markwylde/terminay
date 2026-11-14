@@ -370,3 +370,15 @@ test('floor wrapper copies selected distributables without transferring unpacked
 		await assert.rejects(readFile(join(root, 'release/0.0.0/linux-unpacked/unwanted')), /ENOENT/u);
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('downloaded AppImage regains executable mode only after digest verification', async () => {
+	const workflow = await readFile(new URL('../.gitea/workflows/ci.yml', import.meta.url), 'utf8');
+	const start = workflow.indexOf('- name: Verify both transferred artifacts');
+	const end = workflow.indexOf('- name: Run terminals from both artifacts', start);
+	assert.ok(start >= 0 && end > start);
+	const block = workflow.slice(start, end);
+	const digest = block.indexOf('(cd release/0.0.0 && sha256sum --check SHA256SUMS)');
+	const executable = block.indexOf('chmod 755 release/0.0.0/Terminay-Linux-0.0.0.AppImage');
+	const elfCheck = block.indexOf('node scripts/linux-glibc-floor.mjs check');
+	assert.ok(digest >= 0 && executable > digest && elfCheck > executable);
+});

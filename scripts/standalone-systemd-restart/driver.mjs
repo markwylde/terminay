@@ -52,7 +52,8 @@ function preparedSourceArchive(archive) {
 	assert.equal(createHash('sha256').update(readFileSync(archive)).digest('hex'), expected, 'prepared source archive changed during transfer');
 	const root = process.env.TERMINAY_SYSTEMD_PREPARED_ROOT;
 	assert.match(root ?? '', /^terminay-server-node24\.15\.0-linux-(?:x64|arm64)$/u);
-	const manifest = JSON.parse(sh('tar', ['--occurrence=1', '-xOzf', archive, `${root}/artifact-manifest.json`]));
+	// Full artifact manifests can exceed Node's default 1 MiB stdout buffer.
+	const manifest = JSON.parse(execFileSync('tar', ['--occurrence=1', '-xOzf', archive, `${root}/artifact-manifest.json`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000 }));
 	assert.equal(manifest.channel, 'source');
 	assert.equal(manifest.revision, process.env.TERMINAY_SYSTEMD_PREPARED_REVISION);
 	assert.equal(manifest.target, process.env.TERMINAY_SYSTEMD_PREPARED_TARGET);

@@ -369,6 +369,8 @@ jobs:
         run: |
           (cd release/standalone && sha256sum --check SHA256SUMS)
           (cd release/0.0.0 && sha256sum --check SHA256SUMS)
+          # Artifact transport preserves bytes but normalizes file permissions.
+          chmod 755 release/0.0.0/Terminay-Linux-0.0.0.AppImage
 
       - name: Check every ELF file against the glibc floor
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}

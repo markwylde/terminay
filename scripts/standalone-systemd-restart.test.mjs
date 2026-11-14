@@ -184,3 +184,29 @@ test('shared preparation rejects archive links before host extraction', async ()
 		assert.equal(await readText(join(root, 'outside'), 'utf8'), 'preserved');
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('container prepared-source validation reads manifests larger than one MiB', async () => {
+	const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+	const { readFileSync } = await import('node:fs');
+	const { execFileSync } = await import('node:child_process');
+	const { createHash } = await import('node:crypto');
+	const { tmpdir } = await import('node:os');
+	const { join } = await import('node:path');
+	const directory = await mkdtemp(join(tmpdir(), 'terminay-systemd-large-manifest-'));
+	try {
+		const root = 'terminay-server-node24.15.0-linux-x64';
+		await mkdir(join(directory, root));
+		await writeFile(join(directory, root, 'artifact-manifest.json'), JSON.stringify({ channel: 'source', revision: 'revision', target: 'linux-x64', files: { large: 'x'.repeat(2 * 1024 * 1024) } }));
+		const archive = join(directory, 'source.tar.gz');
+		execFileSync('tar', ['-czf', archive, '-C', directory, root], { timeout: 5000 });
+		const driver = await readFile(new URL('standalone-systemd-restart/driver.mjs', import.meta.url), 'utf8');
+		const source = driver.slice(driver.indexOf('function preparedSourceArchive('), driver.indexOf('\nconst ARCHIVE ='));
+		const validate = new Function('assert', 'createHash', 'readFileSync', 'execFileSync', 'process', `${source}; return preparedSourceArchive;`)(assert, createHash, readFileSync, execFileSync, { env: {
+			TERMINAY_SYSTEMD_PREPARED_SHA256: createHash('sha256').update(readFileSync(archive)).digest('hex'),
+			TERMINAY_SYSTEMD_PREPARED_ROOT: root,
+			TERMINAY_SYSTEMD_PREPARED_REVISION: 'revision',
+			TERMINAY_SYSTEMD_PREPARED_TARGET: 'linux-x64',
+		} });
+		assert.equal(validate(archive), archive);
+	} finally { await rm(directory, { recursive: true, force: true }); }
+});
