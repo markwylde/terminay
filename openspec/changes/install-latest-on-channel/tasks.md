@@ -7,7 +7,7 @@
 ## 2. Desktop Updates page
 
 - [x] 2.1 In `updatesPageModel.ts`, compute the install-latest row: label, target version, `downgrade` flag, enabled state, and disabled reason (already latest, development build, update in progress). Verified by `updatesPageModel` unit tests for each state.
-- [ ] 2.2 Render the row under VERSIONS on This Mac → Updates, with a confirmation dialog that shows the downgrade warning when `downgrade` is set, plus download progress and the failure message. Verified by render tests in `scripts/settings-updates-ui.test.mjs` (row, both versions, warning only for an older build, disabled reason), and by an e2e case in `e2e/settings-update-channel.spec.ts`, run via `npm run test:e2e`: the development build the suite runs shows the row disabled with its reason, and the host refuses an `updater.install-latest` request. An e2e build cannot update itself in place, so the download-and-restart path is covered by the `scripts/app-updater.test.mjs` cases of 1.2.
+- [x] 2.2 Render the row under VERSIONS on This Mac → Updates, with a confirmation dialog that shows the downgrade warning when `downgrade` is set, plus download progress and the failure message. Verified by render tests in `scripts/settings-updates-ui.test.mjs` (row, both versions, warning only for an older build, disabled reason), and by an e2e case in `e2e/settings-update-channel.spec.ts`, run via `npm run test:e2e`: the development build the suite runs shows the row disabled with its reason, and the host refuses an `updater.install-latest` request. An e2e build cannot update itself in place, so the download-and-restart path is covered by the `scripts/app-updater.test.mjs` cases of 1.2.
 
 ## 3. CLI and helper
 
@@ -27,5 +27,5 @@
 ## 6. Finish
 
 - [x] 6.1 `openspec validate --all` passes, and the change is ordered after `three-release-tracks`, `remote-server-in-app-upgrade` and `settings-server-rail` for archive. Verified by the validate output and `openspec list`.
-- [ ] 6.2 Unit suites (bounded `node --test --test-force-exit --test-timeout=120000`), lint, typecheck, and `npm run test:e2e` pass. Verified by their output.
-- [ ] 6.3 Open a pull request on `origin` with `tea`, and read back every Gitea commit status as `success` or `skipped`. Verified by the status listing.
+- [x] 6.2 Unit suites (bounded `node --test --test-force-exit --test-timeout=120000`), lint, typecheck, and `npm run test:e2e` pass. Verified by their output.
+- [x] 6.3 Open a pull request on `origin` with `tea`, and read back every Gitea commit status as `success` or `skipped`. Verified by the status listing.
