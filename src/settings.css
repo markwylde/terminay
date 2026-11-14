@@ -2693,3 +2693,158 @@
     overflow-x: auto;
   }
 }
+
+/* Settings places rail (ADR-0115): this device, each attached server, and
+ * Connect a server. A tile chooses where the settings shown are saved. */
+.settings-rail-slot {
+  flex: 0 0 72px;
+  box-sizing: border-box;
+  background-color: var(--settings-sidebar-bg);
+  border-right: 1px solid var(--settings-border);
+  overflow-y: auto;
+  -webkit-app-region: drag;
+}
+
+.settings-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--settings-space-3);
+  padding: calc(var(--settings-chrome-top) + var(--settings-space-4)) 0 var(--settings-space-4);
+}
+
+.settings-rail-tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 22px;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+  transition: border-radius 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.settings-rail-tile--device {
+  background: color-mix(in srgb, var(--settings-accent) 55%, #1f2a44);
+}
+
+.settings-rail-tile:hover,
+.settings-rail-tile--selected {
+  border-radius: 13px;
+}
+
+.settings-rail-tile--selected {
+  box-shadow: 0 0 0 2px var(--settings-sidebar-bg), 0 0 0 4px var(--settings-text);
+}
+
+.settings-rail-tile:focus-visible {
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 3px;
+}
+
+.settings-rail-tile--connect {
+  background: transparent;
+  color: var(--settings-text-muted);
+  border: 1px dashed var(--settings-border);
+}
+
+.settings-rail-initial {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.settings-rail-status {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--settings-sidebar-bg);
+}
+
+.settings-rail-status--online {
+  background: var(--settings-success);
+}
+
+.settings-rail-status--offline {
+  background: var(--settings-text-muted);
+}
+
+.settings-rail-divider {
+  width: 30px;
+  height: 1px;
+  background: var(--settings-border);
+}
+
+/* Beside the rail the sidebar is narrower (SETTINGS_RAIL_SIDEBAR_WIDTH). */
+.settings-shell[data-settings-rail='true'] {
+  --settings-sidebar-width: 200px;
+}
+
+/* Too narrow for the rail beside the list: it becomes a row above it. */
+.settings-shell[data-settings-layout='narrow'][data-settings-rail='true'] {
+  flex-direction: column;
+}
+
+.settings-shell[data-settings-layout='narrow'] .settings-rail-slot {
+  flex: 0 0 auto;
+  border-right: 0;
+  border-bottom: 1px solid var(--settings-border);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.settings-shell[data-settings-layout='narrow'] .settings-rail {
+  flex-direction: row;
+  padding: calc(var(--settings-chrome-top) + var(--settings-space-3)) var(--settings-inset) var(--settings-space-3);
+}
+
+.settings-shell[data-settings-layout='narrow'] .settings-rail-divider {
+  width: 1px;
+  height: 30px;
+}
+
+.settings-shell[data-settings-layout='narrow'][data-settings-rail='true'] .settings-sidebar,
+.settings-shell[data-settings-layout='narrow'][data-settings-rail='true'] .settings-list-column,
+.settings-shell[data-settings-layout='narrow'][data-settings-rail='true'] .settings-right-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.settings-brand-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--settings-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-scope-line {
+  margin: 0 0 var(--settings-space-4);
+  font-size: 12px;
+  color: var(--settings-text-muted);
+}
+
+.settings-version {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: all;
+  white-space: nowrap;
+}
+
+.settings-version-note--ok { color: var(--settings-success); }
+.settings-version-note--update { color: var(--settings-accent); }
+.settings-version-note--error { color: var(--settings-danger); }
+
+.settings-track-command {
+  display: inline-block;
+  margin-top: var(--settings-space-1);
+  user-select: all;
+}

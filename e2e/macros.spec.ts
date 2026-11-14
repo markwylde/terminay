@@ -755,8 +755,8 @@ test('keeps pending macro edits while another category is shown', async ({ appHa
   await newMacro(macros, 'Pending Macro')
   await expect(saveState(macros)).toHaveText('Unsaved changes in 1 macro')
 
-  await navItem(macros, 'Appearance').click()
-  await expect(macros.locator('.settings-detail-title')).toHaveText('Appearance')
+  await navItem(macros, 'Interaction').click()
+  await expect(macros.locator('.settings-detail-title')).toHaveText('Interaction')
   await expect(macros.getByLabel('Macro name')).toHaveCount(0)
 
   await navItem(macros, 'Macros').click()

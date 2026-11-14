@@ -10,7 +10,7 @@ export const SETTINGS_CATEGORY_GROUPS = Object.freeze([
 		label: 'Terminal',
 		categoryIds: ['shell', 'cursor', 'interaction', 'scrolling'],
 	},
-	{ id: 'connections', label: 'Connections', categoryIds: ['remote', 'import-export'] },
+	{ id: 'connections', label: 'Connections', categoryIds: ['servers', 'remote', 'import-export'] },
 	{ id: 'automation', label: 'Automation', categoryIds: ['macros', 'workflows', 'recording'] },
 	{ id: 'extensions', label: 'Extensions', categoryIds: ['extensions'] },
 	{ id: 'system', label: 'System', categoryIds: ['updates', 'diagnostics'] },

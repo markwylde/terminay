@@ -1,18 +1,21 @@
 import { expect, test } from './fixtures';
 import { openRemoteMenu } from './support/ui';
 
-test('Electron opens Remote Access as a category of the Settings window', async ({
+test('Electron opens Remote Access as the Local server\'s exposure page', async ({
 	appHarness,
 	mainWindow,
 }) => {
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 	const manager = await appHarness.openRemoteAccessSettings(mainWindow);
 	await expect(manager.locator('.settings-sidebar')).toBeVisible();
-	await expect(manager.locator('.settings-list-column')).toBeVisible();
 	await expect(manager.locator('.settings-content')).toBeVisible();
 	await expect(
-		manager.getByRole('heading', { name: 'Settings', level: 1 }),
+		manager.getByRole('heading', { name: 'Local', level: 1 }),
 	).toBeVisible();
+	// Remote Access belongs to the server it exposes: the Local tile is chosen.
+	await expect(
+		manager.locator('[data-settings-place="server"][aria-pressed="true"]'),
+	).toHaveAttribute('data-settings-place-name', 'Local');
 	await expect(
 		manager.locator('.settings-nav-item--active'),
 	).toContainText('Remote Access');
@@ -20,21 +23,34 @@ test('Electron opens Remote Access as a category of the Settings window', async 
 	const url = new URL(manager.url()).searchParams;
 	expect(url.get('auxiliary')).toBe('settings');
 	expect(url.get('section')).toBe('remote');
-	const list = manager.getByRole('navigation', { name: 'Remote Access' });
-	await expect(list.locator('.settings-list-section-title')).toHaveText([
-		'This server',
-		'Saved servers',
-	]);
-	// This server is selected first, with its exposure and its options together.
-	await expect(list.locator('[aria-current="true"]')).toContainText('Not exposed');
+	// The exposure page is a page, not a list: saved servers live elsewhere.
+	await expect(manager.locator('.settings-list-column')).toHaveCount(0);
 	await expect(
 		manager.getByRole('region', { name: 'Server exposure' }),
 	).toBeVisible();
 	await expect(manager.locator('#section-remote-access-host')).toBeVisible();
 	// No other Settings category draws the exposure options.
-	await manager.locator('.settings-nav-item', { hasText: 'Appearance' }).click();
+	await manager.locator('.settings-nav-item', { hasText: 'Interaction' }).click();
 	await expect(manager.locator('#section-remote-access-host')).toHaveCount(0);
-	await manager.locator('.settings-nav-item', { hasText: 'Remote Access' }).click();
+});
+
+test('This device › Servers lists saved servers and adds one', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const manager = await appHarness.openServersSettings(mainWindow);
+	await expect(
+		manager.locator('[data-settings-place="device"]'),
+	).toHaveAttribute('aria-pressed', 'true');
+	await expect(
+		manager.locator('.settings-nav-item--active'),
+	).toContainText('Servers');
+	const list = manager.getByRole('navigation', { name: 'Servers' });
+	await expect(list.locator('.settings-list-section-title')).toHaveText([
+		'Saved servers',
+	]);
+	await expect(manager.locator('#section-remote-access-host')).toHaveCount(0);
 
 	await manager.getByRole('button', { name: 'Add server…' }).click();
 	await expect(
@@ -60,7 +76,22 @@ test('Electron opens Remote Access as a category of the Settings window', async 
 	).toBeVisible();
 });
 
-test('the header connection menu opens Settings at Remote Access', async ({
+test('Connect a server on the rail opens This device › Servers with the add form', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const manager = await appHarness.openRemoteAccessSettings(mainWindow);
+	await manager.getByRole('button', { name: 'Connect a server' }).click();
+	await expect(
+		manager.locator('[data-settings-place="device"]'),
+	).toHaveAttribute('aria-pressed', 'true');
+	await expect(
+		manager.locator('form[aria-label="Add connection"]'),
+	).toBeVisible();
+});
+
+test('the header connection menu opens Settings at This device › Servers', async ({
 	appHarness,
 	mainWindow,
 }) => {
@@ -78,9 +109,9 @@ test('the header connection menu opens Settings at Remote Access', async ({
 	});
 	const url = new URL(manager.url()).searchParams;
 	expect(url.get('auxiliary')).toBe('settings');
-	expect(url.get('section')).toBe('remote');
+	expect(url.get('section')).toBe('servers');
 	await expect(
-		manager.getByRole('navigation', { name: 'Remote Access' }),
+		manager.getByRole('navigation', { name: 'Servers' }),
 	).toBeVisible();
 });
 
@@ -94,7 +125,7 @@ test('the Remote Access command, as the pending-approval notification sends it, 
 	});
 	expect(new URL(manager.url()).searchParams.get('section')).toBe('remote');
 	await expect(
-		manager.getByRole('navigation', { name: 'Remote Access' }),
+		manager.getByRole('region', { name: 'Server exposure' }),
 	).toBeVisible();
 });
 
@@ -118,7 +149,7 @@ test('Create pairing link opens the pairing dialog over Settings, and Escape clo
 	await manager.keyboard.press('Escape');
 	await expect(dialog).toHaveCount(0);
 	await expect(
-		manager.getByRole('navigation', { name: 'Remote Access' }),
+		manager.getByRole('region', { name: 'Server exposure' }),
 	).toBeVisible();
 	await exposure.getByRole('button', { name: 'Stop exposure' }).click();
 });

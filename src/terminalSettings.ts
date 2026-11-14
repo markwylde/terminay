@@ -41,7 +41,9 @@ const TAB_THEME_HUE_COLOR_FALLBACKS: Partial<Record<TerminalThemeKey, string>> =
 		selectionBackground: '#ffff00',
 	};
 
-const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
+/** The top-level settings the selected server stores. Every other top-level
+ * setting belongs to the connection host (the device). */
+export const SERVER_OWNED_TERMINAL_SETTING_KEYS: ReadonlySet<keyof TerminalSettings> = new Set<keyof TerminalSettings>([
 	'agentIntegration',
 	'aiTabMetadata',
 	'activityIndicators',

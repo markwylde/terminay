@@ -23,7 +23,8 @@ function listItem(page: Page, label: string) {
 test('shows selected-server extensions and installs an uploaded extension', async ({ appHarness, mainWindow }) => {
   const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'extensions' })
 
-  await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  // Extensions are the server's: Settings opens on the Local server.
+  await expect(settingsWindow.getByRole('heading', { name: 'Local', level: 1 })).toBeVisible()
   await expect(navItem(settingsWindow, 'Extensions')).toHaveAttribute('aria-current', 'true')
   // Extensions is a collection: the Install item is selected first.
   await expect(listItem(settingsWindow, 'Install extension…')).toHaveAttribute('aria-current', 'true')
@@ -73,14 +74,19 @@ test('shows selected-server extensions and installs an uploaded extension', asyn
   await expect(reopenedSettings.getByRole('article').filter({ hasText: 'terminay-e2e-uploaded-extension' })).toContainText('1.0.0')
 })
 
-test('Group order: the sidebar groups categories, with counts for collections', async ({ appHarness, mainWindow }) => {
-  const settings = await appHarness.openSettingsWindow({ page: mainWindow })
+test('Group order: each place groups its own categories, with counts for collections', async ({ appHarness }) => {
+  const settings = await appHarness.openSettingsAt('Local', 'macros')
   const groups = settings.locator('.settings-nav-section-title')
-  await expect(groups).toHaveText(['General', 'Terminal', 'Connections', 'Automation', 'Extensions', 'System'])
   const section = (label: string) => settings.locator('.settings-nav-section').filter({ has: settings.locator('.settings-nav-section-title', { hasText: label }) })
-  await expect(section('Connections').locator('.settings-nav-label')).toHaveText(['Remote Access', 'Import & Export'])
+  await expect(groups).toHaveText(['General', 'Terminal', 'Connections', 'Automation', 'Extensions', 'System'])
+  await expect(section('Connections').locator('.settings-nav-label')).toHaveText(['Remote Access'])
   await expect(section('Automation').locator('.settings-nav-label')).toHaveText(['Macros', 'Workflows', 'Recording'])
   await expect(navItem(settings, 'Macros').locator('.settings-nav-count')).toHaveText(/^3/u)
+
+  await settings.locator('[data-settings-place="device"]').click()
+  await expect(groups).toHaveText(['General', 'Terminal', 'Connections', 'System'])
+  await expect(section('Connections').locator('.settings-nav-label')).toHaveText(['Servers', 'Import & Export'])
+  await expect(section('System').locator('.settings-nav-label')).toHaveText(['Updates', 'Diagnostics'])
 })
 
 test('Opening Settings at a macro selects it', async ({ appHarness, mainWindow }) => {
@@ -109,7 +115,8 @@ test('Narrow window and widening again: one column at a time, selection kept', a
   await expect(shell).toHaveAttribute('data-settings-stage', 'list')
   await expect(settings.locator('.settings-right-pane')).toBeHidden()
   const listBack = settings.locator('.settings-list-column > .settings-back-button')
-  await expect(listBack).toHaveText(/Settings/u)
+  // It goes back to the place's categories, named for the place.
+  await expect(listBack).toHaveText(/Local/u)
   await listBack.click()
   await expect(shell).toHaveAttribute('data-settings-stage', 'sidebar')
   await navItem(settings, 'Macros').click()
@@ -125,14 +132,15 @@ test('Narrow window and widening again: one column at a time, selection kept', a
   await expect(settings.locator('.settings-detail-title')).toHaveText('Update OS')
 })
 
-test('Finding a macro by its script', async ({ appHarness, mainWindow }) => {
-  const settings = await appHarness.openSettingsWindow({ page: mainWindow })
-  await settings.getByLabel('Search Settings settings').fill('apt-get upgrade')
+test('Finding a macro by its script', async ({ appHarness }) => {
+  // Macros are the server's: search looks in the place that holds them.
+  const settings = await appHarness.openSettingsAt('Local', 'appearance')
+  await settings.getByLabel(/^Search .+ settings$/u).fill('apt-get upgrade')
   const result = settings.locator('.settings-row--button').filter({ hasText: 'Update OS' })
   await expect(result).toContainText('Macros')
   await result.click()
   await expect(navItem(settings, 'Macros')).toHaveAttribute('aria-current', 'true')
-  await expect(settings.getByLabel('Search Settings settings')).toHaveValue('')
+  await expect(settings.getByLabel(/^Search .+ settings$/u)).toHaveValue('')
   await expect(settings.locator('.settings-detail-title')).toHaveText('Update OS')
   await expect(settings.locator('.settings-list-column').getByRole('button', { name: /Update OS/u })).toHaveAttribute('aria-current', 'true')
 })

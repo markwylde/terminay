@@ -56,13 +56,18 @@ and a VPS sit side by side in one tab strip.
 - **Settings, macros, and secrets** are classified by their server or client
   scope. Server state is available to every authorized client; device-local
   state and credentials remain on that client.
-- **Settings** is the one place Terminay and its servers are configured. Its
-  sidebar groups categories under General, Terminal, Connections, Automation,
-  Extensions, and System. A category that holds a list of things (Remote
-  Access, Macros, Extensions) adds a list column between the sidebar and the
-  detail. Remote Access holds this server's exposure and trusted devices and
-  the saved servers this device connects to. Workspace content a user opens
-  rather than configures, such as automations and recordings, lives in Home.
+- **Settings** is the one place Terminay and its servers are configured. A
+  rail on its left lists the places that store settings: this device (This
+  Mac, This PC, or This device) and one tile per attached server. Each place
+  shows only the categories and fields it stores, grouped under General,
+  Terminal, Connections, Automation, Extensions, and System, so an edit or a
+  reset never reaches another place. A category that holds a list of things
+  (Servers, Macros, Extensions) adds a list column between the sidebar and the
+  detail. This device's Servers lists the saved servers it connects to; a
+  server's Remote Access is its exposure and trusted devices. Each place has
+  its own Updates page with the exact version it runs and the newest on its
+  track. Workspace content a user opens rather than configures, such as
+  automations and recordings, lives in Home.
 - **Home** is the one place in a window that is not a project. Its sidebar
   lists Home, Tabs, Bots, Automations, Workflows, Recordings, and, when a forge
   extension serves them, **Pull Requests** and **Issues**: the pull requests and

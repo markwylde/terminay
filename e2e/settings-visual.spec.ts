@@ -13,13 +13,18 @@ async function shoot(page: Page, name: string, testInfo: import('@playwright/tes
 
 for (const scheme of ['dark', 'light'] as const) {
   test(`Settings categories in ${scheme} mode`, async ({ appHarness, mainWindow }, testInfo) => {
-    for (const [sectionId, label] of [
-      ['appearance', 'appearance'],
-      ['remote', 'remote-access'],
-      ['macros', 'macros'],
-      ['extensions', 'extensions'],
+    // Each place's pages: this device's, then the Local server's.
+    for (const [place, sectionId, label] of [
+      ['device', 'appearance', 'device-appearance'],
+      ['device', 'updates', 'device-updates'],
+      ['device', 'servers', 'device-servers'],
+      ['Local', 'interaction', 'server-interaction'],
+      ['Local', 'updates', 'server-updates'],
+      ['Local', 'remote', 'server-remote-access'],
+      ['Local', 'macros', 'server-macros'],
+      ['Local', 'extensions', 'server-extensions'],
     ] as const) {
-      const settings = await appHarness.openSettingsWindow({ page: mainWindow, sectionId })
+      const settings = await appHarness.openSettingsAt(place, sectionId)
       await settings.emulateMedia({ colorScheme: scheme })
       await settings.setViewportSize({ width: 1280, height: 820 })
       await expect(settings.locator('.settings-shell')).toBeVisible()
@@ -33,7 +38,7 @@ for (const scheme of ['dark', 'light'] as const) {
       expect(new Set(boxes.map((box) => box.top)).size).toBe(1)
       expect(new Set(boxes.map((box) => box.height)).size).toBe(1)
       await shoot(settings, `${scheme}-${label}-1280`, testInfo)
-      if (sectionId !== 'appearance') {
+      if (sectionId === 'servers' || sectionId === 'macros' || sectionId === 'extensions') {
         await settings.setViewportSize({ width: 760, height: 820 })
         await expect(settings.locator('.settings-shell')).toHaveAttribute('data-settings-layout', 'narrow')
         await shoot(settings, `${scheme}-${label}-narrow`, testInfo)

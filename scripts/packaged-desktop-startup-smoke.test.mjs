@@ -223,16 +223,22 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		const window = await electronApp.firstWindow({ timeout: 0 });
 		captureRendererFailures(window, failures);
 
+		progress(mode, 'canonical readiness');
 		const identity = await requireCanonicalReadiness(window);
 		if (expected !== undefined)
 			assert.deepEqual(
 				restartedWorkspaceIdentity(identity),
 				restartedWorkspaceIdentity(expected),
 			);
+		progress(mode, 'native menu');
 		await requireNativeMenu(electronApp, window);
+		progress(mode, 'sidebar query');
 		await requireSidebarQuery(window);
+		progress(mode, 'built-in extensions in Settings');
 		await requireBuiltInExtensionsInstalled(electronApp, window, failures);
+		progress(mode, 'terminal input and output');
 		await requireTerminalInputOutput(window, mode);
+		progress(mode, 'reload');
 
 		await window.reload({ waitUntil: 'domcontentloaded' });
 		const reloaded = await requireCanonicalReadiness(window);
@@ -247,8 +253,10 @@ async function exerciseLaunch({ expected, mode, userData }) {
 			reloadedRevision >= initialRevision,
 			'reload may commit a one-time workspace migration but must not regress its revision',
 		);
+		progress(mode, 'sidebar query after reload');
 		await requireSidebarQuery(window);
 
+		progress(mode, 'close');
 		await closeElectronApp(electronApp);
 		electronApp = undefined;
 		assert.deepEqual(failures, []);
@@ -365,8 +373,19 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 	});
 	const settings = await nextWindow;
 	captureRendererFailures(settings, failures);
+	// What Settings shows if it has not reached Extensions in good time.
+	const report = setTimeout(() => {
+		settings
+			.locator('body')
+			.innerText({ timeout: 5_000 })
+			.then(
+				(text) => process.stderr.write(`[smoke] Settings after 30s:\n${text.slice(0, 3000)}\n`),
+				(error) => process.stderr.write(`[smoke] Settings unreadable: ${error}\n`),
+			);
+	}, 30_000);
 	try {
-		await settings.getByRole('heading', { name: 'Settings', exact: true, level: 1 }).waitFor();
+		// Extensions are the server's: Settings opens on the Local server, named in its header.
+		await settings.getByRole('heading', { name: 'Local', exact: true, level: 1 }).waitFor();
 		for (const [packageName, displayName] of [
 			['terminay-builtin-agents', 'Built-in Agents'],
 			['terminay-language-typescript', 'TypeScript'],
@@ -383,8 +402,13 @@ async function requireBuiltInExtensionsInstalled(electronApp, window, failures) 
 			assert.doesNotMatch(text, /Not installed|\bfailed\b|\bincompatible\b/iu, `${packageName} must be healthy`);
 		}
 	} finally {
+		clearTimeout(report);
 		await settings.close();
 	}
+}
+
+function progress(mode, phase) {
+	process.stderr.write(`[smoke] ${new Date().toISOString()} ${mode}: ${phase}\n`);
 }
 
 async function requireSidebarQuery(window) {

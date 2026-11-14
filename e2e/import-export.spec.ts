@@ -207,10 +207,13 @@ test('Import & Export copies items between attached servers and through a bundle
 		await expect(cell(clash, serverHost)).toContainText('same');
 
 		// Change "IE Clash" on Local; review must ask before replacing it.
+		// Macros are Local's; Import & Export is this device's.
+		await ie.locator('[data-settings-place-name="Local"]').click();
 		await openCategory(ie, 'Macros');
 		await ie.locator('.macro-nav-item', { hasText: 'IE Clash' }).getByRole('button').click();
 		await ie.getByLabel('Text to type').first().fill('echo second');
 		await saveMacros(ie);
+		await ie.locator('[data-settings-place="device"]').click();
 		await openCategory(ie, 'Import & Export');
 		await expect(cell(clash, serverHost)).toContainText('differs', { timeout: 30_000 });
 		await clash.getByRole('checkbox').check();
