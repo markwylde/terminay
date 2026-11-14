@@ -312,12 +312,29 @@ export async function findAvailable(
 			resolved.publishedAt === undefined
 				? {}
 				: { publishedAt: resolved.publishedAt };
+		// A rolling channel resolves to its asset name ("canary", "main"), not
+		// a version; the build's own manifest says which version it is.
+		const rolling = resolved.channel !== 'tag' && resolved.assets !== undefined;
+		let identity: Awaited<ReturnType<typeof peekPublishedIdentity>>;
+		let peeked = false;
+		const peek = async () => {
+			if (!peeked && resolved.assets !== undefined) {
+				peeked = true;
+				identity = await peekPublishedIdentity(resolved.assets.archive);
+			}
+			return identity;
+		};
+		const versionOf = async () =>
+			rolling
+				? ((await peek().catch(() => undefined))?.version ?? resolved.version)
+				: resolved.version;
 		const order = orderAgainstInstalled(resolved, installed);
 		if (order === 'newer') {
+			const version = await versionOf();
 			return {
-				available: Object.freeze({ version: resolved.version, ...published }),
+				available: Object.freeze({ version, ...published }),
 				latest: Object.freeze({
-					version: resolved.version,
+					version,
 					...published,
 					order: 'newer',
 				}),
@@ -326,10 +343,14 @@ export async function findAvailable(
 		if (order !== 'unknown')
 			return {
 				available: null,
-				latest: Object.freeze({ version: resolved.version, ...published, order }),
+				latest: Object.freeze({
+					version: order === 'same' ? installed.version : await versionOf(),
+					...published,
+					order,
+				}),
 			};
 		if (resolved.assets === undefined) return { available: null, latest: null };
-		const identity = await peekPublishedIdentity(resolved.assets.archive);
+		identity = await peek();
 		if (identity === undefined) {
 			return {
 				available: null,
@@ -341,14 +362,14 @@ export async function findAvailable(
 			return {
 				available: null,
 				latest: Object.freeze({
-					version: resolved.version,
+					version: installed.version,
 					revision: identity.revision,
 					...published,
 					order: 'same',
 				}),
 			};
 		const different = Object.freeze({
-			version: resolved.version,
+			version: identity.version ?? resolved.version,
 			revision: identity.revision,
 			...published,
 		});
