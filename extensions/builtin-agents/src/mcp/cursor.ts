@@ -6,6 +6,7 @@ import { atomicWriteConfig } from './atomicConfigWrite.js';
 import type {
 	McpAgentRegistrationState,
 	McpInstallActionResult,
+	McpInstallWriteOptions,
 	McpServerCommand,
 } from './types.js';
 
@@ -113,6 +114,8 @@ export async function inspectCursorRegistration(
 export async function installCursor(
 	server: McpServerCommand,
 	homeDirectory?: string,
+	/** `replace` writes over a changed `terminay` entry; set only on an explicit user request. */
+	options: McpInstallWriteOptions = {},
 ): Promise<McpInstallActionResult> {
 	const path = getCursorConfigPath(homeDirectory);
 	try {
@@ -128,7 +131,9 @@ export async function installCursor(
 		const servers = config.mcpServers ?? {};
 		const entry = expectedEntry(server);
 		const existing = servers[SERVER_KEY];
-		if (existing !== undefined && !isDeepStrictEqual(existing, entry))
+		if (existing !== undefined &&
+			!options.replace &&
+			!isDeepStrictEqual(existing, entry))
 			return changedEntryResult(path);
 		if (isDeepStrictEqual(existing, entry)) {
 			return {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -78,4 +78,54 @@ test('targets work while every harness is switched off', async (t) => {
 	await harness.start(undefined, { enabledHarnesses: [] });
 	assert.equal((await harness.mcpInstall(target('codex'))).installed, true);
 	assert.equal((await harness.mcpStatus(target('codex'))).state, 'installed');
+});
+
+test('replace writes the host command over a changed entry; install still refuses', async (t) => {
+	const { harness, home } = await harnessIn(t);
+	const stale = {
+		...fixtureMcpServerCommand,
+		command: '/opt/terminay/versions/canary-old/bin/node',
+		args: ['/opt/terminay/versions/canary-old/server/dist/mcpEntry.js'],
+	};
+	for (const id of ['claude-code', 'codex', 'cursor', 'gemini', 'grok', 'opencode']) {
+		assert.equal((await harness.mcpInstall(target(id), stale)).ok, true, id);
+		assert.equal((await harness.mcpStatus(target(id))).state, 'changed', id);
+		assert.equal((await harness.mcpInstall(target(id))).ok, false, id);
+		assert.equal((await harness.mcpStatus(target(id))).state, 'changed', id);
+		const replaced = await harness.mcpReplace(target(id));
+		assert.equal(replaced.ok, true, id);
+		assert.equal(replaced.installed, true, id);
+		assert.equal((await harness.mcpStatus(target(id))).state, 'installed', id);
+		assert.equal((await harness.mcpReplace(target(id))).ok, true, id);
+		assert.equal((await harness.mcpStatus(target(id))).state, 'installed', id);
+	}
+	const claude = JSON.parse(await readFile(join(home, '.claude.json'), 'utf8'));
+	assert.deepEqual(claude.mcpServers.terminay, fixtureMcpServerCommand);
+	const codex = await readFile(join(home, '.codex', 'config.toml'), 'utf8');
+	assert.doesNotMatch(codex, /canary-old/u);
+	assert.equal(codex.match(/\[mcp_servers\.terminay\]/gu)?.length, 1);
+});
+
+test('replace preserves other configuration and never rewrites an unparsable file', async (t) => {
+	const { harness, home } = await harnessIn(t);
+	const path = join(home, '.claude.json');
+	await writeFile(
+		path,
+		JSON.stringify({
+			theme: 'dark',
+			mcpServers: {
+				other: { command: 'other' },
+				terminay: { command: '/stale/node', args: ['/stale/entry.js'] },
+			},
+		}),
+	);
+	assert.equal((await harness.mcpReplace(target('claude-code'))).ok, true);
+	const config = JSON.parse(await readFile(path, 'utf8'));
+	assert.equal(config.theme, 'dark');
+	assert.deepEqual(config.mcpServers.other, { command: 'other' });
+	assert.deepEqual(config.mcpServers.terminay, fixtureMcpServerCommand);
+
+	await writeFile(path, '{ not json');
+	assert.equal((await harness.mcpReplace(target('claude-code'))).ok, false);
+	assert.equal(await readFile(path, 'utf8'), '{ not json');
 });

@@ -35,3 +35,8 @@ export interface McpInstallActionResult {
 	message?: string;
 	error?: string;
 }
+
+export interface McpInstallWriteOptions {
+	/** Write over a changed `terminay` entry. Only an explicit Replace sets it. */
+	replace?: boolean;
+}
