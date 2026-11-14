@@ -71,3 +71,32 @@ export function loadOrCreateSessionOrigin(
 	renameSync(temporary, file);
 	return hosted.origin;
 }
+
+/**
+ * The session origin a standalone `start` uses (ADR-0120). A server exposed
+ * through hosted signaling, or one that names no exposure mode and so may be
+ * exposed through hosted signaling at runtime, uses the stable hosted origin
+ * of its data root. A server that names an explicit origin, or that is
+ * exposed only directly, keeps the origin its options select, so devices it
+ * has already paired keep reconnecting.
+ */
+export function selectStandaloneSessionOrigin(
+	input: Readonly<{
+		command: string;
+		dataRoot: string;
+		hostedDomain: string;
+		exposeModes: readonly string[];
+		remoteOrigin: string;
+		remoteOriginExplicit: boolean;
+	}>,
+	provision: (
+		dataRoot: string,
+		hostedDomain: string,
+	) => string = loadOrCreateSessionOrigin,
+): string {
+	if (input.command !== 'start' || input.remoteOriginExplicit)
+		return input.remoteOrigin;
+	if (input.exposeModes.includes('hosted') || input.exposeModes.length === 0)
+		return provision(input.dataRoot, input.hostedDomain);
+	return input.remoteOrigin;
+}

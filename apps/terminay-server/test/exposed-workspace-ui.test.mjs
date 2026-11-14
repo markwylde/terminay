@@ -26,14 +26,20 @@ test('an exposed server with no renderer directory refuses to start', async () =
 test('a server that is not exposed may still have no workspace UI', async () => {
 	const source = await readFile(CLI, 'utf8');
 	// A protocol-only deployment is a legitimate configuration: it serves no
-	// workspace because nobody can reach it. The guard is scoped to exposure so
-	// that case keeps working.
-	const guard = source.slice(source.indexOf('const rendererDirectory'));
+	// workspace because nobody can reach it. The startup guard is scoped to
+	// exposure, and runtime exposure (ADR-0120) applies the same refusal only
+	// when a client asks to expose.
+	const guard = source.slice(source.indexOf('// A server nobody exposed'));
 	assert.match(guard.slice(0, 900), /exposeModes\.length > 0/u);
 	assert.doesNotMatch(
 		guard.slice(0, 900),
 		/if \(rendererDirectory === undefined\) \{\s*throw/u,
 		'the refusal must not apply to an unexposed server',
+	);
+	assert.match(
+		source,
+		/assertExposable: \(\) => \{\s*if \(rendererDirectory === undefined\)\s*throw new Error\(EXPOSED_WITHOUT_UI_MESSAGE\)/u,
+		'runtime exposure refuses a server with no workspace UI',
 	);
 });
 

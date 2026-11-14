@@ -703,6 +703,39 @@ secret is always in the fragment, so it never reaches a request line, a proxy
 log, or the signaling endpoint. A device paired one way reconnects the other
 without pairing again.
 
+### Controlling exposure from a client
+
+A connected Desktop or browser client manages a running standalone server's
+exposure from Settings → Remote Access, or from the connection menu, exactly
+as it does for Desktop's own server ([ADR-0120](../../openspec/adr/0120-every-server-host-serves-runtime-exposure-control-over-the-application-protocol.md)).
+It shows whether the server is exposed, its current pairing link, waiting
+approvals, trusted devices and live connections. It offers **Expose this
+server…**, **Create pairing link**, approve, deny, revoke, close connection,
+stop, and **Reset server identity**. Only admin-scoped connections, which
+every paired device and local client is, may use these controls.
+
+- **Expose this server…** starts the modes named by `--expose`, or hosted
+  exposure when `--expose` names none. A server started without `--expose`
+  therefore provisions its hosted session origin at start, unless
+  `--remote-origin` names one. Direct exposure starts at runtime only on a
+  server started with `--expose direct`, because its listener is prepared at
+  startup.
+- **Stop** closes every mode's pairing room and reconnect registration and
+  closes live remote connections. Terminals, the local endpoint, and
+  server-owned work keep running. A client that stops exposure over a remote
+  connection receives the result and is then disconnected. Reaching the
+  server again needs the local endpoint or a restart.
+- **Runtime changes are not persisted.** `--expose` (`TERMINAY_EXPOSE` in the
+  `terminay daemon` environment file) remains the standing decision, and every
+  start applies it again.
+- **Reset server identity** on a running server rotates
+  `remote-host-key.v1.json`, revokes every device, and re-registers each
+  running mode under the new key. It is the online form of the
+  `terminay-server reset-identity` command.
+
+The operator commands `approvals`, `approve`, `deny`, and `--pairing` act on
+the same room and approval queue as these client controls.
+
 ## Network, pairing, and revocation
 
 The default endpoint policy is `loopback`. Expose a standalone server only
