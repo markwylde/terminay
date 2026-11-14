@@ -18,23 +18,13 @@ RUN --mount=type=secret,id=turbo_token,required=false,uid=1000,gid=1000,mode=040
       export TURBO_REMOTE_CACHE_SIGNATURE_KEY="$(cat /run/secrets/turbo_signature_key)"; \
       export TURBO_TEAM; \
     fi; \
-    npm run build:app
+    npm run build:app \
+    && timeout 130s node --test --test-force-exit --test-timeout=120000 scripts/e2e-real-shard-list.test.mjs \
+    && node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs --cached \
+    && printf '%s\n' "PS1='\\u@\\h:\\w\\\$ '" >> /home/node/.bashrc \
+    && printf '%s\n' "PS1='%n@%m:%~%# '" > /home/node/.zshrc
 
-# Validate real test identities after their imported workspace modules exist.
-# Discovery/selection only: this does not launch Electron.
-RUN timeout 130s node --test --test-force-exit --test-timeout=120000 scripts/e2e-real-shard-list.test.mjs
-
-# Commit the browser-shell fixture's Vite dependency bundle into the image so
-# no shard starts a fixture against a cold cache.
-RUN node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs
-
-# A tab shows the title its program sets. Debian's ~/.bashrc writes
-# `user@host: dir` into the title at every prompt, which would name every tab
-# after the container. The suite's shells keep the same prompt without it, so
-# a tab's title is whatever the test under way gave it.
-RUN printf '%s\n' "PS1='\\u@\\h:\\w\\\$ '" >> /home/node/.bashrc
-# zsh offers to write a ~/.zshrc when it finds none; the shell integration
-# spec starts zsh terminals, which need a quiet prompt.
-RUN printf '%s\n' "PS1='%n@%m:%~%# '" > /home/node/.zshrc
-
+# The combined layer retains the built application, checked real shard lists,
+# committed browser optimizer, and quiet shell prompts. The same secret-scoped
+# Turbo identity signs both application and optimizer cache transfers.
 ENTRYPOINT ["sh", "scripts/support/e2e-container-entrypoint.sh"]

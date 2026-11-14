@@ -181,7 +181,7 @@ export async function runSystemdScenarios({ archive, scenarios = SCENARIOS, nega
 		await Promise.race([Promise.all(completions), abort]);
 	} finally {
 		clearTimeout(deadline);
-		signals.forEach((signal, index) => process.removeListener(signal, handlers[index]));
+		signals.forEach((signal, index) => { process.removeListener(signal, handlers[index]); });
 		for (const child of children) stopChild(child);
 		// Removing a container also ends an exec that outlived a killed Docker client.
 		if (process.env.TERMINAY_SYSTEMD_KEEP !== '1') for (const container of containers) removeContainer(container);

@@ -139,3 +139,18 @@ the internal mirror when configured. Package installation runs during image
 build rather than at every container boot. A new worker or a pruned layer pays
 that cold build cost and it remains part of readiness. Do not report the cache
 optimization as a proven five-minute run without fresh Gitea evidence.
+
+## Workspace execution evidence
+
+The full 31-task workspace gate passed locally in 357.842 seconds on overlay
+storage and 185.967 seconds with an executable 2 GiB tmpfs for disposable test
+roots. Peak observed use was 358 MiB. Gitea run 25343 completed the workspace
+job in 172 seconds, including job setup and teardown. These are individual gate
+measurements, not evidence that the complete run meets the readiness target.
+
+Production UI bundles use explicit Turbo inputs and workspace dependencies.
+Release staging runs after restoration; native outputs retain their platform
+provenance checks. Browser optimizer reuse additionally keys the absolute
+checkout root and runtime, and validates metadata and referenced chunks.
+Pinned Electron packaging downloads persist in a platform-specific Docker
+volume; cold downloads still count toward the budget.

@@ -42,6 +42,7 @@ function outputDigest(root) {
 	const roots = [...outputRoots];
 	for (const parent of ['apps', 'packages', 'extensions']) {
 		for (const name of readdirSync(join(root, parent)).sort()) {
+			if (!lstatSync(join(root, parent, name)).isDirectory()) continue;
 			try {
 				if (lstatSync(join(root, parent, name, 'dist')).isDirectory()) roots.push(`${parent}/${name}/dist`);
 			} catch (error) {

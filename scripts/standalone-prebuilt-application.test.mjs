@@ -13,6 +13,7 @@ function fixture(t) {
 	for (const path of ['src', 'electron', 'packages', 'apps', 'extensions', 'scripts', 'public', 'docker', 'dist-web', 'dist-electron', 'dist', 'build/built-in-extensions', 'node_modules/node-pty/build/Release']) mkdirSync(join(root, path), { recursive: true });
 	writeFileSync(join(root, 'src/app.ts'), 'source');
 	writeFileSync(join(root, 'package-lock.json'), '{}');
+	writeFileSync(join(root, 'extensions/builtins.json'), '{}');
 	const options = { root, target, revision, runBuild: () => writeFileSync(join(root, 'dist-web/server.html'), 'compiled') };
 	return options;
 }

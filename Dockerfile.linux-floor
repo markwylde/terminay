@@ -39,6 +39,8 @@ COPY --chown=node:node packages/ui-bundle/package.json packages/ui-bundle/packag
 COPY --chown=node:node scripts/ensure-node-pty-helper-mode.mjs scripts/ensure-node-pty-helper-mode.mjs
 
 USER node
+# Named runner volumes preserve verified tool downloads across floor jobs.
+RUN mkdir -p /home/node/.cache/electron /home/node/.cache/electron-builder
 RUN npm ci
 
 COPY --chown=node:node . .

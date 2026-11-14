@@ -89,6 +89,7 @@ docker create \
   --platform "$platform" \
   --name "$container" \
   --init \
+  --volume "terminay-floor-tools-${platform#linux/}:/home/node/.cache" \
   $env_flags \
   "$image" \
   "$@" >/dev/null

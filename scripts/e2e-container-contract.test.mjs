@@ -303,7 +303,7 @@ test("the base image key ignores npm scripts an install never runs", async () =>
 test("the per-commit image ships a committed browser-fixture dependency cache", async () => {
   const dockerfile = await text("Dockerfile.e2e");
   const buildAt = dockerfile.indexOf("npm run build:app");
-  const prebundleAt = dockerfile.indexOf("RUN node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs");
+  const prebundleAt = dockerfile.indexOf("node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs --cached");
   assert.ok(buildAt !== -1 && prebundleAt > buildAt, "the Vite dependency cache is built after the application");
   const script = await text("scripts/prebundle-e2e-vite-deps.mjs");
   assert.match(script, /prebundleSharedWebShellDependencies/u);

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
@@ -247,6 +250,73 @@ test('build:app produces the bundle the archive stages', async () => {
 	const manifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 	// dist-web comes from the server-ui config; if that step ever leaves
 	// build:app, the archive would stage a directory nothing wrote.
-	assert.match(manifest.scripts['build:app'], /build:server-ui:bundle/u);
+	assert.equal(manifest.scripts['build:app'], 'npm run build:application-graph && turbo run build:production-bundles && npm run build:server-postcompile');
+	assert.match(manifest.scripts['build:production-bundles'], /build:server-ui:bundle/u);
 	assert.match(manifest.scripts['build:server-ui:bundle'], /vite\.server-ui\.config\.ts/u);
+});
+
+
+test('production bundle caching contains the complete JS graph and leaves native staging outside', async () => {
+	const turbo = JSON.parse(await readFile(resolve(root, 'turbo.json'), 'utf8'));
+	const manifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
+	const task = turbo.tasks['//#build:production-bundles'];
+	assert.deepEqual(task.dependsOn, turbo.tasks['//#build:dev-desktop'].dependsOn);
+	assert.deepEqual(task.outputs, ['dist-web/**', 'dist-electron/**', 'dist/**']);
+	for (const input of ['src/**', 'electron/**', 'public/**', 'server.html', 'remote.html', 'vite.config.ts', 'vite.server-ui.config.ts', 'vite.server-preload.config.ts', 'tsconfig.json', 'tsconfig.node.json', 'tsconfig.base.json', 'package.json', 'scripts/run-together.mjs', 'scripts/development-workspace-aliases.mjs', 'scripts/build-ui-bundle-manifest.mjs', 'scripts/server-ui-bundle-language-workers.mjs', '.env*']) assert.ok(task.inputs.includes(input), input);
+	for (const variable of ['NODE_ENV', 'VITE_*', 'TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES', 'TERMINAY_SERVER_UI_WATCH']) assert.ok(task.env.includes(variable), variable);
+	assert.equal(manifest.scripts['build:production-bundles'], 'node scripts/run-together.mjs "npm run build:server-ui:bundle" "tsc" "vite build && vite build --config vite.server-preload.config.ts && node scripts/build-ui-bundle-manifest.mjs dist $npm_package_version 1 remote.html"');
+});
+
+test('production cache keys restore clean JS outputs and invalidate changed inputs and flags', { timeout: 90_000 }, async (t) => {
+	const directory = await mkdtemp(resolve(tmpdir(), 'terminay-production-cache-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const turbo = JSON.parse(await readFile(resolve(root, 'turbo.json'), 'utf8'));
+	// Exercise Turbo's actual hashing/restoration with the production input,
+	// output and environment contract. Tiny fixture commands replace compilers;
+	// graph dependencies are verified separately above.
+	const task = { ...turbo.tasks['//#build:production-bundles'], dependsOn: ['cache-placeholder#build'] };
+	await writeFile(resolve(directory, 'turbo.json'), JSON.stringify({ tasks: { '//#build:production-bundles': task, build: { outputs: ['dist/**'] } } }));
+	await writeFile(resolve(directory, 'package.json'), JSON.stringify({ name: 'terminay-cache-fixture', private: true, workspaces: ['packages/*'], packageManager: 'npm@12.2.1', scripts: { 'build:production-bundles': 'node fixture-build.mjs' } }));
+	await writeFile(resolve(directory, 'package-lock.json'), JSON.stringify({ name: 'terminay-cache-fixture', lockfileVersion: 3, packages: {} }));
+	await writeFile(resolve(directory, '.gitignore'), '.turbo/\ndist/\ndist-web/\ndist-electron/\n.env*\n');
+	await writeFile(resolve(directory, 'fixture-build.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs'; for (const [dir, name] of [['dist-web', 'server.html'], ['dist-electron', 'main.js'], ['dist', 'remote.html']]) { mkdirSync(dir, { recursive: true }); writeFileSync(dir + '/' + name, 'verified output'); }`);
+	await mkdir(resolve(directory, 'packages/placeholder'), { recursive: true });
+	await writeFile(resolve(directory, 'packages/placeholder/package.json'), JSON.stringify({ name: 'cache-placeholder', version: '1.0.0', scripts: { build: 'node build.mjs' } }));
+	await writeFile(resolve(directory, 'packages/placeholder/build.mjs'), `import { mkdirSync, writeFileSync } from 'node:fs'; mkdirSync('dist', { recursive: true }); writeFileSync('dist/index.js', 'compiled workspace');`);
+	await writeFile(resolve(directory, 'packages/placeholder/source.ts'), 'workspace one');
+	await mkdir(resolve(directory, 'src'));
+	await mkdir(resolve(directory, 'scripts'));
+	await writeFile(resolve(directory, 'src/app.ts'), 'export const version = 1;');
+	await writeFile(resolve(directory, 'vite.server-ui.config.ts'), 'config one');
+	await writeFile(resolve(directory, 'scripts/server-ui-bundle-language-workers.mjs'), 'guard one');
+	const run = promisify(execFile);
+	const invoke = async (dry = true, overrides = {}) => {
+		const { stdout } = await run(process.execPath, [resolve(root, 'node_modules/turbo/bin/turbo'), 'run', 'build:production-bundles', '--cache=local:rw', ...(dry ? ['--dry=json'] : [])], {
+			cwd: directory, timeout: 20_000, maxBuffer: 8 * 1024 * 1024,
+			env: { ...process.env, TURBO_TELEMETRY_DISABLED: '1', ...overrides },
+		});
+		return dry ? JSON.parse(stdout).tasks.find((entry) => entry.taskId === '//#build:production-bundles') : stdout;
+	};
+	const cold = await invoke();
+	assert.equal(cold.cache.status, 'MISS');
+	await invoke(false);
+	await writeFile(resolve(directory, 'packages/placeholder/dist/postcompile-marker.json'), 'staged after build');
+	for (const output of ['dist-web', 'dist-electron', 'dist']) await rm(resolve(directory, output), { recursive: true });
+	const warm = await invoke();
+	assert.equal(warm.hash, cold.hash);
+	assert.equal(warm.cache.status, 'HIT');
+	await invoke(false);
+	assert.equal(await readFile(resolve(directory, 'dist-web/server.html'), 'utf8'), 'verified output');
+	assert.equal(await readFile(resolve(directory, 'packages/placeholder/dist/postcompile-marker.json'), 'utf8'), 'staged after build');
+	for (const [file, content] of [['src/app.ts', 'export const version = 2;'], ['vite.server-ui.config.ts', 'config two'], ['scripts/server-ui-bundle-language-workers.mjs', 'guard two'], ['.env.production', 'VITE_CACHE_PROBE=fromfile'], ['packages/placeholder/source.ts', 'workspace two']]) {
+		const before = await invoke();
+		await writeFile(resolve(directory, file), content);
+		const after = await invoke();
+		assert.notEqual(after.hash, before.hash, file);
+		assert.equal(after.cache.status, 'MISS');
+	}
+	const baseline = await invoke();
+	for (const variable of ['NODE_ENV', 'VITE_CACHE_PROBE', 'TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES', 'TERMINAY_SERVER_UI_WATCH']) {
+		assert.notEqual((await invoke(true, { [variable]: 'changed' })).hash, baseline.hash, variable);
+	}
 });

@@ -16,6 +16,8 @@
 - [ ] 3.1 Eliminate duplicate application builds in Linux packaging and reuse verified revision/platform outputs across consumers; verify packaging contracts and actual Gitea floor/systemd/lifecycle checks.
 - [ ] 3.2 Prioritize image production and address available runner capacity without concurrent cleanup hazards; verify job start times and document any infrastructure limitation.
 
+- [ ] 3.3 Cache production bundles and browser optimizer with explicit invalidation and output checks; verify real restoration and Gitea producer timing.
+
 ## 4. Timing and delivery
 
 - [x] 4.1 Add readiness timing report with queue, retry and incomplete-status handling; verify synthetic regression cases and real Gitea captures.
