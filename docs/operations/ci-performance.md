@@ -1,9 +1,29 @@
 # CI readiness and performance
 
-The target is less than 300 seconds from original run creation to completion of
-all required checks. Queueing, cold caches, retries, uploads and teardown count.
-A green run over that limit is a budget miss. CI runs on canonical Gitea;
-GitHub is the release mirror, not a source of pull-request status evidence.
+The target is an execution critical path below 300 seconds, excluding runner
+queueing. Count job setup, cold downloads/cache work, tests, artifact transfers,
+reporting and teardown within each job's start-to-completion duration. Sum those
+durations along dependency chains and take the longest path; do not sum parallel
+jobs or subtract overlapping queue waits from one wall-clock total. Report the
+original creation-to-green elapsed time and queue waits alongside that metric.
+Every required check must still succeed or be legitimately skipped.
+
+The owner accepted the observed improvement and disclosed variation: run 25369
+has a qualifying 288-second execution path, while latest run 25375 has a
+391-second execution path and misses the target. This is not a guarantee that
+every run completes execution or end-to-end feedback within five minutes.
+Dedicated runners were rejected; infrastructure PR 49 was closed without
+deployment. Canonical status evidence comes from Gitea, not the GitHub mirror.
+
+| Run | Actual creation to green | Execution critical path | 300s execution target |
+| --- | ---: | ---: | --- |
+| 25305 baseline | 1,169s | 513s (8m33s), image → E2E 3/18 | miss |
+| 25369 | 1,084s | 288s (4m48s), producer 191s + systemd 97s | pass |
+| 25375 latest | 412s | 391s (6m31s), producer 284s + systemd 107s | miss; variation accepted |
+
+All three reports retain their original elapsed times. The owner accepted the
+result after the latest miss was disclosed and requested wrap-up, not further
+performance work. Final head checks, verification and archive are separate steps.
 
 ## Capture and report
 
@@ -76,7 +96,13 @@ names, expanding matrix jobs individually. An empty list explicitly marks a
 root job. Only a complete successful prerequisite set on a first attempt lets
 the tool calculate dependency wait and subsequent runner admission wait.
 Unspecified or unresolved dependencies produce `null`, not a guessed queue.
-Execution includes the whole job from its start through its completion.
+Execution includes the whole job from its start through its completion. The schema-2 report
+uses `budgetMetric: execution-critical-path`, `executionCriticalPathSeconds`
+and `executionCriticalPathJobs`; `meetsBudget` compares that complete path with
+300 seconds. `creationToGreenSeconds` and `creationMeetsBudget` retain the
+separate actual-elapsed result. `executionCriticalPathValid` is false when the
+required dependency/timestamp evidence cannot establish the path; incomplete
+readiness or ambiguous evidence cannot prove an execution-budget pass.
 
 ## Retries and comparisons
 
@@ -111,7 +137,7 @@ fleet state with `tea api` when authorized; repository-local runners may be empt
 Optimize scheduling and total work for these thirteen Linux slots. Eighteen
 shards necessarily use more than one scheduling wave when other jobs occupy
 slots. Start shared-image producers early, shorten long jobs and balance actual
-shard durations; measure the resulting queue and full readiness time.
+shard durations; measure execution paths, queues and actual full readiness time.
 
 Keep one job per isolated Docker store. The cleanup script prunes stopped
 containers and images globally inside that store; raising concurrency against
@@ -216,7 +242,7 @@ packaged platform checks, floor/systemd checks and container scenarios
 successfully. The run failed its fast gate on a stale assertion that rejected
 the new daemon-owned tool-cache volume; the assertion is corrected to retain
 the prohibition on repository bind mounts. This run took 819 seconds from
-creation to completion and is a budget miss. Its E2E image took 377 seconds
+creation to completion and is an elapsed-time miss under the former queue-inclusive rule. Its E2E image took 377 seconds
 and several Linux dependency installs took about four minutes. It must not be
 used as evidence of a five-minute green run.
 
@@ -266,8 +292,8 @@ creation. The workspace gate failed its unchanged responsiveness assertion;
 the six-file concurrency fix was then verified locally. Systemd ran for
 129 seconds after waiting 495 seconds beyond its floor dependency. Another
 main run began at 16:05:22 UTC, two minutes into this run, followed by another
-PR; shared-fleet contention remains included. Final completion was 16:17:49
-UTC, 867 seconds after creation, so this is another failed budget observation.
+PR; shared-fleet contention remains visible in original elapsed evidence. Final completion was 16:17:49
+UTC, 867 seconds after creation, so this remains a failed run and an elapsed-time miss under the former budget rule.
 
 The parallel systemd driver prepares its source-channel test archive once in
 the parent using gzip level 1. Before host extraction it rejects unsafe tar
@@ -297,8 +323,9 @@ failure’s trace/video comes from the retry, not the original attempt.
 
 Run 25369 (head `550f714f`) is fully green: all 30 required commit statuses
 and jobs succeeded, including all 718 E2E cases. Original creation was
-2026-11-14 16:41:58 UTC and readiness was 17:00:02 UTC: **1,084 seconds**,
-a budget miss. A main run started six seconds earlier on the shared fleet.
+2026-11-14 16:41:58 UTC and readiness was 17:00:02 UTC: **1,084 seconds**. Under the former queue-inclusive
+rule this was a miss; under the current execution metric its 191 + 97-second
+producer/systemd chain is **288 seconds**, a qualifying observation. A main run started six seconds earlier on the shared fleet.
 The image waited 153 seconds and then executed in 33 seconds. The producer
 executed in 191 seconds; floor and systemd then waited 585 and 587 seconds,
 respectively, before executing in 46 and 97 seconds. Both artifact handoff
@@ -312,16 +339,16 @@ DinD pod's two-CPU limit: their CPU quota is unset and observed throttling is
 zero. Increasing that daemon limit would not increase test CPU allocation.
 Kubernetes pod metrics also omit these nested containers, so fleet sizing
 must consider node and Docker-container measurements. Public Forgejo twins
-are separate pools and must retain their credential isolation. A companion
-infrastructure PR is authorized; no additional capacity has yet been deployed.
+are separate pools and retain their credential isolation. This inspection led
+to infrastructure PR 49, but the owner rejected dedicated runners and that PR
+was closed without deployment. The existing shared fleet and ordinary runner
+labels remain in use; no dedicated label or repository-variable activation is
+part of delivery.
 
-The companion infrastructure proposal adds two home3 workers with only the
-`terminay-ci-build` label and capacity one per isolated Docker daemon. The four
-critical jobs select repository variable `TERMINAY_CI_BUILD_RUNNER`, falling
-back to `ubuntu-latest` while it is unset. Deploy and verify both registrations
-before setting the variable to `terminay-ci-build`. Clear it before draining
-the new pool for rollback; already-created jobs must finish or be explicitly
-handled before deleting runners. Existing general and public pools are unchanged.
-Two reserved slots protect this pipeline from the general E2E queue, but do
-not provide a five-minute guarantee for concurrent pipelines. Measure admission,
-whole-node resource pressure and full readiness after activation.
+Run 25375 is fully green with all 30 checks successful. Its original elapsed
+time is **412 seconds**, and its execution critical path is **391 seconds**
+(producer 284 + systemd 107). The producer's increase from 191 to 284 seconds
+shows that execution also varies after admission waits are excluded. The owner
+accepted this latest miss alongside the earlier 288-second qualifying result.
+Retain both observations; do not claim consistent sub-300-second execution or
+rewrite run 25369's 1,084-second actual elapsed time.

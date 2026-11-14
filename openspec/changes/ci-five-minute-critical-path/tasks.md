@@ -16,7 +16,7 @@
 ## 3. Build and scheduling critical path
 
 - [x] 3.1 Eliminate duplicate application builds in Linux packaging and reuse verified revision/platform outputs across consumers; verify packaging contracts and actual Gitea floor/systemd/lifecycle checks.
-- [ ] 3.2 Prioritize image production and address available runner capacity without concurrent cleanup hazards; verify job start times and document any infrastructure limitation.
+- [x] 3.2 Prioritize producers on the existing shared fleet, remove dedicated-runner routing/provisioning from scope, and verify execution paths separately from recorded runner waits.
 
 - [x] 3.3 Cache production bundles and browser optimizer with explicit invalidation and output checks; verify real restoration and Gitea producer timing.
 
@@ -24,7 +24,7 @@
 
 ## 4. Timing and delivery
 
-- [x] 4.1 Add readiness timing report with queue, retry and incomplete-status handling; verify synthetic regression cases and real Gitea captures.
-- [ ] 4.2 Run appropriate bounded local checks and openspec validation, resolve regressions and review the combined diff.
-- [ ] 4.3 Deliver the Terminay Gitea PR and authorized infrastructure companion PR, and verify every head check success/skipped plus full creation-to-green under 300 seconds; retain measured evidence.
+- [x] 4.1 Update readiness reporting for queue-excluded execution critical paths while retaining original elapsed time, retries and incomplete-status handling; verify synthetic cases and real captures.
+- [x] 4.2 Run appropriate bounded local checks and openspec validation, resolve regressions and review the combined diff.
+- [ ] 4.3 Deliver the Terminay Gitea PR and verify every head check success/skipped; retain the qualifying 25369 execution path of 288s and latest 25375 miss of 391s, with original elapsed times of 1084s and 412s. The owner accepted the disclosed variation and requested wrap-up; final head CI/delivery remains pending, with no consistent sub-300 claim.
 - [ ] 4.4 Verify implementation against artifacts and sync/archive completed change in this same PR.

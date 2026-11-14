@@ -138,5 +138,6 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0118](./0118-a-standalone-server-vault-unlocks-from-a-key-file-in-its-data-root.md) | A standalone server's vault unlocks itself from a key file in its data root | accepted, supersedes 0003 in part | 2026-11-14 |
 | [0119](./0119-a-standalone-server-names-its-installations-stable-pointer.md) | A standalone server names its installation's stable pointer, never a release directory, in anything that outlives it | accepted | 2026-11-14 |
 | [0120](./0120-bot-containers-run-under-a-terminay-apparmor-profile-that-allows-user-namespaces.md) | Bot containers run under a Terminay AppArmor profile that allows user namespaces | accepted | 2026-11-14 |
-| [0121](./0121-ci-readiness-is-measured-from-original-creation.md) | CI readiness is measured from original creation with complete coverage | accepted | 2026-11-14 |
+| [0121](./0121-ci-readiness-is-measured-from-original-creation.md) | CI readiness is measured from original creation with complete coverage | accepted (superseded by 0123 in part) | 2026-11-14 |
 | [0122](./0122-ci-download-caches-can-live-in-daemon-owned-volumes.md) | CI download caches can live in daemon-owned volumes | accepted | 2026-11-14 |
+| [0123](./0123-ci-execution-budget-excludes-runner-queueing.md) | CI execution budget excludes runner queueing | accepted, supersedes 0121 in part | 2026-11-14 |

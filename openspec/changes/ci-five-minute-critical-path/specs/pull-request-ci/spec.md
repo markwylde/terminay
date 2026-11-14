@@ -46,27 +46,32 @@ The E2E suite SHALL distribute tests across eighteen shards using recorded durat
 
 ### Requirement: Five-minute run budget
 
-A full CI run for a pull request or main SHALL reach all required checks successful or legitimately skipped within 300 seconds from original run creation. Measurement SHALL include queueing, setup, tests, reporting and teardown. Retries SHALL NOT reset the original creation time or conceal failed attempts. Cache misses and unavailable runners SHALL be reported as budget misses, not silently excluded.
+CI SHALL measure and report each full pull-request or main run against an execution-critical-path target below 300 seconds after excluding runner queueing. The execution critical path SHALL be the longest sum of job execution durations along required dependency chains. Each duration SHALL include job setup, downloads, cache misses, tests, artifact transfers, reporting and teardown from job start to completion. CI SHALL separately retain original creation-to-green elapsed time and runner-wait evidence. Retries SHALL NOT reset the original creation time, conceal failed attempts or supply ambiguous evidence as proof of meeting the target. Readiness SHALL require every required check successful or legitimately skipped.
 
 #### Scenario: Source-only change
 
 - **WHEN** a source-only change triggers CI
-- **THEN** the complete creation-to-green run is measured against 300 seconds including runner waits
+- **THEN** its complete execution critical path is compared with 300 seconds and original creation-to-green elapsed time remains visible
 
 #### Scenario: Dependency change
 
 - **WHEN** a dependency change requires new images or downloads
-- **THEN** that setup time is included and any run exceeding 300 seconds is reported as a budget miss
+- **THEN** that job execution time remains included in the execution budget and any path of 300 seconds or more is reported as a miss
+
+#### Scenario: Runner queueing
+
+- **WHEN** a required job waits for a runner after its dependencies are ready
+- **THEN** that admission wait is excluded from the execution critical path and retained in the queue and end-to-end timing evidence
 
 #### Scenario: Complete green run
 
-- **WHEN** every required check completes successfully
-- **THEN** the readiness report measures original creation to last completion and identifies whether it is below 300 seconds
+- **WHEN** every required check completes successfully or is legitimately skipped
+- **THEN** the report gives both the execution-critical-path budget result and original creation-to-green elapsed time
 
 #### Scenario: Retry or incomplete run
 
-- **WHEN** Gitea preserves earlier jobs across retries or a required check remains pending or failed
-- **THEN** the report preserves attempt context and does not claim an incomplete or over-budget run meets the target
+- **WHEN** attempt history, dependency evidence or a required check is incomplete or ambiguous
+- **THEN** the report preserves that uncertainty and does not claim the run proves the execution target
 
 ### Requirement: npm download cache stays on the runner
 
@@ -101,9 +106,9 @@ CI SHALL reuse build outputs within a run where consumers require identical inpu
 
 ### Requirement: Critical-path timing evidence
 
-CI timing evidence SHALL separate dependency waits, runner waits where determinable, execution and final readiness, and identify cache conditions and ambiguous retry timestamps.
+CI timing evidence SHALL report queue-excluded execution critical paths and original creation-to-green elapsed time, separate dependency and runner waits where determinable, and identify cache conditions and ambiguous retry timestamps.
 
 #### Scenario: Slow run diagnosis
 
 - **WHEN** a completed run exceeds the budget
-- **THEN** its report names the slowest jobs and available scheduling evidence without misclassifying retry starts as initial queue delay
+- **THEN** its report names the execution-critical dependency path, slow jobs and available scheduling evidence without misclassifying retry starts as initial queue delay
