@@ -72,6 +72,44 @@ const noActivity: BotActivity = {
 };
 const nameFor = (id: string) => `terminay-bot-${botEnvironmentId(id)}`;
 
+/** The AppArmor profile bot containers run under (ADR-0120). */
+export type BotAppArmorProfile = 'terminay-bot' | 'default';
+export interface BotAppArmorDecision {
+	readonly profile: BotAppArmorProfile;
+	/** User namespaces are refused and `terminay-bot` is not loaded. */
+	readonly sandboxRefused: boolean;
+}
+const ENGINE_DEFAULT: BotAppArmorDecision = Object.freeze({
+	profile: 'default',
+	sandboxRefused: false,
+});
+export const BOT_APPARMOR_LABEL = 'terminay.apparmor';
+export const BOT_BROWSER_SANDBOX_REFUSED = 'userns-refused-no-profile';
+const APPARMOR_PROBE_DEADLINE_MS = 20_000;
+
+/** A container's recorded AppArmor choice; one created before it was
+ * recorded ran under the engine default. */
+export const botAppArmorLabel = (
+	container: EngineResource | undefined,
+): BotAppArmorProfile =>
+	container?.Config?.Labels?.[BOT_APPARMOR_LABEL] === 'terminay-bot'
+		? 'terminay-bot'
+		: 'default';
+
+/** Current when it runs the current image under the AppArmor choice the
+ * server would give a new container now. An unknown choice (the engine could
+ * not be asked) never makes a container out of date. */
+export function botContainerCurrent(
+	container: EngineResource | undefined,
+	fingerprint: string,
+	appArmor: BotAppArmorProfile | undefined,
+): boolean {
+	return (
+		container?.Config?.Labels?.['terminay.fingerprint'] === fingerprint &&
+		(appArmor === undefined || botAppArmorLabel(container) === appArmor)
+	);
+}
+
 /** Bot definitions can be registered while the engine is absent. Resources are
  * touched only on demand. Per-bot queues serialize lifecycle and event repair. */
 export class BotEnvironmentService extends EventEmitter {
@@ -81,6 +119,10 @@ export class BotEnvironmentService extends EventEmitter {
 	private readonly queues = new Map<string, Promise<unknown>>();
 	private readonly deadlines = new Map<string, BotIdleDeadline>();
 	private readonly activity = new Map<string, BotActivity>();
+	private readonly appArmorDecisions = new Map<
+		string,
+		Promise<BotAppArmorDecision>
+	>();
 	constructor(
 		readonly serverId: string,
 		private readonly hooks: BotEnvironmentHooks,
@@ -216,6 +258,7 @@ export class BotEnvironmentService extends EventEmitter {
 		driver: EngineDriver,
 		bot: BotEnvironmentDefinition,
 		fingerprint: string,
+		appArmor: BotAppArmorDecision,
 	): Promise<void> {
 		const name = nameFor(bot.id);
 		if (!(await this.owned(driver, 'volume', `${name}-home`, bot.id)))
@@ -236,6 +279,8 @@ export class BotEnvironmentService extends EventEmitter {
 			...this.labels(bot.id),
 			'--label',
 			`terminay.fingerprint=${fingerprint}`,
+			'--label',
+			`${BOT_APPARMOR_LABEL}=${appArmor.profile}`,
 			'--label',
 			'terminay.socket=proxy',
 			'--label',
@@ -263,6 +308,13 @@ export class BotEnvironmentService extends EventEmitter {
 		// accepts daemon paths rather than inline profiles; keep its native policy.
 		if (driver.details.pin.kind === 'docker')
 			args.push('--security-opt', BOT_BROWSER_SECURITY_OPT);
+		if (appArmor.profile === 'terminay-bot')
+			args.push('--security-opt', 'apparmor=terminay-bot');
+		if (appArmor.sandboxRefused)
+			args.push(
+				'--env',
+				`TERMINAY_BROWSER_SANDBOX=${BOT_BROWSER_SANDBOX_REFUSED}`,
+			);
 		if (driver.details.platform === 'linux')
 			args.push('--add-host', 'host.docker.internal:host-gateway');
 		if (driver.details.pin.kind === 'podman' && driver.details.rootless)
@@ -345,6 +397,94 @@ export class BotEnvironmentService extends EventEmitter {
 		if (!/^\d+$/.test(value)) throw new Error('engine socket gid unavailable');
 		return Number(value);
 	}
+	/**
+	 * Which AppArmor profile bot containers use on this engine (ADR-0120).
+	 *
+	 * The server cannot read the host's loaded profiles, and the engine's kernel
+	 * may not be the server's, so it asks the engine: a short container from the
+	 * bot image, as the bot user under the bot seccomp profile, tries to create
+	 * a user namespace under the engine default and then under `terminay-bot`.
+	 * Asked once per engine for the life of this process; a profile loaded by
+	 * hand is used after the server restarts. An engine that could not be asked
+	 * is asked again next time, and meanwhile the choice is unknown.
+	 */
+	private appArmorDecision(
+		driver: EngineDriver,
+	): Promise<BotAppArmorDecision | undefined> {
+		const details = driver.details;
+		if (details.pin.kind !== 'docker' || details.appArmor !== true)
+			return Promise.resolve(ENGINE_DEFAULT);
+		const key = `${details.pin.address}\0${details.pin.identity}`;
+		let pending = this.appArmorDecisions.get(key);
+		if (!pending) {
+			pending = this.probeAppArmor(driver);
+			this.appArmorDecisions.set(key, pending);
+			pending.catch(() => {
+				if (this.appArmorDecisions.get(key) === pending)
+					this.appArmorDecisions.delete(key);
+			});
+		}
+		return pending.catch(() => undefined);
+	}
+	private async probeAppArmor(
+		driver: EngineDriver,
+	): Promise<BotAppArmorDecision> {
+		const createsUserNamespace = async (
+			profile: BotAppArmorProfile,
+		): Promise<boolean> => {
+			const args = [
+				'run',
+				'--rm',
+				'--pull',
+				'never',
+				'--network',
+				'none',
+				'--label',
+				'terminay.managed=1',
+				'--label',
+				`terminay.server=${this.serverId}`,
+				'--label',
+				'terminay.helper=apparmor-probe',
+				'--cpus',
+				'0.25',
+				'--memory',
+				'134217728',
+				'--pids-limit',
+				'16',
+				'--user',
+				'bot',
+				'--security-opt',
+				BOT_BROWSER_SECURITY_OPT,
+				...(profile === 'terminay-bot'
+					? ['--security-opt', 'apparmor=terminay-bot']
+					: []),
+				'--entrypoint',
+				'unshare',
+				BOT_IMAGE,
+				'-Ur',
+				'true',
+			];
+			try {
+				await driver.run(args, {
+					deadlineMs: APPARMOR_PROBE_DEADLINE_MS,
+					startDeadlineMs: APPARMOR_PROBE_DEADLINE_MS,
+				});
+				return true;
+			} catch (error) {
+				// The command ran and was refused.
+				if (error instanceof EngineCommandError && error.exitCode !== undefined)
+					return false;
+				// The engine could not start a container under the named profile:
+				// it is not loaded. Under the default, the engine itself failed.
+				if (profile === 'terminay-bot') return false;
+				throw error;
+			}
+		};
+		if (await createsUserNamespace('default')) return ENGINE_DEFAULT;
+		if (await createsUserNamespace('terminay-bot'))
+			return { profile: 'terminay-bot', sandboxRefused: false };
+		return { profile: 'default', sandboxRefused: true };
+	}
 	start(id: string): Promise<void> {
 		return this.enqueue(id, () => this.startNow(id));
 	}
@@ -374,15 +514,17 @@ export class BotEnvironmentService extends EventEmitter {
 				.catch(() => {
 					throw new BotImageBuildError();
 				});
+			const appArmor = await this.appArmorDecision(driver);
 			if (
 				container &&
-				container.Config?.Labels?.['terminay.fingerprint'] !== fingerprint
+				!botContainerCurrent(container, fingerprint, appArmor?.profile)
 			) {
 				await this.removeResources(driver, id, false);
 				container = undefined;
 			}
 			this.setState(id, 'starting');
-			if (!container) await this.create(driver, bot, fingerprint);
+			if (!container)
+				await this.create(driver, bot, fingerprint, appArmor ?? ENGINE_DEFAULT);
 			await driver.run(['container', 'start', name]);
 			try {
 				const bootstrap = await this.hooks.bootstrap(id);
@@ -710,9 +852,11 @@ export class BotEnvironmentService extends EventEmitter {
 					: 0,
 			image: BOT_IMAGE,
 			fingerprint: this.hooks.currentFingerprint(),
-			current:
-				owned?.Config?.Labels?.['terminay.fingerprint'] ===
+			current: botContainerCurrent(
+				owned,
 				this.hooks.currentFingerprint(),
+				owned ? (await this.appArmorDecision(driver))?.profile : undefined,
+			),
 			homeVolume: `${name}-home`,
 			limits: bot.limits ?? defaults,
 			limitsEnforced: driver.details.limitsEnforced,

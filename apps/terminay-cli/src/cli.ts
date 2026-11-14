@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { ScopeError } from './account.js';
+import { HOST_SETUP_COMMAND, runHostSetup } from './apparmor.js';
 import { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
 import { runUpgradeCheck } from './commands/check.js';
 import { runContainerUpgrade } from './commands/containerUpgrade.js';
@@ -57,6 +58,11 @@ async function main(argv: readonly string[]): Promise<number> {
 	// `commands/recreate.ts`).
 	if (argv[0] === HELPER_COMMAND)
 		return runContainerRecreateHelper(argv.slice(1));
+	// Nor this: `daemon upgrade`, as root on a system-scope install, runs it
+	// from the release it has just switched to, so that release applies its
+	// own host setup before it starts (ADR-0120).
+	if (argv[0] === 'daemon' && argv[1] === HOST_SETUP_COMMAND)
+		return runHostSetup(argv.slice(2), write);
 
 	const parsed = parseCommandLine(argv);
 	if (parsed.command === 'help') {

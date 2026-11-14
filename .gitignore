@@ -64,3 +64,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Bytecode the bot-image launcher tests leave beside the scripts
+docker/terminay-bot/bin/__pycache__/

@@ -47,6 +47,8 @@ export interface EngineDetails {
 	readonly botUid: number;
 	readonly botGid: number;
 	readonly platform: NodeJS.Platform;
+	/** Docker reports AppArmor among its security options (ADR-0120). */
+	readonly appArmor?: boolean;
 }
 export interface EngineResource {
 	readonly Id?: string;
@@ -187,6 +189,9 @@ export class BotEngine extends EventEmitter {
 			kind === 'podman'
 				? host?.security?.rootless === true
 				: JSON.stringify(info.SecurityOptions ?? []).includes('rootless');
+		const appArmor =
+			kind === 'docker' &&
+			JSON.stringify(info.SecurityOptions ?? []).includes('name=apparmor');
 		if (kind === 'docker' && rootless)
 			throw new EngineCommandError(
 				'unsupported-engine-mode',
@@ -233,6 +238,7 @@ export class BotEngine extends EventEmitter {
 						)),
 				botUid: this.platform === 'linux' ? botId(process.getuid?.()) : 1000,
 				botGid: this.platform === 'linux' ? botId(process.getgid?.()) : 1000,
+				...(appArmor ? { appArmor: true } : {}),
 			},
 		};
 	}

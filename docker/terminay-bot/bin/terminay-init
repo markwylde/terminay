@@ -142,7 +142,12 @@ def start_desktop(passwd_path, uid, gid, bot_id):
     spawn(["terminay-desktop-session"], uid=uid, gid=gid, env=env)
     # The desktop owns the browser, independently of agent/tool process groups.
     # Keep Chromium's sandbox enabled; it runs as the unprivileged bot user.
-    spawn(["terminay-browser"], uid=uid, gid=gid, env=env)
+    browser_env = dict(env)
+    # Set by the server when the engine refuses Chromium's user namespace and
+    # has no terminay-bot AppArmor profile, so the browser log can say why.
+    if os.environ.get("TERMINAY_BROWSER_SANDBOX"):
+        browser_env["TERMINAY_BROWSER_SANDBOX"] = os.environ["TERMINAY_BROWSER_SANDBOX"]
+    spawn(["terminay-browser"], uid=uid, gid=gid, env=browser_env)
     wait_path("/tmp/terminay-browser.sock", time.monotonic() + 10)
     spawn(["terminay-app"], uid=uid, gid=gid, env=env)
     wait_path("/tmp/terminay-app.sock", time.monotonic() + 10)

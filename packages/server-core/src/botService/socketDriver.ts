@@ -607,10 +607,12 @@ export class SocketDriver implements EngineDriver {
 		const child = new SocketProcess();
 		void (async () => {
 			let id: string | undefined;
+			let removeOnFailure = false;
 			try {
 				if (args[0] !== 'run')
 					throw new TypeError('unsupported internal streaming operation');
 				const spec = createSpec(args.slice(1));
+				removeOnFailure = spec.remove;
 				const created = await this.transport.json<{ Id: string }>(
 					'POST',
 					`/containers/create?${query({ name: spec.name })}`,
@@ -654,6 +656,13 @@ export class SocketDriver implements EngineDriver {
 					);
 				child.finish(status.StatusCode);
 			} catch (e) {
+				// A `--rm` container the engine created but could not start (for
+				// example under an AppArmor profile it does not have) is removed
+				// here, as `docker run --rm` does.
+				if (id && removeOnFailure && !child.signal.aborted)
+					await this.transport
+						.json('DELETE', `/containers/${enc(id)}?force=true`)
+						.catch(() => {});
 				if (!child.signal.aborted) child.finish(null, e);
 			} finally {
 				if (id && child.signal.aborted)

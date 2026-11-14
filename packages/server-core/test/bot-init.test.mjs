@@ -442,3 +442,17 @@ test('desktop apps survive supervised session closure and end with their disposa
 		0,
 	);
 });
+
+test('a refused browser sandbox is named in the browser log, and the sandbox stays on', () => {
+	python(`
+launcher=os.path.join(os.path.dirname(m.__file__),'terminay-browser')
+b=importlib.machinery.SourceFileLoader('browser',launcher).load_module()
+note=b.sandbox_refused_note({'TERMINAY_BROWSER_SANDBOX':'userns-refused-no-profile'})
+assert 'user namespaces' in note and 'terminay-bot AppArmor profile' in note, note
+assert 'sudo terminay daemon upgrade' in note, note
+assert b.sandbox_refused_note({}) is None
+assert b.sandbox_refused_note({'TERMINAY_BROWSER_SANDBOX':'other'}) is None
+assert '--no-sandbox' not in open(launcher).read()
+assert 'browser_env["TERMINAY_BROWSER_SANDBOX"]' in open(m.__file__).read()
+`);
+});

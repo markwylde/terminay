@@ -1,7 +1,15 @@
+import { execFile } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { ensureLoginShell } from '../account.js';
 import { derivePublicHost, PUBLIC_HOST_NEEDS_LITERAL } from '../address.js';
 import { ADVERTISED_PORT_SPAN } from '../advertise.js';
+import {
+	type AppArmorHost,
+	installBotAppArmorProfile,
+	reportAppArmorInstall,
+} from '../apparmor.js';
 import type { DaemonOptions } from '../args.js';
 import { type CommandContext, sendToInstalledServer } from '../context.js';
 import {
@@ -67,6 +75,13 @@ export interface UpgradeDependencies {
 	/** Who is running this. Overridden by tests; root maintains the helper. */
 	readonly uid?: number;
 	readonly env?: Readonly<Record<string, string | undefined>>;
+	/** Where the bot AppArmor profile goes. Overridden by tests. */
+	readonly appArmor?: AppArmorHost;
+	/**
+	 * Runs the new release's `daemon host-setup` after the switch. Overridden
+	 * by tests; the default executes `<release>/bin/terminay`.
+	 */
+	readonly runReleaseHostSetup?: (releaseDirectory: string) => Promise<void>;
 }
 
 export interface UpgradeResult {
@@ -124,6 +139,18 @@ export async function obtainArchive(options: {
 			: { publicKeyPem: options.releasePublicKeyPem }),
 	});
 	return asset.path;
+}
+
+const HOST_SETUP_TIMEOUT_MS = 120_000;
+
+async function runReleaseHostSetup(releaseDirectory: string): Promise<void> {
+	const { stdout } = await promisify(execFile)(
+		join(releaseDirectory, 'bin', 'terminay'),
+		['daemon', 'host-setup'],
+		{ timeout: HOST_SETUP_TIMEOUT_MS },
+	);
+	for (const line of stdout.split('\n'))
+		if (line.trim() !== '') process.stdout.write(`${line}\n`);
 }
 
 function reasonOf(error: unknown): string {
@@ -233,6 +260,17 @@ async function upgradeRelease(
 		await installUpgradeHelper({ layout, runAs: record.runAs, systemd });
 		write('Installed the upgrade helper, so this server can upgrade itself.');
 	}
+	// Root keeps the host's bot AppArmor profile current (ADR-0120), whether or
+	// not there is a newer release: `sudo terminay daemon upgrade` is the fix
+	// the server names when a bot's browser sandbox is refused.
+	if (
+		layout.scope === 'system' &&
+		(dependencies.uid ?? process.getuid?.()) === 0
+	)
+		reportAppArmorInstall(
+			await installBotAppArmorProfile(dependencies.appArmor),
+			write,
+		);
 	// An account created before it was given a login shell is corrected on
 	// the upgrade that reaches it; the helper's oneshot runs as root too.
 	if ((dependencies.uid ?? process.getuid?.()) === 0)
@@ -398,6 +436,20 @@ async function upgradeRelease(
 				: 'Updated the service unit to give this release a private /tmp.',
 		);
 	}
+	// This process is the release being replaced, so the release being
+	// installed applies its own host setup before it starts. A failure is a
+	// warning: the server runs without it.
+	if (
+		layout.scope === 'system' &&
+		(dependencies.uid ?? process.getuid?.()) === 0
+	)
+		await (dependencies.runReleaseHostSetup ?? runReleaseHostSetup)(
+			versionDirectory(layout, installed.name),
+		).catch((error: unknown) =>
+			write(
+				`Warning: the new release's host setup did not complete (${reasonOf(error)}).`,
+			),
+		);
 	// A unit that will not start is the same failure as one that starts and
 	// never reports ready: either way the previous version goes back.
 	const started = await systemd.start().then(

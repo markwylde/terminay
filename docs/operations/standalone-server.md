@@ -974,6 +974,67 @@ Terminay's data directory is at a path too long for a local socket. … Start Te
 Use a shorter `--data-root`, or set `XDG_RUNTIME_DIR` to a short directory only
 the server's user can write.
 
+## Bot browsers on AppArmor hosts
+
+A bot's desktop runs Chromium with its sandbox on, and the sandbox creates a
+user namespace. On a Linux host where AppArmor mediates user namespaces (AppArmor
+4 on a 6.x kernel, for example Debian 13), Docker's default container profile,
+`docker-default`, refuses that, and Chromium exits at start. Terminay never
+turns the sandbox off and never runs bot containers unconfined. It ships an
+AppArmor profile instead, `terminay-bot`: Docker's `docker-default` (pinned to
+Moby v28.0.0) with one added rule, `userns,`. Every other rule, including every
+`/proc` and `/sys` deny, is kept. See ADR-0120.
+
+**System-scope installs manage it.** `sudo terminay daemon install` and
+`sudo terminay daemon upgrade` (and the upgrade helper, which runs as root)
+write `/etc/apparmor.d/terminay-bot` (root, 0644) and load it with
+`apparmor_parser -r -W`. An upgrade does this even when there is nothing newer,
+and the release being installed applies it again before it starts. An install
+still on a release from before this profile gains it on the next upgrade after
+that release, or at once with:
+
+```sh
+sudo terminay daemon upgrade
+```
+
+A failure to write or load it is printed as a warning; the install or upgrade
+still completes. A host without AppArmor, or without `apparmor_parser`, is left
+alone. `daemon uninstall` removes the file but leaves the loaded profile in the
+kernel, so bot containers that are still running stay confined; it is gone at
+the next boot.
+
+**How the server chooses.** On a Docker engine that reports AppArmor, the server
+runs two short containers from the bot image (bot user, bot seccomp profile, no
+network) the first time it starts or checks a bot: one tries `unshare -Ur true`
+under the engine default, and, if that is refused, one tries it under
+`--security-opt apparmor=terminay-bot`. Bot containers use `terminay-bot` only
+when the first is refused and the second works. The answer is kept until the
+server restarts. A bot container created under a different choice is out of
+date: a stopped bot is recreated on its next start, keeping its home; a running
+bot shows **Recreate to update**. Podman, and engines without AppArmor, are not
+probed.
+
+When both are refused, the bot's container starts under the engine default and
+`/tmp/terminay-browser.log` in the container begins with a line saying user
+namespaces are refused and the host has no `terminay-bot` profile.
+
+**User-scope installs, the container image, and Docker hosts the server does
+not run on** have no root step of their own. Load the profile on the host that
+runs the Docker engine, as root, then restart the server:
+
+```sh
+# Copy the profile from a system-scope install, or from
+# apps/terminay-cli/src/apparmor.ts (BOT_APPARMOR_PROFILE), to:
+sudoedit /etc/apparmor.d/terminay-bot
+sudo chown root:root /etc/apparmor.d/terminay-bot
+sudo chmod 0644 /etc/apparmor.d/terminay-bot
+sudo apparmor_parser -r -W /etc/apparmor.d/terminay-bot
+```
+
+Check it is loaded with `sudo aa-status | grep terminay-bot`, and that a bot
+container uses it with
+`docker inspect -f '{{.AppArmorProfile}}' terminay-bot-<id>`.
+
 ## Backup, restore, upgrades, and incidents
 
 Before an upgrade, stop the server, copy the complete data root to a separate
