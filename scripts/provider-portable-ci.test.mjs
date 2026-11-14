@@ -87,7 +87,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   // use, checked against the glibc floor, and run on a clean floor host
   // before a change can merge (ADR-0077).
   const giteaGlibcFloor = job(giteaCi, "linux-glibc-floor");
-  assert.match(giteaGlibcFloor, /^ {4}runs-on: \$\{\{ vars\.TERMINAY_CI_BUILD_RUNNER \|\| 'ubuntu-latest' \}\}$/mu);
+  assert.match(giteaGlibcFloor, /^ {4}runs-on: ubuntu-latest$/mu);
   assert.match(giteaGlibcFloor, /test "\$\(docker info --format '\{\{\.Architecture\}\}'\)" = x86_64/u);
   const producer = job(giteaCi, "linux-artifacts");
   assert.match(producer, /standalone-prebuilt-application\.mjs build linux-x64.*&& sh scripts\/build-linux-standalone-archive\.sh --prebuilt/u);
@@ -370,11 +370,9 @@ test('Linux floor and systemd gates consume one producer directly and verify rev
 });
 
 
-test('only the four critical build jobs opt into the reserved runner pool', () => {
-  const reserved = ['e2e-image', 'linux-artifacts', 'linux-glibc-floor', 'standalone-systemd-restart'];
-  for (const name of reserved) {
-    assert.match(job(giteaCi, name), /^ {4}runs-on: \$\{\{ vars\.TERMINAY_CI_BUILD_RUNNER \|\| 'ubuntu-latest' \}\}$/mu);
+test('Linux verification uses the shared runner pool', () => {
+  for (const name of ['e2e-image', 'linux-artifacts', 'linux-glibc-floor', 'standalone-systemd-restart', 'e2e-test']) {
+    assert.match(job(giteaCi, name), /^ {4}runs-on: ubuntu-latest$/mu);
   }
-  assert.equal((giteaCi.match(/vars\.TERMINAY_CI_BUILD_RUNNER/g) ?? []).length, reserved.length);
-  assert.match(job(giteaCi, 'e2e-test'), /^ {4}runs-on: ubuntu-latest$/mu);
+  assert.doesNotMatch(giteaCi, /TERMINAY_CI_BUILD_RUNNER|terminay-ci-build/);
 });

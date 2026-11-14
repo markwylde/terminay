@@ -33,12 +33,10 @@ concurrency:
 # shell. Shortly before the timeout the watchdog prints the step's processes,
 # the test files still running, and each Node process's JavaScript stack and
 # open handles; it never stops or fails anything.
-# Activate the reserved infrastructure pool only after its runners are online.
-# Clearing this variable restores general-pool scheduling without a code change.
 jobs:
   e2e-image:
     name: Build E2E image
-    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -141,7 +139,7 @@ jobs:
 
   linux-artifacts:
     name: Build Linux floor artifacts (linux-x64)
-    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 45
@@ -326,7 +324,7 @@ jobs:
   # from each on a clean glibc 2.31 host (ADR-0077).
   linux-glibc-floor:
     name: Linux glibc floor (linux-x64)
-    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: linux-artifacts
     timeout-minutes: 45
     env:
@@ -395,7 +393,7 @@ jobs:
   # read from shell output that kept and new terminals can still use /tmp.
   standalone-systemd-restart:
     name: Standalone systemd restart (linux-x64)
-    runs-on: ${{ vars.TERMINAY_CI_BUILD_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     container:
       image: git.i.wylde.net/docker/dind:latest
       volumes:
