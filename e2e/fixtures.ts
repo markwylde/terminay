@@ -12,13 +12,13 @@ import { createServer, type Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {
-	test as base,
 	type ElectronApplication,
 	_electron as electron,
 	expect,
 	type Page,
 	type TestInfo,
 } from '@playwright/test';
+import { test as base } from './support/isolated-test';
 import { startBotSocketServer } from '../packages/server-core/test/fixtures/bot-socket-server.mjs';
 import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-artifact.mjs';
 import { createWorkerRendererArtifact } from './support/renderer-artifact.mjs';

@@ -416,3 +416,23 @@ test('other project workflows pin every third-party action to a reviewed immutab
 		}
 	}
 });
+
+test('image assembly publishes the verified payload without a compress/extract round trip', async () => {
+	const builder = await readFile(new URL('./build-standalone-server-artifact.mjs', import.meta.url), 'utf8');
+	assert.match(dockerfile, /--output-tree \/out\/terminay/u);
+	assert.doesNotMatch(dockerfile, /tar -xzf.*standalone-build/u);
+	assert.ok(builder.indexOf('publishStandalonePayload({') > builder.indexOf('await normalizeArtifactModes(root, executables);', builder.indexOf('artifact-manifest.json')));
+});
+
+test('local image confidence checks describe upgrades offline while explicit upgrade remains a published-release test', async () => {
+	const smoke = await readFile(new URL('./container-image-smoke.mjs', import.meta.url), 'utf8');
+	const bare = smoke.slice(smoke.indexOf('async function bare()'), smoke.indexOf('async function upgrade()'));
+	const upgrade = smoke.slice(smoke.indexOf('async function upgrade()'), smoke.indexOf('async function recreate()'));
+	assert.match(bare, /api\.github\.com:127\.0\.0\.1/u);
+	assert.match(bare, /github\.com:127\.0\.0\.1/u);
+	assert.match(bare, /described\.checkError/u);
+	assert.match(bare, /described\.canUpgrade === true/u);
+	assert.doesNotMatch(upgrade, /api\.github\.com:127\.0\.0\.1/u);
+	assert.match(upgrade, /assert\(!before\.checkError/u);
+	assert.match(upgrade, /'daemon', 'upgrade'\]/u);
+});

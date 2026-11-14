@@ -53,7 +53,15 @@ RUN if printf '%s' "$OCI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-main\.[1-
     node scripts/sync-package-version.mjs "$OCI_VERSION"; \
   fi
 
-RUN npm run build:application-graph \
+ARG TURBO_TEAM=wylde
+RUN --mount=type=secret,id=turbo_token,required=false \
+  --mount=type=secret,id=turbo_signature_key,required=false \
+  if [ -f /run/secrets/turbo_token ] && [ -f /run/secrets/turbo_signature_key ]; then \
+    export TURBO_TOKEN="$(cat /run/secrets/turbo_token)"; \
+    export TURBO_REMOTE_CACHE_SIGNATURE_KEY="$(cat /run/secrets/turbo_signature_key)"; \
+    export TURBO_TEAM; \
+  fi; \
+  npm run build:application-graph \
   && npm run build:server-postcompile \
   && npm run build:server-ui:bundle
 
@@ -89,10 +97,7 @@ RUN set -eu; \
     --node-archive /tmp/node-runtime.tar.xz \
     --runtime-modules node_modules \
     --webrtc-runtime build/webrtc-runtime \
-    --output-dir /tmp/standalone > /tmp/standalone-build.json; \
-  mkdir -p /out/terminay; \
-  tar -xzf "$(node -e 'process.stdout.write(JSON.parse(require("node:fs").readFileSync("/tmp/standalone-build.json", "utf8")).archivePath)')" \
-    --strip-components=1 -C /out/terminay
+    --output-tree /out/terminay > /tmp/standalone-build.json
 
 FROM ${DOCKER_HUB}/debian:bookworm-slim AS runtime
 

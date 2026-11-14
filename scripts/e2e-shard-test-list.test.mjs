@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { createWorkerDisplay } from '../e2e/support/worker-display.mjs';
+import { shardWorkerPolicy } from './support/e2e-worker-policy.mjs';
 import { durationSnapshot } from './update-e2e-duration-snapshot.mjs';
 import {
 	HEAVY_TEST_WEIGHT,
@@ -172,4 +176,90 @@ test('snapshot refresh records successful attempt medians, evidence hashes and r
 	assert.equal(snapshot.source, 'https://git.example/actions/runs/123');
 	assert.match(snapshot.inputs[0].sha256, /^[a-f0-9]{64}$/u);
 	assert.throws(() => durationSnapshot(listing, [{ name: 'empty', content: '' }], 'source'), /no successful test durations/u);
+});
+
+
+test('ordinary shards use two isolated workers but native packaging stays exclusive', () => {
+	assert.equal(shardWorkerPolicy(['bots.spec.ts › Home: Bots › build']).workers, 2);
+	assert.equal(shardWorkerPolicy(['shared.spec.ts', 'ordinary.spec.ts › a'], 1).workers, 1);
+	assert.deepEqual(shardWorkerPolicy(['canonical-runtime-executable-parity.spec.ts › parity', 'ordinary.spec.ts › a'], 2), {
+		workers: 1, reason: 'native packaging requires exclusive access',
+	});
+	assert.equal(shardWorkerPolicy(['canonical-runtime-executable-parity.spec.ts'], 4).workers, 1);
+	assert.throws(() => shardWorkerPolicy(['a.spec.ts'], 0), /positive integer/u);
+});
+
+
+test('measured shards start with the longest predicted wall time including exclusive packaging', () => {
+	const listing = report({ 'first.spec.ts': ['a'], 'canonical-runtime-executable-parity.spec.ts': ['pack'], 'last.spec.ts': ['b', 'c'] });
+	const durations = Object.fromEntries(listedTests(listing).map((test) => [timingKey(test), 10]));
+	const lists = shardTestLists(listing, () => false, 2, durations);
+	assert.ok(lists[0].includes('canonical-runtime-executable-parity.spec.ts › pack'));
+	assert.equal(shardWorkerPolicy(lists[0]).workers, 1);
+	assert.equal(shardWorkerPolicy(lists[1]).workers, 2);
+});
+
+test('shared beforeAll fixtures declare a serial file group for parallel worker pools', async () => {
+	const directory = new URL('../e2e/', import.meta.url);
+	for (const name of await readdir(directory)) {
+		if (!name.endsWith('.spec.ts')) continue;
+		const source = await readFile(new URL(name, directory), 'utf8');
+		if (!/\btest\.beforeAll\(/u.test(source)) continue;
+		assert.match(source, /describe\.configure\(\{\s*mode:\s*['"](?:default|serial)['"]/u, name);
+	}
+});
+
+
+test('worker displays allocate independently and restore parent display on teardown', async () => {
+	let next = 100;
+	const servers = [];
+	const spawnServer = (command, args) => {
+		assert.equal(command, 'Xvfb');
+		assert.ok(args.includes('-nolisten') && args.includes('tcp') && args.includes('-ac'));
+		const server = new EventEmitter();
+		server.stdio = [null, null, new PassThrough(), new PassThrough()];
+		server.stderr = server.stdio[2];
+		server.exitCode = null;
+		server.kill = (signal) => { server.exitCode = 0; server.emit('exit', 0, signal); };
+		const number = next++;
+		queueMicrotask(() => server.stdio[3].write(`${number}\n`));
+		servers.push(server);
+		return server;
+	};
+	const first = { DISPLAY: ':99' };
+	const second = {};
+	const a = await createWorkerDisplay({ enabled: true, env: first, spawnServer });
+	const b = await createWorkerDisplay({ enabled: true, env: second, spawnServer });
+	assert.equal(first.DISPLAY, ':100');
+	assert.equal(second.DISPLAY, ':101');
+	await a.close(); await a.close(); await b.close();
+	assert.equal(first.DISPLAY, ':99');
+	assert.equal(second.DISPLAY, undefined);
+	assert.ok(servers.every((server) => server.exitCode === 0));
+});
+
+test('failed worker display startup kills only its server and retains the parent environment', async () => {
+	let killed;
+	const env = { DISPLAY: ':99' };
+	const spawnServer = () => {
+		const server = new EventEmitter();
+		server.stdio = [null, null, new PassThrough(), new PassThrough()];
+		server.stderr = server.stdio[2];
+		server.kill = (signal) => { killed = signal; };
+		queueMicrotask(() => server.emit('error', new Error('Xvfb unavailable')));
+		return server;
+	};
+	await assert.rejects(createWorkerDisplay({ enabled: true, env, spawnServer }), /Xvfb unavailable/u);
+	assert.equal(killed, 'SIGKILL');
+	assert.equal(env.DISPLAY, ':99');
+});
+
+
+test('all E2E test definitions share the worker display fixture before hooks run', async () => {
+	const directory = new URL('../e2e/', import.meta.url);
+	for (const name of await readdir(directory)) {
+		if (!name.endsWith('.spec.ts')) continue;
+		const source = await readFile(new URL(name, directory), 'utf8');
+		assert.doesNotMatch(source, /import\s*\{[^}]*\btest(?:\s+as\s+\w+)?[^}]*\}\s*from\s*['"]@playwright\/test['"]/u, name);
+	}
 });

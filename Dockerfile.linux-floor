@@ -37,10 +37,18 @@ COPY --chown=node:node packages/responsive-ui/package.json packages/responsive-u
 COPY --chown=node:node packages/server-core/package.json packages/server-core/package.json
 COPY --chown=node:node packages/ui-bundle/package.json packages/ui-bundle/package.json
 COPY --chown=node:node scripts/ensure-node-pty-helper-mode.mjs scripts/ensure-node-pty-helper-mode.mjs
+COPY --chown=node:node scripts/node-build-header-prefix.mjs scripts/node-build-header-prefix.mjs
 
 USER node
-# Named runner volumes preserve verified tool downloads across floor jobs.
-RUN mkdir -p /home/node/.cache/electron /home/node/.cache/electron-builder
-RUN npm ci
+# npm verifies cached tarballs against the lockfile. Keep downloads outside the
+# install layer so a manifest edit does not fetch the whole dependency tree.
+# Foreground lifecycle and HTTP timings identify a slow native build or fetch;
+# the deadline ends a silent install rather than consuming the job timeout.
+RUN --mount=type=cache,id=terminay-floor-npm-node24,target=/home/node/.npm,uid=1000,gid=1000,sharing=locked \
+    header_prefix="$(node scripts/node-build-header-prefix.mjs)" \
+    && npm_config_nodedir="$header_prefix" timeout --signal=TERM --kill-after=10s 180s npm ci \
+      --prefer-offline --foreground-scripts --timing --loglevel=http \
+      --fetch-timeout=30000 --fetch-retries=1 --no-audit --no-fund \
+    && mkdir -p /home/node/.cache/electron /home/node/.cache/electron-builder
 
 COPY --chown=node:node . .

@@ -1,7 +1,9 @@
 ## 1. E2E distribution
 
-- [ ] 1.1 Repair delimiter-sensitive real test titles and validate exactly-once real listing coverage; verify targeted regression tests and Docker E2E shard output.
+- [x] 1.1 Repair delimiter-sensitive real test titles and validate exactly-once real listing coverage; verify targeted regression tests and Docker E2E shard output.
 - [x] 1.2 Add deterministic duration-based distribution and refreshable provenance-backed timing evidence; verify balancing, unknown tests and shared groups.
+
+- [ ] 1.3 Isolate two E2E workers by display/profile/port, preserve shared setup and serialize native packaging; verify Docker trials and full Gitea coverage/timing.
 
 ## 2. Workspace tests
 
@@ -9,14 +11,16 @@
 - [x] 2.2 Parallelize independent workspace checks with shared staging protected; verify full workspace gate and coverage contract.
 - [x] 2.3 Remove repeated immutable test archive preparation where measurement justifies it; verify artifact cases and timing.
 
-- [ ] 2.4 Use bounded memory-backed disposable test roots; verify the full workspace gate and Docker E2E execution without changing production persistence.
+- [x] 2.4 Use bounded memory-backed disposable test roots; verify the full workspace gate and Docker E2E execution without changing production persistence.
 
 ## 3. Build and scheduling critical path
 
-- [ ] 3.1 Eliminate duplicate application builds in Linux packaging and reuse verified revision/platform outputs across consumers; verify packaging contracts and actual Gitea floor/systemd/lifecycle checks.
+- [x] 3.1 Eliminate duplicate application builds in Linux packaging and reuse verified revision/platform outputs across consumers; verify packaging contracts and actual Gitea floor/systemd/lifecycle checks.
 - [ ] 3.2 Prioritize image production and address available runner capacity without concurrent cleanup hazards; verify job start times and document any infrastructure limitation.
 
 - [ ] 3.3 Cache production bundles and browser optimizer with explicit invalidation and output checks; verify real restoration and Gitea producer timing.
+
+- [ ] 3.4 Reuse npm downloads with bounded diagnostic installs and remove redundant image payload compression; verify installer contracts, payload parity and real container smoke.
 
 ## 4. Timing and delivery
 

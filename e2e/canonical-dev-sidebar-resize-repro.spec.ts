@@ -12,8 +12,8 @@ import {
 	expect,
 	type Locator,
 	type Page,
-	test,
 } from '@playwright/test';
+import { test } from './support/isolated-test';
 import WebSocket from 'ws';
 import { openFileExplorer } from './support/ui';
 

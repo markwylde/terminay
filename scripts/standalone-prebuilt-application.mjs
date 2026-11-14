@@ -34,7 +34,7 @@ function digestTree(root, paths, source = false) {
 }
 
 function sourceDigest(root) {
-	const roots = [...sourceRoots, ...readdirSync(root).filter((name) => /^(?:package(?:-lock)?\.json|tsconfig.*\.json|vite.*\.ts|.*\.html|turbo\.json)$/u.test(name))];
+	const roots = [...sourceRoots, ...readdirSync(root).filter((name) => name.startsWith('.env') || /^(?:package(?:-lock)?\.json|tsconfig.*\.json|vite.*\.ts|.*\.html|turbo\.json)$/u.test(name))];
 	return digestTree(root, roots, true);
 }
 

@@ -25,7 +25,11 @@ test('native and argv folder launches show fresh terminals at the exact local cw
 		await expect(
 			page.locator('.project-workspace--active .terminal-panel:visible'),
 		).toHaveCount(1, { timeout: 30_000 });
-		expect(await activeTerminalCwd(page)).toBe(await realpath(first));
+		// Startup presents the default workspace before the native folder queue
+		// finishes validating and selecting the requested local folder.
+		await expect
+			.poll(() => activeTerminalCwd(page), { timeout: 20_000 })
+			.toBe(await realpath(first));
 		const settings = await openSettingsWindow(app, page, {
 			sectionId: 'shell-launch',
 		});

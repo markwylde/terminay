@@ -1,3 +1,5 @@
+import { shardWorkerPolicy } from './e2e-worker-policy.mjs';
+
 // Deals the E2E suite out to shards.
 //
 // Playwright's own `--shard` cuts the ordered test list into contiguous
@@ -118,9 +120,19 @@ export function dealToShards(units, total, longestFirst = false) {
  */
 export function shardTestLists(report, keepsTogether, total, durations) {
 	const tests = listedTests(report, durations);
-	const lists = dealToShards(shardUnits(tests, keepsTogether), total, Boolean(durations)).map(
-		(units) => units.map((unit) => unit.line),
-	);
+	const shards = dealToShards(shardUnits(tests, keepsTogether), total, Boolean(durations));
+	if (durations) {
+		const wallTime = (units) => {
+			const weights = units.map((unit) => unit.tests.reduce((sum, test) => sum + test.weight, 0));
+			const workers = shardWorkerPolicy(units.map((unit) => unit.line)).workers;
+			// Shared groups are indivisible, even when other groups run in parallel.
+			return Math.max(0, ...weights, weights.reduce((sum, weight) => sum + weight, 0) / workers);
+		};
+		// Start the longest predicted wall-time shards first. In particular a
+		// native-packaging shard cannot use two workers to halve its workload.
+		shards.sort((a, b) => wallTime(b) - wallTime(a));
+	}
+	const lists = shards.map((units) => units.map((unit) => unit.line));
 	for (const test of tests) {
 		const selectedBy = lists.filter((lines) =>
 			lines.some((line) => selects(line, test)),

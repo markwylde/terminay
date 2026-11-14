@@ -154,3 +154,68 @@ provenance checks. Browser optimizer reuse additionally keys the absolute
 checkout root and runtime, and validates metadata and referenced chunks.
 Pinned Electron packaging downloads persist in a platform-specific Docker
 volume; cold downloads still count toward the budget.
+
+## Official container smoke
+
+The local four-case image smoke proves pairing, approval, reconnect,
+advertised/derived routing, a negative network control and sustained
+connections. Its bare case also describes the installed upgrade mechanism
+with the release service deliberately unreachable, asserting that lookup
+failure is reported without hiding the available local upgrade capability.
+Both GitHub's API and its HTML fallback are refused by that case's container
+host mapping. The optional `--only upgrade` case retains real published-release
+discovery and installation; it is explicitly network-dependent.
+
+Image assembly consumes the standalone builder's fully validated and normalized
+`--output-tree` result directly. Release archive callers keep deterministic
+compression and archive digests. The direct image path avoids compressing a
+temporary archive only to extract it into the same build stage. Image builds
+may use the signed internal Turbo cache through ephemeral BuildKit secrets;
+the credentials are not copied into the image.
+
+## Linux pull-request dependency installs
+
+Seven Linux jobs mount `terminay-ci-npm-cache` at `/var/cache/terminay-npm` in
+their job container and set `npm_config_cache` to that same path. The volume
+holds npm's integrity-verified download cache, never shared `node_modules`.
+The existing Docker runner and executable test tmpfs isolation remain in use.
+No cache-action archive or end-of-job upload is involved.
+
+`sh scripts/install-ci-dependencies.sh` pins npm only when its version differs
+from 12.2.1, then performs a real `npm ci` with lifecycle scripts enabled.
+It prefers cached downloads, reports fetch/lifecycle timings, limits fetch
+retries and bounds npm installation to 60 seconds and dependency installation
+to 180 seconds, with a further ten-second termination grace. Install-time
+advisory and funding requests are disabled; an advisory lookup does not affect
+`npm ci`'s exit status. Required security and boundary tests are unchanged.
+macOS, weekly benchmarks and release workflows retain their existing installers.
+
+## Parallel E2E and archive measurements
+
+Ordinary shards use two workers with separate Xvfb displays, profiles, ports and
+renderer copies. Shared-setup files run in declaration order. The native-module
+packaging shard uses one worker and is scheduled first by predicted wall time.
+A seven-scenario Docker trial passed on first attempts in 78 seconds versus
+121.8 seconds of summed test durations. Full-run verification remains required.
+
+A representative 196 MB standalone payload compressed in 2.680 seconds at gzip
+level 1 versus 21.937 seconds at level 9, producing 68.48 MB versus 60.19 MB.
+CI requests level 1 explicitly; release defaults remain level 9. Tests verify
+identical decompressed tar bytes, payload hashes and modes, deterministic gzip
+metadata, and reproducibility at both levels.
+
+During dependency installation, node-gyp reuses headers from the actual Node
+executable's installation prefix only when `node_version.h` declares exactly
+the running major, minor and patch version. Missing or mismatched headers keep
+the normal pinned-download path. `npm_config_nodedir` is scoped to the install
+child; it is not exported to later Electron rebuilds, which select Electron's
+own headers. The floor image applies the same exact-version check.
+
+Run 25350 (head `6932bf63`) finished all eighteen E2E shards, workspace tests,
+packaged platform checks, floor/systemd checks and container scenarios
+successfully. The run failed its fast gate on a stale assertion that rejected
+the new daemon-owned tool-cache volume; the assertion is corrected to retain
+the prohibition on repository bind mounts. This run took 819 seconds from
+creation to completion and is a budget miss. Its E2E image took 377 seconds
+and several Linux dependency installs took about four minutes. It must not be
+used as evidence of a five-minute green run.

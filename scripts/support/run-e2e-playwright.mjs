@@ -11,8 +11,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sharesSetup, shardTestLists } from './e2e-shard-test-list.mjs';
+import { shardWorkerPolicy } from './e2e-worker-policy.mjs';
 
 const args = process.argv.slice(2);
+let isolateWorkerDisplays = false;
 const shardAt = args.findIndex((arg) => /^--shard=\d+\/\d+$/u.test(arg));
 
 if (shardAt !== -1) {
@@ -40,9 +42,20 @@ if (shardAt !== -1) {
 		const lines = shardTestLists(report, keepsTogether, total, snapshot.durations)[current - 1];
 		const listPath = join(mkdtempSync(join(tmpdir(), 'terminay-e2e-shard-')), 'tests.txt');
 		writeFileSync(listPath, `${lines.join('\n')}\n`);
-		args.splice(0, args.length, ...others, `--test-list=${listPath}`);
+		const workerAt = others.findIndex((arg) => /^--workers(?:=|$)/u.test(arg));
+		const requested = workerAt === -1 ? 2 : Number(others[workerAt] === '--workers' ? others[workerAt + 1] : others[workerAt].slice('--workers='.length));
+		const policy = shardWorkerPolicy(lines, requested);
+		isolateWorkerDisplays = policy.workers > 1;
+		if (workerAt !== -1) others.splice(workerAt, others[workerAt] === '--workers' ? 2 : 1);
+		args.splice(0, args.length, ...others, `--test-list=${listPath}`, `--workers=${policy.workers}`);
+		process.stdout.write(`Shard workers: ${policy.workers} (${policy.reason})\n`);
 		process.stdout.write(`Shard ${current} of ${total}: ${lines.length} entries dealt from the suite using recorded durations (${snapshot.source})\n`);
 	} catch (error) {
+		// A fallback may contain the native-packaging case. Keep its original
+		// single-worker safety even when a caller requested parallel execution.
+		const workerAt = args.findIndex((arg) => /^--workers(?:=|$)/u.test(arg));
+		if (workerAt !== -1) args.splice(workerAt, args[workerAt] === '--workers' ? 2 : 1);
+		args.push('--workers=1');
 		process.stderr.write(
 			`Could not deal the suite to shards; Playwright will shard it instead: ${error instanceof Error ? error.message : String(error)}\n`,
 		);
@@ -51,6 +64,7 @@ if (shardAt !== -1) {
 
 const child = spawn('xvfb-run', ['--auto-servernum', 'npx', 'playwright', 'test', ...args], {
 	stdio: 'inherit',
+	env: { ...process.env, TERMINAY_E2E_WORKER_DISPLAY: isolateWorkerDisplays ? '1' : '0' },
 });
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'])
 	process.on(signal, () => child.kill(signal));

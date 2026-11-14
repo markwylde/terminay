@@ -207,6 +207,10 @@ jobs:
   packaged-linux-built-in-lifecycle:
     name: Packaged Linux built-in lifecycle (linux-x64)
     runs-on: ubuntu-latest
+    container:
+      image: git.i.wylde.net/docker/dind:latest
+      volumes:
+        - terminay-ci-npm-cache:/var/cache/terminay-npm
     timeout-minutes: 20
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 20
@@ -232,16 +236,14 @@ jobs:
           test "$(node -p 'process.arch')" = x64
           test "$(uname -m)" = x86_64
 
-      # The runner tool cache outlives its jobs, so npm keeps its download
-      # cache there. Nothing is archived or uploaded when a job ends, which is
-      # why every setup-node step turns its own package-manager cache off.
+      # The named daemon volume persists npm's verified download cache.
+      # No node_modules tree or cache archive is shared between jobs.
       - name: Install dependencies from the clean manifest
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
-          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          npm_config_cache: /var/cache/terminay-npm
         run: |
-          npm install --global npm@12.2.1
-          npm ci
+          sh scripts/install-ci-dependencies.sh
 
       - name: Build, extract, and exercise packaged built-ins offline
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
@@ -292,7 +294,7 @@ jobs:
         run: |
           test ! -e release
           sh scripts/run-in-linux-floor.sh --output release --env TERMINAY_REVISION --env TURBO_TEAM --env TURBO_TOKEN --env TURBO_REMOTE_CACHE_SIGNATURE_KEY -- \
-            sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && node scripts/standalone-prebuilt-application.mjs build linux-x64 "$TERMINAY_REVISION" && sh scripts/build-linux-standalone-archive.sh --prebuilt linux-x64 main "$TERMINAY_REVISION" release/standalone/terminay-server-main-linux-x64.tar.gz && npx electron-builder --linux AppImage --x64 --publish never'
+            sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && node scripts/standalone-prebuilt-application.mjs build linux-x64 "$TERMINAY_REVISION" && sh scripts/build-linux-standalone-archive.sh --prebuilt --compression-level 1 linux-x64 main "$TERMINAY_REVISION" release/standalone/terminay-server-main-linux-x64.tar.gz && npx electron-builder --linux AppImage --x64 --publish never'
           # Stage Node-native archive bytes before electron-builder may rebuild native modules.
 
       - name: Record the standalone archive digest
@@ -329,6 +331,10 @@ jobs:
   standalone-systemd-restart:
     name: Standalone systemd restart (linux-x64)
     runs-on: ubuntu-latest
+    container:
+      image: git.i.wylde.net/docker/dind:latest
+      volumes:
+        - terminay-ci-npm-cache:/var/cache/terminay-npm
     needs: linux-glibc-floor
     timeout-minutes: 60
     env:
@@ -371,10 +377,9 @@ jobs:
       - name: Install dependencies and build the CLI that drives the install
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
-          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          npm_config_cache: /var/cache/terminay-npm
         run: |
-          npm install --global npm@12.2.1
-          npm ci
+          sh scripts/install-ci-dependencies.sh
           npm run build --workspace apps/terminay-cli
 
       - name: Restart under systemd (scenarios A, B, C)
@@ -390,6 +395,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: git.i.wylde.net/docker/dind:latest
+      volumes:
+        - terminay-ci-npm-cache:/var/cache/terminay-npm
       options: --tmpfs /test-tmp:rw,exec,size=2g,mode=1777
     timeout-minutes: 10
     env:
@@ -414,10 +421,9 @@ jobs:
       - name: Install dependencies
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
-          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          npm_config_cache: /var/cache/terminay-npm
         run: |
-          npm install --global npm@12.2.1
-          npm ci
+          sh scripts/install-ci-dependencies.sh
 
       - name: Build, lint, and run the fast gate
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
@@ -435,6 +441,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: git.i.wylde.net/docker/dind:latest
+      volumes:
+        - terminay-ci-npm-cache:/var/cache/terminay-npm
       options: --tmpfs /test-tmp:rw,exec,size=2g,mode=1777
     timeout-minutes: 10
     env:
@@ -459,10 +467,9 @@ jobs:
       - name: Install dependencies
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
-          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          npm_config_cache: /var/cache/terminay-npm
         run: |
-          npm install --global npm@12.2.1
-          npm ci
+          sh scripts/install-ci-dependencies.sh
 
       - name: Build and test every workspace
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
@@ -475,6 +482,10 @@ jobs:
   real-webrtc:
     name: Real WebRTC pairing
     runs-on: ubuntu-latest
+    container:
+      image: git.i.wylde.net/docker/dind:latest
+      volumes:
+        - terminay-ci-npm-cache:/var/cache/terminay-npm
     timeout-minutes: 10
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 10
@@ -497,10 +508,9 @@ jobs:
       - name: Install dependencies
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
-          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          npm_config_cache: /var/cache/terminay-npm
         run: |
-          npm install --global npm@12.2.1
-          npm ci
+          sh scripts/install-ci-dependencies.sh
 
       # The fast job leaves the selected WebRTC runtime unstaged, so every
       # test that opens a real peer skips there. This job stages it and runs
@@ -520,6 +530,10 @@ jobs:
   container-image-smoke:
     name: Container image smoke
     runs-on: ubuntu-latest
+    container:
+      image: git.i.wylde.net/docker/dind:latest
+      volumes:
+        - terminay-ci-npm-cache:/var/cache/terminay-npm
     timeout-minutes: 40
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 40
@@ -550,7 +564,7 @@ jobs:
       - name: Build the official image and the packages Desktop's pairing code imports
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
-          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          npm_config_cache: /var/cache/terminay-npm
           TURBO_TEAM: wylde
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
@@ -563,10 +577,12 @@ jobs:
             --file ./Dockerfile \
             --tag "terminay-image-smoke:${GITHUB_SHA}" \
             --build-arg OCI_REVISION="${GITHUB_SHA}" \
+            --build-arg TURBO_TEAM="$TURBO_TEAM" \
+            --secret id=turbo_token,env=TURBO_TOKEN \
+            --secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY \
             . >"$image_log" 2>&1 &
           image_build=$!
-          npm install --global npm@12.2.1
-          npm ci
+          sh scripts/install-ci-dependencies.sh
           npx turbo run build --filter=@terminay/protocol --filter=@terminay/server-core
           if ! wait "$image_build"; then
             cat "$image_log"
@@ -594,6 +610,10 @@ jobs:
   bot-mcp-runtime:
     name: Bot MCP real-container ownership
     runs-on: ubuntu-latest
+    container:
+      image: git.i.wylde.net/docker/dind:latest
+      volumes:
+        - terminay-ci-npm-cache:/var/cache/terminay-npm
     timeout-minutes: 20
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 20
@@ -617,10 +637,9 @@ jobs:
       - name: Install dependencies
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
-          npm_config_cache: ${{ runner.tool_cache }}/npm-cache
+          npm_config_cache: /var/cache/terminay-npm
         run: |
-          npm install --global npm@12.2.1
-          npm ci
+          sh scripts/install-ci-dependencies.sh
       - name: Build the production bot image and require real MCP ownership tests
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: npm run test:bots:mcp-real

@@ -81,7 +81,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(giteaPackagedLinux, /Require the native supported Linux x64 architecture/u);
   assert.match(giteaPackagedLinux, /test "\$\(node -p 'process\.arch'\)" = x64/u);
   assert.match(giteaPackagedLinux, /test "\$\(uname -m\)" = x86_64/u);
-  assert.match(giteaPackagedLinux, /npm ci/u);
+  assert.match(giteaPackagedLinux, /sh scripts\/install-ci-dependencies\.sh/u);
   assert.match(giteaPackagedLinux, /test:packaged-built-in-extension-runtime:linux -- linux-x64/u);
   // Both x64 Linux artifacts are built in the floor image the release lanes
   // use, checked against the glibc floor, and run on a clean floor host
@@ -91,7 +91,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   assert.match(giteaGlibcFloor, /test "\$\(docker info --format '\{\{\.Architecture\}\}'\)" = x86_64/u);
   assert.match(giteaGlibcFloor, /standalone-prebuilt-application\.mjs build linux-x64.*&& sh scripts\/build-linux-standalone-archive\.sh --prebuilt/u);
   assert.match(giteaGlibcFloor, /electron-builder --linux AppImage --x64 --publish never/u);
-  assert.match(giteaGlibcFloor, /build-linux-standalone-archive\.sh --prebuilt linux-x64 main/u);
+  assert.match(giteaGlibcFloor, /build-linux-standalone-archive\.sh --prebuilt --compression-level 1 linux-x64 main/u);
   assert.match(giteaGlibcFloor, /node scripts\/linux-glibc-floor\.mjs check --target linux-x64 \\\n\s+release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage \\\n\s+release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
   assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh appimage release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage/u);
   assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh server-archive release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
@@ -123,7 +123,7 @@ test("Gitea CI retains its shared-image fan-out and declared runner bounds", () 
     parts(JSON.parse(packageJson).scripts["test:ci"]),
     "the two unit jobs must cover npm run test:ci between them",
   );
-  // Each job installs from npm's cache in the runner tool cache. Archiving
+  // Each Linux install uses the daemon-owned npm download volume. Archiving
   // that cache through setup-node uploaded it again at the end of every job.
   assert.doesNotMatch(giteaCi, /^ {10}cache: npm$/mu);
   // setup-node caches on its own when package.json names a package manager.
@@ -131,7 +131,7 @@ test("Gitea CI retains its shared-image fan-out and declared runner bounds", () 
     (giteaCi.match(/uses: actions\/setup-node@/gu) ?? []).length,
     (giteaCi.match(/^ {10}package-manager-cache: false$/gmu) ?? []).length,
   );
-  assert.equal((giteaCi.match(/npm_config_cache: \$\{\{ runner\.tool_cache \}\}\/npm-cache/gu) ?? []).length, 7);
+  assert.equal((giteaCi.match(/npm_config_cache: \/var\/cache\/terminay-npm/gu) ?? []).length, 7);
   assert.match(job(giteaCi, "e2e-test"), /needs: e2e-image/u);
   assert.equal((giteaCi.match(/name: Require amd64 Docker host/g) ?? []).length, 2);
   assert.equal((giteaCi.match(/x86_64\|amd64/g) ?? []).length, 2);
@@ -275,4 +275,70 @@ test("the server image is published only for a release tag or a dispatched night
   assert.match(job(serverImage, "publish"), /^ {4}needs: \[plan, build\]$/mu);
   assert.doesNotMatch(triggerRelease, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/u);
   assert.match(decision, /Native arm64 qualification belongs to the manually triggered release/u);
+});
+
+test('all seven Linux dependency installs retain scripts and share only verified tarballs', () => {
+  const names = ['packaged-linux-built-in-lifecycle', 'standalone-systemd-restart', 'build-and-test', 'workspace-tests', 'real-webrtc', 'container-image-smoke', 'bot-mcp-runtime'];
+  for (const name of names) {
+    const body = job(giteaCi, name);
+    assert.match(body, /container:\n {6}image: git\.i\.wylde\.net\/docker\/dind:latest\n {6}volumes:\n {8}- terminay-ci-npm-cache:\/var\/cache\/terminay-npm/u);
+    assert.match(body, /npm_config_cache: \/var\/cache\/terminay-npm/u);
+    assert.match(body, /sh scripts\/install-ci-dependencies\.sh/u);
+    assert.doesNotMatch(body, /--ignore-scripts|node_modules:/u);
+  }
+  for (const name of ['build-and-test', 'workspace-tests']) assert.match(job(giteaCi, name), /--tmpfs \/test-tmp:rw,exec,size=2g,mode=1777/u);
+});
+
+test('Linux installer pins npm only when needed, bounds each command, preserves lifecycle and propagates failure', async () => {
+  const { mkdtemp, writeFile, chmod, readFile: readText, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { spawnSync } = await import('node:child_process');
+  const root = await mkdtemp(join(tmpdir(), 'terminay-ci-installer-'));
+  try {
+    const mockNpm = join(root, 'npm');
+    await writeFile(mockNpm, `#!${process.execPath}\nimport {existsSync,readFileSync,writeFileSync,appendFileSync} from 'node:fs';\nconst args=process.argv.slice(2);const state=process.env.INSTALLER_TEST_STATE;if(args[0]==='--version'){console.log(existsSync(state)?readFileSync(state,'utf8'):process.env.INSTALLER_TEST_VERSION);process.exit(0);}appendFileSync(process.env.INSTALLER_TEST_LOG,JSON.stringify({args,cache:process.env.npm_config_cache,headers:process.env.npm_config_nodedir})+'\\n');if(args[0]==='install')writeFileSync(state,'12.2.1');if(args[0]==='ci'&&process.env.INSTALLER_TEST_FAIL==='1')process.exit(42);\n`);
+    const mockTimeout = join(root, 'timeout');
+    await writeFile(mockTimeout, `#!${process.execPath}\nimport {appendFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';const args=process.argv.slice(2);appendFileSync(process.env.INSTALLER_TEST_BOUNDS,JSON.stringify(args.slice(0,3))+'\\n');const result=spawnSync(args[3],args.slice(4),{stdio:'inherit'});process.exit(result.status??1);\n`);
+    await chmod(mockNpm, 0o755); await chmod(mockTimeout, 0o755);
+    for (const [name, version, fails] of [['pinned', '12.2.1', false], ['upgrade', '11.0.0', false], ['failure', '12.2.1', true]]) {
+      const log = join(root, `${name}.log`), bounds = join(root, `${name}.bounds`);
+      const cache = join(root, 'cache with spaces');
+      const result = spawnSync('sh', [new URL('./install-ci-dependencies.sh', import.meta.url).pathname], { encoding: 'utf8', timeout: 5000, env: { ...process.env, PATH: `${root}:${process.env.PATH}`, npm_config_cache: cache, INSTALLER_TEST_LOG: log, INSTALLER_TEST_BOUNDS: bounds, INSTALLER_TEST_STATE: join(root, `${name}.state`), INSTALLER_TEST_VERSION: version, INSTALLER_TEST_FAIL: fails ? '1' : '0' } });
+      assert.equal(result.status, fails ? 42 : 0, result.stderr);
+      const commands = (await readText(log, 'utf8')).trim().split('\n').map(JSON.parse);
+      assert.equal(commands.filter(command => command.args[0] === 'install').length, version === '12.2.1' ? 0 : 1);
+      const install = commands.find(command => command.args[0] === 'ci');
+      assert.equal(install.cache, cache);
+      const { verifiedNodeHeaderPrefix } = await import('./node-build-header-prefix.mjs');
+      const expectedHeaders = verifiedNodeHeaderPrefix();
+      if (expectedHeaders) assert.equal(install.headers, expectedHeaders);
+      for (const flag of ['--prefer-offline', '--foreground-scripts', '--timing', '--fetch-timeout=30000', '--fetch-retries=1', '--no-audit']) assert.ok(install.args.includes(flag));
+      assert.ok(!install.args.includes('--ignore-scripts'));
+      const limits = (await readText(bounds, 'utf8')).trim().split('\n').map(JSON.parse);
+      assert.deepEqual(limits.at(-1), ['--signal=TERM', '--kill-after=10s', '180s']);
+      if (version !== '12.2.1') assert.deepEqual(limits[0], ['--signal=TERM', '--kill-after=10s', '60s']);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('node-gyp header reuse requires exact runtime major, minor and patch versions', async () => {
+  const { verifiedNodeHeaderPrefix } = await import('./node-build-header-prefix.mjs');
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const root = await mkdtemp(join(tmpdir(), 'terminay-local-node-headers-'));
+  try {
+    await mkdir(join(root, 'bin')); await mkdir(join(root, 'include/node'), { recursive: true });
+    const executable = join(root, 'bin/node'); await writeFile(executable, 'runtime');
+    assert.equal(verifiedNodeHeaderPrefix({ executable, version: '24.15.0' }), null);
+    await writeFile(join(root, 'include/node/node_version.h'), '#define NODE_MAJOR_VERSION 24\n#define NODE_MINOR_VERSION 15\n#define NODE_PATCH_VERSION 0\n');
+    assert.equal(verifiedNodeHeaderPrefix({ executable, version: '24.15.0' }), root);
+    for (const version of ['22.15.0', '24.14.0', '24.15.1', '24.15.0-custom']) assert.equal(verifiedNodeHeaderPrefix({ executable, version }), null);
+    await writeFile(join(root, 'include/node/node_version.h'), '#define NODE_MAJOR_VERSION 24\n#define NODE_MINOR_VERSION 15\n');
+    assert.equal(verifiedNodeHeaderPrefix({ executable, version: '24.15.0' }), null);
+    const floor = await read('Dockerfile.linux-floor');
+    assert.match(floor, /npm_config_nodedir="\$header_prefix" timeout/u);
+    assert.doesNotMatch(floor, /^ENV .*npm_config_nodedir/gmu, 'Electron packaging must choose its own headers');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -44,3 +44,16 @@ test('target architecture and full revision are checked before building', (t) =>
 	assert.throws(() => buildVerifiedApplication({ ...options, revision: 'abc123' }), /full commit SHA/u);
 	assert.throws(() => buildVerifiedApplication({ ...options, target: 'windows-x64' }), /native build host/u);
 });
+
+
+test('Vite environment files are included in prebuilt source provenance', (t) => {
+	const options = fixture(t);
+	writeFileSync(join(options.root, '.env.production'), 'VITE_ENDPOINT=first');
+	buildVerifiedApplication(options);
+	verifyPrebuiltApplication(options);
+	writeFileSync(join(options.root, '.env.production'), 'VITE_ENDPOINT=second');
+	assert.throws(() => verifyPrebuiltApplication(options), /source mismatch/u);
+	buildVerifiedApplication(options);
+	writeFileSync(join(options.root, '.env.local'), 'VITE_ENDPOINT=local');
+	assert.throws(() => verifyPrebuiltApplication(options), /source mismatch/u);
+});

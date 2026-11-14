@@ -1,4 +1,5 @@
-import { expect, test, type Browser, type Page } from '@playwright/test'
+import { expect, type Browser, type Page } from '@playwright/test';
+import { test } from './support/isolated-test';
 import {
   expectEffectAheadOfBackground,
   readBackgroundProbe,
@@ -15,6 +16,10 @@ const PROBE = '__terminayTask20Pressure'
 const PRESSURE_FRAMES = 120
 
 let fixture: SharedWebShellFixture
+
+// One fixture instance owns this file; keep its tests in declaration order
+// when other independent files share the container's worker pool.
+test.describe.configure({ mode: 'default' });
 
 test.beforeAll(async () => {
   fixture = await startSharedWebShellFixture()

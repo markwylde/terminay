@@ -79,7 +79,7 @@ test("busy torn-off window E2E waits for a non-shell process the container can r
 
 test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
   const workflow = await text(".gitea/workflows/ci.yml");
-  assert.match(workflow, /npm install --global npm@12\.2\.1/u);
+  assert.match(await text("scripts/install-ci-dependencies.sh"), /npm install --global npm@12\.2\.1/u);
 
   const e2eJob = job(workflow, "e2e-test");
   assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18\]/u, "Gitea E2E job must retain eighteen shards");

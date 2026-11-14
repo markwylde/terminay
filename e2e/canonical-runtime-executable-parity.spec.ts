@@ -6,9 +6,9 @@ import { promisify } from 'node:util';
 import {
 	_electron as electron,
 	expect,
-	test,
 	type ElectronApplication,
 } from '@playwright/test';
+import { test } from './support/isolated-test';
 
 const execFileAsync = promisify(execFile);
 

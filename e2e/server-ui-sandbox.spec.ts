@@ -7,8 +7,8 @@ import {
 	_electron as electron,
 	expect,
 	type Page,
-	test,
 } from '@playwright/test';
+import { test } from './support/isolated-test';
 import { build } from 'esbuild';
 
 type HostileProof = {

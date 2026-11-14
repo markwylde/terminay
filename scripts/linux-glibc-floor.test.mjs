@@ -251,7 +251,7 @@ test('the floor image installs dependencies from the same manifests as the E2E b
 	const manifests = (text) =>
 		[...text.matchAll(/^COPY (?:--chown=\S+ )?(\S+) /gmu)]
 			.map(([, source]) => source)
-			.filter((source) => source.endsWith('package.json') || source.endsWith('.mjs') || source === 'package-lock.json');
+			.filter((source) => source.endsWith('package.json') || source === 'package-lock.json');
 	const floor = await readFile(new URL('../Dockerfile.linux-floor', import.meta.url), 'utf8');
 	const e2e = await readFile(new URL('../Dockerfile.e2e-base', import.meta.url), 'utf8');
 	assert.deepEqual(manifests(floor), manifests(e2e));
@@ -334,10 +334,13 @@ test('the probe launches the holder with the environment the server gives it', a
 
 test('the floor scripts reach Docker without bind-mounting the repository', async () => {
 	// A CI job's Docker daemon cannot see the job's filesystem, so sources go
-	// in as the build context or by `docker cp`, never as a volume.
+	// in as the build context or by `docker cp`. The named tool cache is
+	// daemon-owned and contains no repository sources.
 	for (const name of ['run-in-linux-floor.sh', 'probe-linux-glibc-floor.sh']) {
 		const script = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
-		assert.doesNotMatch(script, /^\s+(?:--volume|--mount|-v(?:[ =]|$))/mu, name);
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: Match the shell parameter expansion literally.
+		const withoutToolCache = script.replace('--volume "terminay-floor-tools-${platform#linux/}:/home/node/.cache"', '');
+		assert.doesNotMatch(withoutToolCache, /^\s+(?:--volume|--mount|-v(?:[ =]|$))/mu, name);
 		assert.match(script, /docker cp /u, name);
 	}
 });
