@@ -465,6 +465,14 @@ export interface McpInstallTargetRuntime {
 	uninstall(
 		request: McpInstallTargetRequest,
 	): Promise<McpInstallTargetActionResult>;
+	/**
+	 * Writes the server command over the target's existing Terminay entry,
+	 * changed or not, at the user's explicit request. `install` refuses a
+	 * changed entry; this is the only operation that may replace one.
+	 */
+	replace?(
+		request: McpInstallTargetRequest,
+	): Promise<McpInstallTargetActionResult>;
 }
 
 export interface McpInstallTargetRegistration extends Disposable {

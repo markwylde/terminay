@@ -1,3 +1,4 @@
+import type { TerminalClipboardForUpload } from './terminalClipboardUpload';
 import type { TerminayHostActionRequest, TerminayHostContext, TerminayHostEvent } from '@terminay/protocol';
 
 /** Electron consumes the canonical protocol contract; this module only names
@@ -11,6 +12,13 @@ export type ServerUiHostBridge = Readonly<{
 	subscribeEvent(listener: (event: TerminayHostEvent) => Promise<void> | void): () => void;
 	resolveDroppedFilePath(file: File): string | undefined;
 	readTerminalClipboard(): Promise<string>;
+	readTerminalClipboardForUpload(): Promise<TerminalClipboardForUpload>;
+	readTerminalClipboardFilePart(
+		token: string,
+		file: number,
+		offset: number,
+		length: number,
+	): Promise<Uint8Array>;
 }>;
 
 /** One opaque byte endpoint exposed to the bound document. */

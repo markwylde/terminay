@@ -68,6 +68,10 @@ function createTarget(
 			if (signal.aborted) return cancelled();
 			return provider.uninstall(server, homeDirectory);
 		},
+		async replace({ server, signal }): Promise<McpInstallTargetActionResult> {
+			if (signal.aborted) return cancelled();
+			return provider.install(server, homeDirectory, { replace: true });
+		},
 	});
 }
 

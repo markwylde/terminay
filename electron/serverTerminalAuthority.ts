@@ -1359,6 +1359,10 @@ export class ServerTerminalAuthority {
 									mcpRouter.uninstall(
 										mcpTarget(request),
 									) as unknown as Promise<JsonValue>,
+								'mcp-install.replace': (request: CommandRequest) =>
+									mcpRouter.replace(
+										mcpTarget(request),
+									) as unknown as Promise<JsonValue>,
 							}),
 					...(remoteAccess === undefined
 						? {}

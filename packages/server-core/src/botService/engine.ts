@@ -47,7 +47,7 @@ export interface EngineDetails {
 	readonly botUid: number;
 	readonly botGid: number;
 	readonly platform: NodeJS.Platform;
-	/** Docker reports AppArmor among its security options (ADR-0119). */
+	/** Docker reports AppArmor among its security options (ADR-0120). */
 	readonly appArmor?: boolean;
 }
 export interface EngineResource {

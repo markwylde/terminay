@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 /**
- * The `terminay-bot` AppArmor profile (ADR-0119).
+ * The `terminay-bot` AppArmor profile (ADR-0120).
  *
  * On a kernel where AppArmor mediates user namespaces, Docker's
  * `docker-default` profile refuses them, and Chromium's sandbox cannot start
@@ -31,7 +31,7 @@ export const BOT_APPARMOR_PROFILE_PATH = '/etc/apparmor.d/terminay-bot';
 
 export const BOT_APPARMOR_PROFILE = `# Managed by Terminay. Docker's default container profile (Moby v28.0.0
 # profiles/apparmor/template.go) plus \`userns,\`, so Chromium's sandbox can
-# create its user namespace in a bot container. See ADR-0119.
+# create its user namespace in a bot container. See ADR-0120.
 
 #include <tunables/global>
 

@@ -72,7 +72,7 @@ const noActivity: BotActivity = {
 };
 const nameFor = (id: string) => `terminay-bot-${botEnvironmentId(id)}`;
 
-/** The AppArmor profile bot containers run under (ADR-0119). */
+/** The AppArmor profile bot containers run under (ADR-0120). */
 export type BotAppArmorProfile = 'terminay-bot' | 'default';
 export interface BotAppArmorDecision {
 	readonly profile: BotAppArmorProfile;
@@ -398,7 +398,7 @@ export class BotEnvironmentService extends EventEmitter {
 		return Number(value);
 	}
 	/**
-	 * Which AppArmor profile bot containers use on this engine (ADR-0119).
+	 * Which AppArmor profile bot containers use on this engine (ADR-0120).
 	 *
 	 * The server cannot read the host's loaded profiles, and the engine's kernel
 	 * may not be the server's, so it asks the engine: a short container from the

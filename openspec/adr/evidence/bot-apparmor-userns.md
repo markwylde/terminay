@@ -1,6 +1,6 @@
 # Bot browser sandbox under AppArmor
 
-Evidence for ADR-0119. Recorded 2026-11-14.
+Evidence for ADR-0120. Recorded 2026-11-14.
 
 ## Host
 

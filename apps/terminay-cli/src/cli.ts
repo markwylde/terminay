@@ -60,7 +60,7 @@ async function main(argv: readonly string[]): Promise<number> {
 		return runContainerRecreateHelper(argv.slice(1));
 	// Nor this: `daemon upgrade`, as root on a system-scope install, runs it
 	// from the release it has just switched to, so that release applies its
-	// own host setup before it starts (ADR-0119).
+	// own host setup before it starts (ADR-0120).
 	if (argv[0] === 'daemon' && argv[1] === HOST_SETUP_COMMAND)
 		return runHostSetup(argv.slice(2), write);
 

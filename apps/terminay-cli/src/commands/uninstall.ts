@@ -74,7 +74,7 @@ export async function runUninstall(
 	// would start an upgrader that is about to be removed.
 	await removeUpgradeHelper({ layout, systemd });
 	// The file only: unloading the profile would unconfine bot containers that
-	// are still running. The loaded copy is gone at the next boot (ADR-0119).
+	// are still running. The loaded copy is gone at the next boot (ADR-0120).
 	if (
 		layout.scope === 'system' &&
 		(await removeBotAppArmorProfile(appArmor).catch(() => false))

@@ -389,7 +389,7 @@ export async function runInstall(
 	);
 
 	// Before the service starts, so its first bot containers can use it
-	// (ADR-0119). Only root on a system-scope install writes host policy.
+	// (ADR-0120). Only root on a system-scope install writes host policy.
 	if (scope === 'system')
 		reportAppArmorInstall(
 			await installBotAppArmorProfile(dependencies.appArmor),

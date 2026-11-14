@@ -63,4 +63,4 @@ None.
 - `docker/terminay-bot/bin/terminay-browser`: the missing-profile message.
 - `docs/operations/standalone-server.md`: the profile and its manual install.
 - Security: the profile adds only user-namespace creation, which Chromium needs
-  for its sandbox and which the seccomp profile already allows. See ADR-0119.
+  for its sandbox and which the seccomp profile already allows. See ADR-0120.

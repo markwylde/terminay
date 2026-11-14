@@ -15,7 +15,7 @@
 
 ## 4. Docs
 
-- [x] 4.1 `docs/operations/standalone-server.md`: what the profile is, that system-scope installs manage it, upgrading from an older release, the manual root commands for user-scope and container installs, and the server restart after a manual load. Verified by review against ADR-0119.
+- [x] 4.1 `docs/operations/standalone-server.md`: what the profile is, that system-scope installs manage it, upgrading from an older release, the manual root commands for user-scope and container installs, and the server restart after a manual load. Verified by review against ADR-0120.
 
 ## 5. Verification
 

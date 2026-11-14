@@ -8,7 +8,7 @@ import {
 } from '../dist/botService/index.js';
 import { botId, fakeClock, fakeDriver, name } from './fixtures/bot-driver.mjs';
 
-// --- bot-browser-sandbox-under-apparmor (ADR-0119) ---
+// --- bot-browser-sandbox-under-apparmor (ADR-0120) ---
 
 const refused = () =>
 	new EngineCommandError('not-running', 'container process failed', {

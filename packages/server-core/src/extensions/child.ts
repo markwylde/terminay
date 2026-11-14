@@ -800,11 +800,19 @@ async function invokeMcpTarget(frame: HostFrame): Promise<void> {
 	const method =
 		operation === 'status' ||
 		operation === 'install' ||
-		operation === 'uninstall'
+		operation === 'uninstall' ||
+		operation === 'replace'
 			? target?.[operation]
 			: undefined;
 	if (typeof method !== 'function') {
-		failure(frame.id, new Error('MCP install target is not registered'));
+		failure(
+			frame.id,
+			new Error(
+				target !== undefined && operation === 'replace'
+					? 'This MCP install target cannot replace its entry'
+					: 'MCP install target is not registered',
+			),
+		);
 		return;
 	}
 	const controller = new AbortController();

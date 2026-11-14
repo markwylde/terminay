@@ -138,3 +138,27 @@ test('a failing target reads as an error row, not a failed status', async () => 
 	assert.equal(status.agents[0].state, 'error');
 	assert.equal(status.agents[0].message, 'boom line');
 });
+
+test("replace routes to the named target with the host's command", async () => {
+	const calls = [];
+	const router = new McpInstallRouter({
+		hosts: () =>
+			hosts(['com.terminay.builtin-agents/codex'], (id, operation, command) => {
+				calls.push([id, operation, command.command]);
+				return { ok: true, installed: true };
+			}),
+		serverCommand: () => server,
+	});
+	assert.deepEqual(await router.replace('com.terminay.builtin-agents/codex'), {
+		ok: true,
+		installed: true,
+	});
+	assert.deepEqual(calls, [
+		['com.terminay.builtin-agents/codex', 'replace', server.command],
+	]);
+	assert.equal(
+		(await router.replace('com.terminay.builtin-agents/unknown')).ok,
+		false,
+	);
+	assert.equal(calls.length, 1);
+});

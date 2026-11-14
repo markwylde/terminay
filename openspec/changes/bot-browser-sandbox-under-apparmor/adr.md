@@ -16,7 +16,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0119-bot-containers-run-under-a-terminay-apparmor-profile-that-allows-user-namespaces.md - Terminay ships and root-installs a docker-default-plus-userns profile; the server uses it only when the engine needs and has it; Chromium's sandbox is never disabled.
+- openspec/adr/0120-bot-containers-run-under-a-terminay-apparmor-profile-that-allows-user-namespaces.md - Terminay ships and root-installs a docker-default-plus-userns profile; the server uses it only when the engine needs and has it; Chromium's sandbox is never disabled.
 
 ## Notes
 

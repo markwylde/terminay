@@ -260,7 +260,7 @@ async function upgradeRelease(
 		await installUpgradeHelper({ layout, runAs: record.runAs, systemd });
 		write('Installed the upgrade helper, so this server can upgrade itself.');
 	}
-	// Root keeps the host's bot AppArmor profile current (ADR-0119), whether or
+	// Root keeps the host's bot AppArmor profile current (ADR-0120), whether or
 	// not there is a newer release: `sudo terminay daemon upgrade` is the fix
 	// the server names when a bot's browser sandbox is refused.
 	if (

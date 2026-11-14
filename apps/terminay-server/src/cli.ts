@@ -181,6 +181,7 @@ import {
 import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
 import { loadOrCreateSessionOrigin } from './remote/sessionOrigin.js';
 import { probeShell } from './remote/terminalProbe.js';
+import { stableInstallPath } from './stableInstallPath.js';
 import {
 	describeUnreadableState,
 	unreadableStateStore,
@@ -946,10 +947,16 @@ async function createServerComposition(
 	settings.onChange((state) => applyAgentSettings(state.settings));
 	// Every terminal this server starts gets the control socket and its own
 	// capability, unless Settings > AI > Terminay MCP is off. The entry runs on
-	// this Node with an absolute path, so nothing has to be on PATH.
+	// this Node with an absolute path, so nothing has to be on PATH. Inside an
+	// installation both name its `current` pointer, so a registration written
+	// from this command survives upgrades (ADR-0119).
 	const mcpServerCommand = {
-		command: process.execPath,
-		args: [fileURLToPath(new URL('./mcpEntry.js', import.meta.url))],
+		command: stableInstallPath(process.execPath),
+		args: [
+			stableInstallPath(
+				fileURLToPath(new URL('./mcpEntry.js', import.meta.url)),
+			),
+		],
 	};
 	const mcp = createMcpHost({
 		serverId: options.serverId,
@@ -1442,6 +1449,10 @@ async function createServerComposition(
 					) as unknown as Promise<JsonValue>,
 				'mcp-install.uninstall': (request) =>
 					mcpInstall.uninstall(
+						mcpInstallTarget(request.envelope.payload),
+					) as unknown as Promise<JsonValue>,
+				'mcp-install.replace': (request) =>
+					mcpInstall.replace(
 						mcpInstallTarget(request.envelope.payload),
 					) as unknown as Promise<JsonValue>,
 			},

@@ -1,4 +1,4 @@
-# ADR-0119: Bot containers run under a Terminay AppArmor profile that allows user namespaces
+# ADR-0120: Bot containers run under a Terminay AppArmor profile that allows user namespaces
 
 Status: accepted
 Date: 2026-11-14

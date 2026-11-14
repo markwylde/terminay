@@ -4,6 +4,9 @@
  * leaves a server-backed terminal input queue in an indeterminate state.
  */
 
+import type { DesktopClipboardForUpload } from '../host/nativeActions';
+import type { TerminalDroppedFileSource } from './terminalDropInteraction';
+
 export const CLIPBOARD_IMAGE_MIME_TYPES = Object.freeze([
 	'image/png',
 	'image/jpeg',
@@ -305,4 +308,114 @@ async function imageFromFile(
 	if (!isClipboardImageMimeType(file.type)) return undefined;
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	return { bytes, mimeType: file.type };
+}
+
+/**
+ * A Desktop paste into a terminal whose server is not this machine's Local
+ * server. Copied files are copied to that server like a drop, and an image is
+ * materialised there like a browser paste, so only server paths are inserted
+ * (ADR-0113). Text pastes as text.
+ */
+export async function pasteDesktopClipboardForUpload(
+	read: () => Promise<DesktopClipboardForUpload>,
+	options: {
+		readonly announceInput: () => void;
+		readonly paste: (text: string) => void;
+		readonly focus: () => void;
+		readonly escapePath: (path: string) => string;
+		readonly readFilePart: (
+			token: string,
+			file: number,
+			offset: number,
+			length: number,
+		) => Promise<Uint8Array>;
+		/** Uploads the files and answers with their shell-escaped server paths,
+		 * or null when nothing should be inserted. Reports its own failures. */
+		readonly uploadFiles: (
+			files: readonly TerminalDroppedFileSource[],
+		) => Promise<string | null>;
+		readonly materializeImage?: (
+			image: Extract<TerminalClipboardContents, { kind: 'image' }>,
+		) => Promise<string>;
+		readonly onFailure: (reason: string) => void;
+	},
+): Promise<boolean> {
+	let contents: DesktopClipboardForUpload;
+	try {
+		contents = await read();
+	} catch {
+		options.onFailure('the copied files could not be read');
+		options.focus();
+		return false;
+	}
+	switch (contents.kind) {
+		case 'text':
+			options.announceInput();
+			options.paste(contents.text);
+			return true;
+		case 'folder':
+			options.onFailure('folders cannot be copied to this terminal’s server');
+			options.focus();
+			return false;
+		case 'empty':
+			options.focus();
+			return false;
+		case 'image': {
+			if (options.materializeImage === undefined) {
+				options.onFailure('this terminal’s server cannot receive images');
+				options.focus();
+				return false;
+			}
+			try {
+				const bytes = new Uint8Array(contents.bytes.byteLength);
+				bytes.set(contents.bytes);
+				const path = await options.materializeImage({
+					kind: 'image',
+					bytes,
+					mimeType: contents.mimeType,
+				});
+				if (path.length === 0) {
+					options.focus();
+					return false;
+				}
+				options.announceInput();
+				options.paste(options.escapePath(path));
+				return true;
+			} catch {
+				options.onFailure('the image could not be uploaded');
+				options.focus();
+				return false;
+			}
+		}
+		case 'files': {
+			const { token } = contents;
+			const sources = contents.files.map(
+				({ name, size }, index): TerminalDroppedFileSource => ({
+					name,
+					size,
+					slice: (start, end) => ({
+						arrayBuffer: async () => {
+							const part = await options.readFilePart(
+								token,
+								index,
+								start,
+								end - start,
+							);
+							const buffer = new ArrayBuffer(part.byteLength);
+							new Uint8Array(buffer).set(part);
+							return buffer;
+						},
+					}),
+				}),
+			);
+			const text = await options.uploadFiles(sources);
+			if (text === null) {
+				options.focus();
+				return false;
+			}
+			options.announceInput();
+			options.paste(text);
+			return true;
+		}
+	}
 }
