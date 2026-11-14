@@ -86,6 +86,23 @@ test('an up-to-date server offers no upgrade', () => {
 	const html = render({ model: m, serverName: 'VPS', onUpgrade: () => {} });
 	assert.doesNotMatch(html, /Upgrade VPS/);
 	assert.match(html, /Latest on Stable/);
+	// Without a way to ask, there is no check; with one, it is always offered.
+	assert.doesNotMatch(html, /Check for updates/);
+	const checkable = render({
+		model: m,
+		serverName: 'VPS',
+		onCheck: () => {},
+		check: { checking: false, result: 'Up to date · 5.1.1' },
+	});
+	assert.match(checkable, /data-server-update-check[^>]*>Check for updates/);
+	assert.match(checkable, /role="status"[^>]*>Up to date · 5\.1\.1/);
+	const checking = render({
+		model: m,
+		serverName: 'VPS',
+		onCheck: () => {},
+		check: { checking: true },
+	});
+	assert.match(checking, /disabled=""[^>]*>Checking…/);
 });
 
 test('a source install has no published latest, and lists every track', () => {

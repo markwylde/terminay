@@ -8,7 +8,7 @@
  * indication is the same wherever the window is.
  */
 
-import { TriangleAlert } from 'lucide-react';
+import { RefreshCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { writeClipboardText } from '../host/nativeActions';
 import type { ServerUpgradeRow } from './serverUpgradeModel.ts';
@@ -18,6 +18,9 @@ export type ServerUpgradeMenuRowsProps = Readonly<{
 	/** True when the window holds more than one server. */
 	namesServers: boolean;
 	onUpgrade: (profileId: string) => void;
+	/** Ask that server to read its release channel now; resolves with the
+	 * line to show for what it found. */
+	onCheck: (profileId: string) => Promise<string>;
 	/** `menu` inside the header's menu, where the action is a menu item;
 	 * `sheet` in the phone-width switcher, which is a list, not a menu. */
 	variant: 'menu' | 'sheet';
@@ -73,8 +76,59 @@ export function ServerUpgradeCommand({
 	);
 }
 
+/** Ask one server to look for a newer release now, and say what it found. */
+export function ServerUpgradeCheck({
+	onCheck,
+	profileId,
+	reachable,
+	variant,
+}: Readonly<{
+	profileId: string;
+	reachable: boolean;
+	onCheck: (profileId: string) => Promise<string>;
+	variant: 'menu' | 'sheet';
+}>) {
+	const [checking, setChecking] = useState(false);
+	const [result, setResult] = useState<string>();
+	const mounted = useRef(true);
+	useEffect(() => {
+		mounted.current = true;
+		return () => {
+			mounted.current = false;
+		};
+	}, []);
+	const check = () => {
+		setChecking(true);
+		void onCheck(profileId).then((line) => {
+			if (!mounted.current) return;
+			setChecking(false);
+			setResult(line);
+		});
+	};
+	return (
+		<>
+			<button
+				type="button"
+				className="remote-access-menu__item server-upgrade-row__check"
+				{...(variant === 'menu' ? { role: 'menuitem' } : {})}
+				data-server-upgrade-check
+				disabled={!reachable || checking}
+				onClick={check}
+			>
+				<span>{checking ? 'Checking for updates…' : 'Check for updates'}</span>
+			</button>
+			{!checking && result !== undefined ? (
+				<p className="server-upgrade-row__progress" role="status">
+					{result}
+				</p>
+			) : null}
+		</>
+	);
+}
+
 export function ServerUpgradeMenuRows({
 	namesServers,
+	onCheck,
 	onUpgrade,
 	rows,
 	variant,
@@ -93,11 +147,19 @@ export function ServerUpgradeMenuRows({
 					data-server-upgrade-state={row.action}
 				>
 					<div className="server-upgrade-row__summary">
-						<TriangleAlert
-							className="server-upgrade-row__icon"
-							size={13}
-							aria-hidden="true"
-						/>
+						{row.available === undefined && row.failure === undefined ? (
+							<RefreshCw
+								className="server-upgrade-row__icon server-upgrade-row__icon--quiet"
+								size={13}
+								aria-hidden="true"
+							/>
+						) : (
+							<TriangleAlert
+								className="server-upgrade-row__icon"
+								size={13}
+								aria-hidden="true"
+							/>
+						)}
 						<span>
 							{namesServers ? (
 								<span className="server-upgrade-row__server">
@@ -127,6 +189,14 @@ export function ServerUpgradeMenuRows({
 						>
 							<span>Upgrade server…</span>
 						</button>
+					) : null}
+					{row.checkable && row.action !== 'upgrading' ? (
+						<ServerUpgradeCheck
+							profileId={row.profileId}
+							reachable={row.reachable}
+							onCheck={onCheck}
+							variant={variant}
+						/>
 					) : null}
 					{row.action === 'manual' ? (
 						<>

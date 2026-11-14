@@ -19,6 +19,7 @@ import {
 	activeServerUpgradeVersion,
 	createServerUpgradeMemory,
 	requestServerUpgrade,
+	requestServerUpgradeCheck,
 	ServerUpgradeBoard,
 	type ServerUpgradeEntry,
 	type ServerUpgradeNotice,
@@ -26,6 +27,7 @@ import {
 	type ServerUpgradeRow,
 	serverUpgradeRows,
 	serverUpgradeSources,
+	upgradeCheckResultText,
 } from './serverUpgradeModel.ts';
 
 export type ServerUpgradeConfirmationState = Readonly<{
@@ -50,6 +52,9 @@ export type ServerUpgrades = Readonly<{
 	dismissNotice: (noticeId: string) => void;
 	/** Open the confirmation. Nothing is sent until it is confirmed. */
 	requestUpgrade: (profileId: string) => void;
+	/** Ask a server to look for a newer release now; resolves with the line
+	 * that says what it found. */
+	checkForUpgrade: (profileId: string) => Promise<string>;
 	confirmation?: ServerUpgradeConfirmationState;
 	/** Each followed upgrade's ticklist, by connection. */
 	progress: readonly ServerUpgradeProgressView[];
@@ -87,6 +92,16 @@ export function useServerUpgrades(
 	const requestUpgrade = useCallback((profileId: string) => {
 		setConfirmingProfileId(profileId);
 	}, []);
+	const checkForUpgrade = useCallback(
+		async (profileId: string) =>
+			upgradeCheckResultText(
+				await requestServerUpgradeCheck(
+					connections.find((connection) => connection.profileId === profileId)
+						?.context?.serverUpgradeClient,
+				),
+			),
+		[connections],
+	);
 	const dismissNotice = useCallback(
 		(noticeId: string) => board.dismiss(noticeId),
 		[board],
@@ -137,6 +152,7 @@ export function useServerUpgrades(
 		notices: snapshot.notices,
 		dismissNotice,
 		requestUpgrade,
+		checkForUpgrade,
 		...(activeVersion === undefined ? {} : { activeVersion }),
 		...(confirmation === undefined ? {} : { confirmation }),
 	};

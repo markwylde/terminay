@@ -4868,6 +4868,11 @@ body.project-tabbar-reordering .project-tabbar {
 	right: 2px;
 }
 
+.server-upgrade-row__icon--quiet {
+	color: inherit;
+	opacity: 0.6;
+}
+
 .server-upgrade-dialog__title-icon {
 	margin-right: 6px;
 	vertical-align: -2px;
@@ -4961,6 +4966,7 @@ body.project-tabbar-reordering .project-tabbar {
 
 /* In the phone-width switcher every control is a touch target. */
 .server-upgrade-row--sheet .server-upgrade-row__action,
+.server-upgrade-row--sheet .server-upgrade-row__check,
 .server-upgrade-row--sheet .server-upgrade-row__copy {
 	min-height: 44px;
 }

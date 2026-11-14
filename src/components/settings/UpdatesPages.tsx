@@ -308,12 +308,18 @@ export function ServerUpdatesPage({
 	serverName,
 	onUpgrade,
 	onInstallLatest,
+	onCheck,
+	check,
 	onOpenDeviceUpdates,
 }: Readonly<{
 	model: ServerUpdatesModel;
 	serverName: string;
 	onUpgrade?: () => void;
 	onInstallLatest?: () => void;
+	/** Ask the server to read its release channel now. */
+	onCheck?: () => void;
+	/** The check in flight, or the line the last one left. */
+	check?: Readonly<{ checking: boolean; result?: string }>;
 	onOpenDeviceUpdates?: () => void;
 }>) {
 	if (model.kind === 'local')
@@ -358,6 +364,22 @@ export function ServerUpdatesPage({
 					</span>
 				</div>
 				<VersionLines lines={[model.running, model.latest]} />
+				{onCheck === undefined ? null : (
+					<div className="settings-inline-actions settings-detail-buttons">
+						<button
+							type="button"
+							className="settings-secondary-button"
+							data-server-update-check
+							disabled={check?.checking === true}
+							onClick={onCheck}
+						>
+							{check?.checking === true ? 'Checking…' : 'Check for updates'}
+						</button>
+						<span className="settings-section-desc" role="status">
+							{check?.checking === true ? '' : (check?.result ?? '')}
+						</span>
+					</div>
+				)}
 				{model.installLatest === undefined || onInstallLatest === undefined ? null : (
 					<div className="settings-group">
 						<InstallLatestRow action={model.installLatest} onChoose={onInstallLatest} />

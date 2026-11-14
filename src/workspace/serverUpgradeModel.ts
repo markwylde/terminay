@@ -1075,6 +1075,8 @@ export type ServerUpgradeRow = Readonly<{
 	failure?: string;
 	/** The step a followed upgrade is on, said in place of "Upgrading…". */
 	step?: string;
+	/** The server has an upgrader, so it can be asked to check now. */
+	checkable: boolean;
 }>;
 
 /** The row for one server, or `undefined` when it has nothing to say. */
@@ -1085,7 +1087,10 @@ export function serverUpgradeRow(
 	const { status } = entry;
 	const available = status.available?.version;
 	const progress = status.upgrade;
+	// A server with an upgrader always has a row, so it can be asked to check.
+	const checkable = status.channel !== undefined;
 	if (
+		!checkable &&
 		available === undefined &&
 		progress.state !== 'in-progress' &&
 		progress.state !== 'failed'
@@ -1112,6 +1117,7 @@ export function serverUpgradeRow(
 		action,
 		...(step === undefined ? {} : { step }),
 		reachable: entry.reachable,
+		checkable,
 		...(available === undefined ? {} : { available }),
 		...(action === 'manual' && manual !== undefined
 			? { reason: manual.reason, command: manual.command }
@@ -1217,6 +1223,58 @@ export function upgradeStartErrorText(cause: unknown): string {
 		default:
 			return 'The upgrade could not be started.';
 	}
+}
+
+/** What a check the person asked for came to, in words. */
+export function upgradeCheckErrorText(cause: unknown): string {
+	const code = errorField(cause, 'code');
+	const details = errorField(cause, 'details');
+	const reason =
+		typeof details === 'object' && details !== null
+			? (details as { reason?: unknown }).reason
+			: undefined;
+	if (reason === 'check-failed')
+		return 'The server could not reach its release channel. Try again shortly.';
+	if (reason === 'cannot-check')
+		return 'This server has no upgrader to check with.';
+	if (code === 'not_found' || code === 'incompatible')
+		return 'This server is too old to check on request. It checks by itself every hour.';
+	if (upgradeStartOutcomeUnknown(cause))
+		return 'The connection to this server dropped. Try again once it is back.';
+	return 'The check could not be made.';
+}
+
+/** The outcome of asking a server to look for a newer release now. */
+export type ServerUpgradeCheckResult =
+	| Readonly<{ ok: true; status: ServerUpgradeStatus }>
+	| Readonly<{ ok: false; error: string }>;
+
+/** Ask a server to read its release channel now. */
+export async function requestServerUpgradeCheck(
+	client:
+		| Readonly<{
+				checkForServerUpgrade: () => Promise<ServerUpgradeStatus>;
+		  }>
+		| undefined,
+): Promise<ServerUpgradeCheckResult> {
+	if (client === undefined)
+		return { ok: false, error: 'This server is not connected.' };
+	try {
+		return { ok: true, status: await client.checkForServerUpgrade() };
+	} catch (cause) {
+		return { ok: false, error: upgradeCheckErrorText(cause) };
+	}
+}
+
+/** The one line a finished check leaves beside its action. */
+export function upgradeCheckResultText(
+	result: ServerUpgradeCheckResult,
+): string {
+	if (!result.ok) return result.error;
+	const { status } = result;
+	if (status.available !== undefined)
+		return `Update available · ${status.available.version}`;
+	return `Up to date · ${status.version}`;
 }
 
 /**

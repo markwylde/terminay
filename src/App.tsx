@@ -11409,6 +11409,7 @@ function App({
 										<ServerUpgradeMenuRows
 											rows={serverUpgrades.rows}
 											namesServers={serverUpgrades.namesServers}
+											onCheck={serverUpgrades.checkForUpgrade}
 											onUpgrade={(profileId) => {
 												setIsRemoteMenuOpen(false);
 												serverUpgrades.requestUpgrade(profileId);
@@ -11544,6 +11545,7 @@ function App({
 									<ServerUpgradeMenuRows
 										rows={serverUpgrades.rows}
 										namesServers={serverUpgrades.namesServers}
+										onCheck={serverUpgrades.checkForUpgrade}
 										onUpgrade={(profileId) => {
 											closeCompactSwitcher();
 											serverUpgrades.requestUpgrade(profileId);
