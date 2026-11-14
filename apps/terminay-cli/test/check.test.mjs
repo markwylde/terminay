@@ -401,6 +401,7 @@ const CANARY = {
 	tag: 'canary-latest',
 	version: '0.0.0',
 	assetVersion: 'canary',
+	manifestVersion: '6.10.0-main.3428.canary',
 	channel: 'canary',
 	revision: 'e'.repeat(40),
 	publishedAt: '2026-10-03T00:00:00Z',
@@ -417,10 +418,13 @@ test('a canary install checks the canary prerelease for a newer revision', async
 		async ({ check }) => {
 			const report = await check();
 			assert.equal(report.installed.channel, 'canary');
+			// The build's own version, read from its manifest, never the asset
+			// name: a client compares it with what the server runs afterwards.
 			assert.deepEqual(report.available, {
-				version: 'canary',
+				version: '6.10.0-main.3428.canary',
 				publishedAt: '2026-10-03T00:00:00Z',
 			});
+			assert.equal(report.latest.version, '6.10.0-main.3428.canary');
 		},
 	);
 });

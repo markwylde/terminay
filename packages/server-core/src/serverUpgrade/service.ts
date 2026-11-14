@@ -9,6 +9,9 @@ import {
 	type ServerUpgradeStatus,
 } from '@terminay/protocol';
 
+/** What a server run without `TERMINAY_SERVER_VERSION` calls itself. */
+const UNKNOWN_SERVER_VERSION = '0.0.0';
+
 /** How long a release check's answer is taken to be current. */
 export const SERVER_UPGRADE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -543,7 +546,13 @@ export class ServerUpgradeService {
 					(mode) => mode !== 'recreate' || report.trigger.kind === 'spawn',
 				);
 		return parseServerUpgradeStatus({
-			version: report?.installed.version ?? this.serverVersion,
+			// The process knows what it runs. The install record the upgrader
+			// reads is moved to the new release only once this server is ready,
+			// so just after an upgrade it still names the release replaced.
+			version:
+				this.serverVersion === UNKNOWN_SERVER_VERSION
+					? (report?.installed.version ?? this.serverVersion)
+					: this.serverVersion,
 			...(report === undefined ? {} : { channel: report.installed.channel }),
 			...(this.available === undefined ? {} : { available: this.available }),
 			canUpgrade,

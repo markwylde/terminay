@@ -474,7 +474,9 @@ test('a server started by its upgrader reads the release and outcome recorded af
 	await settle();
 	service.clientAttached('c1');
 	await settle();
-	assert.equal(service.status.version, '5.1.1');
+	// It says what it runs, not what the stale record names: a client that
+	// followed the upgrade must not read the old version and call it failed.
+	assert.equal(service.status.version, '5.2.0');
 	assert.equal(clock.deadlines, SERVER_UPGRADE_SETTLE_CHECKS_MS.length);
 	// The upgrader records the new release and its outcome.
 	const at = new Date(clock.now() + 2_000).toISOString();

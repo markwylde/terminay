@@ -41,7 +41,9 @@ export async function startReleaseFixture(options) {
 	for (const release of releases) {
 		const fixture = await buildArchiveFixture({
 			directory,
-			version: release.assetVersion ?? release.version,
+			// A rolling build's manifest names its own version, not the asset's.
+			version:
+				release.manifestVersion ?? release.assetVersion ?? release.version,
 			channel: release.channel ?? 'tag',
 			revision: release.revision,
 			architecture: 'x64',
