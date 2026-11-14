@@ -179,6 +179,9 @@ async function setup(
 		...compositionOptions,
 	});
 	await composition.start();
+	// Startup leaves bot reconciliation running; these tests begin after it.
+	// While it is in flight this joins it rather than starting another.
+	await service.reconcile();
 	const clients = [];
 	t.after(async () => {
 		for (const c of clients) await c.close();

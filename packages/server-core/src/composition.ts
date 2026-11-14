@@ -2178,6 +2178,8 @@ export function createServerCoreComposition(
 		| 'failed' = 'created';
 	let startPromise: Promise<void> | undefined;
 	let shutdownPromise: Promise<void> | undefined;
+	/** Bot reconciliation and trigger start, which startup does not await. */
+	let botStartup: Promise<void> | undefined;
 	const start = (): Promise<void> => {
 		if (lifecycle === 'ready') return Promise.resolve();
 		if (lifecycle === 'starting' && startPromise !== undefined)
@@ -2193,12 +2195,21 @@ export function createServerCoreComposition(
 					await options.extensions?.installer.initialize();
 					await options.extensions?.activateEnabled?.();
 				}
-				await options.bots?.reconcile();
-				await options.bots?.triggers.start(
-					scheduleEngine,
-					eventFanout,
-					automationTimeZone,
-				);
+				// Bot reconciliation asks the container engine, which can take a
+				// minute to answer while it wakes. Nothing else at startup needs
+				// it: an execution waits for reconciliation itself. So bots catch
+				// up beside startup, and their triggers start once they have.
+				const bots = options.bots;
+				if (bots !== undefined)
+					botStartup = (async () => {
+						await bots.reconcile().catch(() => undefined);
+						if (shutdownPromise !== undefined) return;
+						await bots.triggers.start(
+							scheduleEngine,
+							eventFanout,
+							automationTimeZone,
+						);
+					})().catch(() => undefined);
 				await options.settings?.load();
 				// The unattached limit is a server setting; the holder is told it
 				// now and again whenever it changes.
@@ -2354,6 +2365,9 @@ export function createServerCoreComposition(
 			// If startup was still binding a hook receiver, wait for it before
 			// teardown so it cannot resurrect after shutdown begins.
 			await startPromise?.catch(() => undefined);
+			// Bots must not reconcile into a service that is shutting down. Once
+			// it returns, a begun shutdown keeps their triggers from starting.
+			await botStartup;
 			const failures: unknown[] = [];
 			const attempt = async (
 				operation: () => Promise<unknown> | unknown,
