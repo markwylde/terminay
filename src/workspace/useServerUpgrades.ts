@@ -34,6 +34,11 @@ export type ServerUpgradeConfirmationState = Readonly<{
 	/** Resolves with why the server refused, or `undefined` once it began. */
 	start: (mode: ServerUpgradeMode) => Promise<string | undefined>;
 	close: () => void;
+	/**
+	 * Set when this confirms Install latest on the channel (ADR-0117) rather
+	 * than an upgrade: the release it installs, and whether it is older.
+	 */
+	installLatest?: Readonly<{ version: string; downgrade: boolean }>;
 }>;
 
 export type ServerUpgrades = Readonly<{

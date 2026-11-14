@@ -12,6 +12,8 @@ import { dirname } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
+	INSTALL_LATEST_PATH_UNIT_NAME,
+	INSTALL_LATEST_SERVICE_UNIT_NAME,
 	type InstallLayout,
 	UPGRADE_PATH_UNIT_NAME,
 	UPGRADE_SERVICE_UNIT_NAME,
@@ -60,6 +62,21 @@ export async function upgradeHelperInstalled(
 	);
 }
 
+/**
+ * The install-latest pair present (ADR-0117). An install whose helper predates
+ * it upgrades forward as before, and gains it at its next `daemon upgrade`.
+ */
+export async function installLatestHelperInstalled(
+	layout: InstallLayout,
+): Promise<boolean> {
+	const helper = layout.upgradeHelper;
+	if (helper === undefined) return false;
+	return (
+		(await exists(helper.latestPathUnitPath)) &&
+		(await exists(helper.latestServiceUnitPath))
+	);
+}
+
 async function uidOf(account: string): Promise<number | undefined> {
 	try {
 		const { stdout } = await execFileAsync('id', ['-u', account], {
@@ -81,15 +98,26 @@ async function requestDirectoryPrepared(
 ): Promise<boolean> {
 	const helper = layout.upgradeHelper;
 	if (helper === undefined) return false;
-	const [directory, file] = await Promise.all([
+	const [directory, file, latest] = await Promise.all([
 		stat(helper.requestDirectory).catch(() => undefined),
 		stat(helper.requestFile).catch(() => undefined),
+		stat(helper.latestRequestFile).catch(() => undefined),
 	]);
-	if (directory === undefined || file === undefined) return false;
-	if ((directory.mode & 0o777) !== 0o700 || (file.mode & 0o777) !== 0o600)
+	if (directory === undefined || file === undefined || latest === undefined)
+		return false;
+	if (
+		(directory.mode & 0o777) !== 0o700 ||
+		(file.mode & 0o777) !== 0o600 ||
+		(latest.mode & 0o777) !== 0o600
+	)
 		return false;
 	const uid = await uidOf(runAs);
-	return uid !== undefined && directory.uid === uid && file.uid === uid;
+	return (
+		uid !== undefined &&
+		directory.uid === uid &&
+		file.uid === uid &&
+		latest.uid === uid
+	);
 }
 
 async function writeIfChanged(
@@ -127,6 +155,8 @@ export async function installUpgradeHelper(options: {
 	if (!(await requestDirectoryPrepared(layout, runAs))) {
 		if (await exists(helper.pathUnitPath))
 			await systemd.stopUnit(UPGRADE_PATH_UNIT_NAME);
+		if (await exists(helper.latestPathUnitPath))
+			await systemd.stopUnit(INSTALL_LATEST_PATH_UNIT_NAME);
 		// Root creates the directory and hands it to the run-as account alone,
 		// so no other account can ask for an upgrade or see that one was asked
 		// for.
@@ -134,8 +164,10 @@ export async function installUpgradeHelper(options: {
 		await chmod(helper.requestDirectory, 0o700);
 		// The file exists from the start, so the first request is a change to
 		// a file systemd is already watching rather than the appearance of one.
-		await (await open(helper.requestFile, 'a', 0o600)).close();
-		await chmod(helper.requestFile, 0o600);
+		for (const request of [helper.requestFile, helper.latestRequestFile]) {
+			await (await open(request, 'a', 0o600)).close();
+			await chmod(request, 0o600);
+		}
 		await execFileAsync(
 			'chown',
 			['-R', `${runAs}:${runAs}`, helper.requestDirectory],
@@ -151,9 +183,19 @@ export async function installUpgradeHelper(options: {
 		helper.serviceUnitPath,
 		renderUpgradeServiceUnit(layout),
 	);
-	if (wrotePath || wroteService) await systemd.daemonReload();
+	const wroteLatestPath = await writeIfChanged(
+		helper.latestPathUnitPath,
+		renderUpgradePathUnit(layout, 'install-latest'),
+	);
+	const wroteLatestService = await writeIfChanged(
+		helper.latestServiceUnitPath,
+		renderUpgradeServiceUnit(layout, 'install-latest'),
+	);
+	const wrote = wrotePath || wroteService || wroteLatestPath || wroteLatestService;
+	if (wrote) await systemd.daemonReload();
 	await systemd.enableNowUnit(UPGRADE_PATH_UNIT_NAME);
-	return wrotePath || wroteService;
+	await systemd.enableNowUnit(INSTALL_LATEST_PATH_UNIT_NAME);
+	return wrote;
 }
 
 export async function removeUpgradeHelper(options: {
@@ -166,9 +208,14 @@ export async function removeUpgradeHelper(options: {
 	// Disabled and stopped before its file goes, or systemd keeps a watch armed
 	// for a unit whose definition no longer exists.
 	await systemd.disableNowUnit(UPGRADE_PATH_UNIT_NAME);
+	await systemd.disableNowUnit(INSTALL_LATEST_PATH_UNIT_NAME);
 	await rm(helper.pathUnitPath, { force: true });
 	await rm(helper.serviceUnitPath, { force: true });
+	await rm(helper.latestPathUnitPath, { force: true });
+	await rm(helper.latestServiceUnitPath, { force: true });
 	await rm(helper.requestDirectory, { recursive: true, force: true });
 	await systemd.resetFailedUnit(UPGRADE_PATH_UNIT_NAME);
 	await systemd.resetFailedUnit(UPGRADE_SERVICE_UNIT_NAME);
+	await systemd.resetFailedUnit(INSTALL_LATEST_PATH_UNIT_NAME);
+	await systemd.resetFailedUnit(INSTALL_LATEST_SERVICE_UNIT_NAME);
 }

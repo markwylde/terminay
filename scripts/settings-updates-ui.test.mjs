@@ -161,3 +161,129 @@ test('device version lines cover every updater state', () => {
 	assert.equal(current[1].version, '5.1.0');
 	assert.equal(current[1].note, 'Up to date · checked today');
 });
+
+test('device install latest covers every state and warns only for an older build', () => {
+	const base = {
+		currentVersion: '6.3.0-main.3300.nightly',
+		checkedAt: '2026-11-14T00:00:00Z',
+		errorMessage: null,
+		latestVersion: null,
+		canInstallInPlace: true,
+		channelLatest: { version: '6.2.4', order: 'older' },
+		installingLatest: null,
+	};
+	assert.equal(model.deviceInstallLatest(null, 'stable'), null);
+	assert.equal(model.deviceInstallLatest({ ...base, canInstallInPlace: false }, 'stable'), null);
+	const dev = model.deviceInstallLatest({ ...base, currentVersion: '0.0.0', canInstallInPlace: false }, 'stable');
+	assert.equal(dev.enabled, false);
+	assert.match(dev.reason, /development build/);
+
+	const older = model.deviceInstallLatest(base, 'stable');
+	assert.deepEqual(older, { label: 'Install latest on Stable', version: '6.2.4', downgrade: true, enabled: true });
+	const newer = model.deviceInstallLatest({ ...base, channelLatest: { version: '6.3.1', order: 'newer' } }, 'stable');
+	assert.equal(newer.downgrade, false);
+	assert.equal(newer.enabled, true);
+	const same = model.deviceInstallLatest({ ...base, channelLatest: { version: base.currentVersion, order: 'same' } }, 'nightly');
+	assert.equal(same.enabled, false);
+	assert.equal(same.reason, 'This build is already the latest on Nightly.');
+	assert.equal(model.deviceInstallLatest({ ...base, channelLatest: null }, 'stable').reason, 'Not checked yet.');
+	assert.match(model.deviceInstallLatest({ ...base, installingLatest: '6.2.4' }, 'stable').reason, /Downloading 6\.2\.4/);
+
+	const lines = model.deviceVersionLines(base, 'stable', () => 'today');
+	assert.equal(lines[1].version, '6.2.4');
+	assert.equal(lines[1].note, 'Older than this build · checked today');
+});
+
+test('the install latest row and confirmation say what they install and warn on a downgrade', async () => {
+	const pages = await bundle('src/components/settings/UpdatesPages.tsx', 'updates-pages-2.cjs');
+	const older = { label: 'Install latest on Stable', version: '6.2.4', downgrade: true, enabled: true };
+	const row = renderToStaticMarkup(React.createElement(pages.InstallLatestRow, { action: older, onChoose: () => {} }));
+	assert.match(row, /Install latest on Stable/);
+	assert.match(row, /older than the running build/);
+	assert.match(row, /data-install-latest="enabled"/);
+	const dialog = renderToStaticMarkup(
+		React.createElement(pages.DeviceInstallLatestConfirmation, {
+			action: older,
+			currentVersion: '6.3.0-main.3300.nightly',
+			onCancel: () => {},
+			onConfirm: () => {},
+		}),
+	);
+	assert.match(dialog, /6\.3\.0-main\.3300\.nightly/);
+	assert.match(dialog, /6\.2\.4/);
+	assert.match(dialog, /might not carry over/);
+	const forward = renderToStaticMarkup(
+		React.createElement(pages.DeviceInstallLatestConfirmation, {
+			action: { ...older, downgrade: false, version: '6.3.1' },
+			currentVersion: '6.3.0',
+			onCancel: () => {},
+			onConfirm: () => {},
+		}),
+	);
+	assert.doesNotMatch(forward, /might not carry over/);
+	const disabled = renderToStaticMarkup(
+		React.createElement(pages.InstallLatestRow, {
+			action: { label: 'Install latest on Stable', downgrade: false, enabled: false, reason: 'Not checked yet.' },
+			onChoose: () => {},
+		}),
+	);
+	assert.match(disabled, /disabled=""/);
+	assert.match(disabled, /Not checked yet/);
+});
+
+test("a server ahead of its channel offers Install latest, and Local never does", () => {
+	const ahead = {
+		version: '5.3.0-main.40.nightly',
+		channel: 'main',
+		canUpgrade: true,
+		latest: { version: '5.3.0-main.38.nightly', order: 'older', canInstall: true },
+		upgrade: { state: 'none' },
+	};
+	const m = model.serverUpdatesModel({ isLocal: false, status: ahead });
+	assert.equal(m.latest.version, '5.3.0-main.38.nightly');
+	assert.equal(m.latest.note, 'Older than this server');
+	assert.deepEqual(m.installLatest, {
+		label: 'Install latest on Nightly',
+		version: '5.3.0-main.38.nightly',
+		downgrade: true,
+		enabled: true,
+	});
+	const html = render({ model: m, serverName: 'VPS', onInstallLatest: () => {} });
+	assert.match(html, /Install latest on Nightly/);
+	assert.match(html, /data-install-latest="enabled"/);
+
+	const same = model.serverUpdatesModel({
+		isLocal: false,
+		status: { ...ahead, latest: { version: ahead.version, order: 'same', canInstall: false } },
+	});
+	assert.equal(same.installLatest.enabled, false);
+	assert.match(same.installLatest.reason, /already runs the latest release on Nightly/);
+
+	const blocked = model.serverUpdatesModel({
+		isLocal: false,
+		status: {
+			...ahead,
+			latest: {
+				...ahead.latest,
+				canInstall: false,
+				unavailable: { reason: 'needs the helper', command: 'sudo terminay daemon upgrade --allow-downgrade --system' },
+			},
+		},
+	});
+	assert.equal(blocked.installLatest.enabled, false);
+	assert.equal(blocked.installLatest.command, 'sudo terminay daemon upgrade --allow-downgrade --system');
+	const blockedHtml = render({ model: blocked, serverName: 'VPS', onInstallLatest: () => {} });
+	assert.match(blockedHtml, /needs the helper/);
+	assert.match(blockedHtml, /--allow-downgrade/);
+
+	const busy = model.serverUpdatesModel({ isLocal: false, status: { ...ahead, upgrade: { state: 'in-progress' } } });
+	assert.equal(busy.installLatest.enabled, false);
+
+	// A server whose upgrader predates install-latest names no latest release.
+	const old = model.serverUpdatesModel({ isLocal: false, status: { version: '5.2.0', channel: 'tag', canUpgrade: true } });
+	assert.equal(old.installLatest, undefined);
+
+	const local = model.serverUpdatesModel({ isLocal: true, status: ahead });
+	assert.equal(local.kind, 'local');
+	assert.doesNotMatch(render({ model: local, serverName: 'Local', onInstallLatest: () => {} }), /Install latest/);
+});

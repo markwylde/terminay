@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { parseCommandLine } from '../dist/args.js';
-import { runUpgradeCheck } from '../dist/commands/check.js';
+import { belowImageFloor, runUpgradeCheck } from '../dist/commands/check.js';
 import { NotInstalledError } from '../dist/context.js';
 import { installUpgradeHelper } from '../dist/helper.js';
 import { installLayout, writeInstallRecord } from '../dist/layout.js';
@@ -158,6 +158,12 @@ test('a newer tagged release is reported as available, in the documented shape',
 			modes: ['in-place'],
 			trigger: { kind: 'spawn' },
 			unavailable: null,
+			latest: {
+				version: '4.1.1',
+				publishedAt: '2026-09-08T00:00:00Z',
+				order: 'newer',
+			},
+			installLatestUnavailable: null,
 			lastResult: null,
 		});
 		// The contract fixes the order as well as the members.
@@ -170,6 +176,8 @@ test('a newer tagged release is reported as available, in the documented shape',
 			'modes',
 			'trigger',
 			'unavailable',
+			'latest',
+			'installLatestUnavailable',
 			'lastResult',
 		]);
 	});
@@ -183,6 +191,8 @@ test('an install already on the newest release has nothing available', async () 
 			assert.equal(report.available, null);
 			assert.equal(report.canUpgrade, true);
 			assert.equal(report.checkError, undefined);
+			assert.equal(report.latest.version, '4.1.1');
+			assert.equal(report.latest.order, 'same');
 		},
 	);
 });
@@ -195,6 +205,35 @@ test('an install ahead of its channel is never offered an older release', async 
 			assert.equal(report.available, null);
 			assert.equal(report.installed.version, '4.2.0');
 			assert.equal(report.checkError, undefined);
+			// It is named, ordered as older, and a user-scope install can take it.
+			assert.equal(report.latest.version, '4.1.1');
+			assert.equal(report.latest.order, 'older');
+			assert.equal(report.installLatestUnavailable, null);
+		},
+	);
+});
+
+test('a system install whose helper predates install-latest names the downgrade command', async () => {
+	await withInstall(
+		{ scope: 'system', record: { version: '4.2.0', revision: 'e'.repeat(40) } },
+		async ({ check, layout, fake }) => {
+			await shipUpgrader(layout);
+			const systemd = createSystemd({ scope: 'system', env: fake.env() });
+			await installUpgradeHelper({ layout, runAs: 'ada', systemd });
+			// An install from before the second pair: only the upgrade pair is there.
+			await rm(layout.upgradeHelper.latestPathUnitPath);
+			await rm(layout.upgradeHelper.latestServiceUnitPath);
+			const report = await check();
+			assert.equal(report.canUpgrade, true);
+			assert.equal(report.latest.order, 'older');
+			assert.match(report.installLatestUnavailable.reason, /installed before/u);
+			assert.equal(
+				report.installLatestUnavailable.command,
+				`sudo ${layout.currentLink}/bin/terminay daemon upgrade --allow-downgrade --system`,
+			);
+
+			await installUpgradeHelper({ layout, runAs: 'ada', systemd });
+			assert.equal((await check()).installLatestUnavailable, null);
 		},
 	);
 });
@@ -286,6 +325,7 @@ test('a system install with the helper is triggered through its request file', a
 		assert.deepEqual(report.trigger, {
 			kind: 'request-file',
 			path: layout.upgradeHelper.requestFile,
+			latestPath: layout.upgradeHelper.latestRequestFile,
 		});
 		assert.ok(
 			report.trigger.path.endsWith('/var/lib/terminay-upgrade/request'),
@@ -515,4 +555,14 @@ test('the binary prints exactly one line of JSON and exits zero, even with the r
 		assert.equal(stdout.split('\n').filter(Boolean).length, 1);
 		assert.equal(JSON.parse(stdout).schemaVersion, 1);
 	});
+});
+
+test('a container never installs a tagged release older than its image', () => {
+	const image = { channel: 'tag', version: '5.1.0' };
+	assert.equal(belowImageFloor(image, 'tag', '5.0.9'), true);
+	assert.equal(belowImageFloor(image, 'tag', '5.1.0'), false);
+	assert.equal(belowImageFloor(image, 'tag', '5.2.0'), false);
+	// A rolling build is ordered by the image it was staged over, not by version.
+	assert.equal(belowImageFloor(image, 'main', '5.0.0-main.1.nightly'), false);
+	assert.equal(belowImageFloor({ channel: 'main', version: '5.1.0' }, 'tag', '5.0.0'), false);
 });

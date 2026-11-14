@@ -168,6 +168,11 @@ test('a start request names a mode and nothing else', () => {
 	assert.deepEqual(parseServerUpgradeStartRequest({ mode: 'in-place' }), {
 		mode: 'in-place',
 	});
+	// Consent to move backwards is a boolean and never a version (ADR-0117).
+	assert.deepEqual(
+		parseServerUpgradeStartRequest({ mode: 'in-place', allowOlder: true }),
+		{ mode: 'in-place', allowOlder: true },
+	);
 	assert.deepEqual(parseServerUpgradeStartRequest({ mode: 'recreate' }), {
 		mode: 'recreate',
 	});
@@ -182,10 +187,50 @@ test('a start request names a mode and nothing else', () => {
 		{ mode: 'in-place', url: 'https://example.test/terminay.tar.gz' },
 		{ mode: 'in-place', path: '/tmp/terminay' },
 		{ mode: 'in-place', flags: ['--force'] },
+		{ mode: 'in-place', allowOlder: false },
+		{ mode: 'in-place', allowOlder: '5.1.0' },
+		{ mode: 'in-place', allowOlder: true, version: '5.1.0' },
 	])
 		assert.throws(
 			() => parseServerUpgradeStartRequest(bad),
 			TypeError,
 			JSON.stringify(bad),
 		);
+});
+
+test("a status may name the channel's latest release, whichever way it orders", () => {
+	const base = {
+		version: '5.3.0-main.40.nightly',
+		channel: 'main',
+		canUpgrade: true,
+		modes: ['in-place'],
+		upgrade: { state: 'none' },
+	};
+	const older = parseServerUpgradeStatus({
+		...base,
+		latest: { version: '5.3.0-main.38.nightly', order: 'older', canInstall: true },
+	});
+	assert.deepEqual(older.latest, {
+		version: '5.3.0-main.38.nightly',
+		order: 'older',
+		canInstall: true,
+	});
+	const blocked = parseServerUpgradeStatus({
+		...base,
+		latest: {
+			version: '5.2.0',
+			order: 'older',
+			canInstall: false,
+			unavailable: { reason: 'needs the helper', command: 'sudo terminay daemon upgrade --allow-downgrade --system' },
+		},
+	});
+	assert.equal(blocked.latest.unavailable.reason, 'needs the helper');
+	for (const latest of [
+		{ version: '5.2.0', order: 'sideways', canInstall: true },
+		{ version: '5.2.0', order: 'older', canInstall: 'yes' },
+		{ version: '5.2.0', order: 'same', canInstall: true },
+		{ version: '', order: 'older', canInstall: true },
+		{ version: '5.2.0', order: 'older', canInstall: true, url: 'https://example.test' },
+	])
+		assert.throws(() => parseServerUpgradeStatus({ ...base, latest }), TypeError, JSON.stringify(latest));
 });

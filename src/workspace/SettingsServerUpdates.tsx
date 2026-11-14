@@ -63,7 +63,7 @@ export function SettingsServerUpdates({
 }>) {
 	const client = connection.context?.serverUpgradeClient;
 	const status = useUpgradeStatus(client?.store);
-	const [confirming, setConfirming] = useState(false);
+	const [confirming, setConfirming] = useState<'upgrade' | 'install-latest'>();
 	const helloVersion = connection.hello?.serverVersion;
 	const desktopVersion = useDesktopVersion(isLocal);
 	const model = serverUpdatesModel({
@@ -77,10 +77,11 @@ export function SettingsServerUpdates({
 			<ServerUpdatesPage
 				model={model}
 				serverName={connection.label}
-				onUpgrade={() => setConfirming(true)}
+				onUpgrade={() => setConfirming('upgrade')}
+				onInstallLatest={() => setConfirming('install-latest')}
 				{...(isLocal ? { onOpenDeviceUpdates } : {})}
 			/>
-			{confirming && status?.available !== undefined ? (
+			{confirming === 'upgrade' && status?.available !== undefined ? (
 				<ServerUpgradeDialog
 					confirmation={{
 						entry: {
@@ -90,7 +91,31 @@ export function SettingsServerUpdates({
 							reachable: connection.phase === 'ready',
 						},
 						start: (mode) => requestServerUpgrade(client, mode),
-						close: () => setConfirming(false),
+						close: () => setConfirming(undefined),
+					}}
+				/>
+			) : null}
+			{confirming === 'install-latest' &&
+			status?.latest !== undefined &&
+			status.latest.order !== 'same' ? (
+				<ServerUpgradeDialog
+					confirmation={{
+						entry: {
+							profileId: connection.profileId,
+							label: connection.label,
+							status,
+							reachable: connection.phase === 'ready',
+						},
+						installLatest: {
+							version: status.latest.version,
+							downgrade: status.latest.order === 'older',
+						},
+						// Consent to move backwards is sent only when it does (ADR-0117).
+						start: (mode) =>
+							requestServerUpgrade(client, mode, {
+								allowOlder: status.latest?.order === 'older',
+							}),
+						close: () => setConfirming(undefined),
 					}}
 				/>
 			) : null}

@@ -910,3 +910,149 @@ test('the Windows installer is per-user and one-click, so updates never need ele
 	assert.match(nsis, /"perMachine":\s*false/u);
 	assert.match(nsis, /"allowToChangeInstallationDirectory":\s*false/u);
 });
+
+// ---------------------------------------------------------------------------
+// Install latest on the channel (ADR-0117)
+
+function downgradeAware(version) {
+	// electron-updater offers an older build only while allowDowngrade is set.
+	return async (updater) => {
+		updater.downgradeDuringCheck = updater.allowDowngrade;
+		if (!updater.allowDowngrade) {
+			updater.emit('update-not-available', { version });
+			return null;
+		}
+		return downloadsVersion(version)(updater);
+	};
+}
+
+test('a check records the channel latest even when it is older than the running build', async () => {
+	const h = trackHarness({
+		channel: 'stable',
+		currentVersion: '6.3.0-main.3300.nightly',
+		stable: '6.2.4',
+	});
+	h.updater.onCheck = downgradeAware('6.2.4');
+	const status = await h.appUpdater.check();
+	assert.equal(status.hasUpdate, false);
+	assert.deepEqual(status.channelLatest, { version: '6.2.4', source: 'stable', order: 'older' });
+	assert.equal(h.updater.downgradeDuringCheck, false);
+});
+
+test('a nightly check records the higher of its prerelease and stable as the channel latest', async () => {
+	const h = trackHarness({
+		currentVersion: '5.8.0-main.3290.nightly',
+		nightly: '5.8.0-main.3300.nightly',
+		stable: '5.8.0',
+	});
+	h.updater.onCheck = downloadsVersion('5.8.0');
+	const status = await h.appUpdater.check();
+	assert.deepEqual(status.channelLatest, { version: '5.8.0', source: 'stable', order: 'newer' });
+});
+
+test('a development or notice-only build reports no channel latest', async () => {
+	const dev = harness({ currentVersion: '0.0.0' });
+	assert.equal((await dev.appUpdater.check()).channelLatest, null);
+	await assert.rejects(dev.appUpdater.installLatest('1.3.0'), /development build/u);
+
+	const notice = trackHarness({
+		isPackaged: false,
+		channel: 'stable',
+		currentVersion: '6.3.0-main.3300.nightly',
+		stable: '6.2.4',
+	});
+	assert.equal((await notice.appUpdater.check()).channelLatest, null);
+	await assert.rejects(notice.appUpdater.installLatest('6.2.4'), /cannot install updates in place/u);
+});
+
+test('install latest downgrades to stable, restarts, and leaves later checks forward-only', async () => {
+	const restarts = [];
+	const h = trackHarness({
+		channel: 'stable',
+		currentVersion: '6.3.0-main.3300.nightly',
+		stable: '6.2.4',
+		onRestartRequested: () => restarts.push('restart'),
+	});
+	h.updater.onCheck = downgradeAware('6.2.4');
+	await h.appUpdater.check();
+	const status = await h.appUpdater.installLatest('6.2.4');
+	assert.equal(h.updater.downgradeDuringCheck, true);
+	assert.equal(h.updater.allowDowngrade, false);
+	assert.deepEqual(h.updater.feeds.at(-1), STABLE_FEED);
+	assert.equal(status.state, 'ready');
+	assert.equal(status.latestVersion, '6.2.4');
+	assert.deepEqual(restarts, ['restart']);
+	assert.equal(h.appUpdater.isRestartToUpdateRequested(), true);
+	h.appUpdater.finishQuit(h.quit);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.deepEqual(h.updater.installs, [[false, true]]);
+	assert.deepEqual(h.quits, []);
+
+	h.advance(2 * 60 * 60 * 1000);
+	await h.appUpdater.check();
+	assert.equal(h.updater.downgradeDuringCheck, false);
+});
+
+test('install latest on nightly takes a newer stable release', async () => {
+	const h = trackHarness({
+		currentVersion: '5.8.0-main.3290.nightly',
+		nightly: '5.8.0-main.3300.nightly',
+		stable: '5.8.0',
+		onRestartRequested: () => {},
+	});
+	h.updater.onCheck = downloadsVersion('5.8.0');
+	const status = await h.appUpdater.installLatest('5.8.0');
+	assert.deepEqual(h.updater.feeds.at(-1), STABLE_FEED);
+	assert.equal(status.latestVersion, '5.8.0');
+});
+
+test('install latest refuses when the channel moved or the running build is the latest', async () => {
+	const moved = trackHarness({
+		channel: 'stable',
+		currentVersion: '6.3.0-main.3300.nightly',
+		stable: '6.2.5',
+	});
+	moved.updater.onCheck = downgradeAware('6.2.5');
+	await assert.rejects(moved.appUpdater.installLatest('6.2.4'), /now publishes 6\.2\.5/u);
+	assert.equal(moved.updater.checks, 0);
+	assert.equal(moved.appUpdater.getStatus().channelLatest.version, '6.2.5');
+
+	const same = trackHarness({ channel: 'stable', currentVersion: '6.2.4', stable: '6.2.4' });
+	await assert.rejects(same.appUpdater.installLatest('6.2.4'), /already the latest/u);
+	assert.equal(same.updater.checks, 0);
+});
+
+test('a failed install-latest download does not restart and withdraws the downgrade', async () => {
+	const restarts = [];
+	const h = trackHarness({
+		channel: 'stable',
+		currentVersion: '6.3.0-main.3300.nightly',
+		stable: '6.2.4',
+		onRestartRequested: () => restarts.push('restart'),
+	});
+	h.updater.onCheck = async (updater) => {
+		updater.emit('update-available', { version: '6.2.4' });
+		updater.emit('error', new Error('sha512 checksum mismatch'));
+		return { downloadPromise: Promise.reject(new Error('sha512 checksum mismatch')) };
+	};
+	const status = await h.appUpdater.installLatest('6.2.4');
+	assert.match(status.errorMessage, /checksum/u);
+	assert.deepEqual(restarts, []);
+	assert.equal(status.installingLatest, null);
+	assert.equal(h.updater.allowDowngrade, false);
+	assert.equal(h.appUpdater.isRestartToUpdateRequested(), false);
+});
+
+test('changing channel re-resolves the channel latest on the new channel', async () => {
+	const h = trackHarness({
+		channel: 'stable',
+		currentVersion: '6.3.0-main.3300.nightly',
+		stable: '6.2.4',
+		canary: '6.3.0-main.3400.canary',
+	});
+	h.updater.onCheck = downgradeAware('6.2.4');
+	await h.appUpdater.check();
+	h.updater.onCheck = async () => null;
+	const status = await h.appUpdater.setChannel('canary');
+	assert.deepEqual(status.channelLatest, { version: '6.3.0-main.3400.canary', source: 'canary', order: 'newer' });
+});

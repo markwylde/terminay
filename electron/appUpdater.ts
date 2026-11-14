@@ -1,6 +1,7 @@
 import { win32 } from 'node:path';
 import type { AppUpdater as ElectronAppUpdater } from 'electron-updater';
 import type {
+	AppChannelLatest,
 	AppReleaseNote,
 	AppUpdateChannel,
 	AppUpdateState,
@@ -88,6 +89,12 @@ export interface AppUpdaterOptions {
 	/** Called when a download starts, finishes, or fails outside a check's own result. */
 	onStatusChanged?: () => void;
 	/**
+	 * Called once an Install latest download is verified and a restart to it
+	 * has been requested; the host then quits gracefully, and `finishQuit`
+	 * installs it.
+	 */
+	onRestartRequested?: () => void;
+	/**
 	 * A test-only feed in place of the channel's rolling prerelease. With it
 	 * the stable source is not read, so a probe sees only the build it serves.
 	 */
@@ -106,6 +113,14 @@ export interface AppUpdater {
 	}): Promise<AppUpdateStatus>;
 	getStatus(): AppUpdateStatus;
 	setChannel(channel: AppUpdateChannel): Promise<AppUpdateStatus>;
+	/**
+	 * Download the latest build the selected channel publishes, even when it is
+	 * older than the running one, then request a restart into it (ADR-0117).
+	 * `expectedVersion` is the version the user confirmed; the updater resolves
+	 * the build itself and refuses when that resolution differs, or when it is
+	 * the running build.
+	 */
+	installLatest(expectedVersion: string): Promise<AppUpdateStatus>;
 	/** Records that the next graceful quit should install and relaunch. */
 	requestRestartToUpdate(): boolean;
 	cancelRestartToUpdate(): void;
@@ -414,6 +429,10 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	let releaseNotes: AppReleaseNote[] | null = null;
 	let releaseNotesError: string | null = null;
 	let restartRequested = false;
+	/** The latest version on the channel, as the last check resolved it. */
+	let channelLatest: AppChannelLatest | null = null;
+	/** The version an Install latest is downloading, to restart into once verified. */
+	let installingLatest: string | null = null;
 	let inFlight: Promise<AppUpdateStatus> | null = null;
 	let updaterPromise: Promise<UpdaterLike> | null = null;
 	let notesPromise: Promise<void> | null = null;
@@ -443,6 +462,17 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 					: releasePageUrl(offeredSource ?? channel, shownVersion),
 			releaseNotes,
 			releaseNotesError,
+			channelLatest: installable ? channelLatest : null,
+			installingLatest,
+		};
+	}
+
+	function noteChannelLatest(version: string, source: UpdateSource): void {
+		const compared = compareVersions(version, currentVersion);
+		channelLatest = {
+			version,
+			source,
+			order: compared > 0 ? 'newer' : compared < 0 ? 'older' : 'same',
 		};
 	}
 
@@ -498,6 +528,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 				updater.on('update-available', (info: UpdateInfoLike) => {
 					const version = versionString(info.version);
 					if (!version) return;
+					noteChannelLatest(version, checkSource);
 					latestVersion = version;
 					offeredSource = checkSource;
 					failure = null;
@@ -508,7 +539,9 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 					loadNotes(version, checkSource, info);
 					options.onStatusChanged?.();
 				});
-				updater.on('update-not-available', () => {
+				updater.on('update-not-available', (info?: UpdateInfoLike) => {
+					const version = versionString(info?.version);
+					if (version) noteChannelLatest(version, checkSource);
 					if (downloadedVersion === null) {
 						state = 'idle';
 						latestVersion = null;
@@ -529,11 +562,20 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 					failure = null;
 					state = 'ready';
 					loadNotes(version, checkSource, info);
+					if (installingLatest === version) {
+						// The user confirmed this build: go straight to it.
+						installingLatest = null;
+						restartRequested = true;
+						options.onStatusChanged?.();
+						options.onRestartRequested?.();
+						return;
+					}
 					options.onStatusChanged?.();
 				});
 				updater.on('error', (error: unknown) => {
 					log('[updater] update failed', error);
 					failure = errorMessage(error);
+					installingLatest = null;
 					if (downloadedVersion !== null) {
 						// The update already waiting is still the one to install.
 						state = 'ready';
@@ -640,7 +682,10 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 			checking === 'stable'
 				? 'stable'
 				: await selectSource().then(
-						(selected) => selected.source,
+						(selected) => {
+							noteChannelLatest(selected.version, selected.source);
+							return selected.source;
+						},
 						() => checking,
 					);
 		configureFeed(updater, checkSource);
@@ -659,6 +704,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		}
 		const { source, version } = await selectSource();
 		checkSource = source;
+		noteChannelLatest(version, source);
 		if (compareVersions(version, currentVersion) > 0) {
 			latestVersion = version;
 			offeredSource = source;
@@ -698,6 +744,66 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 		return status();
 	}
 
+	async function runInstallLatest(
+		expectedVersion: string,
+	): Promise<AppUpdateStatus> {
+		const updater = await getUpdater();
+		const selected = await selectSource();
+		noteChannelLatest(selected.version, selected.source);
+		if (compareVersions(selected.version, currentVersion) === 0)
+			throw new Error(
+				`Terminay ${currentVersion} is already the latest on the ${CHANNEL_NAMES[channel]} channel.`,
+			);
+		if (selected.version !== expectedVersion)
+			throw new Error(
+				`The ${CHANNEL_NAMES[channel]} channel now publishes ${selected.version}, not ${expectedVersion}. Review it and try again.`,
+			);
+		checkSource = selected.source;
+		configureFeed(updater, selected.source);
+		installingLatest = selected.version;
+		failure = null;
+		// The one check that may move backwards (ADR-0117). Downloading needs no
+		// permission of its own, so it is withdrawn as soon as the check settles.
+		updater.allowDowngrade = true;
+		let result: { downloadPromise?: Promise<unknown> | null } | null;
+		try {
+			result = (await updater.checkForUpdates()) as typeof result;
+		} catch (error) {
+			installingLatest = null;
+			throw error;
+		} finally {
+			updater.allowDowngrade = false;
+		}
+		void result?.downloadPromise?.catch(() => {});
+		if (installingLatest !== null && state !== 'downloading' && state !== 'ready') {
+			installingLatest = null;
+			throw new Error(
+				`Terminay ${selected.version} could not be fetched from the ${CHANNEL_NAMES[channel]} channel.`,
+			);
+		}
+		return status();
+	}
+
+	function installLatest(expectedVersion: string): Promise<AppUpdateStatus> {
+		if (!installable)
+			return Promise.reject(
+				new Error('This build cannot install updates in place.'),
+			);
+		if (currentVersion === '0.0.0')
+			return Promise.reject(
+				new Error('A development build has no release version to replace.'),
+			);
+		const run = (async () => {
+			if (inFlight) await inFlight.catch(() => {});
+			return runInstallLatest(expectedVersion);
+		})();
+		const tracked: Promise<AppUpdateStatus> = run.finally(() => {
+			if (inFlight === tracked) inFlight = null;
+		});
+		inFlight = tracked;
+		return tracked;
+	}
+
 	function check(checkOptions?: {
 		force?: boolean;
 		manual?: boolean;
@@ -719,6 +825,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 	return {
 		check,
 		getStatus: status,
+		installLatest,
 		async setChannel(next) {
 			if (next === channel) return status();
 			channel = next;
@@ -727,6 +834,7 @@ export function createAppUpdater(options: AppUpdaterOptions): AppUpdater {
 			// already downloaded stays installable on quit; electron-updater
 			// replaces it if the new channel offers something newer.
 			latestVersion = null;
+			channelLatest = null;
 			notesVersion = null;
 			releaseNotes = null;
 			releaseNotesError = null;

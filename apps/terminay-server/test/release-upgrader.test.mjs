@@ -114,6 +114,30 @@ test('a check answer is accepted exactly as the upgrader prints it', () => {
 		).modes,
 		['in-place', 'recreate'],
 	);
+	// The channel's latest release, and the install-latest helper's file.
+	const ahead = parseUpgradeCheckOutput(
+		JSON.stringify(
+			answer({
+				environment: 'system',
+				trigger: {
+					kind: 'request-file',
+					path: '/var/lib/terminay-upgrade/request',
+					latestPath: '/var/lib/terminay-upgrade/install-latest',
+				},
+				latest: { version: '5.1.0', order: 'older' },
+				installLatestUnavailable: null,
+			}),
+		),
+	);
+	assert.deepEqual(ahead.latest, { version: '5.1.0', order: 'older' });
+	assert.equal(ahead.installLatestUnavailable, null);
+	assert.equal(ahead.trigger.latestPath, '/var/lib/terminay-upgrade/install-latest');
+	for (const bad of [
+		{ latest: { version: '5.1.0', order: 'backwards' } },
+		{ latest: { version: '5.1.0', order: 'older', url: 'https://example.test' } },
+		{ trigger: { kind: 'request-file', path: '/r', latestPath: 'relative' } },
+	])
+		assert.throws(() => parseUpgradeCheckOutput(JSON.stringify(answer(bad))), JSON.stringify(bad));
 });
 
 test('a canary install reports its own channel and the canary build it follows', () => {
@@ -204,6 +228,11 @@ test('the argument vector is fixed by the environment and the mode alone', () =>
 	assert.deepEqual(
 		upgradeArguments({ environment: 'container', mode: 'recreate' }),
 		['daemon', 'upgrade', '--recreate'],
+	);
+	// Consent to move backwards adds one fixed flag, and still names no release.
+	assert.deepEqual(
+		upgradeArguments({ environment: 'user', mode: 'in-place', allowOlder: true }),
+		['daemon', 'upgrade', '--user', '--allow-downgrade'],
 	);
 	// Nothing else a caller passes reaches it.
 	assert.deepEqual(
@@ -407,6 +436,20 @@ test('a request-file upgrade replaces the file and runs nothing', async (t) => {
 	await assert.rejects(
 		upgrader.trigger({ ...handover, mode: 'recreate' }),
 		/in-place upgrade only/u,
+	);
+	// Install latest writes the other helper's file, never the upgrade one.
+	const latest = join(fake.directory, 'install-latest');
+	now = 3_000;
+	await upgrader.trigger({
+		...handover,
+		allowOlder: true,
+		trigger: { ...handover.trigger, latestPath: latest },
+	});
+	assert.equal(await readFile(latest, 'utf8'), '3000\n');
+	assert.equal(await readFile(request, 'utf8'), '2000\n');
+	await assert.rejects(
+		upgrader.trigger({ ...handover, allowOlder: true }),
+		/no helper that installs the latest release/u,
 	);
 	// A request file that cannot be written is a failed handover.
 	await assert.rejects(

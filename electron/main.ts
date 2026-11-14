@@ -2758,6 +2758,9 @@ function getAppUpdater(): AppUpdater {
 			fetch: (url, init) => fetch(url, { ...init, redirect: 'follow' }),
 			log: (message, error) => console.warn(message, error ?? ''),
 			onStatusChanged: () => broadcastAppUpdateStatusChanged(),
+			// Install latest restarts as soon as its download is verified: the
+			// graceful quit ends in finishQuit, which installs it.
+			onRestartRequested: () => app.quit(),
 			testFeedUrl,
 		});
 		setInterval(() => {
@@ -4455,6 +4458,10 @@ function createWindow(options?: {
 							throw new Error('No downloaded update is ready to install.');
 						app.quit();
 						return;
+					case 'updater.install-latest':
+						// The version is only the one the user confirmed; the updater
+						// resolves the build from its own channel (ADR-0117).
+						return getAppUpdater().installLatest(action.version);
 					case 'preview.download':
 						return savePreviewDownload(window, action);
 					case 'import-export.bundle.save':

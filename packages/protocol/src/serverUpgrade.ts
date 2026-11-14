@@ -3,8 +3,9 @@
  *
  * The server decides what is installed. A client reads the status the server
  * publishes and may ask for an upgrade to begin; the request names the mode
- * and nothing else, so no version, reference, URL, path, or flag can travel
- * in it.
+ * and, to install the channel's latest release even when it is older, the one
+ * boolean `allowOlder` (ADR-0117). No version, reference, URL, path, or other
+ * flag can travel in it.
  */
 
 /** Hello capability advertised by a server that publishes its upgrade status. */
@@ -31,6 +32,10 @@ export const SERVER_UPGRADE_REFUSALS = [
 	'mode-not-offered',
 	'in-progress',
 	'trigger-failed',
+	/** `allowOlder` asked for the release that is already running. */
+	'already-latest',
+	/** `allowOlder` asked for a release this server cannot install itself. */
+	'cannot-install-latest',
 ] as const;
 export type ServerUpgradeRefusal = (typeof SERVER_UPGRADE_REFUSALS)[number];
 
@@ -62,6 +67,20 @@ export type ServerUpgradeProgress =
 			readonly at: number;
 	  };
 
+export const SERVER_UPGRADE_LATEST_ORDERS = ['newer', 'same', 'older'] as const;
+export type ServerUpgradeLatestOrder =
+	(typeof SERVER_UPGRADE_LATEST_ORDERS)[number];
+
+/** The newest release on the server's channel, whichever way it orders. */
+export interface ServerUpgradeLatest {
+	readonly version: string;
+	readonly order: ServerUpgradeLatestOrder;
+	/** Whether a request with `allowOlder` would install it, in place. */
+	readonly canInstall: boolean;
+	/** Why it cannot be installed from here, and what to run on the host. */
+	readonly unavailable?: { readonly reason: string; readonly command: string };
+}
+
 export interface ServerUpgradeStatus {
 	/** The release this server is running. */
 	readonly version: string;
@@ -79,11 +98,17 @@ export interface ServerUpgradeStatus {
 	/** Why the server cannot upgrade itself, and what an operator runs on the
 	 * host instead. */
 	readonly unavailable?: { readonly reason: string; readonly command: string };
+	/** The channel's latest release, newer or not (ADR-0117). Absent before a
+	 * check has read it, and on a source install. */
+	readonly latest?: ServerUpgradeLatest;
 	readonly upgrade: ServerUpgradeProgress;
 }
 
 export interface ServerUpgradeStartRequest {
 	readonly mode: ServerUpgradeMode;
+	/** Install the channel's latest release even when it is older. Only ever
+	 * `true` when present. */
+	readonly allowOlder?: true;
 }
 
 /** Validate a status exactly as a server publishes it. */
@@ -96,6 +121,7 @@ export function parseServerUpgradeStatus(value: unknown): ServerUpgradeStatus {
 		'modes',
 		'recreateEndsTerminals',
 		'unavailable',
+		'latest',
 		'upgrade',
 	]);
 	const version = text(
@@ -134,26 +160,39 @@ export function parseServerUpgradeStatus(value: unknown): ServerUpgradeStatus {
 			),
 		});
 	}
-	let unavailable:
-		| { readonly reason: string; readonly command: string }
-		| undefined;
-	if (record.unavailable !== undefined) {
-		const entry = strictRecord(
-			record.unavailable,
-			'server upgrade unavailable',
-			['reason', 'command'],
-		);
-		unavailable = Object.freeze({
-			reason: text(
-				entry.reason,
-				'unavailable reason',
-				SERVER_UPGRADE_MAX_TEXT_CHARS,
+	const unavailable =
+		record.unavailable === undefined
+			? undefined
+			: parseUnavailable(record.unavailable, 'unavailable');
+	let latest: ServerUpgradeLatest | undefined;
+	if (record.latest !== undefined) {
+		const entry = strictRecord(record.latest, 'server upgrade latest', [
+			'version',
+			'order',
+			'canInstall',
+			'unavailable',
+		]);
+		if (
+			!(SERVER_UPGRADE_LATEST_ORDERS as readonly unknown[]).includes(entry.order)
+		)
+			throw new TypeError('server upgrade latest order is invalid');
+		if (typeof entry.canInstall !== 'boolean')
+			throw new TypeError('server upgrade latest canInstall is invalid');
+		if (entry.canInstall && entry.order === 'same')
+			throw new TypeError('server upgrade latest cannot install itself');
+		const blocked =
+			entry.unavailable === undefined
+				? undefined
+				: parseUnavailable(entry.unavailable, 'latest unavailable');
+		latest = Object.freeze({
+			version: text(
+				entry.version,
+				'latest version',
+				SERVER_UPGRADE_MAX_VERSION_CHARS,
 			),
-			command: text(
-				entry.command,
-				'unavailable command',
-				SERVER_UPGRADE_MAX_TEXT_CHARS,
-			),
+			order: entry.order as ServerUpgradeLatestOrder,
+			canInstall: entry.canInstall,
+			...(blocked === undefined ? {} : { unavailable: blocked }),
 		});
 	}
 	return Object.freeze({
@@ -166,19 +205,46 @@ export function parseServerUpgradeStatus(value: unknown): ServerUpgradeStatus {
 		modes,
 		...(offersRecreate ? { recreateEndsTerminals: true as const } : {}),
 		...(unavailable === undefined ? {} : { unavailable }),
+		...(latest === undefined ? {} : { latest }),
 		upgrade: parseProgress(record.upgrade),
 	});
 }
 
-/** Validate a start request. Anything beyond the mode is a rejection: the
- * client never names what is installed. */
+function parseUnavailable(
+	value: unknown,
+	name: string,
+): { readonly reason: string; readonly command: string } {
+	const entry = strictRecord(value, `server upgrade ${name}`, [
+		'reason',
+		'command',
+	]);
+	return Object.freeze({
+		reason: text(entry.reason, `${name} reason`, SERVER_UPGRADE_MAX_TEXT_CHARS),
+		command: text(
+			entry.command,
+			`${name} command`,
+			SERVER_UPGRADE_MAX_TEXT_CHARS,
+		),
+	});
+}
+
+/** Validate a start request. Anything beyond the mode and `allowOlder` is a
+ * rejection: the client never names what is installed. */
 export function parseServerUpgradeStartRequest(
 	value: unknown,
 ): ServerUpgradeStartRequest {
-	const record = strictRecord(value, 'server upgrade request', ['mode']);
+	const record = strictRecord(value, 'server upgrade request', [
+		'mode',
+		'allowOlder',
+	]);
 	if (!isServerUpgradeMode(record.mode))
 		throw new TypeError('server upgrade mode is invalid');
-	return Object.freeze({ mode: record.mode });
+	if (record.allowOlder !== undefined && record.allowOlder !== true)
+		throw new TypeError('server upgrade allowOlder is invalid');
+	return Object.freeze({
+		mode: record.mode,
+		...(record.allowOlder === true ? { allowOlder: true as const } : {}),
+	});
 }
 
 export function isServerUpgradeMode(

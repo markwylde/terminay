@@ -33,6 +33,15 @@ const prose = z
  * change `remote-server-in-app-upgrade`). It is another process's output, so
  * it is validated field by field and anything unknown is refused.
  */
+const requestPath = z
+	.string()
+	.min(1)
+	.max(4096)
+	.refine(
+		(path) => isAbsolute(path) && !path.includes('\0'),
+		'the request file must be an absolute path',
+	);
+
 const checkReportSchema = z.strictObject({
 	schemaVersion: z.literal(1),
 	environment: z.enum(['user', 'system', 'container']),
@@ -63,17 +72,25 @@ const checkReportSchema = z.strictObject({
 		z.strictObject({ kind: z.literal('spawn') }),
 		z.strictObject({
 			kind: z.literal('request-file'),
-			path: z
-				.string()
-				.min(1)
-				.max(4096)
-				.refine(
-					(path) => isAbsolute(path) && !path.includes('\0'),
-					'the request file must be an absolute path',
-				),
+			path: requestPath,
+			latestPath: requestPath.optional(),
 		}),
 	]),
 	unavailable: z.nullable(z.strictObject({ reason: prose, command: text })),
+	// Both absent from an upgrader that predates install-latest (ADR-0117).
+	latest: z
+		.nullable(
+			z.strictObject({
+				version,
+				revision: z.string().max(128).optional(),
+				publishedAt: z.string().max(64).optional(),
+				order: z.enum(['newer', 'same', 'older']),
+			}),
+		)
+		.optional(),
+	installLatestUnavailable: z
+		.nullable(z.strictObject({ reason: prose, command: text }))
+		.optional(),
 	lastResult: z.nullable(
 		z.strictObject({
 			from: version,
@@ -125,8 +142,37 @@ export function parseUpgradeCheckOutput(
 					},
 		canUpgrade: report.canUpgrade,
 		modes: report.modes,
-		trigger: report.trigger,
+		trigger:
+			report.trigger.kind === 'request-file'
+				? {
+						kind: 'request-file',
+						path: report.trigger.path,
+						...(report.trigger.latestPath === undefined
+							? {}
+							: { latestPath: report.trigger.latestPath }),
+					}
+				: report.trigger,
 		unavailable: report.unavailable,
+		...(report.latest === undefined
+			? {}
+			: {
+					latest:
+						report.latest === null
+							? null
+							: {
+									version: report.latest.version,
+									...(report.latest.revision === undefined
+										? {}
+										: { revision: report.latest.revision }),
+									...(report.latest.publishedAt === undefined
+										? {}
+										: { publishedAt: report.latest.publishedAt }),
+									order: report.latest.order,
+								},
+				}),
+		...(report.installLatestUnavailable === undefined
+			? {}
+			: { installLatestUnavailable: report.installLatestUnavailable }),
 		lastResult:
 			report.lastResult === null
 				? null
@@ -151,13 +197,16 @@ export function parseUpgradeCheckOutput(
  * reference, URL, path, or flag from a client can reach it (ADR-0062).
  */
 export function upgradeArguments(
-	handover: Pick<ServerUpgradeHandover, 'environment' | 'mode'>,
+	handover: Pick<ServerUpgradeHandover, 'environment' | 'mode' | 'allowOlder'>,
 ): readonly string[] {
 	return Object.freeze([
 		'daemon',
 		'upgrade',
 		...(handover.environment === 'user' ? ['--user'] : []),
 		...(handover.mode === 'recreate' ? ['--recreate'] : []),
+		// The one fixed flag a client's consent adds (ADR-0117). It names no
+		// release: the upgrader still resolves the channel's newest itself.
+		...(handover.allowOlder === true ? ['--allow-downgrade'] : []),
 	]);
 }
 
@@ -299,7 +348,15 @@ export function createReleaseUpgrader(
 			// changes and never reads it, so it cannot carry a mode.
 			if (handover.mode !== 'in-place')
 				throw new Error('a request file starts an in-place upgrade only');
-			await writeFile(handover.trigger.path, `${now()}\n`, { mode: 0o600 });
+			// Moving backwards is the other helper's: its own file, its own
+			// fixed command (ADR-0117).
+			const path =
+				handover.allowOlder === true
+					? handover.trigger.latestPath
+					: handover.trigger.path;
+			if (path === undefined)
+				throw new Error('this install has no helper that installs the latest release');
+			await writeFile(path, `${now()}\n`, { mode: 0o600 });
 			return undefined;
 		}
 		const log = openSync(logPath(), 'a', 0o600);

@@ -10,11 +10,16 @@ import {
 	supervisedServerPid,
 } from '../container.js';
 import { resolveContext } from '../context.js';
-import { upgradeHelperInstalled } from '../helper.js';
+import {
+	installLatestHelperInstalled,
+	upgradeHelperInstalled,
+} from '../helper.js';
 import type { InstallLayout } from '../layout.js';
+import { readArchiveManifest } from '../manifest.js';
 import { readUpgradeOutcome, type UpgradeOutcome } from '../outcome.js';
 import { peekPublishedIdentity } from '../peek.js';
 import {
+	compareVersions,
 	type InstalledRelease,
 	orderAgainstInstalled,
 	type ReleaseSource,
@@ -46,7 +51,12 @@ export type UpgradeMode = 'in-place' | 'recreate';
 
 export type UpgradeTrigger =
 	| { readonly kind: 'spawn' }
-	| { readonly kind: 'request-file'; readonly path: string };
+	| {
+			readonly kind: 'request-file';
+			readonly path: string;
+			/** The install-latest helper's request file, when it is installed. */
+			readonly latestPath?: string;
+	  };
 
 export interface UpgradeCheckReport {
 	readonly schemaVersion: 1;
@@ -65,6 +75,25 @@ export interface UpgradeCheckReport {
 	readonly modes: readonly UpgradeMode[];
 	readonly trigger: UpgradeTrigger;
 	readonly unavailable: null | {
+		readonly reason: string;
+		readonly command: string;
+	};
+	/**
+	 * The newest release on the installed channel, whichever way it orders
+	 * against the installed one (ADR-0117). Null for a source install, and when
+	 * the channel could not be read or ordered.
+	 */
+	readonly latest: null | {
+		readonly version: string;
+		readonly revision?: string;
+		readonly publishedAt?: string;
+		readonly order: 'newer' | 'same' | 'older';
+	};
+	/**
+	 * Why `latest` cannot be installed from here, with the command to run on the
+	 * host instead; null when it can.
+	 */
+	readonly installLatestUnavailable: null | {
 		readonly reason: string;
 		readonly command: string;
 	};
@@ -93,6 +122,10 @@ interface Described {
 	readonly trigger: UpgradeTrigger;
 	readonly unavailable: UpgradeCheckReport['unavailable'];
 	readonly resultPath: string;
+	/** Why an older latest release cannot be installed here, before ordering it. */
+	readonly installLatestUnavailable: UpgradeCheckReport['installLatestUnavailable'];
+	/** A container's image release: nothing older than it can run there. */
+	readonly floor?: { readonly channel: string; readonly version: string };
 }
 
 /**
@@ -144,9 +177,15 @@ async function describeService(
 		helper !== undefined &&
 		cli === shipped &&
 		(await upgradeHelperInstalled(layout));
+	const latestReady =
+		helperReady && (await installLatestHelperInstalled(layout));
 	const trigger: UpgradeTrigger =
 		helper !== undefined && helperReady
-			? Object.freeze({ kind: 'request-file', path: helper.requestFile })
+			? Object.freeze({
+					kind: 'request-file',
+					path: helper.requestFile,
+					...(latestReady ? { latestPath: helper.latestRequestFile } : {}),
+				})
 			: Object.freeze({ kind: 'spawn' });
 
 	let unavailable: Described['unavailable'] = null;
@@ -162,6 +201,26 @@ async function describeService(
 			command: command(''),
 		});
 	}
+	// Installing the latest release may move backwards, which a system-scope
+	// server asks for through its second, fixed trigger (ADR-0117).
+	let installLatestUnavailable: Described['installLatestUnavailable'] =
+		unavailable === null
+			? null
+			: Object.freeze({
+					reason: unavailable.reason,
+					command: command(' --allow-downgrade'),
+				});
+	if (
+		installLatestUnavailable === null &&
+		layout.scope === 'system' &&
+		!latestReady
+	) {
+		installLatestUnavailable = Object.freeze({
+			reason:
+				'This server was installed before it could install an older release itself. Run this command once on the machine it is installed on; it installs the release and the helper that lets the server do this itself next time.',
+			command: command(' --allow-downgrade'),
+		});
+	}
 	return Object.freeze({
 		environment: layout.scope,
 		installed,
@@ -169,6 +228,7 @@ async function describeService(
 		trigger,
 		unavailable,
 		resultPath: layout.resultPath,
+		installLatestUnavailable,
 	});
 }
 
@@ -210,6 +270,9 @@ async function describeContainer(
 			command: 'docker pull <image>',
 		});
 	}
+	const image = await readArchiveManifest(layout.imageRelease).catch(
+		() => undefined,
+	);
 	return Object.freeze({
 		environment: 'container',
 		installed,
@@ -217,6 +280,10 @@ async function describeContainer(
 		trigger: Object.freeze({ kind: 'spawn' }),
 		unavailable,
 		resultPath: layout.resultPath,
+		installLatestUnavailable: unavailable,
+		...(image === undefined
+			? {}
+			: { floor: Object.freeze({ channel: image.channel, version: image.version }) }),
 	});
 }
 
@@ -237,8 +304,8 @@ function message(error: unknown): string {
 export async function findAvailable(
 	installed: InstalledRelease,
 	source: ReleaseSource,
-): Promise<Pick<UpgradeCheckReport, 'available' | 'checkError'>> {
-	if (installed.channel === 'source') return { available: null };
+): Promise<Pick<UpgradeCheckReport, 'available' | 'latest' | 'checkError'>> {
+	if (installed.channel === 'source') return { available: null, latest: null };
 	try {
 		const resolved = await resolveUpgradeTarget(undefined, installed, source);
 		const published =
@@ -249,28 +316,92 @@ export async function findAvailable(
 		if (order === 'newer') {
 			return {
 				available: Object.freeze({ version: resolved.version, ...published }),
+				latest: Object.freeze({
+					version: resolved.version,
+					...published,
+					order: 'newer',
+				}),
 			};
 		}
-		if (order !== 'unknown') return { available: null };
-		if (resolved.assets === undefined) return { available: null };
+		if (order !== 'unknown')
+			return {
+				available: null,
+				latest: Object.freeze({ version: resolved.version, ...published, order }),
+			};
+		if (resolved.assets === undefined) return { available: null, latest: null };
 		const identity = await peekPublishedIdentity(resolved.assets.archive);
 		if (identity === undefined) {
 			return {
 				available: null,
+				latest: null,
 				checkError: `the published ${resolved.channel} build does not say which commit it was built from`,
 			};
 		}
-		if (identity.revision === installed.revision) return { available: null };
+		if (identity.revision === installed.revision)
+			return {
+				available: null,
+				latest: Object.freeze({
+					version: resolved.version,
+					revision: identity.revision,
+					...published,
+					order: 'same',
+				}),
+			};
+		const different = Object.freeze({
+			version: resolved.version,
+			revision: identity.revision,
+			...published,
+		});
 		return {
-			available: Object.freeze({
-				version: resolved.version,
-				revision: identity.revision,
-				...published,
-			}),
+			available: different,
+			latest: Object.freeze({ ...different, order: 'newer' }),
 		};
 	} catch (error) {
-		return { available: null, checkError: message(error) };
+		return { available: null, latest: null, checkError: message(error) };
 	}
+}
+
+/**
+ * Whether a container whose image carries `floor` would pass over a staged
+ * `version` on `channel`. Only a tagged release has an order to compare: a
+ * rolling build is accepted for as long as the image is the one it was staged
+ * over (see `selectRelease`).
+ */
+export function belowImageFloor(
+	floor: { readonly channel: string; readonly version: string },
+	channel: string,
+	version: string,
+): boolean {
+	return (
+		floor.channel === 'tag' &&
+		channel === 'tag' &&
+		compareVersions(version, floor.version) < 0
+	);
+}
+
+/**
+ * Why the channel's latest release cannot be installed here, after ordering
+ * it. Only a release that is not the installed one is ever installable, and a
+ * container cannot run a tagged release older than the one its image carries:
+ * its entrypoint would pass the staged release over.
+ */
+function installLatestBlocked(
+	described: Described,
+	latest: UpgradeCheckReport['latest'],
+): UpgradeCheckReport['installLatestUnavailable'] {
+	if (described.installLatestUnavailable !== null)
+		return described.installLatestUnavailable;
+	if (latest === null || latest.order !== 'older') return null;
+	const floor = described.floor;
+	if (
+		floor !== undefined &&
+		belowImageFloor(floor, described.installed.channel, latest.version)
+	)
+		return Object.freeze({
+			reason: `This container's image carries ${floor.version}, and a container never runs a release older than its image. Its image tag decides its version: pull the tag you want and recreate the container.`,
+			command: 'docker pull <image>',
+		});
+	return null;
 }
 
 export async function runUpgradeCheck(
@@ -297,7 +428,7 @@ export async function runUpgradeCheck(
 		);
 	}
 
-	const { available, checkError } = await findAvailable(described.installed, {
+	const { available, latest, checkError } = await findAvailable(described.installed, {
 		architecture: dependencies.architecture ?? described.architecture,
 		...(dependencies.repository === undefined
 			? {}
@@ -331,6 +462,8 @@ export async function runUpgradeCheck(
 		modes,
 		trigger: described.trigger,
 		unavailable: described.unavailable,
+		latest,
+		installLatestUnavailable: installLatestBlocked(described, latest),
 		lastResult:
 			last === undefined
 				? null
