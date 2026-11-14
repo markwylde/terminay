@@ -119,6 +119,11 @@ const spawnRequest = (sessionId, extra = {}) => ({
 /** Let queued socket writes and their handlers run. */
 const settle = () => delay(50);
 
+async function until(condition, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition() && Date.now() < deadline) await delay(10);
+}
+
 function collect(stream) {
   const chunks = [];
   const exits = [];
@@ -610,7 +615,7 @@ test('parser exhaustion refuses presentation without ending the process or its l
  const spawned = await client.spawn(spawnRequest('exhausted'));
  const raw = collect(spawned.stream);
  pty.children[0].emitData('x'.repeat(2 * 1024 * 1024));
- await settle();
+ await until(() => raw.text().length >= 2 * 1024 * 1024);
  assert.equal(raw.text().length, 2 * 1024 * 1024);
  spawned.stream.release();
  const recovered = await client.attach('exhausted', 0);
