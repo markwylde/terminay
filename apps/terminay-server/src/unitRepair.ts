@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 /**
  * A standalone server that finds itself started under a systemd private
- * `/tmp` asks for its unit to be repaired (ADR-0115).
+ * `/tmp` asks for its unit to be repaired (ADR-0116).
  *
  * `PrivateTmp=true` gives each run of the service its own `/tmp` and deletes it
  * when that run stops. Terminals outlive the run, so after a restart every held

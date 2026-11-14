@@ -16,8 +16,8 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0115-a-session-holder-takes-new-sessions-only-while-its-environment-is-healthy.md - a holder must pass an environment health check to receive new sessions, the unit must not give the service a filesystem view that systemd tears down on stop, and survival is proven by using the shell.
+- openspec/adr/0116-a-session-holder-takes-new-sessions-only-while-its-environment-is-healthy.md - a holder must pass an environment health check to receive new sessions, the unit must not give the service a filesystem view that systemd tears down on stop, and survival is proven by using the shell.
 
 ## Notes
 
-- ADR-0115 extends ADR-0035 rather than superseding it: the drain rule stands and gains one more cause.
+- ADR-0116 extends ADR-0035 rather than superseding it: the drain rule stands and gains one more cause.

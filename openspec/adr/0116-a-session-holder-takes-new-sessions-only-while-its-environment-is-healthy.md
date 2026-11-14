@@ -1,4 +1,4 @@
-# ADR-0115: A session holder takes new sessions only while its environment is healthy
+# ADR-0116: A session holder takes new sessions only while its environment is healthy
 
 Status: accepted
 Date: 2026-11-13

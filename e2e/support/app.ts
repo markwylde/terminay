@@ -110,7 +110,34 @@ export async function openMacrosSettings(
   return openSettingsWindow(electronApp, page, { sectionId: 'macros' })
 }
 
-/** Settings › Remote Access, where exposure and saved servers are managed. */
+/** Settings at one place's category. `place` is `device` for this device's
+ * tile, or a server's name for its tile. The request opens the place that has
+ * the category; the rail then moves to the named place when it differs. */
+export async function openSettingsAt(
+  electronApp: ElectronApplication,
+  page: Page,
+  place: 'device' | string,
+  categoryId: string,
+): Promise<Page> {
+  const settings = await openSettingsWindow(electronApp, page, { sectionId: categoryId })
+  const tile =
+    place === 'device'
+      ? settings.locator('[data-settings-place="device"]')
+      : settings.locator(`[data-settings-place-name="${place}"]`)
+  await tile.waitFor({ state: 'visible' })
+  if ((await tile.getAttribute('aria-pressed')) !== 'true') await tile.click()
+  return settings
+}
+
+/** Settings › This device › Servers, where saved servers are managed. */
+export async function openServersSettings(
+  electronApp: ElectronApplication,
+  page: Page,
+): Promise<Page> {
+  return openSettingsWindow(electronApp, page, { sectionId: 'servers' })
+}
+
+/** Settings › a server › Remote Access, where that server's exposure is managed. */
 export async function openRemoteAccessSettings(
   electronApp: ElectronApplication,
   page: Page,

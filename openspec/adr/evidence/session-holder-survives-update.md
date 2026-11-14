@@ -136,7 +136,7 @@ upgrade, an x64 machine, and a user-scope install.
 
 ## Restart under PrivateTmp
 
-Recorded 2026-11-13 for ADR-0115. Debian 12 in a privileged Podman container
+Recorded 2026-11-13 for ADR-0116. Debian 12 in a privileged Podman container
 with systemd as PID 1, linux-arm64 archive built from this change, system
 scope, `runAs: terminay`, a purged fresh install per scenario:
 

@@ -205,7 +205,7 @@ jobs:
         if: ${{ always() }}
         run: sh scripts/prune-ci-docker-images.sh
 
-  # ADR-0115: restart this commit's standalone archive under a real systemd and
+  # ADR-0116: restart this commit's standalone archive under a real systemd and
   # read from shell output that kept and new terminals can still use /tmp.
   standalone-systemd-restart:
     name: Standalone systemd restart (linux-x64)

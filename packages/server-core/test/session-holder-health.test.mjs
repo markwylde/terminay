@@ -18,7 +18,7 @@ import {
 } from "../dist/index.js";
 
 /**
- * ADR-0115: a holder an earlier server launched takes new sessions only while
+ * ADR-0116: a holder an earlier server launched takes new sessions only while
  * its environment is healthy, and its sessions are marked only when their
  * temporary directory is positively broken.
  */

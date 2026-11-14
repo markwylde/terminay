@@ -24,7 +24,7 @@ export interface TerminalPanelAttachment {
   readonly position: number;
   readonly closed: boolean;
   readonly presentation: TerminalPresentationState;
-  /** The session's temporary directory is unusable (ADR-0115). */
+  /** The session's temporary directory is unusable (ADR-0116). */
   readonly degraded?: TerminalClientAttachment["degraded"];
   readonly onEvent: (listener: (event: TerminalStreamEvent) => void) => () => void;
   readonly onOutput: (listener: (event: TerminalStreamOutputEvent) => void) => () => void;

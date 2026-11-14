@@ -234,7 +234,7 @@ export interface TerminalSessionSnapshot extends TerminalIdentity {
 	readonly dimensions: TerminalDimensions;
 	readonly exit?: TerminalExitMetadata;
 	/** A shell kept across a restart whose temporary directory is gone or
-	 * read-only (ADR-0115). Shown to the user; nothing acts on it. */
+	 * read-only (ADR-0116). Shown to the user; nothing acts on it. */
 	readonly degraded?: 'tmp-unusable';
 }
 

@@ -279,15 +279,15 @@ The chooser SHALL show at most the five most recent folders of the list it prese
 #### Scenario: Few recent folders
 
 - **WHEN** the server holds five or fewer recent folders
-- **THEN** every one is listed, with no search box and no Show more control
+- **THEN** every one is listed below the search box, with no Show more control
 
 ### Requirement: The chooser searches every recent folder
 
-When the server holds more than five recent folders, the chooser SHALL show a search box above the list, reachable with the arrow keys and Tab. When the search box first appears outside the compact layout, it SHALL take keyboard focus if focus is then on **Open a folder** or on nothing, and SHALL otherwise leave focus where it is. In the compact layout it SHALL NOT take focus, so a phone's on-screen keyboard does not cover the chooser. A query SHALL match a folder when every whitespace-separated term appears, ignoring case, in its name or full path, and SHALL search every recent folder of the server. Matches SHALL keep recency order and collapse to five as the full list does. Enter SHALL open the first available match; Escape SHALL clear the query. A query that matches nothing SHALL say so.
+When the server holds any recent folder, the chooser SHALL show a search box above the list, reachable with the arrow keys and Tab. When the search box first appears outside the compact layout, it SHALL take keyboard focus if focus is then on **Open a folder** or on nothing, and SHALL otherwise leave focus where it is. In the compact layout it SHALL NOT take focus, so a phone's on-screen keyboard does not cover the chooser. A query SHALL match a folder when every whitespace-separated term appears, ignoring case, in its name or full path, and SHALL search every recent folder of the server. Matches SHALL keep recency order and collapse to five as the full list does. Enter SHALL open the first available match; Escape SHALL clear the query. A query that matches nothing SHALL say so.
 
 #### Scenario: Search box focused on show
 
-- **WHEN** a new project's chooser is shown outside the compact layout for a server holding more than five recent folders, and the user has not moved focus while the list loaded
+- **WHEN** a new project's chooser is shown outside the compact layout for a server holding recent folders, and the user has not moved focus while the list loaded
 - **THEN** the search box has keyboard focus, so typing searches at once
 
 #### Scenario: Focus already moved
@@ -297,7 +297,7 @@ When the server holds more than five recent folders, the chooser SHALL show a se
 
 #### Scenario: Compact layout keeps focus off the search box
 
-- **WHEN** the chooser is shown in the compact layout for a server holding more than five recent folders
+- **WHEN** the chooser is shown in the compact layout for a server holding recent folders
 - **THEN** the search box appears without taking focus
 
 #### Scenario: Type, arrow down, Enter
@@ -319,3 +319,8 @@ When the server holds more than five recent folders, the chooser SHALL show a se
 
 - **WHEN** the query matches no recent folder
 - **THEN** the chooser says no recent projects match it
+
+#### Scenario: Search box with few recent folders
+
+- **WHEN** the chooser is shown for a server holding two recent folders
+- **THEN** the search box is shown above them

@@ -279,7 +279,7 @@ export interface TerminalAttachResult {
 	readonly presentation: TerminalPresentationState;
 	/** Present only for a fresh attachment backed by a pinned checkpoint. */
 	readonly checkpoint?: TerminalPresentationCheckpointMetadata;
-	/** The session's temporary directory is no longer usable (ADR-0115). */
+	/** The session's temporary directory is no longer usable (ADR-0116). */
 	readonly degraded?: TerminalSessionDegradation;
 }
 

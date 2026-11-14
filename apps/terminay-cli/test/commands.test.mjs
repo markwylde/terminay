@@ -2487,7 +2487,7 @@ test('install does not call a server running whose terminals cannot start', asyn
 	);
 });
 
-// ADR-0115: the unit's PrivateTmp follows the release that runs, changes only
+// ADR-0116: the unit's PrivateTmp follows the release that runs, changes only
 // between the stop and the start, and is repaired even when nothing upgrades.
 
 const UNSAFE_THEN_SAFE = [

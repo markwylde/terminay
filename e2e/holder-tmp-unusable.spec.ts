@@ -7,7 +7,7 @@ import { createTerminal, settledTerminalSessionId } from './support/terminal-ses
 
 /**
  * A terminal kept across a relaunch whose temporary directory is gone says so,
- * and a new terminal is not affected (ADR-0115).
+ * and a new terminal is not affected (ADR-0116).
  *
  * The first launch runs with a TMPDIR of its own, which its session holder and
  * shell inherit. Terminay quits keeping the terminal, that directory is

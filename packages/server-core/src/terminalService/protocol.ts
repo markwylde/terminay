@@ -1184,7 +1184,7 @@ export function createTerminalOperationRegistry(
 				clientId,
 				attachment.attachmentId,
 			),
-			// ADR-0115: the panel says so; input is unaffected.
+			// ADR-0116: the panel says so; input is unaffected.
 			...(snapshot?.degraded === undefined
 				? {}
 				: { degraded: snapshot.degraded }),

@@ -58,7 +58,7 @@ export type SessionHolderObservationReport =
 			readonly kind: 'drained';
 			readonly holder: SessionHolderIdentity;
 			/** Another build launched it, or its environment failed, or could
-			 * not be, checked (ADR-0115). */
+			 * not be, checked (ADR-0116). */
 			readonly cause: 'build-mismatch' | 'unhealthy' | 'health-unknown';
 			readonly facts?: HolderHealthFacts;
 			/** Its sessions are shown as having lost their temporary directory. */

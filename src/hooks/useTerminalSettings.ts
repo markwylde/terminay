@@ -15,7 +15,20 @@ export interface TerminalSettingsClient {
 	update<T = JsonValue>(settings: JsonValue): Promise<T>;
 	reset<T = JsonValue>(): Promise<T>;
 	onChanged(listener: (settings: JsonValue) => void): () => void;
+	/**
+	 * Writes only one place's settings: `device` touches only this device's
+	 * store and sends the server nothing; `server` commits only server-owned
+	 * settings and leaves the device's untouched (ADR-0115).
+	 */
+	updatePlace?<T = JsonValue>(place: SettingsPlace, settings: JsonValue): Promise<T>;
+	/** Resets only one place's settings to their defaults. */
+	resetPlace?<T = JsonValue>(place: SettingsPlace): Promise<T>;
+	/** The effective settings from this device's store alone, without asking
+	 * the server: what device pages show while the server cannot answer. */
+	getDevice?<T = JsonValue>(): Promise<T>;
 }
+
+export type SettingsPlace = 'device' | 'server';
 
 const TerminalSettingsClientContext = createContext<TerminalSettingsClient | undefined>(undefined);
 
@@ -46,6 +59,12 @@ export function createServerTerminalSettingsClient(
 				connectionHostSettings,
 			),
 		);
+	// The device's own values over the last server state seen, or over the
+	// defaults when the server has not answered: no server round trip.
+	const deviceEffectiveSettings = () =>
+		lastServerState === null
+			? normalizeTerminalSettings(mergeSettings(defaultTerminalSettings, connectionHostSettings))
+			: effectiveSettings(lastServerState);
 	return {
 		async get<T>() {
 			lastServerState = await client.get<JsonValue>();
@@ -70,6 +89,41 @@ export function createServerTerminalSettingsClient(
 			return normalizeTerminalSettings(
 				mergeSettings(mergeSettings(defaultTerminalSettings, state), connectionHostSettings),
 			) as T;
+		},
+		async updatePlace<T>(place: SettingsPlace, settings: JsonValue) {
+			if (place === 'device') {
+				const selectedDeviceSettings = selectConnectionHostSettings(settings);
+				const deviceWrite = updateDeviceTerminalSettings(selectedDeviceSettings);
+				if (!hasNativeSettingsHost())
+					writeConnectionHostSettings(selectedDeviceSettings);
+				connectionHostSettings = (await deviceWrite) ?? selectedDeviceSettings;
+				if (!hasNativeSettingsHost())
+					writeConnectionHostSettings(connectionHostSettings);
+				return deviceEffectiveSettings() as T;
+			}
+			const current = serverSettings(await client.get<JsonValue>());
+			lastServerState = await client.update<JsonValue>(
+				selectServerSettings(settings, current),
+			);
+			return effectiveSettings(lastServerState) as T;
+		},
+		async resetPlace<T>(place: SettingsPlace) {
+			if (place === 'device') {
+				const defaultDeviceSettings = selectConnectionHostSettings(
+					defaultTerminalSettings as unknown as JsonValue,
+				);
+				connectionHostSettings =
+					(await updateDeviceTerminalSettings(defaultDeviceSettings)) ??
+					defaultDeviceSettings;
+				if (!hasNativeSettingsHost())
+					writeConnectionHostSettings(connectionHostSettings);
+				return deviceEffectiveSettings() as T;
+			}
+			lastServerState = await client.reset<JsonValue>();
+			return effectiveSettings(lastServerState) as T;
+		},
+		async getDevice<T>() {
+			return deviceEffectiveSettings() as T;
 		},
 		async reset<T>() {
 			const defaultDeviceSettings = selectConnectionHostSettings(

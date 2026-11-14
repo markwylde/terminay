@@ -812,7 +812,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		null,
 	);
 	const [terminalInputNotice, setTerminalInputNotice] = useState<TerminalInputNotice | null>(null);
-	// ADR-0115: the server found this shell's temporary directory unusable.
+	// ADR-0116: the server found this shell's temporary directory unusable.
 	const [degraded, setDegraded] = useState<string | undefined>(undefined);
 	const dismissDegraded = useCallback(() => setDegraded(undefined), []);
 	const resumeTerminalInputRef = useRef<() => boolean>(() => false);

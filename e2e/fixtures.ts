@@ -26,6 +26,8 @@ import {
 	openMacroLauncher,
 	openMacrosSettings,
 	openRemoteAccessSettings,
+	openServersSettings,
+	openSettingsAt,
 	openSettingsWindow,
 	prepareWindow,
 	sendAppCommand,
@@ -50,6 +52,8 @@ type ElectronFixtures = {
 		) => Promise<void>;
 		openMacrosSettings: (page?: Page) => Promise<Page>;
 		openRemoteAccessSettings: (page?: Page) => Promise<Page>;
+		openServersSettings: (page?: Page) => Promise<Page>;
+		openSettingsAt: (place: 'device' | string, categoryId: string, page?: Page) => Promise<Page>;
 		openSettingsWindow: (options?: {
 			page?: Page;
 			sectionId?: string;
@@ -372,7 +376,7 @@ export async function launchDesktopApp(options: {
 }> {
 	const { tempDir, userDataDir, testInfo } = options;
 	// A holder whose TMPDIR is deleted after it was started is what this spec
-	// is about (ADR-0115): its first launch gets a directory of its own.
+	// is about (ADR-0116): its first launch gets a directory of its own.
 	const temporaryDirectory =
 		options.temporaryDirectory ??
 		(path.basename(testInfo.file) === 'holder-tmp-unusable.spec.ts'
@@ -619,6 +623,10 @@ export const test = base.extend<ElectronFixtures>({
 				openMacrosSettings(electronApp, page),
 			openRemoteAccessSettings: (page = mainWindow) =>
 				openRemoteAccessSettings(electronApp, page),
+			openServersSettings: (page = mainWindow) =>
+				openServersSettings(electronApp, page),
+			openSettingsAt: (place, categoryId, page = mainWindow) =>
+				openSettingsAt(electronApp, page, place, categoryId),
 			openSettingsWindow: (options) =>
 				openSettingsWindow(electronApp, options?.page ?? mainWindow, {
 					sectionId: options?.sectionId,

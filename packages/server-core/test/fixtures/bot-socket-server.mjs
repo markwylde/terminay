@@ -10,6 +10,25 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { extract } from 'tar';
 
+/** The filter keys Docker's `GET /containers/json` accepts. */
+const DOCKER_CONTAINER_FILTERS = new Set([
+	'ancestor',
+	'before',
+	'expose',
+	'exited',
+	'health',
+	'id',
+	'isolation',
+	'is-task',
+	'label',
+	'name',
+	'network',
+	'publish',
+	'since',
+	'status',
+	'volume',
+]);
+
 export async function startBotSocketServer(root, options = {}) {
 	await mkdir(root, { recursive: true });
 	const directory = await mkdtemp(path.join(tmpdir(), 'bot-api-'));
@@ -239,6 +258,13 @@ export async function startBotSocketServer(root, options = {}) {
 			}
 			if (p[0] === 'containers' && p[1] === 'json') {
 				const filters = JSON.parse(url.searchParams.get('filters') ?? '{}');
+				// Docker answers any other filter key with 400 (Podman accepts more,
+				// such as `label!`), so the fake is as strict as the stricter engine.
+				const unsupported = Object.keys(filters).filter(
+					(key) => !DOCKER_CONTAINER_FILTERS.has(key),
+				);
+				if (unsupported.length)
+					return send({ message: `invalid filter '${unsupported[0]}'` }, 400);
 				const args = [
 					'container',
 					'ls',
@@ -248,12 +274,14 @@ export async function startBotSocketServer(root, options = {}) {
 					),
 				];
 				const result = await invoke(args);
+				const ids = result.text.trim().split(/\s+/).filter(Boolean);
 				return send(
-					result.text
-						.trim()
-						.split(/\s+/)
-						.filter(Boolean)
-						.map((Id) => ({ Id })),
+					await Promise.all(
+						ids.map(async (Id) => {
+							const r = await read('container', Id);
+							return { Id, Labels: r?.Config?.Labels ?? r?.Labels ?? {} };
+						}),
+					),
 				);
 			}
 			if (

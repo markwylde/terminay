@@ -38,7 +38,7 @@ export interface ArchiveManifest {
 	/**
 	 * The release keeps its fixed-name scratch files in an owner-only,
 	 * per-account directory, so it may run with the host's shared temporary
-	 * directory (ADR-0115). Absent on every release before that.
+	 * directory (ADR-0116). Absent on every release before that.
 	 */
 	readonly sharedTmpSafe?: boolean;
 }

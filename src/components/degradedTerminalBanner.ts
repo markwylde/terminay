@@ -3,7 +3,7 @@ import { createElement, type ReactElement } from 'react';
 import { ErrorBanner } from './ErrorBanner.ts';
 
 /**
- * ADR-0115: a shell kept across a server restart whose temporary directory is
+ * ADR-0116: a shell kept across a server restart whose temporary directory is
  * gone or read-only. The server cannot give it a new one, but new terminals
  * get a working one, and this says exactly that. It is the workspace's usual
  * dismissable error bar, across the top of the panel: it takes no focus and

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 /**
  * Whether a session holder's environment can still serve new terminals
- * (ADR-0115). Linux only: elsewhere there are no mount namespaces to differ.
+ * (ADR-0116). Linux only: elsewhere there are no mount namespaces to differ.
  *
  * A holder outlives the server that launched it. Under systemd's `PrivateTmp`
  * the run that launched it has its `/tmp` deleted when it stops, and the

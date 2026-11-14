@@ -445,7 +445,7 @@ else if (options.command === 'mcp') {
 								? {}
 								: { host: options.healthHost }),
 						});
-			// ADR-0115: what this server knows about its own unit's /tmp, for
+			// ADR-0116: what this server knows about its own unit's /tmp, for
 			// `daemon status`. Settled in the background after start-up.
 			let unitRepair: UnitRepairState = 'not-needed';
 			const start = async (): Promise<void> => {

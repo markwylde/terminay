@@ -5,7 +5,7 @@ import test from 'node:test';
 import { runSystemdRestart, SCENARIOS } from './standalone-systemd-restart.mjs';
 
 /**
- * ADR-0115's gate. The real run needs a privileged systemd container and an
+ * ADR-0116's gate. The real run needs a privileged systemd container and an
  * archive for the daemon's architecture, so it runs when
  * TERMINAY_SYSTEMD_ARCHIVE names one (the `standalone-systemd-restart` CI job
  * does). The contract below holds everywhere.

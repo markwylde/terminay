@@ -382,7 +382,7 @@ async function upgradeRelease(
 	await activate(layout, installed.name);
 	// Changed only now, between the stop and the start, and put back exactly
 	// on rollback: the release that runs decides whether it may share /tmp
-	// (ADR-0115), so an older one never runs without its private /tmp.
+	// (ADR-0116), so an older one never runs without its private /tmp.
 	const unitForNew = unitForRelease(
 		unitAfter,
 		releaseSharesTmpSafely(installed.manifest),

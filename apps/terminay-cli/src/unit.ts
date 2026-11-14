@@ -134,7 +134,7 @@ export interface UnitConfiguration {
  * started them (`KillMode=process`, ADR-0035), so every shell, and every shell
  * started later by the same session holder, would be left with a `/tmp` that
  * no longer exists. A release that keeps its scratch files safe in a shared
- * temporary directory (ADR-0115) therefore runs without it. An older release
+ * temporary directory (ADR-0116) therefore runs without it. An older release
  * wrote clipboard images to a fixed shared path, so it keeps the private one.
  */
 export const UNIT_PRIVATE_TMP_LINE = 'PrivateTmp=true';

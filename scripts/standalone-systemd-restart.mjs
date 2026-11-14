@@ -8,7 +8,7 @@ import { basename, join, resolve } from 'node:path';
 /**
  * Restart a real standalone server under a real systemd and prove, from shell
  * output alone, that every terminal kept across the restart and every new one
- * can still use /tmp (ADR-0115).
+ * can still use /tmp (ADR-0116).
  *
  *   node scripts/standalone-systemd-restart.mjs --archive <terminay-server-*.tar.gz> [--scenarios A,B,C]
  *

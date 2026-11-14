@@ -159,7 +159,7 @@ export interface SessionHolderPtyFactoryOptions extends NodePtyFactoryOptions {
 	readonly onObservation?: SessionHolderObserver;
 	/**
 	 * How a holder this server did not launch is checked before it is given new
-	 * sessions (ADR-0115). Defaults to procfs on Linux; `false`, and every other
+	 * sessions (ADR-0116). Defaults to procfs on Linux; `false`, and every other
 	 * platform, check nothing.
 	 */
 	readonly health?: SessionHolderHealthCheck | false;

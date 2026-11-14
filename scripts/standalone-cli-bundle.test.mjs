@@ -175,7 +175,7 @@ test('the archive manifest declares it may share /tmp, which is what drops Priva
 		'utf8',
 	);
 	const manifest = builder.slice(builder.indexOf('const manifest = {'));
-	// ADR-0115: only a release that keeps its scratch files in an owner-only
+	// ADR-0116: only a release that keeps its scratch files in an owner-only
 	// per-account directory may run with the host's shared /tmp.
 	assert.match(
 		manifest.slice(0, manifest.indexOf('};')),

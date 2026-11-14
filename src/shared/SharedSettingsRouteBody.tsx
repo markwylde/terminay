@@ -34,6 +34,12 @@ export interface SharedSettingsRouteCategorySection {
 
 export interface SharedSettingsRouteBodyProps {
   readonly title?: string
+  /** One line under the title: what the place is (Settings places rail). */
+  readonly subtitle?: string
+  /** The places rail, drawn before the category list. */
+  readonly rail?: ReactNode
+  /** Where the shown page's settings are saved and who they reach. */
+  readonly scopeLine?: string
   readonly query: string
   readonly queryPlaceholder?: string
   readonly categories: readonly SharedSettingsRouteCategory[]
@@ -63,6 +69,11 @@ export interface SharedSettingsRouteBodyProps {
 export const SETTINGS_SIDEBAR_WIDTH = 232
 export const SETTINGS_LIST_WIDTH = 264
 export const SETTINGS_DETAIL_MIN_WIDTH = 420
+export const SETTINGS_RAIL_WIDTH = 72
+/** With the rail beside them, the sidebar and detail give back its width, so a
+ * window that held three columns without the rail still holds them with it. */
+export const SETTINGS_RAIL_SIDEBAR_WIDTH = 200
+export const SETTINGS_RAIL_DETAIL_MIN_WIDTH = 380
 
 type NarrowStage = 'sidebar' | 'list' | 'detail'
 
@@ -107,6 +118,9 @@ function useElementWidth<T extends HTMLElement>(): [Ref<T>, number | null] {
  */
 export function SharedSettingsRouteBody({
   title = 'Settings',
+  subtitle,
+  rail,
+  scopeLine,
   query,
   queryPlaceholder = 'Search settings...',
   categories,
@@ -129,7 +143,13 @@ export function SharedSettingsRouteBody({
 }: SharedSettingsRouteBodyProps) {
   const [shellRef, width] = useElementWidth<HTMLDivElement>()
   const hasList = listColumn !== undefined
-  const neededWidth = SETTINGS_SIDEBAR_WIDTH + (hasList ? SETTINGS_LIST_WIDTH : 0) + SETTINGS_DETAIL_MIN_WIDTH
+  const neededWidth =
+    rail === undefined
+      ? SETTINGS_SIDEBAR_WIDTH + (hasList ? SETTINGS_LIST_WIDTH : 0) + SETTINGS_DETAIL_MIN_WIDTH
+      : SETTINGS_RAIL_WIDTH +
+        SETTINGS_RAIL_SIDEBAR_WIDTH +
+        (hasList ? SETTINGS_LIST_WIDTH : 0) +
+        SETTINGS_RAIL_DETAIL_MIN_WIDTH
   const narrow = width !== null && width < neededWidth
   const [stage, setStage] = useState<NarrowStage>('detail')
 
@@ -163,11 +183,18 @@ export function SharedSettingsRouteBody({
         data-shared-route-body="settings"
         data-settings-layout={narrow ? 'narrow' : hasList ? 'columns' : 'page'}
         data-settings-stage={narrow ? stage : undefined}
+        data-settings-rail={rail === undefined ? undefined : 'true'}
       >
+        {rail === undefined ? null : (
+          <div className="settings-rail-slot" hidden={narrow && stage !== 'sidebar'}>
+            {rail}
+          </div>
+        )}
         <aside className="settings-sidebar" hidden={narrow && stage !== 'sidebar'}>
           <header className="settings-column-header settings-sidebar-header">
             <div className="settings-brand">
               <h1>{title}</h1>
+              {subtitle === undefined ? null : <p className="settings-brand-subtitle">{subtitle}</p>}
             </div>
           </header>
           <div className="settings-sidebar-tools">
@@ -236,7 +263,14 @@ export function SharedSettingsRouteBody({
             {detailActions === undefined ? null : <div className="settings-detail-actions">{detailActions}</div>}
           </header>
           <main className="settings-main" ref={contentRef}>
-            <div className="settings-content">{children}</div>
+            <div className="settings-content">
+              {scopeLine === undefined ? null : (
+                <p className="settings-scope-line" data-settings-scope-line="">
+                  {scopeLine}
+                </p>
+              )}
+              {children}
+            </div>
           </main>
           {preview}
           {collapsedPreview}

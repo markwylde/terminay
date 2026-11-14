@@ -211,14 +211,19 @@ test('many recent folders show five, a search box above, and Show more below', (
 	assert.match(items.at(-1), /data-terminay-recent-show-more/u);
 });
 
-test('five or fewer recent folders show every one, with no search and no Show more', () => {
+test('five or fewer recent folders show every one below a search box, with no Show more', () => {
 	const markup = chooser({ recent: manyRecent(5) });
 	assert.equal(
 		[...markup.matchAll(/data-terminay-recent-folder=/gu)].length,
 		5,
 	);
-	assert.doesNotMatch(markup, /data-terminay-recent-search/u);
+	assert.match(markup, /data-terminay-recent-search/u);
 	assert.doesNotMatch(markup, /data-terminay-recent-show-more/u);
+});
+
+test('a single recent folder still gets a search box', () => {
+	const markup = chooser({ recent: manyRecent(1) });
+	assert.match(markup, /data-terminay-recent-search/u);
 });
 
 test('the search box and Show more are styled and sized for touch in compact', () => {

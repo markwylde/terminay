@@ -220,5 +220,5 @@ the previous unit, and a downgrade to an unsafe release puts `PrivateTmp` back.
 
 ## Open Questions
 
-None. ADR-0035 stays in force, and ADR-0115 adds the health condition and the
+None. ADR-0035 stays in force, and ADR-0116 adds the health condition and the
 unit rule.

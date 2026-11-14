@@ -385,7 +385,7 @@ test('a release that may share /tmp runs without PrivateTmp, and an older one ke
 			workingDirectory: '/home/ada',
 		};
 		// A private /tmp is deleted on every stop, and the terminals that
-		// outlive the stop would keep the deleted one (ADR-0115).
+		// outlive the stop would keep the deleted one (ADR-0116).
 		assert.doesNotMatch(
 			renderUnit({ ...base, sharedTmpSafe: true }),
 			/^PrivateTmp=/mu,

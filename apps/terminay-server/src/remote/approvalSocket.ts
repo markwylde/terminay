@@ -44,7 +44,7 @@ export interface ServerStatusSummary {
 	readonly exposeModes: readonly string[];
 	readonly publicHost?: string;
 	readonly advertiseAddress?: string;
-	/** ADR-0115: the unit gives this server a private /tmp. `requested` when
+	/** ADR-0116: the unit gives this server a private /tmp. `requested` when
 	 * the upgrade helper was asked to repair it, `needed` when the operator
 	 * must run `terminay daemon upgrade`. */
 	readonly unitRepair?: 'requested' | 'needed';
