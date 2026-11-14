@@ -27,11 +27,13 @@ present them as steps of one upgrade, not as a run of connection errors.
   or the failed step marked with why: a rollback, still on the old version, no
   report of the outcome, an incompatible server, or a server that did not come
   back. The device that started the upgrade keeps that final state until the
-  person closes it, and can hide the card while connected. The existing
-  Notifications entries for the outcome are unchanged.
-- A device that only observes the upgrade shows the card only while its
-  connection is down; an attached server that is not the window's own shows
-  the running step in its menu row only.
+  person closes it. The existing Notifications entries for the outcome are
+  unchanged.
+- The card is centred and modal over the whole window for the whole upgrade,
+  on every device following it, and never moves when the connection drops or
+  returns: there is nothing useful to do in that window meanwhile. An attached
+  server that is not the window's own shows the running step in its menu row
+  only.
 - The steps come from what the window already sees: the start reply, the
   server's published upgrade status, and the connection's phase. The protocol
   and the server are unchanged.
@@ -48,7 +50,7 @@ None.
   server upgrade" (added by the in-flight change `remote-server-in-app-upgrade`)
   replaces "the connection's drop and return SHALL use the ordinary
   reconnecting presentation" with the progress ticklist, and gains scenarios
-  for the steps, the reconnect overlay, reload, Hide, observers, and each
+  for the steps, the modal card, reload, observers, and each
   ending.
 
 ## Impact

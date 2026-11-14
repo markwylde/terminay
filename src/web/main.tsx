@@ -43,10 +43,9 @@ import {
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
 import {
-	overlayShowsUpgrade,
 	ServerUpgradeBoardHost,
-	ServerUpgradeFloatingProgress,
-	ServerUpgradeOverlayProgress,
+	ServerUpgradeModal,
+	showsUpgradeModal,
 	useServerUpgradeProgress,
 } from '../workspace/ServerUpgradeBoardHost.tsx';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
@@ -353,10 +352,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 									error={error}
 								/>
 							)}
-							<ServerUpgradeFloatingProgress
-								profileId={primary?.profileId}
-								reconnecting={phase === 'reconnecting'}
-							/>
+							<ServerUpgradeModal profileId={primary?.profileId} />
 							<ConnectedWebRendererWorkspace
 								connectionRoute={connectionRoute}
 								hostContext={desktopContext}
@@ -435,21 +431,16 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 }
 
 /**
- * The dim over a workspace whose connection is coming back. While the server
- * restarts for an upgrade this window follows, that is a step of the upgrade,
- * and its ticklist is shown in place of the stall or connection-lost text.
+ * The dim over a workspace whose connection is coming back. While the window's
+ * server is being upgraded, the upgrade's modal card is already up and the drop
+ * is one of its steps: nothing more is drawn, so the card never moves.
  */
 function SessionReconnecting({
 	error,
 	profileId,
 }: Readonly<{ error: string | undefined; profileId: string | undefined }>) {
 	const upgrade = useServerUpgradeProgress(profileId);
-	if (overlayShowsUpgrade(upgrade))
-		return (
-			<div className="session-workspace__reconnecting session-workspace__reconnecting--upgrade">
-				<ServerUpgradeOverlayProgress progress={upgrade} />
-			</div>
-		);
+	if (showsUpgradeModal(upgrade)) return null;
 	return (
 		<div
 			className="session-workspace__reconnecting"

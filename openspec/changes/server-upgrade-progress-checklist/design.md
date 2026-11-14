@@ -73,7 +73,7 @@ protocol.
 ### Steps are derived on the client
 
 The board's snapshot gains `progress` per followed profile:
-`{ profileId, label, mode, from, to, initiatedHere, hidden, steps[4], ended }`,
+`{ profileId, label, mode, from, to, initiatedHere, restarting, steps[4], outcome }`,
 each step `{ id, label, state, detail? }`.
 
 | Step | running when | done when | failed when |
@@ -113,18 +113,19 @@ window identifies the server (non-goal above covers the earlier screen).
 
 New `ServerUpgradeProgress` renders the ticklist (`role="status"`, the step
 list as an ordered list with each state in text, not colour alone). The board
-host draws it for the window's primary connection only:
+host draws it for the window's primary connection only, in **one place**: a
+fixed, full-window backdrop with the card centred. It is shown while the
+upgrade is followed (any device) and, on the device that started it, until it
+is closed after the end. The backdrop takes every pointer event, so the window
+is modal for the whole upgrade; nothing in it is useful while the server is
+being replaced, and the card never moves between a connected and a
+disconnected position.
 
-- while that connection is reconnecting and its upgrade is followed: inside
-  the reconnecting overlay, replacing the text and `LoadingDots` (the dim
-  stays), regardless of `hidden`;
-- otherwise, when `initiatedHere`, not `hidden`, and not closed: as a small
-  card over the workspace at the same position.
-
-`main.tsx` asks the board host whether to draw the overlay's own text. The
-confirmation dialog closes on acceptance as today; the card the host then draws
-is the confirmation "becoming" the progress. **Hide** (while connected, before
-the end) sets `hidden`; **Close** (after the end) removes the progress record.
+While it is shown, `main.tsx` draws only the reconnecting dim and none of its
+own text or `LoadingDots`. The confirmation dialog closes on acceptance as
+today; the card the host then draws is the confirmation "becoming" the
+progress. There is no **Hide**; **Close** (after the end, on the device that
+started it) removes the progress record.
 
 ### Status and menu row wording
 
@@ -137,9 +138,10 @@ text is unchanged; it is not drawn while the card is.
 
 ## Risks / Trade-offs
 
-- [A long-running card covers the workspace] → Only on the device that started
-  it, small, hideable while connected; on observers only while the workspace is
-  unusable anyway.
+- [The window is modal for the whole upgrade] → Intended: the server is being
+  replaced, so nothing in its window is worth doing meanwhile. Every ending,
+  including a server that never comes back, ends the modal by the reconnect
+  deadline at the latest.
 - [The board now outlives `App`] → It is disposed by the board host, which
   lives as long as the shell's connected composition; tests prove `App`'s
   unmount neither disposes it nor leaves a stale subscription or timer.

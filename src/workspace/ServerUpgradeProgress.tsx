@@ -49,26 +49,18 @@ export function serverUpgradeProgressTitle(
 
 export type ServerUpgradeProgressProps = Readonly<{
 	progress: ServerUpgradeProgressView;
-	/** Absent where the card cannot be put away: while the server restarts,
-	 * and once the upgrade has ended. */
-	onHide?: () => void;
-	/** Absent until the upgrade has ended. */
+	/** Absent until the upgrade has ended: nothing puts it away before. */
 	onClose?: () => void;
-	/** `overlay` in place of the reconnecting text; `floating` over the
-	 * workspace while it is usable. */
-	placement: 'overlay' | 'floating';
 }>;
 
 export function ServerUpgradeProgress({
 	onClose,
-	onHide,
-	placement,
 	progress,
 }: ServerUpgradeProgressProps) {
 	const title = serverUpgradeProgressTitle(progress);
 	return (
 		<section
-			className={`server-upgrade-progress server-upgrade-progress--${placement}`}
+			className="server-upgrade-progress"
 			role="status"
 			aria-live="polite"
 			aria-label={title}
@@ -109,18 +101,11 @@ export function ServerUpgradeProgress({
 					Disconnected while the server restarts. This reconnects by itself.
 				</p>
 			) : null}
-			{onHide === undefined && onClose === undefined ? null : (
+			{onClose === undefined ? null : (
 				<div className="server-upgrade-progress__actions">
-					{onHide === undefined ? null : (
-						<button type="button" onClick={onHide}>
-							Hide
-						</button>
-					)}
-					{onClose === undefined ? null : (
-						<button type="button" onClick={onClose}>
-							Close
-						</button>
-					)}
+					<button type="button" onClick={onClose}>
+						Close
+					</button>
 				</div>
 			)}
 		</section>

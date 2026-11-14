@@ -171,8 +171,6 @@ export type ServerUpgradeProgressView = Readonly<{
 	to?: string;
 	/** This device asked for the upgrade. */
 	initiatedHere: boolean;
-	/** Hidden by the person while connected; shown again while it restarts. */
-	hidden: boolean;
 	/** The connection is down because the server is restarting for it. */
 	restarting: boolean;
 	/** How it ended, once it has; the ticklist then has no running step. */
@@ -416,7 +414,6 @@ type Attempt = {
 	from: string | undefined;
 	to: string | undefined;
 	initiatedHere: boolean;
-	hidden: boolean;
 	/** A status arrived on the connection that replaced the dropped one. */
 	returned: boolean;
 	end:
@@ -547,18 +544,6 @@ export class ServerUpgradeBoard {
 		this.publish();
 	}
 
-	/** Put the ticklist away while connected. It is shown again while the
-	 * server restarts, and stays away if the upgrade ends meanwhile. */
-	hideProgress(profileId: string): void {
-		const record = this.tracked.get(profileId);
-		const attempt = record?.attempt;
-		if (record === undefined || attempt === undefined) return;
-		if (attempt.end !== undefined || attempt.hidden) return;
-		if (record.source.phase !== 'ready') return;
-		attempt.hidden = true;
-		this.publish();
-	}
-
 	/** Close a ticklist whose upgrade has ended. */
 	closeProgress(profileId: string): void {
 		const record = this.tracked.get(profileId);
@@ -613,7 +598,6 @@ export class ServerUpgradeBoard {
 			from: remembered.following.from,
 			to: remembered.following.to,
 			initiatedHere: remembered.following.initiated === true,
-			hidden: false,
 			returned: false,
 			end: undefined,
 		};
@@ -783,7 +767,6 @@ export class ServerUpgradeBoard {
 			from: record.status?.version,
 			to: record.status?.available?.version,
 			initiatedHere: false,
-			hidden: false,
 			returned: false,
 			end: undefined,
 		};
@@ -1034,7 +1017,6 @@ function progressView(
 		...(attempt.from === undefined ? {} : { from: attempt.from }),
 		...(attempt.to === undefined ? {} : { to: attempt.to }),
 		initiatedHere: attempt.initiatedHere,
-		hidden: attempt.hidden,
 		restarting,
 		...(end === undefined
 			? {}

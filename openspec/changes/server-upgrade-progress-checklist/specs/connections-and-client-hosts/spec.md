@@ -4,9 +4,9 @@
 
 Choosing **Upgrade server…** SHALL open a confirmation in the host's in-page window frame that names the server, its running version, and the available version, and states that the connection to that server drops briefly and that its terminals keep running. When the server offers the recreate mode, the confirmation SHALL offer both modes with in-place preselected, and SHALL state beside recreate that it ends every terminal on that server. Nothing SHALL be sent to the server until the user confirms. While the request is outstanding the confirmation SHALL show that it is starting; a refusal SHALL stay in the confirmation with its reason, and no progress SHALL be shown for it.
 
-Once the server accepts, or the reply is lost to the server's restart, the confirmation SHALL be replaced by a progress card for the window's server, titled with the server's name, listing the upgrade's steps in order: **Starting the upgrade**, **Installing** the target version, **Restarting** the server (**Recreating the container** in the recreate mode), and **Running** the target version. Each step SHALL show one of waiting, running, done, or failed. Until the upgrade ends exactly one step SHALL be running; once it ends no step SHALL be running. The steps SHALL be derived from the start reply, the server's published upgrade status, and the connection's phase; the client SHALL NOT poll for them. The card SHALL be exposed to assistive technology as a status region. The card SHALL be held by the window rather than by one connection's workspace, so it survives the workspace being replaced on reconnect. The device that started the upgrade SHALL remember the target version and mode with the upgrade it follows, so that after a document reload the card is shown again, with the same steps, as soon as the connection identifies the server.
+Once the server accepts, or the reply is lost to the server's restart, the confirmation SHALL be replaced by a progress card for the window's server, titled with the server's name, listing the upgrade's steps in order: **Starting the upgrade**, **Installing** the target version, **Restarting** the server (**Recreating the container** in the recreate mode), and **Running** the target version. Each step SHALL show one of waiting, running, done, or failed. Until the upgrade ends exactly one step SHALL be running; once it ends no step SHALL be running. The steps SHALL be derived from the start reply, the server's published upgrade status, and the connection's phase; the client SHALL NOT poll for them. The card SHALL be drawn in one place, centred over the whole window, and SHALL be modal for the whole time it is shown: nothing else in the window can be used beneath it, and it SHALL NOT move when the connection drops or returns. The card SHALL be exposed to assistive technology as a status region. The card SHALL be held by the window rather than by one connection's workspace, so it survives the workspace being replaced on reconnect. The device that started the upgrade SHALL remember the target version and mode with the upgrade it follows, so that after a document reload the card is shown again, with the same steps, as soon as the connection identifies the server.
 
-While the window's connection is down during an upgrade the client follows, the client SHALL present that as the **Restarting** step running: the reconnecting overlay SHALL show the progress card in place of its stall or connection-lost text, whether or not the card was hidden, and the connection's status SHALL read "Restarting for upgrade…" rather than "Reconnecting…". A device that did not start the upgrade but follows it from the server's in-progress status SHALL show the same card in that overlay, with **Starting the upgrade** done, and SHALL NOT show the card while connected. While the upgrade is in progress, the server's menu row SHALL name the running step on every client attached to it, including a server attached to the window that is not its own, and the upgrade action SHALL be unavailable on every such client.
+Every device that follows an upgrade of its window's server SHALL show the card from the moment it begins following until the upgrade ends: the device that started it from acceptance, and any other device from the server's in-progress status, with **Starting the upgrade** done. While the window's connection is down during that upgrade, the client SHALL present that as the **Restarting** step running: the card SHALL stand in place of the reconnecting overlay's stall or connection-lost text, and the connection's status SHALL read "Restarting for upgrade…" rather than "Reconnecting…". While the upgrade is in progress, the server's menu row SHALL name the running step on every client attached to it, including a server attached to the window that is not its own, and the upgrade action SHALL be unavailable on every such client.
 
 The upgrade SHALL end on the first of these, and the card SHALL show it:
 
@@ -17,7 +17,7 @@ The upgrade SHALL end on the first of these, and the card SHALL show it:
 - the server returns as one this client cannot speak to: **Running** failed, with the connection's own explanation of which side needs updating;
 - no status arrives within the reconnect deadline, or the connection layer stops trying: **Restarting** failed, saying the server did not come back, and the window keeps its ordinary offline presentation. A later return of the server SHALL NOT reopen or change that card.
 
-On the device that started the upgrade, the card SHALL keep its final state until the user closes it. While connected and before the upgrade ends, the card SHALL offer **Hide**; a hidden card SHALL stay hidden when the upgrade ends while connected, and the outcome SHALL reach the user only through the menu row and the Notifications list. The client SHALL tell a reported success, a reported rollback, a version moved to the target, and a server that did not come back once each as an entry in the header Notifications list, counted on the Notifications control like every other notification and kept until dismissed. The outcome SHALL NOT open a popup over the workspace on a device whose card is not already showing.
+The card SHALL offer nothing to dismiss it before the upgrade ends. On the device that started the upgrade, the card SHALL keep its final state until the user closes it; on any other device it SHALL be removed when the upgrade ends. The client SHALL tell a reported success, a reported rollback, a version moved to the target, and a server that did not come back once each as an entry in the header Notifications list, counted on the Notifications control like every other notification and kept until dismissed. The outcome SHALL NOT open a popup over the workspace on a device whose card is not already showing.
 
 #### Scenario: Confirmation names the versions
 
@@ -42,7 +42,7 @@ On the device that started the upgrade, the card SHALL keep its final state unti
 #### Scenario: Confirming shows the steps
 
 - **WHEN** the user confirms and the server accepts
-- **THEN** the confirmation is replaced by a progress card listing **Starting the upgrade** done, **Installing 5.2.0** running, and **Restarting** and **Running 5.2.0** waiting
+- **THEN** the confirmation is replaced by a progress card, centred and modal over the whole window, listing **Starting the upgrade** done, **Installing 5.2.0** running, and **Restarting** and **Running 5.2.0** waiting
 
 #### Scenario: Recreate wording
 
@@ -52,7 +52,7 @@ On the device that started the upgrade, the card SHALL keep its final state unti
 #### Scenario: The restart is a step, not an error
 
 - **WHEN** the server restarts during a followed upgrade and the connection drops
-- **THEN** the reconnecting overlay shows the progress card with **Restarting** running and no stall or connection-lost text, and the connection's status reads "Restarting for upgrade…"
+- **THEN** the same card, in the same place, shows **Restarting** running, no stall or connection-lost text is shown, and the connection's status reads "Restarting for upgrade…"
 
 #### Scenario: Card survives the reconnect
 
@@ -67,7 +67,7 @@ On the device that started the upgrade, the card SHALL keep its final state unti
 #### Scenario: Progress on another device
 
 - **WHEN** one device starts an upgrade while a second is attached to the same server
-- **THEN** the second device's menu row names the running step and offers no upgrade action, it shows no card while connected, and while its connection is down its reconnecting overlay shows the progress card
+- **THEN** the second device shows the same modal progress card from **Installing** onwards, offers no upgrade action, and removes the card when the upgrade ends, leaving the outcome in its Notifications list
 
 #### Scenario: Success
 
@@ -99,15 +99,10 @@ On the device that started the upgrade, the card SHALL keep its final state unti
 - **WHEN** no status arrives from the server within the reconnect deadline
 - **THEN** the progress card marks **Restarting** failed, saying the server did not come back, the Notifications list holds one entry saying so, and the window keeps its ordinary offline presentation
 
-#### Scenario: Hidden, then success
+#### Scenario: Nothing beneath the card is usable
 
-- **WHEN** the user hides the card while connected and the upgrade then succeeds without the card having been shown again
-- **THEN** no card appears, the menu row no longer shows an upgrade running, and the Notifications list holds the success entry
-
-#### Scenario: Hidden, then disconnect
-
-- **WHEN** the user hides the card and the server then restarts
-- **THEN** the reconnecting overlay shows the progress card with **Restarting** running
+- **WHEN** the card is shown while the upgrade runs
+- **THEN** the workspace beneath it cannot be used and the card offers no way to dismiss it
 
 #### Scenario: Closing the finished card
 

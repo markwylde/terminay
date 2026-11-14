@@ -817,8 +817,6 @@ test('a started upgrade is a ticklist from install, through the restart, to runn
 	);
 	assert.equal(timers.pending.size, 0);
 	// Kept until closed; closing takes the ticklist and leaves the notice.
-	board.hideProgress('vps');
-	assert.equal(board.snapshot.progress[0]?.hidden, false);
 	board.closeProgress('vps');
 	assert.equal(board.snapshot.progress.length, 0);
 	assert.equal(board.snapshot.notices.length, 1);
@@ -960,24 +958,22 @@ test('a status that says it began before the reply makes one ticklist, this devi
 	assert.equal(board.snapshot.progress[0]?.initiatedHere, true);
 });
 
-test('a hidden ticklist stays hidden through its ending, and shows while restarting', () => {
+test('nothing puts the ticklist away before the upgrade ends', () => {
 	const board = new ServerUpgradeBoard(fakeTimers());
 	const before = fakeClient(status(AVAILABLE));
 	board.sync([source('vps', before)]);
 	board.markStarted('vps', { mode: 'in-place', to: '5.2.0' });
-	board.hideProgress('vps');
-	assert.equal(board.snapshot.progress[0]?.hidden, true);
+	board.closeProgress('vps');
+	assert.equal(board.snapshot.progress.length, 1);
 	before.publish(RUNNING);
 	board.sync([source('vps', undefined, { phase: 'reconnecting' })]);
-	// Hidden, and restarting: the shell draws it in the overlay regardless.
-	assert.equal(board.snapshot.progress[0]?.hidden, true);
 	assert.equal(board.snapshot.progress[0]?.restarting, true);
-	// Closing is only for a ticklist that has ended.
 	board.closeProgress('vps');
 	assert.equal(board.snapshot.progress.length, 1);
 	board.sync([source('vps', fakeClient(SUCCEEDED))]);
-	assert.equal(board.snapshot.progress[0]?.hidden, true);
 	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	board.closeProgress('vps');
+	assert.equal(board.snapshot.progress.length, 0);
 });
 
 test('a reload mid-upgrade restores this device’s ticklist with its target and mode', () => {

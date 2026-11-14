@@ -86,58 +86,36 @@ export function useServerUpgradeProgress(
 const FALLBACK_BOARD = new ServerUpgradeBoard();
 
 /**
- * Whether the reconnecting overlay shows the ticklist in place of its own
- * text: while the window's server restarts for an upgrade it follows, and,
- * on the device that asked for it, for as long as the card is up.
+ * Whether the window's upgrade card is up: while its server's upgrade is
+ * followed, on any device, and on the device that asked for it until closed.
  */
-export function overlayShowsUpgrade(
+export function showsUpgradeModal(
 	progress: ServerUpgradeProgressView | undefined,
 ): progress is ServerUpgradeProgressView {
 	if (progress === undefined) return false;
-	// Once it has ended, a card that was hidden stays hidden: a later drop for
-	// any other reason is an ordinary reconnect.
-	return (
-		progress.outcome === undefined ||
-		(progress.initiatedHere && !progress.hidden)
-	);
-}
-
-/** The ticklist inside the reconnecting overlay. */
-export function ServerUpgradeOverlayProgress({
-	progress,
-}: Readonly<{ progress: ServerUpgradeProgressView }>) {
-	const board = useProvidedServerUpgradeBoard();
-	return (
-		<ServerUpgradeProgress
-			progress={progress}
-			placement="overlay"
-			{...(progress.outcome !== undefined && board !== undefined
-				? { onClose: () => board.closeProgress(progress.profileId) }
-				: {})}
-		/>
-	);
+	return progress.outcome === undefined || progress.initiatedHere;
 }
 
 /**
- * The ticklist over a usable workspace, on the device that asked for the
- * upgrade, until it is hidden or, once it has ended, closed.
+ * The upgrade's ticklist, centred over the whole window and modal for as long
+ * as it is up. It is drawn in this one place whether the connection is up or
+ * down, so it never moves while the server restarts; nothing beneath it is of
+ * use while the server is being replaced.
  */
-export function ServerUpgradeFloatingProgress({
+export function ServerUpgradeModal({
 	profileId,
-	reconnecting,
-}: Readonly<{ profileId: string | undefined; reconnecting: boolean }>) {
+}: Readonly<{ profileId: string | undefined }>) {
 	const board = useProvidedServerUpgradeBoard();
 	const progress = useServerUpgradeProgress(profileId);
-	if (board === undefined || progress === undefined) return null;
-	if (reconnecting || !progress.initiatedHere || progress.hidden) return null;
-	const ended = progress.outcome !== undefined;
+	if (board === undefined || !showsUpgradeModal(progress)) return null;
 	return (
-		<ServerUpgradeProgress
-			progress={progress}
-			placement="floating"
-			{...(ended
-				? { onClose: () => board.closeProgress(progress.profileId) }
-				: { onHide: () => board.hideProgress(progress.profileId) })}
-		/>
+		<div className="server-upgrade-modal" data-server-upgrade-modal>
+			<ServerUpgradeProgress
+				progress={progress}
+				{...(progress.outcome === undefined
+					? {}
+					: { onClose: () => board.closeProgress(progress.profileId) })}
+			/>
+		</div>
 	);
 }

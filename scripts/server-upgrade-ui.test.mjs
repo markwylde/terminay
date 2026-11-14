@@ -163,7 +163,6 @@ function progress(overrides = {}) {
 		from: '5.1.1',
 		to: '5.2.0',
 		initiatedHere: true,
-		hidden: false,
 		restarting: false,
 		steps: [
 			{ id: 'start', label: 'Starting the upgrade', state: 'done' },
@@ -179,7 +178,6 @@ test('the ticklist is a status region that says each step and its state in words
 	const markup = renderToStaticMarkup(
 		React.createElement(ServerUpgradeProgress, {
 			progress: progress({ restarting: true }),
-			placement: 'overlay',
 		}),
 	);
 	assert.match(markup, /role="status"[^>]*aria-label="Upgrading VPS"/);
@@ -193,15 +191,13 @@ test('the ticklist is a status region that says each step and its state in words
 	assert.doesNotMatch(markup, /<button/);
 });
 
-test('the ticklist offers Hide while it runs and Close once it has ended', () => {
+test('the ticklist has no dismiss action while it runs and Close once it has ended', () => {
 	const running = renderToStaticMarkup(
 		React.createElement(ServerUpgradeProgress, {
 			progress: progress(),
-			placement: 'floating',
-			onHide: noop,
 		}),
 	);
-	assert.match(running, />Hide</);
+	assert.doesNotMatch(running, /<button/);
 	assert.doesNotMatch(running, />Close</);
 	const failed = renderToStaticMarkup(
 		React.createElement(ServerUpgradeProgress, {
@@ -219,7 +215,6 @@ test('the ticklist offers Hide while it runs and Close once it has ended', () =>
 					},
 				],
 			}),
-			placement: 'floating',
 			onClose: noop,
 		}),
 	);
