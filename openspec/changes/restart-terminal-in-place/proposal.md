@@ -10,7 +10,7 @@ shell behind the panel and keep everything else.
 ## What Changes
 
 - A **Restart terminal** action on a terminal panel, and on the degraded
-  notice, that ends the session's shell and starts a new one in the same panel,
+  banner, that ends the session's shell and starts a new one in the same panel,
   with the same name, project, folder, working directory and shell profile.
 - **Authorization as both close and open.** A caller may restart a terminal
   only if it may close that terminal and may open one in its project. This
@@ -40,7 +40,7 @@ None.
   with the authorization, serialization, binding and cleanup rules above. This
   capability's main spec is created when `terminals-survive-restart` is
   archived, which must happen first.
-- `terminal-workspace`: the panel and the degraded notice offer **Restart
+- `terminal-workspace`: the panel and the degraded banner offer **Restart
   terminal**.
 - `mcp-server`: a `restart_terminal` tool, authorized as close plus
   open.
@@ -51,7 +51,7 @@ None.
   restart operation, per-session serialization, binding check.
 - `packages/protocol` and `packages/client-core`: a `terminal.restart` request
   and its result.
-- `src/components/TerminalPanel.tsx` and the degraded notice: the action.
+- `src/components/TerminalPanel.tsx` and the degraded banner: the action.
 - MCP tool list and its authorization tests.
 - E2E: restart a degraded terminal and see it keep its panel, name and project
   with a working `/tmp`.

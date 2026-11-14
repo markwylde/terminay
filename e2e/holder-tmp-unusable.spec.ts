@@ -79,21 +79,22 @@ test('a kept terminal whose temporary directory is gone says so, and a new termi
 		const kept = window.locator(`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`);
 		await expect(kept).toBeVisible({ timeout: READY_TIMEOUT_MS });
 
-		const notice = kept.locator('.terminal-degraded-notice');
+		const notice = kept.locator('.error-banner[data-degraded]');
 		await expect(notice).toHaveText(MESSAGE, { timeout: READY_TIMEOUT_MS });
-		await expect(notice).toHaveAttribute('role', 'status');
 		await window.screenshot({ path: testInfo.outputPath('degraded-terminal-notice.png') });
 
 		// It blocks nothing: the shell still takes input, and really has lost
 		// its temporary directory.
 		await typeLine(window, sessionId, `mkdir "$TMPDIR/probe" 2>/dev/null && echo "TMP""-OK" || echo "TMP""-GONE"`);
 		await expect(kept.locator('.xterm-rows')).toContainText('TMP-GONE', { timeout: 10_000 });
+		await notice.getByRole('button', { name: 'Dismiss error' }).click();
+		await expect(notice).toHaveCount(0);
 
 		// A new terminal goes to a new holder and has a working one.
 		const freshId = await createTerminal(window);
 		expect(freshId).not.toBe(sessionId);
 		const freshPanel = window.locator(`.terminal-panel[data-terminay-terminal-session-id="${freshId}"]`);
-		await expect(freshPanel.locator('.terminal-degraded-notice')).toHaveCount(0);
+		await expect(freshPanel.locator('.error-banner[data-degraded]')).toHaveCount(0);
 		await typeLine(window, freshId, `mkdir "$TMPDIR/probe-new" && echo "TMP""-OK" || echo "TMP""-GONE"`);
 		await expect(freshPanel.locator('.xterm-rows')).toContainText('TMP-OK', { timeout: 10_000 });
 		await expect.poll(() => holderPids(userDataDir).filter((pid) => pid !== oldHolder).length).toBe(1);

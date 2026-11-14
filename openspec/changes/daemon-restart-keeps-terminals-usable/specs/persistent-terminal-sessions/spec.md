@@ -40,7 +40,7 @@ A holder that is not healthy SHALL be drained. It SHALL keep serving its existin
 
 ### Requirement: A damaged session is flagged on its panel
 
-A live session SHALL be degraded only when its holder's `/tmp` or `TMPDIR` is missing or unwritable while the server's own probe of those paths passes. Its panel SHALL show a non-blocking banner saying that this terminal's temporary directory is no longer usable and that new terminals are not affected. The health check SHALL NOT end a session; a degraded session ends exactly as any other session does.
+A live session SHALL be degraded only when its holder's `/tmp` or `TMPDIR` is missing or unwritable while the server's own probe of those paths passes. Its panel SHALL show the workspace's dismissable error banner across its top, saying that this terminal's temporary directory is no longer usable and that new terminals are not affected. The health check SHALL NOT end a session; a degraded session ends exactly as any other session does.
 
 #### Scenario: Banner shown on a damaged session
 

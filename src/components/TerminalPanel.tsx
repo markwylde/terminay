@@ -814,6 +814,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const [terminalInputNotice, setTerminalInputNotice] = useState<TerminalInputNotice | null>(null);
 	// ADR-0115: the server found this shell's temporary directory unusable.
 	const [degraded, setDegraded] = useState<string | undefined>(undefined);
+	const dismissDegraded = useCallback(() => setDegraded(undefined), []);
 	const resumeTerminalInputRef = useRef<() => boolean>(() => false);
 	const [presentationUnavailable, setPresentationUnavailable] = useState(false);
 	// An exited or interrupted terminal has nothing to retry; a refused
@@ -3401,6 +3402,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			ref={containerRef}
 			style={terminalPanelStyle}
 		>
+			{degradedTerminalBanner(degraded, dismissDegraded)}
 			{hasTerminalNote ? (
 				<div className="terminal-note-shell">
 					<textarea
@@ -3583,7 +3585,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					Copy
 				</button>
 			) : null}
-			{degradedTerminalBanner(degraded)}
 			{terminalInputNotice ? (
 				<div className="terminal-input-notice" role="alert">
 					<span>{terminalInputNotice.message}</span>

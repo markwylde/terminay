@@ -3865,23 +3865,6 @@ body.project-tabbar-reordering .project-tabbar {
   pointer-events: auto;
 }
 
-.terminal-degraded-notice {
-  /* A corner, clear of where a prompt and its output start. */
-  position: absolute;
-  inset-inline-end: 12px;
-  inset-block-start: 8px;
-  max-inline-size: min(360px, calc(100% - 24px));
-  z-index: 11;
-  padding: 6px 10px;
-  border: 1px solid var(--terminal-note-color, #d8b86e);
-  border-radius: 6px;
-  color: var(--text-primary, #eee);
-  background: color-mix(in srgb, var(--terminal-panel-surface, #111316) 88%, transparent);
-  font-size: 12px;
-  line-height: 1.4;
-  pointer-events: none;
-}
-
 .terminal-input-notice {
   position: absolute;
   inset-inline: 12px;

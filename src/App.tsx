@@ -40,7 +40,6 @@ import {
 	Sparkles,
 	Terminal,
 	Workflow,
-	X,
 } from 'lucide-react';
 import { useIsDesktopHost } from './host/useIsDesktopHost';
 import {
@@ -114,6 +113,7 @@ import {
 } from './components/AgentsSidebar';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { DocumentationTree } from './components/DocumentationTree';
+import { ErrorBanner } from './components/ErrorBanner';
 import type {
 	FilePanelInstanceParams,
 	FilePanelSaveRegistration,
@@ -5948,20 +5948,9 @@ const ProjectWorkspace = memo(forwardRef<
 				style={{ '--project-color': project.color } as CSSProperties}
 			>
 				{errorText ? (
-					<div className="error-banner">
-						<span className="error-banner__message">
-							Operation failed: {errorText}
-						</span>
-						<button
-							type="button"
-							className="error-banner__dismiss"
-							aria-label="Dismiss error"
-							title="Dismiss"
-							onClick={dismissError}
-						>
-							<X size={14} aria-hidden="true" />
-						</button>
-					</div>
+					<ErrorBanner onDismiss={dismissError}>
+						Operation failed: {errorText}
+					</ErrorBanner>
 				) : null}
 				{isActive && compactAgentsHost != null
 					? createPortal(

@@ -9,8 +9,9 @@ import {
 } from './degradedTerminalBanner.ts';
 
 test('a session whose temporary directory is unusable says so, in exactly these words', () => {
-	const markup = renderToStaticMarkup(degradedTerminalBanner('tmp-unusable'));
-	assert.match(markup, /role="status"/u);
+	const markup = renderToStaticMarkup(
+		degradedTerminalBanner('tmp-unusable', () => {}),
+	);
 	assert.ok(
 		markup.includes(
 			'This terminal&#x27;s temporary directory is no longer usable. New terminals are not affected.',
@@ -23,28 +24,28 @@ test('a session whose temporary directory is unusable says so, in exactly these 
 	);
 });
 
-test('the notice blocks nothing: no control, no focus, no input handling', () => {
-	const markup = renderToStaticMarkup(degradedTerminalBanner('tmp-unusable'));
-	assert.doesNotMatch(markup, /<button|<input|tabindex|aria-modal|role="alert"/u);
-	const css = readFileSync(new URL('../App.css', import.meta.url), 'utf8');
-	const rule = css.slice(css.indexOf('.terminal-degraded-notice {'));
-	assert.match(
-		rule.slice(0, rule.indexOf('}')),
-		/pointer-events: none;/u,
-		'clicks reach the terminal through the notice',
+test('it is the workspace error bar, with its dismiss button', () => {
+	const markup = renderToStaticMarkup(
+		degradedTerminalBanner('tmp-unusable', () => {}),
 	);
+	assert.match(markup, /^<div class="error-banner" data-degraded="tmp-unusable">/u);
+	assert.match(markup, /class="error-banner__dismiss"/u);
+	assert.doesNotMatch(markup, /tabindex|aria-modal|role="alert"/u);
 });
 
 test('no flag, or one this build does not know, shows nothing', () => {
-	assert.equal(degradedTerminalBanner(undefined), null);
-	assert.equal(degradedTerminalBanner('something-else'), null);
+	assert.equal(degradedTerminalBanner(undefined, () => {}), null);
+	assert.equal(degradedTerminalBanner('something-else', () => {}), null);
 });
 
-test('the terminal panel shows the notice from its attachment', () => {
+test('the terminal panel shows the banner from its attachment, at its top', () => {
 	const panel = readFileSync(
 		new URL('./TerminalPanel.tsx', import.meta.url),
 		'utf8',
 	);
 	assert.match(panel, /setDegraded\(attachment\.degraded\)/u);
-	assert.match(panel, /\{degradedTerminalBanner\(degraded\)\}/u);
+	assert.match(
+		panel,
+		/ref=\{containerRef\}[\s\S]{0,80}>\s*\{degradedTerminalBanner\(degraded, dismissDegraded\)\}/u,
+	);
 });
