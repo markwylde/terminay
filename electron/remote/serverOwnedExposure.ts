@@ -15,6 +15,7 @@ import {
 	createServerRemoteExposure,
 	type ServerRemoteExposure,
 } from '../../apps/terminay-server/src/remote/serverExposure';
+import { projectRemoteAccessStatus } from '../../apps/terminay-server/src/remote/remoteAccessStatus';
 import type { RemoteAccessStatus } from '../../src/types/terminay';
 import { assertAuthenticatedRemoteAccessContract } from './desktopAuthenticatedWebRtc';
 
@@ -444,77 +445,9 @@ function projectStatus(
 		deviceName: string;
 	}>[] = [],
 ): RemoteAccessStatus {
-	const status = exposure?.status;
-	const pairing = status?.pairing;
-	const handoffUrl = exposure?.pairingHandoff?.pairingUrl ?? null;
-	const peers = (status?.peers ?? []) as readonly Readonly<{
-		state: string;
-		peerId: string;
-		deviceId: string;
-	}>[];
-	const devices = (
-		(exposure?.devices.list() ?? []) as readonly Readonly<{
-			createdAt: number;
-			deviceId: string;
-			deviceName: string;
-			lastSeenAt: number | null;
-			revokedAt: number | null;
-		}>[]
-	).filter((device) => device.revokedAt === null);
-	const namedDevice = (deviceId: string) =>
-		devices.find((device) => device.deviceId === deviceId)?.deviceName ??
-		deviceId;
-	const managerConnections = peers
-		.filter((peer) => peer.state === 'connected')
-		.map((peer) => ({
-			attachedSessionCount: 0,
-			connectionId: peer.peerId,
-			deviceId: peer.deviceId,
-			deviceName: namedDevice(peer.deviceId),
-		}));
-	const connections = [...managerConnections, ...hostedConnections];
-	const pendingApprovals = (exposure?.listPendingApprovals() ?? []).map((approval) => ({
-		approvalId: approval.approvalId,
-		deviceName: approval.deviceName,
-		matchCode: approval.matchCode,
-		expiresAt: new Date(approval.expiresAt).toISOString(),
-	}));
-	return {
-		activeConnectionCount: connections.length,
-		pendingApprovals,
-		pendingWebRtcConnectionCount: 0,
-		auditEvents: [],
-		connections,
-		// Idle (not yet exposed) is not a settings problem. The renderer treats
-		// configurationIssue as "open settings and abort" instead of exposing.
-		configurationIssue: null,
-		configurationPath: 'Terminay Server',
-		errorMessage: null,
-		isRunning: status?.exposure.state === 'exposed',
-		pairedDeviceCount: devices.length,
-		pairedDevices: devices.map((device) => ({
-			addedAt: new Date(device.createdAt).toISOString(),
-			deviceId: device.deviceId,
-			lastSeenAt:
-				device.lastSeenAt === null
-					? null
-					: new Date(device.lastSeenAt).toISOString(),
-			name: device.deviceName,
-		})),
-		webRtcPairingExpiresAt:
-			pairing === undefined ? null : new Date(pairing.expiresAt).toISOString(),
-		webRtcPairingQrCodeDataUrl: null,
-		webRtcPairingUrl: handoffUrl,
-		webRtcRoomId: pairing?.roomId ?? null,
-		webRtcStatus:
-			pairing === undefined
-				? sessionOrigin === undefined
-					? 'not-configured'
-					: 'registering'
-				: 'pairing-ready',
-		webRtcStatusMessage:
-			pairing === undefined
-				? null
-				: 'Terminay Server exposure is ready for pairing.',
-	};
+	return projectRemoteAccessStatus({
+		exposure,
+		hasSessionOrigin: sessionOrigin !== undefined,
+		hostedConnections,
+	});
 }

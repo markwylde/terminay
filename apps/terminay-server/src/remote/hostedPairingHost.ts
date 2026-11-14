@@ -387,6 +387,9 @@ export async function startHostedPairingHost(
 	let closed = false;
 	let deviceExpiresAt = Date.now() + DEVICE_HOST_AVAILABILITY_MS;
 	let pairingRefreshChain = Promise.resolve();
+	// The failure of the latest pairing refresh, kept so an explicit mint can
+	// report it while the host keeps retrying in the background.
+	let lastPairingFailure: unknown;
 
 	const diagnose = (event: HostedPairingDiagnostic) => {
 		options.onDiagnostic?.(event);
@@ -861,7 +864,9 @@ export async function startHostedPairingHost(
 			pairingGeneration += 1;
 			closeSocket(previous);
 			await registerPairing(currentHandoff);
+			lastPairingFailure = undefined;
 		} catch (error) {
+			lastPairingFailure = error;
 			diagnose({
 				type: 'failed',
 				scope: 'pairing',
@@ -955,7 +960,10 @@ export async function startHostedPairingHost(
 		close,
 		closeDevice: (deviceId) =>
 			deviceReplacements.run(deviceId, () => closeDevicePeers(deviceId)),
-		mintPairing: () => refreshPairing('mint'),
+		mintPairing: () =>
+			refreshPairing('mint').then(() => {
+				if (lastPairingFailure !== undefined) throw lastPairingFailure;
+			}),
 		waitForPairingRefresh: () => pairingRefreshChain,
 	};
 

@@ -156,12 +156,13 @@ and return it. The disruptive part (closing hosts, closing peers) is scheduled
 with `setTimeout(…, RESPONSE_GRACE_MS)` (250 ms) on the controller queue, so the
 command's result frame is written to the requesting connection before that
 connection closes. The status returned already reflects the end state (stopped,
-or devices revoked). Before the grace timer fires, the controller also refuses
-new pairing and joins (`exposed` is already false). This is a best-effort
+or devices revoked). Pending approvals are closed at once, so nothing can be
+enrolled during the grace period. This is a best-effort
 ordering, not a delivery proof. If the frame is lost, the client sees the
 connection drop it asked for. Codex finding 5 is taken in part.
-`close-connection` and `revoke-device` on the caller's own connection follow
-the same rule.
+`close-connection` and `revoke-device` act immediately. Each one names its
+target explicitly, so a caller that targets its own device has asked to be
+disconnected, and Desktop behaves the same way.
 
 ### 7. Identity reset ordering
 
@@ -184,8 +185,12 @@ Finding 9 is correct that device challenges carry the session origin, so
 changing the origin of a data root that already has paired remote devices
 would break them. The rule is therefore narrow. A `start` with **no** `--expose`
 mode and no explicit `--remote-origin` now calls `loadOrCreateSessionOrigin`
-(the same file `--expose hosted` uses), and its pairing format becomes
-`hosted-compact`. Every other combination keeps today's origin and format:
+(the same file `--expose hosted` uses). Its startup handoff keeps the local
+pairing fragment its configured origin implies, so local-HTTP pairing is
+unchanged. When a client first exposes it, the controller calls
+`remote.useHostedPairing()` and rotates to a fresh compact hosted room before
+any mode registers. The startup fragment is never advertised as an exposure
+room. Every other combination keeps today's origin and format:
 `--expose hosted`, `--expose direct`, both, or an explicit origin. Remote
 devices could only have been paired on such a server through `--expose`, which
 used either the same provisioned origin (`hosted`) or one that is still used
@@ -207,9 +212,10 @@ approval queue.
   existing standalone hosted, direct and approval tests cover it.
 - [Runtime start without `TERMINAY_UI_RENDERER_DIRECTORY` would pair a device to
   an empty page] → `expose()` refuses with the same message startup uses.
-- [The 250 ms grace keeps closed exposure briefly reachable for already-open
-  peers] → New pairing and joins are refused immediately. Only existing
-  sessions linger for that window.
+- [The 250 ms grace keeps a stopped exposure's hosts registered for that
+  window] → Pending approvals are closed at once, so no device can enroll.
+  A known device could start reconnecting in that window and is closed with
+  the rest.
 
 ## Migration Plan
 

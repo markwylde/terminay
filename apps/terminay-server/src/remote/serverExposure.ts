@@ -144,7 +144,7 @@ export class ServerRemoteExposure {
 	private readonly cleanupTimer: ReturnType<typeof setInterval> | undefined;
 	private shutdownPromise: Promise<void> | undefined;
 	private activePairingHandoff: ServerPairingHandoff | undefined;
-	private readonly pairingUrlFormat:
+	private pairingUrlFormat:
 		| 'standalone'
 		| 'direct-device'
 		| 'hosted-compact';
@@ -233,6 +233,15 @@ export class ServerRemoteExposure {
 
 	get pairingHandoff(): ServerPairingHandoff | undefined {
 		return this.activePairingHandoff;
+	}
+
+	/**
+	 * Mint later rooms as compact hosted links. A standalone server that was
+	 * not exposed at startup keeps its local pairing fragment until a client
+	 * exposes it through hosted signaling (ADR-0120).
+	 */
+	useHostedPairing(): void {
+		this.pairingUrlFormat = 'hosted-compact';
 	}
 
 	get advertisedHostName(): string {
@@ -431,6 +440,11 @@ export class ServerRemoteExposure {
 			'denied',
 		);
 		return approval;
+	}
+
+	/** Exposure stopped: discard every waiting request; nothing is enrolled. */
+	closePendingApprovals(): number {
+		return this.resolvePendingApprovals(() => true, 'closed');
 	}
 
 	/** Discard requests whose peer went away; nothing is enrolled. */

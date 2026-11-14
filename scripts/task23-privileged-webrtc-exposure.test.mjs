@@ -3,10 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 test('Desktop WebRTC exposure uses the server-owned hosted pairing host', async () => {
-	const [host, exposure, main] = await Promise.all([
+	const [host, exposure, main, statusProjection] = await Promise.all([
 		readFile('apps/terminay-server/src/remote/hostedPairingHost.ts', 'utf8'),
 		readFile('electron/remote/serverOwnedExposure.ts', 'utf8'),
 		readFile('electron/main.ts', 'utf8'),
+		readFile('apps/terminay-server/src/remote/remoteAccessStatus.ts', 'utf8'),
 	]);
 	assert.match(host, /createDeviceHostReadyMessage/u);
 	assert.match(host, /device-host-registered/u);
@@ -14,7 +15,10 @@ test('Desktop WebRTC exposure uses the server-owned hosted pairing host', async 
 	assert.match(exposure, /startHostedPairingHost/u);
 	assert.match(exposure, /createPairingLink/u);
 	assert.match(exposure, /mintPairing/u);
-	assert.match(exposure, /revokedAt === null/u);
+	// Revoked devices never appear as trusted, through the one projection
+	// Desktop and standalone share (ADR-0120).
+	assert.match(exposure, /projectRemoteAccessStatus/u);
+	assert.match(statusProjection, /revokedAt === null/u);
 	assert.match(exposure, /loadOrCreateHostedHostKey|hostKey/u);
 	assert.match(main, /new DesktopServerOwnedExposure/u);
 	assert.match(main, /parseHostedIceServers/u);
