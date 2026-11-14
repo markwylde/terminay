@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
 	SERVER_UPGRADE_CHECK_INTERVAL_MS,
 	SERVER_UPGRADE_IN_PROGRESS_DEADLINE_MS,
+	SERVER_UPGRADE_SETTLE_CHECKS_MS,
 	ServerUpgradeService,
 } from '../dist/index.js';
 
@@ -452,6 +453,82 @@ test('the outcome the upgrader recorded is reported from the first check on', as
 	assert.deepEqual(absent.service.status.upgrade, { state: 'none' });
 });
 
+test('a server started by its upgrader reads the release and outcome recorded after it was ready', async (t) => {
+	const settle = () => new Promise((resolve) => setImmediate(resolve));
+	// The check at start runs before the upgrader has recorded the new
+	// release: it still names the one this server replaced, and an earlier
+	// outcome.
+	const upgrader = fakeUpgrader([
+		report({
+			installed: { channel: 'tag', version: '5.1.1', revision: 'aaaa111' },
+			lastResult: {
+				from: '5.1.0',
+				to: '5.1.1',
+				outcome: 'succeeded',
+				at: new Date(1_000).toISOString(),
+			},
+		}),
+	]);
+	const { clock, service } = served(t, upgrader, { serverVersion: '5.2.0' });
+	service.start();
+	await settle();
+	service.clientAttached('c1');
+	await settle();
+	assert.equal(service.status.version, '5.1.1');
+	assert.equal(clock.deadlines, SERVER_UPGRADE_SETTLE_CHECKS_MS.length);
+	// The upgrader records the new release and its outcome.
+	const at = new Date(clock.now() + 2_000).toISOString();
+	upgrader.answer(
+		report({
+			installed: { channel: 'tag', version: '5.2.0', revision: 'bbbb222' },
+			available: null,
+			lastResult: { from: '5.1.1', to: '5.2.0', outcome: 'succeeded', at },
+		}),
+	);
+	clock.advance(SERVER_UPGRADE_SETTLE_CHECKS_MS[0]);
+	await settle();
+	assert.equal(service.status.version, '5.2.0');
+	assert.deepEqual(service.status.upgrade, {
+		state: 'succeeded',
+		from: '5.1.1',
+		to: '5.2.0',
+		at: Date.parse(at),
+	});
+	// Read: the remaining settle checks are dropped.
+	assert.equal(clock.deadlines, 0);
+});
+
+test('the settle checks after start are bounded, and ask only for an attached client', async (t) => {
+	const settle = () => new Promise((resolve) => setImmediate(resolve));
+	const upgrader = fakeUpgrader([report()]);
+	const { clock, service } = served(t, upgrader);
+	service.start();
+	await settle();
+	service.clientAttached('c1');
+	await settle();
+	const before = upgrader.checks;
+	let previous = 0;
+	for (const delay of SERVER_UPGRADE_SETTLE_CHECKS_MS) {
+		clock.advance(delay - previous);
+		previous = delay;
+		await settle();
+	}
+	assert.equal(
+		upgrader.checks - before,
+		SERVER_UPGRADE_SETTLE_CHECKS_MS.length,
+	);
+	assert.equal(clock.deadlines, 0);
+
+	// Nobody attached: the settle checks ask nothing.
+	const quiet = fakeUpgrader([report()]);
+	const alone = served(t, quiet);
+	alone.service.start();
+	await settle();
+	alone.clock.advance(SERVER_UPGRADE_SETTLE_CHECKS_MS.at(-1));
+	await settle();
+	assert.equal(quiet.checks, 1);
+});
+
 test('what the server can do is reported for each kind of install', async (t) => {
 	const cases = [
 		['user scope', report(), { canUpgrade: true, modes: ['in-place'] }],
@@ -731,7 +808,11 @@ test('an upgrade that ends while the server is still running stops being in prog
 
 const ahead = (overrides = {}) =>
 	report({
-		installed: { channel: 'main', version: '5.3.0-main.40.nightly', revision: 'cccc333' },
+		installed: {
+			channel: 'main',
+			version: '5.3.0-main.40.nightly',
+			revision: 'cccc333',
+		},
 		available: null,
 		latest: { version: '5.3.0-main.38.nightly', order: 'older' },
 		installLatestUnavailable: null,
@@ -753,8 +834,14 @@ test("the status names the channel's latest release and whether it can be instal
 	upgrader.answer(
 		ahead({
 			environment: 'system',
-			trigger: { kind: 'request-file', path: '/var/lib/terminay-upgrade/request' },
-			installLatestUnavailable: { reason: 'installed before', command: 'sudo terminay daemon upgrade --allow-downgrade --system' },
+			trigger: {
+				kind: 'request-file',
+				path: '/var/lib/terminay-upgrade/request',
+			},
+			installLatestUnavailable: {
+				reason: 'installed before',
+				command: 'sudo terminay daemon upgrade --allow-downgrade --system',
+			},
 		}),
 	);
 	await service.check();
@@ -772,18 +859,28 @@ test('allowOlder installs the latest release in place and is refused otherwise',
 	const { service } = served(t, upgrader);
 	await service.check();
 	// Without consent an older release is never installed.
-	await assert.rejects(service.startUpgrade('in-place'), refused('none-available'));
+	await assert.rejects(
+		service.startUpgrade('in-place'),
+		refused('none-available'),
+	);
 	await assert.rejects(
 		service.startUpgrade('recreate', { allowOlder: true }),
 		refused('mode-not-offered'),
 	);
 	await service.startUpgrade('in-place', { allowOlder: true });
 	assert.deepEqual(upgrader.handovers, [
-		{ environment: 'user', mode: 'in-place', trigger: { kind: 'spawn' }, allowOlder: true },
+		{
+			environment: 'user',
+			mode: 'in-place',
+			trigger: { kind: 'spawn' },
+			allowOlder: true,
+		},
 	]);
 	assert.equal(service.status.upgrade.state, 'in-progress');
 
-	const same = fakeUpgrader([ahead({ latest: { version: '5.3.0-main.40.nightly', order: 'same' } })]);
+	const same = fakeUpgrader([
+		ahead({ latest: { version: '5.3.0-main.40.nightly', order: 'same' } }),
+	]);
 	const second = served(t, same);
 	await second.service.check();
 	await assert.rejects(
@@ -792,7 +889,12 @@ test('allowOlder installs the latest release in place and is refused otherwise',
 	);
 
 	const blocked = fakeUpgrader([
-		ahead({ installLatestUnavailable: { reason: 'below the image', command: 'docker pull <image>' } }),
+		ahead({
+			installLatestUnavailable: {
+				reason: 'below the image',
+				command: 'docker pull <image>',
+			},
+		}),
 	]);
 	const third = served(t, blocked);
 	await third.service.check();

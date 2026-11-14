@@ -12,10 +12,12 @@ The upgrade SHALL end on the first of these, and the card SHALL show it:
 
 - the status reports success, or the server returns running the target version: every step done;
 - the status reports a rollback: **Running** failed, with the reason and the restored version;
-- the server returns running the version it ran before without reporting an outcome: **Running** failed, saying the server is still on that version;
+- the server returns running the version it ran before without reporting an outcome of this upgrade: **Running** failed, saying the server is still on that version;
 - the server returns without saying anything of its upgrade before the reconnect deadline: **Running** failed, saying the server did not report how the upgrade ended;
 - the server returns as one this client cannot speak to: **Running** failed, with the connection's own explanation of which side needs updating;
 - no status arrives within the reconnect deadline, or the connection layer stops trying: **Restarting** failed, saying the server did not come back, and the window keeps its ordinary offline presentation. A later return of the server SHALL NOT reopen or change that card.
+
+An outcome the client has already seen, or one stamped before the upgrade began, is not this upgrade's: the version the server runs SHALL decide the ending instead, and the client SHALL NOT wait for a further outcome once the server has returned. Every state of a followed upgrade, including one restored after a reload, SHALL reach one of these endings within the reconnect deadline.
 
 The card SHALL offer nothing to dismiss it before the upgrade ends. On the device that started the upgrade, the card SHALL keep its final state until the user closes it; on any other device it SHALL be removed when the upgrade ends. The client SHALL tell a reported success, a reported rollback, a version moved to the target, and a server that did not come back once each as an entry in the header Notifications list, counted on the Notifications control like every other notification and kept until dismissed. The outcome SHALL NOT open a popup over the workspace on a device whose card is not already showing.
 
@@ -83,6 +85,12 @@ The card SHALL offer nothing to dismiss it before the upgrade ends. On the devic
 
 - **WHEN** the connection returns, the status reports no upgrade, and the server still runs `5.1.1`
 - **THEN** the progress card marks **Running 5.2.0** failed, saying the server is still on `5.1.1`
+
+#### Scenario: Back on the target with an outcome already seen
+
+- **GIVEN** a device reopened during an upgrade it started, and the success outcome was already seen before the window closed
+- **WHEN** the connection returns, reporting that outcome and running `5.2.0`
+- **THEN** every step is done, and the card is not left waiting on **Running 5.2.0**
 
 #### Scenario: Back but silent
 

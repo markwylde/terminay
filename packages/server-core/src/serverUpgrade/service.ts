@@ -11,6 +11,19 @@ import {
 
 /** How long a release check's answer is taken to be current. */
 export const SERVER_UPGRADE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * When the server looks again soon after it starts, measured from the start.
+ * An upgrader that restarted this server records the new release and the
+ * outcome only once this server reports ready, so the check at start can read
+ * the release it replaced. These few checks pick that record up and stop once
+ * an outcome from after the start is read. Like the hourly check they ask
+ * only while a client is attached, and they are bounded to one start, not a
+ * poll (ADR-0028).
+ */
+export const SERVER_UPGRADE_SETTLE_CHECKS_MS: readonly number[] = Object.freeze(
+	[10_000, 30_000, 90_000],
+);
 /** How long an upgrade this server handed over may leave it running before
  * the server stops saying one is in progress and looks again. */
 export const SERVER_UPGRADE_IN_PROGRESS_DEADLINE_MS = 30 * 60 * 1000;
@@ -165,6 +178,8 @@ export class ServerUpgradeService {
 	private lastCheckAt: number | undefined;
 	private checkTimer: unknown;
 	private inProgressTimer: unknown;
+	private settleTimers: unknown[] = [];
+	private startedAt: number | undefined;
 	private attempt = 0;
 	private disposed = false;
 
@@ -228,7 +243,18 @@ export class ServerUpgradeService {
 
 	/** The server started: look once, whoever is or is not attached. */
 	start(): void {
+		this.startedAt = this.now();
 		void this.check();
+		if (this.upgrader === undefined) return;
+		for (const delay of SERVER_UPGRADE_SETTLE_CHECKS_MS) {
+			const timer = this.scheduleTimeout(() => {
+				this.settleTimers = this.settleTimers.filter((t) => t !== timer);
+				// Like the hourly check, asked only for someone attached.
+				if (this.attached.size === 0) return;
+				void this.check();
+			}, delay);
+			this.settleTimers.push(timer);
+		}
 	}
 
 	/** An authenticated connection opened. */
@@ -306,10 +332,21 @@ export class ServerUpgradeService {
 			// Install latest (ADR-0117): the target is still the upgrader's own
 			// answer for this channel. Only the direction is the client's consent.
 			const latest = this.current.latest;
-			if (this.disposed || upgrader === undefined || report === undefined || latest === undefined)
-				throw refusal('none-available', 'no latest release is known for this channel');
+			if (
+				this.disposed ||
+				upgrader === undefined ||
+				report === undefined ||
+				latest === undefined
+			)
+				throw refusal(
+					'none-available',
+					'no latest release is known for this channel',
+				);
 			if (latest.order === 'same')
-				throw refusal('already-latest', 'this server already runs the latest release on its channel');
+				throw refusal(
+					'already-latest',
+					'this server already runs the latest release on its channel',
+				);
 			if (!latest.canInstall)
 				throw refusal(
 					'cannot-install-latest',
@@ -387,6 +424,7 @@ export class ServerUpgradeService {
 		this.disposed = true;
 		this.disarmCheckTimer();
 		this.disarmInProgressTimer();
+		this.disarmSettleTimers();
 		this.attached.clear();
 		this.listeners.clear();
 	}
@@ -422,6 +460,14 @@ export class ServerUpgradeService {
 		}
 		try {
 			this.outcome = outcomeOf(report.lastResult);
+			// The upgrader that restarted this server has recorded how it ended.
+			if (
+				this.outcome !== undefined &&
+				'at' in this.outcome &&
+				this.startedAt !== undefined &&
+				this.outcome.at >= this.startedAt
+			)
+				this.disarmSettleTimers();
 			this.publish();
 		} catch (error) {
 			// A report the status cannot carry is a failed check.
@@ -489,7 +535,8 @@ export class ServerUpgradeService {
 	) {
 		const blocked = report.installLatestUnavailable ?? null;
 		const triggerReady =
-			report.trigger.kind === 'spawn' || report.trigger.latestPath !== undefined;
+			report.trigger.kind === 'spawn' ||
+			report.trigger.latestPath !== undefined;
 		const canInstall =
 			latest.order !== 'same' &&
 			report.installLatestUnavailable !== undefined &&
@@ -514,6 +561,11 @@ export class ServerUpgradeService {
 		if (this.checkTimer === undefined) return;
 		this.cancelInterval(this.checkTimer);
 		this.checkTimer = undefined;
+	}
+
+	private disarmSettleTimers(): void {
+		for (const timer of this.settleTimers) this.cancelTimeout(timer);
+		this.settleTimers = [];
 	}
 
 	private disarmInProgressTimer(): void {

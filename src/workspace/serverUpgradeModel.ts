@@ -670,56 +670,71 @@ export class ServerUpgradeBoard {
 				record.attempt.returned = true;
 		}
 		const progress = status.upgrade;
+		const cameBack = returned || record.attempt?.returned === true;
 		if (progress.state === 'in-progress') {
-			this.follow(record, progress.startedAt);
+			// A server that has already restarted under this upgrade does not
+			// move its start: an outcome stamped before it is still this one's.
+			this.follow(record, cameBack ? undefined : progress.startedAt);
+			// Back, and still busy: it is held to the same deadline as a silent
+			// one, so the ticklist can never wait on it for ever.
+			if (cameBack) this.awaitOutcome(record);
 			return;
 		}
-		if (progress.state === 'none') {
-			if (!record.following) return;
-			if (!returned) {
-				// Said by the server that was to restart, without restarting: its
-				// upgrader has finished. How it ended follows in the next status.
-				record.expectsRestart = false;
+		if (progress.state !== 'none') {
+			const unseen = !record.seenOutcomes.has(progress.at);
+			// An outcome from before the followed upgrade began is an earlier one's.
+			const fresh =
+				unseen &&
+				(record.startedAt === undefined || progress.at >= record.startedAt);
+			record.seenOutcomes.add(progress.at);
+			// An outcome that arrives unfollowed ended an upgrade this window
+			// never watched: the menu row says how it stands, and nothing is
+			// announced.
+			if (!record.following) {
+				if (unseen) this.remember(record);
 				return;
 			}
-			// The outcome was replaced before this window reconnected. The version
-			// the server now runs still says how a followed upgrade ended.
-			const from = record.followedFrom;
-			const to = record.attempt?.to;
-			const moved =
-				(from !== undefined && from !== status.version) ||
-				(to !== undefined && to === status.version);
-			this.unfollow(
-				record,
-				moved
-					? {}
-					: {
-							failed: 'running',
-							detail: upgradeStillOnText(record.source.label, status.version),
-						},
-			);
-			if (moved)
-				this.tell(
-					record,
-					`moved:${status.version}`,
-					'success',
-					upgradeSucceededText(record.source.label, status.version),
-				);
-			return;
-		}
-		const unseen = !record.seenOutcomes.has(progress.at);
-		// An outcome from before the followed upgrade began is an earlier one's.
-		const fresh =
-			unseen &&
-			(record.startedAt === undefined || progress.at >= record.startedAt);
-		record.seenOutcomes.add(progress.at);
-		// An outcome already seen belongs to an earlier attempt, and one that
-		// arrives unfollowed ended an upgrade this window never watched: the
-		// menu row says how it stands, and nothing is announced.
-		if (!fresh || !record.following) {
+			if (fresh) {
+				this.end(record, progress);
+				return;
+			}
 			if (unseen) this.remember(record);
+		}
+		if (!record.following) return;
+		// No outcome of its own: the version the server runs says how it ended.
+		const from = record.followedFrom;
+		const to = record.attempt?.to;
+		const moved =
+			(from !== undefined && from !== status.version) ||
+			(to !== undefined && to === status.version);
+		if (moved) {
+			this.unfollow(record, {});
+			this.tell(
+				record,
+				`moved:${status.version}`,
+				'success',
+				upgradeSucceededText(record.source.label, status.version),
+			);
 			return;
 		}
+		if (cameBack) {
+			this.unfollow(record, {
+				failed: 'running',
+				detail: upgradeStillOnText(record.source.label, status.version),
+			});
+			return;
+		}
+		// Said by the server that was to restart, without restarting: its
+		// upgrader has finished, or an earlier outcome is still on record. How
+		// this one ended follows, within the deadline.
+		if (progress.state === 'none') record.expectsRestart = false;
+		if (!record.expectsRestart) this.awaitOutcome(record);
+	}
+
+	private end(
+		record: Tracked,
+		progress: Extract<ServerUpgradeStatus['upgrade'], { at: number }>,
+	): void {
 		this.unfollow(
 			record,
 			progress.state === 'succeeded'
@@ -826,15 +841,22 @@ export class ServerUpgradeBoard {
 			this.lose(record);
 			return;
 		}
+		this.awaitOutcome(record);
+	}
+
+	/**
+	 * Hold a followed upgrade to one deadline. Every wait the ticklist can be
+	 * in ends by it: a server that never returns is lost, and one that is
+	 * connected but has not said how the upgrade ended is reported silent.
+	 */
+	private awaitOutcome(record: Tracked): void {
 		if (record.deadline !== undefined) return;
 		record.deadline = this.setTimer(() => {
 			record.deadline = undefined;
 			if (!record.following) return;
-			// Connected again but silent about its upgrade: it did come back.
-			if (
-				record.source.phase === 'ready' &&
-				record.client !== record.droppedClient
-			) {
+			const connected =
+				record.source.phase === 'ready' && record.client !== undefined;
+			if (connected || !record.expectsRestart) {
 				this.unfollow(record, {
 					failed: 'running',
 					detail: upgradeSilentText(record.source.label),
