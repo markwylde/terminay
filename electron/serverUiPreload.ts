@@ -16,6 +16,10 @@ import type {
 const GET_CONTEXT = 'server-ui-host:get-context';
 const REQUEST_ACTION = 'server-ui-host:request-action';
 const READ_TERMINAL_CLIPBOARD = 'server-ui-host:read-terminal-clipboard';
+const READ_TERMINAL_CLIPBOARD_FOR_UPLOAD =
+	'server-ui-host:read-terminal-clipboard-for-upload';
+const READ_TERMINAL_CLIPBOARD_FILE_PART =
+	'server-ui-host:read-terminal-clipboard-file-part';
 let contextPromise: Promise<TerminayHostContext> | undefined;
 const context = () =>
 	(contextPromise ??= ipcRenderer
@@ -137,6 +141,18 @@ const bridge: ServerUiHostBridge = Object.freeze({
 	readTerminalClipboard: () => {
 		return ipcRenderer.invoke(READ_TERMINAL_CLIPBOARD) as Promise<string>;
 	},
+	// A paste into a terminal on another server: copied files are named, never
+	// pathed, and only the files named by the latest read can be read back.
+	readTerminalClipboardForUpload: () =>
+		ipcRenderer.invoke(READ_TERMINAL_CLIPBOARD_FOR_UPLOAD),
+	readTerminalClipboardFilePart: (token, file, offset, length) =>
+		ipcRenderer.invoke(
+			READ_TERMINAL_CLIPBOARD_FILE_PART,
+			token,
+			file,
+			offset,
+			length,
+		),
 });
 if (
 	(process as NodeJS.Process & { isMainFrame?: boolean }).isMainFrame !== false

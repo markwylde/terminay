@@ -85,6 +85,10 @@ import { pushOriginForSessionOrigin } from '../packages/server-core/src/push/sen
 import { launchDetachedSessionHolder } from '../packages/server-core/src/sessionHolder/factory';
 import { sessionHolderEnabled as isSessionHolderEnabled } from '../packages/server-core/src/sessionHolder/paths';
 import { currentHolderAddressing } from './windowsUser';
+import {
+	TerminalClipboardUploadReader,
+	type TerminalClipboardForUpload,
+} from './terminalClipboardUpload';
 import { singleInstanceRefusalMessage } from './singleInstanceRefusal';
 import { prepareHolderRuntime, pruneHolderRuntimes } from './sessionHolderRuntime';
 import { backgroundTerminalLimitMs } from '../packages/server-core/src/settings/backgroundTerminals';
@@ -782,6 +786,31 @@ async function readTerminalClipboard(): Promise<string> {
 	if (text.length > 0) return text;
 	const imagePath = await readClipboardImagePath(items);
 	return imagePath === null ? '' : shellEscapePath(imagePath);
+}
+
+const terminalClipboardUploadReader = new TerminalClipboardUploadReader();
+
+/** A paste bound for a terminal on another server: copied files are named here
+ * and their bytes read back in parts, so only the terminal's server paths are
+ * ever inserted. */
+async function readTerminalClipboardForUpload(): Promise<TerminalClipboardForUpload> {
+	const items = await clipboard.read();
+	return terminalClipboardUploadReader.read({
+		readUriList: async () => {
+			for (const item of items) {
+				const value = await readClipboardItemText(item, 'text/uri-list');
+				if (value) return value;
+			}
+			return null;
+		},
+		readText: () => clipboard.readText(),
+		readPng: async () => {
+			const item = items.find((candidate) => candidate.types.includes('image/png'));
+			if (!item) return null;
+			const payload = await item.getType('image/png').catch(() => null);
+			return payload instanceof Blob ? new Uint8Array(await payload.arrayBuffer()) : null;
+		},
+	});
 }
 
 function isAppNavigation(url: string): boolean {
@@ -4401,6 +4430,9 @@ function createWindow(options?: {
 			initialUrl: entryUrl.toString(),
 			preloadPath,
 			readTerminalClipboard,
+			readTerminalClipboardForUpload,
+			readTerminalClipboardFilePart: (token, file, offset, length) =>
+				terminalClipboardUploadReader.readPart(token, file, offset, length),
 			onLifecycleDiagnostic: (event) => {
 				void desktopDiagnostics.record(
 					{

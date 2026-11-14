@@ -11,7 +11,27 @@ type NativeHostBridge = Readonly<{
 	requestAction(request: TerminayHostActionRequest): Promise<unknown>;
 	resolveDroppedFilePath?(file: File): string | undefined;
 	readTerminalClipboard?(): Promise<string>;
+	readTerminalClipboardForUpload?(): Promise<DesktopClipboardForUpload>;
+	readTerminalClipboardFilePart?(
+		token: string,
+		file: number,
+		offset: number,
+		length: number,
+	): Promise<Uint8Array>;
 }>;
+
+/** What Desktop's clipboard holds for a terminal on another server: copied
+ * files by name and size only, never by local path. */
+export type DesktopClipboardForUpload =
+	| Readonly<{
+			kind: 'files';
+			token: string;
+			files: readonly Readonly<{ name: string; size: number }>[];
+	  }>
+	| Readonly<{ kind: 'folder' }>
+	| Readonly<{ kind: 'text'; text: string }>
+	| Readonly<{ kind: 'image'; bytes: Uint8Array; mimeType: 'image/png' }>
+	| Readonly<{ kind: 'empty' }>;
 
 function bridge(): NativeHostBridge | undefined {
 	if (typeof window === 'undefined') return undefined;
@@ -108,6 +128,26 @@ export function canReadTerminalClipboard(): boolean {
 		canReadClipboardText() ||
 		canReadClipboardItems()
 	);
+}
+
+/** The Desktop clipboard route for a terminal whose server is not Local, when
+ * this host provides one. */
+export function desktopClipboardUploadRoute():
+	| Readonly<{
+			read: () => Promise<DesktopClipboardForUpload>;
+			readFilePart: (
+				token: string,
+				file: number,
+				offset: number,
+				length: number,
+			) => Promise<Uint8Array>;
+	  }>
+	| undefined {
+	const host = bridge();
+	const read = host?.readTerminalClipboardForUpload;
+	const readFilePart = host?.readTerminalClipboardFilePart;
+	if (read === undefined || readFilePart === undefined) return undefined;
+	return { read: () => read(), readFilePart: (...args) => readFilePart(...args) };
 }
 
 export function canUseDesktopTerminalClipboard(): boolean {
