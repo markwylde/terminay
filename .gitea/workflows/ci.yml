@@ -390,7 +390,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: git.i.wylde.net/docker/dind:latest
-      options: --tmpfs /test-tmp:rw,size=2g,mode=1777
+      options: --tmpfs /test-tmp:rw,exec,size=2g,mode=1777
     timeout-minutes: 10
     env:
       TMPDIR: /test-tmp
@@ -435,7 +435,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: git.i.wylde.net/docker/dind:latest
-      options: --tmpfs /test-tmp:rw,size=2g,mode=1777
+      options: --tmpfs /test-tmp:rw,exec,size=2g,mode=1777
     timeout-minutes: 10
     env:
       TMPDIR: /test-tmp

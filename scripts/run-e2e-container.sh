@@ -91,7 +91,7 @@ docker create \
   --name "$container" \
   --init \
   --shm-size 2g \
-  --tmpfs /tmp:rw,size=2g,mode=1777 \
+  --tmpfs /tmp:rw,exec,size=2g,mode=1777 \
   --env TERMINAY_E2E_REAL_MCP_APP \
   "$image" \
   "$@" >/dev/null
