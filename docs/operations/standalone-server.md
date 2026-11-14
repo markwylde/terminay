@@ -942,10 +942,18 @@ With Terminay MCP off, terminals get neither.
 
 To register Terminay MCP with an agent CLI, use **Install** for that agent on
 the same Settings page. The registered command is the Node binary running this
-server followed by the absolute path of `dist/mcpEntry.js` in the server's
-release. Nothing has to be on `PATH`, so the command works inside the container
-too. An in-place upgrade runs the new release from its own directory under
-`<data-root>/releases/`, so install again after one.
+server followed by the absolute path of `server/dist/mcpEntry.js`. Nothing has
+to be on `PATH`, so the command works inside the container too. A server
+running from an installed release names both through the installation's
+`current` link — `/opt/terminay/current/…`, `~/.local/share/terminay/current/…`,
+or `<data-root>/releases/current/…` in a container — so the registration keeps
+working across upgrades and rollbacks.
+
+An agent whose `terminay` entry differs from what the server would write shows
+**Changed** and is never overwritten on its own. **Replace** writes the server's
+entry over it and leaves the rest of that agent's configuration alone. A
+registration made by an older server, which names a release directory under
+`versions/`, needs one Replace per agent.
 
 What it keeps in the data root, all owner-only:
 

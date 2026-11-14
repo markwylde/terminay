@@ -299,6 +299,11 @@ export interface AgentExtensionHarness {
 		targetId: string,
 		server?: McpServerCommand,
 	): Promise<McpInstallTargetActionResult>;
+	/** Rejects when the target does not implement `replace`. */
+	mcpReplace(
+		targetId: string,
+		server?: McpServerCommand,
+	): Promise<McpInstallTargetActionResult>;
 	/** Chat provider ids the extension registered, in registration order. */
 	registeredChatProviderIds(): readonly string[];
 	registeredBotAgentIds(): readonly string[];
@@ -797,6 +802,18 @@ export async function createAgentExtensionHarness(
 				targetId,
 				server,
 				(runtime, request) => runtime.uninstall(request),
+				validateMcpInstallTargetActionResult,
+			);
+		},
+		mcpReplace(targetId, server = fixtureMcpServerCommand) {
+			return callTarget(
+				targetId,
+				server,
+				(runtime, request) => {
+					if (typeof runtime.replace !== 'function')
+						throw new Error(`MCP install target cannot replace: ${targetId}`);
+					return runtime.replace(request);
+				},
 				validateMcpInstallTargetActionResult,
 			);
 		},

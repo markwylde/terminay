@@ -47,6 +47,7 @@ import type {
 	McpAgentRegistrationState,
 	McpInstallActionResult,
 	McpInstallStatus,
+	McpInstallWriteOptions,
 	McpServerCommand,
 } from './types.js';
 
@@ -67,6 +68,7 @@ export type McpInstallProvider = Readonly<{
 	install(
 		server: McpServerCommand,
 		homeDirectory?: string,
+		options?: McpInstallWriteOptions,
 	): Promise<McpInstallActionResult>;
 	uninstall(
 		server: McpServerCommand | undefined,

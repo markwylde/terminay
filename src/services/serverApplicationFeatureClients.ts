@@ -43,6 +43,8 @@ export type McpInstallClient = Readonly<{
 	getStatus(): Promise<McpInstallStatus>;
 	install(agent: McpAgentId): Promise<McpInstallActionResult>;
 	uninstall(agent: McpAgentId): Promise<McpInstallActionResult>;
+	/** Writes the server's entry over a changed one. */
+	replace(agent: McpAgentId): Promise<McpInstallActionResult>;
 }>;
 
 /** Server application-protocol facade for the provider-registration UI. */
@@ -59,6 +61,10 @@ export function createServerMcpInstallClient(
 			}) as unknown as Promise<McpInstallActionResult>,
 		uninstall: (agent) =>
 			transport.command('mcp-install.uninstall', {
+				agent,
+			}) as unknown as Promise<McpInstallActionResult>,
+		replace: (agent) =>
+			transport.command('mcp-install.replace', {
 				agent,
 			}) as unknown as Promise<McpInstallActionResult>,
 	};

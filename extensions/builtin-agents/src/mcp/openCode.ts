@@ -6,6 +6,7 @@ import { atomicWriteConfig } from './atomicConfigWrite.js';
 import type {
 	McpAgentRegistrationState,
 	McpInstallActionResult,
+	McpInstallWriteOptions,
 	McpServerCommand,
 } from './types.js';
 
@@ -179,6 +180,8 @@ export async function inspectOpenCodeRegistration(
 export async function installOpenCode(
 	server: McpServerCommand,
 	homeDirectory?: string,
+	/** `replace` writes over a changed `terminay` entry; set only on an explicit user request. */
+	options: McpInstallWriteOptions = {},
 ): Promise<McpInstallActionResult> {
 	const resolution = await resolveConfig(homeDirectory);
 	if ('error' in resolution)
@@ -199,7 +202,9 @@ export async function installOpenCode(
 		const mcp = config.mcp ?? {};
 		const entry = openCodeEntry(server);
 		const existing = mcp[SERVER_KEY];
-		if (existing !== undefined && !isDeepStrictEqual(existing, entry))
+		if (existing !== undefined &&
+			!options.replace &&
+			!isDeepStrictEqual(existing, entry))
 			return changedEntryResult(path);
 		if (isDeepStrictEqual(existing, entry)) {
 			return {

@@ -81,6 +81,32 @@ test('rows are keyed by extension target id in declaration order and show every 
 	assert.match(markup, /\/home\/user\/\.grok\/config/);
 });
 
+test('a changed row offers Replace; unavailable and error rows offer nothing', () => {
+	const rows = [
+		target('claude-code', 'Claude Code', 'installed'),
+		target('codex', 'Codex', 'not-installed'),
+		target('cursor', 'Cursor CLI', 'changed', { installed: true }),
+		target('gemini', 'Gemini CLI', 'unavailable'),
+		target('grok', 'Grok', 'error'),
+	];
+	const buttons = rows.map((row) => {
+		const markup = render({ agents: [row] });
+		const button = markup.match(/<button[^>]*>([^<]*)<\/button>/u);
+		return [button[1], /disabled=""/u.test(button[0])];
+	});
+	assert.deepEqual(buttons, [
+		['Uninstall', false],
+		['Install', false],
+		['Replace', false],
+		['Install', true],
+		['Install', true],
+	]);
+	assert.match(
+		render({ agents: [rows[2]] }),
+		/title="Replace the terminay entry in \/home\/user\/\.cursor\/config with this server&#x27;s"/u,
+	);
+});
+
 test('a busy target disables the other rows only', () => {
 	const markup = render(
 		{

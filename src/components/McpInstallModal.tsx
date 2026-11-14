@@ -88,7 +88,7 @@ export function McpInstallModal({
 	}, [client, open]);
 
 	const runAction = useCallback(
-		async (agent: McpAgentId, installed: boolean) => {
+		async (agent: McpAgentId, action: McpInstallAction) => {
 			if (busyAgent) {
 				return;
 			}
@@ -103,9 +103,12 @@ export function McpInstallModal({
 			});
 
 			try {
-				const result = installed
-					? await client?.uninstall(agent)
-					: await client?.install(agent);
+				const result =
+					action === 'uninstall'
+						? await client?.uninstall(agent)
+						: action === 'replace'
+							? await client?.replace(agent)
+							: await client?.install(agent);
 				if (result === undefined) throw new Error('MCP installation is unavailable on the selected server.');
 
 				if (!result.ok) {
@@ -128,6 +131,9 @@ export function McpInstallModal({
 						),
 					};
 				});
+				// A replace turns a changed row into an installed one; reread the
+				// row state rather than guessing it.
+				if (result.ok && action === 'replace') await refreshStatus();
 			} catch (error) {
 				setRowErrors((previous) => ({
 					...previous,
@@ -173,12 +179,20 @@ export function McpInstallModal({
 						status={status}
 						busyTarget={busyAgent}
 						rowErrors={rowErrors}
-						onAction={(agent) => void runAction(agent.id, agent.installed)}
+						onAction={(agent) => void runAction(agent.id, mcpInstallAction(agent))}
 					/>
 				) : null}
 			</div>
 		</InPageWindow>
 	);
+}
+
+export type McpInstallAction = 'install' | 'uninstall' | 'replace';
+
+/** What a row's button does: a changed entry is replaced only on request. */
+export function mcpInstallAction(agent: McpAgentInstallState): McpInstallAction {
+	if (agent.state === 'changed') return 'replace';
+	return agent.state === 'installed' ? 'uninstall' : 'install';
 }
 
 export interface McpInstallTargetListProps {
@@ -239,8 +253,13 @@ function McpAgentRow({
 	error,
 	onAction,
 }: McpAgentRowProps): JSX.Element {
-	const canAct = agent.state === 'installed' || agent.state === 'not-installed';
-	const actionLabel = agent.state === 'installed' ? 'Uninstall' : 'Install';
+	const canAct =
+		agent.state === 'installed' ||
+		agent.state === 'not-installed' ||
+		agent.state === 'changed';
+	const action = mcpInstallAction(agent);
+	const actionLabel =
+		action === 'uninstall' ? 'Uninstall' : action === 'replace' ? 'Replace' : 'Install';
 	const stateLabel =
 		agent.state === 'installed'
 			? 'Installed'
@@ -277,8 +296,13 @@ function McpAgentRow({
 			</div>
 			<button
 				type="button"
-				className={`mcp-install-action${agent.installed ? ' mcp-install-action--uninstall' : ''}`}
+				className={`mcp-install-action${action === 'uninstall' ? ' mcp-install-action--uninstall' : ''}`}
 				onClick={onAction}
+				title={
+					action === 'replace'
+						? `Replace the terminay entry in ${agent.configPath} with this server's`
+						: undefined
+				}
 				disabled={busy || disabled || !canAct}
 			>
 				{busy ? 'Working…' : actionLabel}

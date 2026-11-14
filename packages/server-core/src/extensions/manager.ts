@@ -322,7 +322,7 @@ export class ExtensionHostManager {
 
 	async invokeMcpTarget(
 		targetId: string,
-		operation: 'status' | 'install' | 'uninstall',
+		operation: 'status' | 'install' | 'uninstall' | 'replace',
 		server: McpServerCommand,
 		signal?: AbortSignal,
 	): Promise<unknown> {

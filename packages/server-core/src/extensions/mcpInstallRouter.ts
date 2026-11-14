@@ -11,7 +11,7 @@ export interface McpInstallTargetHosts {
 	mcpInstallTargetContributions(): readonly McpInstallTargetProvider[];
 	invokeMcpTarget(
 		targetId: string,
-		operation: 'status' | 'install' | 'uninstall',
+		operation: 'status' | 'install' | 'uninstall' | 'replace',
 		server: McpServerCommand,
 		signal?: AbortSignal,
 	): Promise<unknown>;
@@ -103,9 +103,14 @@ export class McpInstallRouter {
 		return this.act(targetId, 'uninstall');
 	}
 
+	/** Writes the server's entry over a changed one, on an explicit request. */
+	replace(targetId: string): Promise<McpInstallTargetActionResult> {
+		return this.act(targetId, 'replace');
+	}
+
 	private async act(
 		targetId: string,
-		operation: 'install' | 'uninstall',
+		operation: 'install' | 'uninstall' | 'replace',
 	): Promise<McpInstallTargetActionResult> {
 		const hosts = this.options.hosts();
 		if (

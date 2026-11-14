@@ -656,7 +656,7 @@ export class ExtensionHost {
 	 * before it leaves the host. */
 	async invokeMcpTarget(
 		targetId: string,
-		operation: 'status' | 'install' | 'uninstall',
+		operation: 'status' | 'install' | 'uninstall' | 'replace',
 		server: McpServerCommand,
 		signal?: AbortSignal,
 	): Promise<unknown> {

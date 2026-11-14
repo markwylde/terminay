@@ -12,6 +12,7 @@ import {
 import type {
 	McpAgentRegistrationState,
 	McpInstallActionResult,
+	McpInstallWriteOptions,
 	McpServerCommand,
 } from './types.js';
 
@@ -68,13 +69,15 @@ export async function inspectCodexRegistration(
 export async function installCodex(
 	server: McpServerCommand,
 	homeDirectory?: string,
+	/** `replace` writes over a changed `terminay` entry; set only on an explicit user request. */
+	options: McpInstallWriteOptions = {},
 ): Promise<McpInstallActionResult> {
 	const path = getCodexConfigPath(homeDirectory);
 	try {
 		const content = await readConfig(path);
 		const block = renderCodexBlock(server);
 		const existing = getCodexBlock(content);
-		if (existing !== null && existing !== block) {
+		if (existing !== null && !options.replace && existing !== block) {
 			return changedEntryResult(path);
 		}
 		if (existing === block) {
