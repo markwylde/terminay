@@ -53,6 +53,9 @@ export async function startReleaseFixture(options) {
 			...(release.executable === undefined
 				? {}
 				: { executable: release.executable }),
+			...(release.sharedTmpSafe === undefined
+				? {}
+				: { sharedTmpSafe: release.sharedTmpSafe }),
 		});
 		const bytes = await readFile(fixture.archivePath);
 		const digest = createHash('sha256').update(bytes).digest('hex');

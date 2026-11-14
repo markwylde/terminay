@@ -30,6 +30,15 @@ import {
 	MAX_HOLDER_CLOSE_RECORDS,
 	readHolderCloseRecords,
 } from './closeRecord.js';
+import {
+	checkHolderHealth,
+	checkOwnHealth,
+	type HolderHealthFacts,
+	holderIsHealthy,
+	holderTmpUnusable,
+	type OwnHealthFacts,
+	ownTmpUnusable,
+} from './health.js';
 import type { SessionHolderRecordFile } from './holder.js';
 import {
 	holderClosedReport,
@@ -148,11 +157,29 @@ export interface SessionHolderPtyFactoryOptions extends NodePtyFactoryOptions {
 	 * Called on transitions, never for output, and never able to fail one.
 	 */
 	readonly onObservation?: SessionHolderObserver;
+	/**
+	 * How a holder this server did not launch is checked before it is given new
+	 * sessions (ADR-0116). Defaults to procfs on Linux; `false`, and every other
+	 * platform, check nothing.
+	 */
+	readonly health?: SessionHolderHealthCheck | false;
 }
+
+export interface SessionHolderHealthCheck {
+	readonly holder: (pid: number) => Promise<HolderHealthFacts>;
+	readonly own: () => Promise<OwnHealthFacts>;
+}
+
+/**
+ * Why a held session is marked: its holder's temporary directory is gone or
+ * read-only while this server's is fine. Shown, never acted on.
+ */
+export type HeldSessionDegradation = 'tmp-unusable';
 
 /** A session a holder still has, live or ended, that a server may adopt. */
 export interface HeldSessionSummary extends HolderSessionRecord {
 	readonly generation: string;
+	readonly degraded?: HeldSessionDegradation;
 }
 
 export interface SessionHolderPtyFactory {
@@ -167,6 +194,7 @@ export interface SessionHolderPtyFactory {
 		readonly from: number;
 		readonly presentationRecovery?: TerminalPresentationRecovery;
 		readonly presentationError?: string;
+		readonly degraded?: HeldSessionDegradation;
 	}>;
 	/** End one session and forget it, wherever it is held. */
 	readonly end: (sessionId: string) => Promise<void>;
@@ -206,6 +234,18 @@ export function createSessionHolderPtyFactory(
 	 */
 	const endings = new Map<string, () => void>();
 	const incompatible: string[] = [];
+	const health: SessionHolderHealthCheck | undefined =
+		options.health === false
+			? undefined
+			: (options.health ??
+				(addressing.platform === 'linux'
+					? {
+							holder: (pid) => checkHolderHealth(pid),
+							own: () => checkOwnHealth(),
+						}
+					: undefined));
+	/** Sessions whose holder lost its temporary directory. */
+	const degradedSessions = new Set<string>();
 	let current: SessionHolderClient | undefined;
 	let launching: Promise<SessionHolderClient> | undefined;
 	/**
@@ -321,7 +361,10 @@ export function createSessionHolderPtyFactory(
 			clients.delete(client.generation);
 			if (current === client) current = undefined;
 			for (const [sessionId, owner] of owners)
-				if (owner === client) owners.delete(sessionId);
+				if (owner === client) {
+					owners.delete(sessionId);
+					degradedSessions.delete(sessionId);
+				}
 			// Counted on the connection record above, not reported one by one.
 			for (const [sessionId, session] of observed)
 				if (session.client === client) observed.delete(sessionId);
@@ -345,6 +388,7 @@ export function createSessionHolderPtyFactory(
 		started = (async () => {
 			const held: HeldSessionSummary[] = [];
 			const wait = waitUntilLeaving();
+			let own: OwnHealthFacts | undefined;
 			try {
 				for (const record of readHolderRecords(dataRoot, addressing)) {
 					const holder: SessionHolderIdentity = {
@@ -398,12 +442,42 @@ export function createSessionHolderPtyFactory(
 					track(client, record.startedAt);
 					const sameBuild = client.buildId === options.buildId;
 					const wasDraining = client.draining;
-					if (sameBuild && !wasDraining) current ??= client;
+					// It was launched by an earlier server, whose environment may be
+					// gone: only a positive check earns it new sessions.
+					let facts: HolderHealthFacts | undefined;
+					if (health !== undefined) {
+						if (own === undefined) {
+							own = await health.own().catch(
+								(): OwnHealthFacts => ({ tmp: 'unknown', tmpdir: 'unknown' }),
+							);
+							// Nothing a holder can fix: say so once, and launch anyway.
+							if (ownTmpUnusable(own))
+								observe({ kind: 'host-tmp-unusable', facts: own });
+						}
+						facts = await health.holder(record.pid).catch(
+							(): HolderHealthFacts => ({
+								sameNamespace: 'unknown',
+								tmp: 'unknown',
+								tmpdir: 'unknown',
+							}),
+						);
+					}
+					const healthy = facts === undefined || holderIsHealthy(facts);
+					if (sameBuild && !wasDraining && healthy) current ??= client;
 					else if (!wasDraining) client.drain();
+					const degraded =
+						facts !== undefined &&
+						own !== undefined &&
+						holderTmpUnusable(facts, own);
 					const sessions = await client.list();
 					for (const session of sessions) {
 						owners.set(session.sessionId, client);
-						held.push({ ...session, generation: client.generation });
+						if (degraded) degradedSessions.add(session.sessionId);
+						held.push({
+							...session,
+							generation: client.generation,
+							...(degraded ? { degraded: 'tmp-unusable' as const } : {}),
+						});
 						noteSession(
 							client,
 							holder,
@@ -426,8 +500,17 @@ export function createSessionHolderPtyFactory(
 						endedSessions: sessions.length - liveSessions,
 						limitMs,
 					});
-					if (!sameBuild && !wasDraining)
-						observe({ kind: 'drained', holder, cause: 'build-mismatch' });
+					if (!wasDraining && (!sameBuild || !healthy))
+						observe({
+							kind: 'drained',
+							holder,
+							cause: !sameBuild
+								? 'build-mismatch'
+								: // Only a check that ran can make a holder unhealthy.
+									healthCause(facts as HolderHealthFacts),
+							...(facts === undefined || healthy ? {} : { facts }),
+							...(degraded ? { degraded: true } : {}),
+						});
 				}
 			} finally {
 				waits.delete(wait);
@@ -651,6 +734,9 @@ export function createSessionHolderPtyFactory(
 				from,
 				presentationRecovery,
 				presentationError,
+				...(degradedSessions.has(sessionId)
+					? { degraded: 'tmp-unusable' as const }
+					: {}),
 			};
 		},
 		async end(sessionId) {
@@ -659,6 +745,7 @@ export function createSessionHolderPtyFactory(
 			const client = owners.get(sessionId);
 			if (client === undefined) return;
 			owners.delete(sessionId);
+			degradedSessions.delete(sessionId);
 			// A holder ends a session it is asked to end without reporting an exit.
 			if (observed.get(sessionId)?.live === true)
 				sessionEnded(sessionId, {
@@ -1065,4 +1152,15 @@ function spawnSessionId(options: PtySpawnOptions): string {
 	if (typeof sessionId !== 'string' || sessionId.length === 0)
 		throw new Error('a held terminal needs a session id');
 	return sessionId;
+}
+
+/** Why a same-build holder was passed over: a fact against it, or no proof. */
+function healthCause(facts: HolderHealthFacts): 'unhealthy' | 'health-unknown' {
+	const against =
+		facts.sameNamespace === 'no' ||
+		facts.tmp === 'missing' ||
+		facts.tmp === 'unwritable' ||
+		facts.tmpdir === 'missing' ||
+		facts.tmpdir === 'unwritable';
+	return against ? 'unhealthy' : 'health-unknown';
 }

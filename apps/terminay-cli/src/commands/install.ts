@@ -40,6 +40,7 @@ import {
 	installLayout,
 	writeInstallRecord,
 } from '../layout.js';
+import { releaseSharesTmpSafely } from '../manifest.js';
 import { hostArchitecture } from '../platform.js';
 import {
 	defaultStreams,
@@ -375,6 +376,7 @@ export async function runInstall(
 			layout,
 			runAs: selection.runAs,
 			workingDirectory: options.projectRoot ?? selection.home,
+			sharedTmpSafe: releaseSharesTmpSafely(installed.manifest),
 		}),
 		{ mode: 0o644 },
 	);

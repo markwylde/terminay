@@ -169,6 +169,20 @@ test('the archive server launcher names the upgrader beside it, unless one was g
 	assert.match(launcher, /export [^\n]*\bTERMINAY_SERVER_REVISION\b/u);
 });
 
+test('the archive manifest declares it may share /tmp, which is what drops PrivateTmp from its unit', async () => {
+	const builder = await readFile(
+		new URL('build-standalone-server-artifact.mjs', import.meta.url),
+		'utf8',
+	);
+	const manifest = builder.slice(builder.indexOf('const manifest = {'));
+	// ADR-0116: only a release that keeps its scratch files in an owner-only
+	// per-account directory may run with the host's shared /tmp.
+	assert.match(
+		manifest.slice(0, manifest.indexOf('};')),
+		/^\s*sharedTmpSafe: true,$/mu,
+	);
+});
+
 test('the image runs the archive CLI and carries no second copy', async () => {
 	const dockerfile = await readFile(
 		new URL('../Dockerfile', import.meta.url),

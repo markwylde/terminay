@@ -177,6 +177,10 @@ try {
 			nativePath: 'node_modules/node-pty/build/Release/pty.node',
 		},
 		entrypoints: { server: 'bin/terminay-server', cli: ARCHIVE_CLI_LAUNCHER },
+		// Scratch files live in an owner-only per-account directory, so the
+		// service may share the host's /tmp (ADR-0116). The CLI drops the unit's
+		// PrivateTmp only for a release that says so.
+		sharedTmpSafe: true,
 		webrtcRuntime: {
 			root: 'webrtc-runtime',
 			selection: JSON.parse(

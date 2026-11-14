@@ -133,3 +133,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0113](./0113-dropped-files-are-a-streamed-scratch-write-on-the-terminals-own-server.md) | A dropped file becomes a path on the terminal's own server, through a third named scratch write | accepted | 2026-11-13 |
 | [0114](./0114-git-watches-never-walk-a-tree-on-the-event-loop-and-skip-what-git-ignores.md) | Git watches never walk a tree on the event loop, and skip what Git ignores | accepted | 2026-11-13 |
 | [0115](./0115-settings-are-organised-by-the-place-that-stores-them.md) | Settings are organised by the place that stores them | accepted, supersedes ADR-0075 in part | 2026-11-13 |
+| [0116](./0116-a-session-holder-takes-new-sessions-only-while-its-environment-is-healthy.md) | A session holder takes new sessions only while its environment is healthy | accepted | 2026-11-13 |

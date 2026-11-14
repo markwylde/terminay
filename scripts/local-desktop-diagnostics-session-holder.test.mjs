@@ -76,6 +76,26 @@ const REPORTS = [
 	[{ kind: 'launched', holder: other, durationMs: 180, limitMs: null }, 'info'],
 	[{ kind: 'launch-failed', durationMs: 840, error: 'session holder exited before it was ready (exit code 1)' }, 'warning'],
 	[{ kind: 'drained', holder, cause: 'build-mismatch' }, 'info'],
+	[
+		{
+			kind: 'drained',
+			holder,
+			cause: 'unhealthy',
+			facts: { sameNamespace: 'no', tmp: 'missing', tmpdir: 'missing' },
+			degraded: true,
+		},
+		'warning',
+	],
+	[
+		{
+			kind: 'drained',
+			holder,
+			cause: 'health-unknown',
+			facts: { sameNamespace: 'unknown', tmp: 'unknown', tmpdir: 'unknown' },
+		},
+		'warning',
+	],
+	[{ kind: 'host-tmp-unusable', facts: { tmp: 'unwritable', tmpdir: 'unwritable' } }, 'warning'],
 	[{ kind: 'limit-set', limitMs: 300_000, holders: 2 }, 'info'],
 	[{ kind: 'connection-closed', holder, requested: true, announced: false, liveSessions: 3 }, 'info'],
 	[{ kind: 'connection-closed', holder, requested: false, announced: false, liveSessions: 3 }, 'warning'],
@@ -149,7 +169,13 @@ test('a session is named by a process-local id, and no record field can carry an
 		'endedSessions', 'endedUnattached', 'error', 'exitCode', 'holder', 'holderPid', 'holderStartedAt',
 		'holders', 'late', 'limitMs', 'liveSessions', 'reason', 'requested', 'sameBuild', 'session',
 		'signal', 'sinceAttachMs', 'sinceDetachMs',
+		// Health facts are fixed words (ok, missing, unknown...), never a path.
+		'facts', 'degraded',
 	]);
+	const words = new Set(['yes', 'no', 'ok', 'missing', 'unwritable', 'unknown']);
+	for (const [report] of REPORTS)
+		for (const value of Object.values(event(report).fields.facts ?? {}))
+			assert.ok(words.has(value), `health fact ${value} is not a fixed word`);
 	for (const [report] of REPORTS)
 		for (const key of Object.keys(event(report).fields))
 			assert.ok(allowed.has(key), `${report.kind} records an unexpected field: ${key}`);

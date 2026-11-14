@@ -534,8 +534,12 @@ markwylde/terminay` to add tools. The image runs with `--cap-drop=ALL`,
 ### Files attached in app windows or dropped on a terminal
 
 When a person attaches a file to a message they send from an app window, the
-server writes it to `terminay-attachments` under its temporary directory
-(`$TMPDIR`, else `/tmp`), in a directory only the server's user can read. A
+server writes it to `terminay-attachments` inside its scratch root,
+`terminay-<uid>` under its temporary directory (`$TMPDIR`, else `/tmp`). The
+server creates the scratch root readable only by its own account, and refuses
+to write into it unless it is a real directory owned by that account that no
+other account can reach. Clipboard images pasted from a browser
+(`terminay-clipboard`) live there too. A
 file has no size limit, and the server never removes one it has delivered, so
 the directory grows until the operating system clears it. Two things follow:
 
@@ -548,16 +552,17 @@ the directory grows until the operating system clears it. Two things follow:
   yourself. Nothing reads them after the agent has, so this is safe at any time:
 
   ```sh
-  find "${TMPDIR:-/tmp}/terminay-attachments" -type f -mtime +7 -delete
+  find "${TMPDIR:-/tmp}/terminay-$(id -u)/terminay-attachments" -type f -mtime +7 -delete
   ```
 
 Files dropped onto a terminal from another machine, whether from Desktop or a
-browser, follow the same rules. The server writes them to `terminay-drops`, in a
+browser, follow the same rules. The server writes them to `terminay-drops` in its
+scratch root, in a
 new folder for each drop, keeps each file's name, and types the paths into the
 terminal. The same `tmpfs` limits and clean-up apply:
 
 ```sh
-find "${TMPDIR:-/tmp}/terminay-drops" -mindepth 1 -mtime +7 -delete
+find "${TMPDIR:-/tmp}/terminay-$(id -u)/terminay-drops" -mindepth 1 -mtime +7 -delete
 ```
 
 The image declares a health check against the server's readiness endpoint,
@@ -791,7 +796,6 @@ TimeoutStopSec=15s
 StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=true
-PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -811,6 +815,22 @@ journalctl -u terminay-server.service -f
 With the default kill mode, stopping the unit ends the session holder and every
 shell it holds. `terminay daemon install` writes it, and `terminay daemon
 upgrade` adds it to a unit that predates it before it stops the service.
+
+The unit has no `PrivateTmp=true`, and must not have one. A private `/tmp` is
+created for each run of the service and deleted when that run stops, but the
+terminals the session holder keeps outlive the run. After one restart every
+held shell, and every shell the same holder starts later, would have a `/tmp`
+that no longer exists, and tools such as `claude` fail with `ENOENT` on
+`mkdir /tmp/...`. The server keeps its own scratch files in an owner-only
+per-account directory instead (see above), which is what makes sharing `/tmp`
+safe. A release manifest says whether its release is built that way
+(`sharedTmpSafe`); `terminay daemon install` and `upgrade` write `PrivateTmp`
+only for a release that is not, and an upgrade switches it between stopping
+the old release and starting the new one, restoring it on rollback. A server
+that finds itself started under a private `/tmp` anyway (because an older CLI
+performed the upgrade) asks the system-scope upgrade helper to repair the unit,
+once the helper is idle; a user-scope server reports it in `terminay daemon
+status`, and `terminay daemon upgrade` repairs it.
 
 ### launchd (reference only)
 

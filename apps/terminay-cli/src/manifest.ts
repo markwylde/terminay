@@ -35,6 +35,19 @@ export interface ArchiveManifest {
 	readonly version: string;
 	readonly entrypoints: Readonly<{ server: string }>;
 	readonly files: readonly ManifestFile[];
+	/**
+	 * The release keeps its fixed-name scratch files in an owner-only,
+	 * per-account directory, so it may run with the host's shared temporary
+	 * directory (ADR-0116). Absent on every release before that.
+	 */
+	readonly sharedTmpSafe?: boolean;
+}
+
+/** Whether a release may run with the host's shared temporary directory. */
+export function releaseSharesTmpSafely(manifest: {
+	readonly sharedTmpSafe?: unknown;
+}): boolean {
+	return manifest.sharedTmpSafe === true;
 }
 
 export class ManifestError extends Error {}

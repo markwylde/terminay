@@ -471,7 +471,7 @@ export interface ServerCoreCompositionOptions
 	readonly appWindows?: {
 		/** The display title of a terminal, for an approval prompt. */
 		readonly terminalTitle?: (terminalSessionId: string) => string | undefined;
-		/** Where window message attachments are written. Defaults to a server-owned directory under os.tmpdir(). */
+		/** Where window message attachments are written. Defaults to `terminay-attachments` under the per-account scratch root. */
 		readonly attachmentDirectory?: string;
 		/**
 		 * Where window records are written, so a window outlives a server restart

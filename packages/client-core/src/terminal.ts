@@ -133,6 +133,7 @@ export interface TerminalClientSession extends TerminalClientIdentity {
 	readonly replayFrom: number;
 	readonly dimensions: TerminalDimensions;
 	readonly pid?: number;
+	readonly degraded?: TerminalSessionDegradation;
 }
 
 export interface TerminalClientListResult {
@@ -278,7 +279,12 @@ export interface TerminalAttachResult {
 	readonly presentation: TerminalPresentationState;
 	/** Present only for a fresh attachment backed by a pinned checkpoint. */
 	readonly checkpoint?: TerminalPresentationCheckpointMetadata;
+	/** The session's temporary directory is no longer usable (ADR-0116). */
+	readonly degraded?: TerminalSessionDegradation;
 }
+
+/** Why a running session is shown as impaired. Nothing acts on it. */
+export type TerminalSessionDegradation = 'tmp-unusable';
 
 export interface TerminalClientTransport {
 	readonly query?: <T extends JsonValue = JsonValue>(
@@ -315,6 +321,8 @@ export interface TerminalClientAttachment {
 	readonly position: number;
 	readonly closed: boolean;
 	readonly presentation: TerminalPresentationState;
+	/** The server says this session's temporary directory is unusable. */
+	readonly degraded?: TerminalSessionDegradation;
 	readonly onEvent: (
 		listener: (event: TerminalStreamEvent) => void,
 	) => () => void;
@@ -353,6 +361,7 @@ interface MutableAttachment {
 	readonly initialEvents: TerminalStreamEvent[];
 	position: number;
 	presentation: TerminalPresentationState;
+	readonly degraded: TerminalSessionDegradation | undefined;
 	closed: boolean;
 	detached: Promise<void> | undefined;
 	acknowledgedPosition: number;
@@ -800,6 +809,7 @@ export class TerminayTerminalClient {
 			initialEvents: initialEvents.map(copyEvent),
 			position,
 			presentation: copyPresentation(result.presentation ?? { ...copyIdentity(request), revision: 0, role: 'read_only' }),
+			degraded: result.degraded,
 			closed: false,
 			detached: undefined,
 			acknowledgedPosition: result.fromPosition,
@@ -1436,6 +1446,9 @@ class AttachmentView implements TerminalClientAttachment {
 		return this.mutable.closed;
 	}
 	get presentation(): TerminalPresentationState { return this.mutable.presentation; }
+	get degraded(): TerminalSessionDegradation | undefined {
+		return this.mutable.degraded;
+	}
 	onEvent(listener: (event: TerminalStreamEvent) => void): () => void {
 		if (typeof listener !== 'function')
 			throw new TypeError('terminal event listener must be a function');
@@ -1500,6 +1513,8 @@ function validateAttachResult(value: TerminalAttachResult): void {
 		throw new TypeError('terminal attach result is invalid');
 	if (value.presentation !== undefined) validatePresentation(value.presentation, undefined);
 	if (value.checkpoint !== undefined) validateCheckpointMetadata(value.checkpoint, undefined);
+	if (value.degraded !== undefined && value.degraded !== 'tmp-unusable')
+		throw new TypeError('terminal attach degradation is invalid');
 }
 
 function decodeCheckpointTail(
@@ -1670,6 +1685,8 @@ function validateCreatedSession(value: TerminalClientSession): void {
 		(!Number.isSafeInteger(value.pid) || value.pid <= 0)
 	)
 		throw new TypeError('created terminal pid is invalid');
+	if (value.degraded !== undefined && value.degraded !== 'tmp-unusable')
+		throw new TypeError('terminal degradation is invalid');
 	if (value.launch !== undefined) {
 		const launch = value.launch;
 		if (

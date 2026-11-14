@@ -195,6 +195,44 @@ test('the status op reports readiness, build, and reachability, and nothing else
 	);
 });
 
+test('the status op carries a unit repair state, and only a known one', async () => {
+	for (const unitRepair of ['requested', 'needed']) {
+		assert.deepEqual(
+			await handleApprovalSocketRequest(
+				{ op: 'status' },
+				{
+					...authority(),
+					serverStatus: () => ({
+						ready: true,
+						version: '4.2.0',
+						exposeModes: [],
+						unitRepair,
+					}),
+				},
+			),
+			{
+				ok: true,
+				status: { ready: true, version: '4.2.0', exposeModes: [], unitRepair },
+			},
+		);
+	}
+	assert.deepEqual(
+		await handleApprovalSocketRequest(
+			{ op: 'status' },
+			{
+				...authority(),
+				serverStatus: () => ({
+					ready: true,
+					version: '4.2.0',
+					exposeModes: [],
+					unitRepair: '/var/lib/terminay',
+				}),
+			},
+		),
+		{ ok: true, status: { ready: true, version: '4.2.0', exposeModes: [] } },
+	);
+});
+
 test('a server nobody exposed answers the pairing op with no URL at all', async () => {
 	assert.deepEqual(
 		await handleApprovalSocketRequest({ op: 'pairing' }, authority()),

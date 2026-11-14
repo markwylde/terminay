@@ -643,3 +643,28 @@ test('materializeClipboardImage fails closed when binary upload is unavailable',
 		/does not support clipboard image upload/,
 	);
 });
+
+test('an attachment carries the server saying its session lost its temporary directory, and nothing else', async () => {
+	const attachWith = async (extra) => {
+		const transport = fakeTransport();
+		transport.command = async (operation, payload) => {
+			if (operation === 'terminal.attach')
+				return {
+					attachmentId: 'attachment-degraded',
+					fromPosition: payload.fromPosition,
+					position: 0,
+					events: [],
+					...extra,
+				};
+			return null;
+		};
+		return new TerminayTerminalClient(transport).attach({ ...identity, clientId: 'client-a' });
+	};
+	const degraded = await attachWith({ degraded: 'tmp-unusable' });
+	assert.equal(degraded.degraded, 'tmp-unusable');
+	await degraded.detach();
+	const plain = await attachWith({});
+	assert.equal(plain.degraded, undefined);
+	await plain.detach();
+	await assert.rejects(attachWith({ degraded: '/tmp/x' }), /degradation is invalid/u);
+});

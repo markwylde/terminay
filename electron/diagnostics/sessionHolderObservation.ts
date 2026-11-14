@@ -57,7 +57,11 @@ function isWarning(report: Report): boolean {
 		case 'launch-failed':
 		case 'incompatible':
 		case 'unreachable':
+		case 'host-tmp-unusable':
 			return true;
+		case 'drained':
+			// Passed over for its environment: terminals it keeps are impaired.
+			return report.cause !== 'build-mismatch';
 		default:
 			return false;
 	}

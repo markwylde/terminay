@@ -86,6 +86,7 @@ interface CheckpointOutputChunk {
 
 interface MutableSession {
 	presentationSeedThrough?: number;
+	readonly degraded?: 'tmp-unusable';
 	/** Replaced, never edited, when the terminal's panel moves project. */
 	identity: TerminalIdentity;
 	readonly cwd: string;
@@ -991,6 +992,7 @@ export class TerminalService {
 			outputPosition: options.outputPosition,
 			replayFrom: options.outputPosition,
 			process: options.process,
+			...(options.degraded === undefined ? {} : { degraded: options.degraded }),
 		};
 		const pid = options.process.pid;
 		if (typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0) {
@@ -2396,6 +2398,7 @@ function snapshotOf(session: MutableSession): TerminalSessionSnapshot {
 		...(session.pid === undefined ? {} : { pid: session.pid }),
 		dimensions: Object.freeze({ ...session.dimensions }),
 		...(session.exit === undefined ? {} : { exit: session.exit }),
+		...(session.degraded === undefined ? {} : { degraded: session.degraded }),
 	});
 }
 

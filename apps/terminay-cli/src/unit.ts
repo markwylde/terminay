@@ -120,6 +120,64 @@ export interface UnitConfiguration {
 	readonly layout: InstallLayout;
 	readonly runAs: string;
 	readonly workingDirectory: string;
+	/**
+	 * Whether the release the unit starts keeps its scratch files safe in a
+	 * shared temporary directory (its manifest's `sharedTmpSafe`). Only such a
+	 * release runs without `PrivateTmp`.
+	 */
+	readonly sharedTmpSafe: boolean;
+}
+
+/**
+ * `PrivateTmp=true` gives each run of the service its own `/tmp`, and systemd
+ * deletes it when that run stops. Terminal sessions outlive the run that
+ * started them (`KillMode=process`, ADR-0035), so every shell, and every shell
+ * started later by the same session holder, would be left with a `/tmp` that
+ * no longer exists. A release that keeps its scratch files safe in a shared
+ * temporary directory (ADR-0116) therefore runs without it. An older release
+ * wrote clipboard images to a fixed shared path, so it keeps the private one.
+ */
+export const UNIT_PRIVATE_TMP_LINE = 'PrivateTmp=true';
+
+/** The unit with `PrivateTmp` set as the release requires, otherwise unchanged. */
+export function withPrivateTmp(unit: string, privateTmp: boolean): string {
+	const lines = unit.split('\n');
+	const kept = lines.filter((line) => !/^PrivateTmp=/u.test(line.trim()));
+	if (privateTmp) {
+		const anchor = kept.findIndex(
+			(line) => line.trim() === 'NoNewPrivileges=true',
+		);
+		const at =
+			anchor >= 0
+				? anchor + 1
+				: Math.max(
+						0,
+						kept.findIndex((line) => line.trim().startsWith('StandardOutput=')),
+					);
+		kept.splice(at, 0, UNIT_PRIVATE_TMP_LINE);
+	}
+	return kept.join('\n');
+}
+
+/** Whether a unit already has `PrivateTmp` as the release requires. */
+export function unitMatchesRelease(
+	unit: string,
+	sharedTmpSafe: boolean,
+): boolean {
+	const privateLines = unit
+		.split('\n')
+		.filter((line) => /^PrivateTmp=/u.test(line.trim()));
+	return sharedTmpSafe
+		? privateLines.length === 0
+		: privateLines.length === 1 &&
+				privateLines[0]?.trim() === UNIT_PRIVATE_TMP_LINE;
+}
+
+/** The unit as the release requires: unchanged when it already matches. */
+export function unitForRelease(unit: string, sharedTmpSafe: boolean): string {
+	return unitMatchesRelease(unit, sharedTmpSafe)
+		? unit
+		: withPrivateTmp(unit, !sharedTmpSafe);
 }
 
 /**
@@ -169,8 +227,7 @@ KillSignal=SIGTERM
 ${UNIT_KILL_MODE_LINE}
 TimeoutStopSec=15s
 NoNewPrivileges=true
-PrivateTmp=true
-StandardOutput=journal
+${configuration.sharedTmpSafe ? '' : `${UNIT_PRIVATE_TMP_LINE}\n`}StandardOutput=journal
 StandardError=journal
 
 [Install]

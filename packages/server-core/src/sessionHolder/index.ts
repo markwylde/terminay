@@ -1,6 +1,7 @@
 export * from './client.js';
 export * from './closeRecord.js';
 export * from './factory.js';
+export * from './health.js';
 export * from './holder.js';
 export * from './observation.js';
 export * from './paths.js';

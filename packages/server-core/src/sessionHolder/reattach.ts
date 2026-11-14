@@ -112,6 +112,7 @@ export async function reattachHeldSessions(
 					outputPosition: taken.from,
 					presentationRecovery: taken.presentationRecovery,
 					presentationError: taken.presentationError,
+					...(taken.degraded === undefined ? {} : { degraded: taken.degraded }),
 				});
 				adopted.push(sessionId);
 			} catch {
@@ -167,6 +168,7 @@ export async function reattachHeldSessions(
 					outputPosition: taken.from,
 					presentationRecovery: taken.presentationRecovery,
 					presentationError: taken.presentationError,
+					...(taken.degraded === undefined ? {} : { degraded: taken.degraded }),
 				});
 				(taken.record.exit === undefined ? adopted : ended).push(session.id);
 				continue;

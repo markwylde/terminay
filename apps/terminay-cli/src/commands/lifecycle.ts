@@ -58,6 +58,14 @@ export interface StatusReport {
 	readonly exposure: readonly string[] | 'off';
 	readonly activeVersion?: string;
 	readonly advertiseAddress?: string;
+	readonly unitRepair?: 'requested' | 'needed';
+}
+
+/** The line `daemon status` prints when the server runs under a private /tmp. */
+export function describeUnitRepair(state: 'requested' | 'needed'): string {
+	return state === 'requested'
+		? 'unit         repair requested from the upgrade helper (private /tmp)'
+		: 'unit         needs repair: run `terminay daemon upgrade` (private /tmp)';
 }
 
 export async function runStatus(
@@ -91,6 +99,15 @@ export async function runStatus(
 	} catch {
 		// A stopped server cannot answer; the configured modes stand.
 	}
+	let unitRepair: 'requested' | 'needed' | undefined;
+	try {
+		const response = requireOk(
+			await sendToInstalledServer(context, { op: 'status' }),
+		);
+		if ('status' in response) unitRepair = response.status.unitRepair;
+	} catch {
+		// Nothing to add for a server that cannot answer.
+	}
 
 	const report: StatusReport = Object.freeze({
 		unit,
@@ -104,6 +121,7 @@ export async function runStatus(
 		...(context.record.advertiseAddress === undefined
 			? {}
 			: { advertiseAddress: context.record.advertiseAddress }),
+		...(unitRepair === undefined ? {} : { unitRepair }),
 	});
 
 	context.write(
@@ -123,6 +141,8 @@ export async function runStatus(
 	if (report.advertiseAddress !== undefined) {
 		context.write(`advertised   ${report.advertiseAddress}`);
 	}
+	if (report.unitRepair !== undefined)
+		context.write(describeUnitRepair(report.unitRepair));
 	return report;
 }
 
@@ -150,5 +170,7 @@ export async function runForegroundStatus(
 	context.write(`exposure     ${status.exposeModes.join(', ') || 'off'}`);
 	context.write(`public host  ${status.publicHost ?? 'not set'}`);
 	context.write(`advertised   ${status.advertiseAddress ?? 'not set'}`);
+	if (status.unitRepair !== undefined)
+		context.write(describeUnitRepair(status.unitRepair));
 	return status;
 }

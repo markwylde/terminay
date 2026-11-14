@@ -233,6 +233,9 @@ export interface TerminalSessionSnapshot extends TerminalIdentity {
 	readonly pid?: number;
 	readonly dimensions: TerminalDimensions;
 	readonly exit?: TerminalExitMetadata;
+	/** A shell kept across a restart whose temporary directory is gone or
+	 * read-only (ADR-0116). Shown to the user; nothing acts on it. */
+	readonly degraded?: 'tmp-unusable';
 }
 
 export interface TerminalOutputEvent {
@@ -457,6 +460,7 @@ export interface TerminalRestoreEndedOptions extends TerminalDimensions {
 export interface TerminalAdoptOptions extends TerminalDimensions {
 	readonly presentationRecovery?: TerminalPresentationRecovery;
 	readonly presentationError?: string;
+	readonly degraded?: 'tmp-unusable';
 	readonly identity: TerminalIdentity;
 	readonly cwd: string;
 	readonly createdAt: number;

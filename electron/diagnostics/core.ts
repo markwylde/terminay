@@ -133,6 +133,7 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.session-holder.launched',
 	'local-server.session-holder.launch-failed',
 	'local-server.session-holder.drained',
+	'local-server.session-holder.host-tmp-unusable',
 	'local-server.session-holder.limit-set',
 	'local-server.session-holder.connection-closed',
 	'local-server.session-holder.closed',

@@ -44,6 +44,10 @@ export interface ServerStatusSummary {
 	readonly exposeModes: readonly string[];
 	readonly publicHost?: string;
 	readonly advertiseAddress?: string;
+	/** ADR-0116: the unit gives this server a private /tmp. `requested` when
+	 * the upgrade helper was asked to repair it, `needed` when the operator
+	 * must run `terminay daemon upgrade`. */
+	readonly unitRepair?: 'requested' | 'needed';
 }
 
 /** One live pairing handoff, as the running server currently advertises it.
@@ -165,7 +169,7 @@ export async function handleApprovalSocketRequest(
 			if (authority.serverStatus === undefined)
 				throw new Error('this server does not report its status');
 			// Rebuilt field by field, so nothing an authority happens to carry
-			// beside these six can ride out with them.
+			// beside these seven can ride out with them.
 			const status = authority.serverStatus();
 			return Object.freeze({
 				ok: true,
@@ -182,6 +186,10 @@ export async function handleApprovalSocketRequest(
 					...(status.advertiseAddress === undefined
 						? {}
 						: { advertiseAddress: status.advertiseAddress }),
+					...(status.unitRepair === 'requested' ||
+					status.unitRepair === 'needed'
+						? { unitRepair: status.unitRepair }
+						: {}),
 				}),
 			});
 		}

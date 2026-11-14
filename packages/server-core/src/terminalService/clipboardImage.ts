@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DEFAULT_PROTOCOL_LIMITS } from '@terminay/protocol';
+import { ensureScratchDirectory, scratchRoot } from '../scratchDirectory.js';
 import { TerminalServiceError } from './errors.js';
 
 export const TERMINAL_MATERIALIZE_CLIPBOARD_IMAGE_OPERATION =
@@ -23,7 +23,7 @@ const EXTENSIONS = Object.freeze({
 
 export type ClipboardImageMimeType = keyof typeof EXTENSIONS;
 
-export function clipboardImageDirectory(root = tmpdir()): string {
+export function clipboardImageDirectory(root = scratchRoot()): string {
 	return join(root, CLIPBOARD_IMAGE_DIRECTORY_NAME);
 }
 
@@ -60,9 +60,16 @@ export async function writeClipboardImage(input: {
 			'clipboard image bytes do not match the declared type',
 		);
 	const directory = input.directory ?? clipboardImageDirectory();
-	await mkdir(directory, { recursive: true });
+	await ensureScratchDirectory(directory);
 	const filePath = join(directory, `clipboard-${randomUUID()}.${extension}`);
-	await writeFile(filePath, input.bytes);
+	// Created, never opened: with O_EXCL a name that already exists, a link
+	// included, is refused rather than written through.
+	const file = await open(filePath, 'wx', 0o600);
+	try {
+		await file.writeFile(input.bytes);
+	} finally {
+		await file.close();
+	}
 	return filePath;
 }
 
