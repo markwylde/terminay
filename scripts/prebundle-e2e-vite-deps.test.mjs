@@ -72,7 +72,10 @@ test('Turbo restores committed optimizer outputs even though node_modules is ign
     await writeFile(join(root, 'warm.mjs'), `import {mkdirSync,writeFileSync} from 'node:fs'; mkdirSync('node_modules/.vite/deps',{recursive:true});writeFileSync('node_modules/.vite/deps/react.js','committed');\n`);
     const command = fileURLToPath(new URL('../node_modules/turbo/bin/turbo', import.meta.url));
     const args = [command, 'run', 'warm', '--cache=local:rw'];
-    const options = { cwd: root, encoding: 'utf8', timeout: 10000, env: { ...process.env } };
+    // This is a functional restore check, not a startup latency assertion.
+    // Allow shared-runner contention while bounding both calls below the
+    // enclosing 120-second Node test deadline.
+    const options = { cwd: root, encoding: 'utf8', timeout: 30000, env: { ...process.env } };
     execFileSync(process.execPath, args, options);
     await rm(join(root, 'node_modules'), { recursive: true, force: true });
     const restored = execFileSync(process.execPath, args, options);
