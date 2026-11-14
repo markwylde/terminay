@@ -45,6 +45,20 @@ def request(url):
     print("Navigation requested. Capture and inspect a fresh desktop screenshot to verify the page.")
 
 
+SANDBOX_REFUSED = "userns-refused-no-profile"
+
+
+def sandbox_refused_note(environ):
+    # Chromium keeps its sandbox regardless; this only names the cause.
+    if environ.get("TERMINAY_BROWSER_SANDBOX") != SANDBOX_REFUSED:
+        return None
+    return ("terminay: this bot container cannot create user namespaces and the host has no "
+            "terminay-bot AppArmor profile, so Chromium's sandbox cannot start and the browser "
+            "will exit. The sandbox stays on. Fix on the host: run `sudo terminay daemon upgrade`, "
+            "or load the profile as described in docs/operations/standalone-server.md, then "
+            "restart the server and recreate this bot.")
+
+
 def serve():
     # Chromium does its own single-instance dispatch. Each explicit request
     # either navigates the existing browser or launches it if it was closed.
@@ -55,6 +69,9 @@ def serve():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     with open("/tmp/terminay-browser.log", "ab", buffering=0) as log:
+        sandbox_note = sandbox_refused_note(os.environ)
+        if sandbox_note:
+            log.write(sandbox_note.encode() + b"\n")
         def launch(url):
             subprocess.Popen(["chromium", "--no-first-run", "--no-default-browser-check",
                               "--disable-dev-shm-usage", "--hide-crash-restore-bubble", "--start-maximized",

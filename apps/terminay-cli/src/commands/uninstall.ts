@@ -1,5 +1,10 @@
 import { rm } from 'node:fs/promises';
 
+import {
+	type AppArmorHost,
+	BOT_APPARMOR_PROFILE_PATH,
+	removeBotAppArmorProfile,
+} from '../apparmor.js';
 import type { DaemonOptions } from '../args.js';
 import type { CommandContext } from '../context.js';
 import { removeUpgradeHelper } from '../helper.js';
@@ -31,6 +36,7 @@ export async function runUninstall(
 	options: DaemonOptions,
 	context: CommandContext,
 	streams: PromptStreams = defaultStreams(),
+	appArmor?: AppArmorHost,
 ): Promise<UninstallResult> {
 	const { layout, record, systemd, write } = context;
 
@@ -67,6 +73,15 @@ export async function runUninstall(
 	// The upgrade helper goes with the service it upgrades: a watch left armed
 	// would start an upgrader that is about to be removed.
 	await removeUpgradeHelper({ layout, systemd });
+	// The file only: unloading the profile would unconfine bot containers that
+	// are still running. The loaded copy is gone at the next boot (ADR-0119).
+	if (
+		layout.scope === 'system' &&
+		(await removeBotAppArmorProfile(appArmor).catch(() => false))
+	)
+		write(
+			`Removed ${BOT_APPARMOR_PROFILE_PATH}. The loaded profile keeps confining any bot containers still running until the host restarts.`,
+		);
 	await systemd.daemonReload();
 	await systemd.resetFailed();
 

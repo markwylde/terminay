@@ -18,6 +18,11 @@ import {
 	PUBLIC_HOST_NEEDS_LITERAL,
 } from '../address.js';
 import { ADVERTISED_PORT_SPAN } from '../advertise.js';
+import {
+	type AppArmorHost,
+	installBotAppArmorProfile,
+	reportAppArmorInstall,
+} from '../apparmor.js';
 import type { DaemonOptions, InstallScope } from '../args.js';
 import { type CommandContext, serviceNode } from '../context.js';
 import {
@@ -149,6 +154,8 @@ export interface InstallDependencies {
 	readonly verify?: () => Promise<UsableReport>;
 	/** The pairing session an interactive install ends in. Overridden by tests. */
 	readonly pair?: (context: CommandContext) => Promise<unknown>;
+	/** Where the bot AppArmor profile goes. Overridden by tests. */
+	readonly appArmor?: AppArmorHost;
 }
 
 /** The install ran again as root, through `sudo`, and this is how it ended. */
@@ -380,6 +387,14 @@ export async function runInstall(
 		}),
 		{ mode: 0o644 },
 	);
+
+	// Before the service starts, so its first bot containers can use it
+	// (ADR-0119). Only root on a system-scope install writes host policy.
+	if (scope === 'system')
+		reportAppArmorInstall(
+			await installBotAppArmorProfile(dependencies.appArmor),
+			write,
+		);
 
 	const systemd = createSystemd({
 		scope,

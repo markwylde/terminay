@@ -19,10 +19,15 @@ import { runUpgrade, UpgradeError } from '../dist/commands/upgrade.js';
 import { NotInstalledError, resolveContext } from '../dist/context.js';
 import { upgradeHelperInstalled } from '../dist/helper.js';
 import { activeVersion, installedVersions } from '../dist/install.js';
-import { installLayout, readInstallRecord } from '../dist/layout.js';
+import {
+	installLayout,
+	readInstallRecord,
+	versionDirectory,
+} from '../dist/layout.js';
 import { readUpgradeOutcome } from '../dist/outcome.js';
 import { createSystemd } from '../dist/systemd.js';
 import { parseEnvironmentFile } from '../dist/unit.js';
+import { fakeAppArmorHost, loads } from './apparmor-fixture.mjs';
 import { createFakeBin } from './fake-bin.mjs';
 import {
 	startFakeApprovalSocket,
@@ -126,7 +131,12 @@ async function pointHealthAtFixture(
 		request.op === 'status'
 			? {
 					ok: true,
-					status: { ready: true, version: 'fake', exposeModes: [], ...statusExtra },
+					status: {
+						ready: true,
+						version: 'fake',
+						exposeModes: [],
+						...statusExtra,
+					},
 				}
 			: request.op === 'probe-terminal'
 				? { ok: true, terminal: probe }
@@ -1885,13 +1895,15 @@ async function withSystemInstall(run) {
 		const { home, fake, health, installDependencies } = machine;
 		const systemRoot = join(home, 'root');
 		fake.install('chown', '');
+		const appArmor = fakeAppArmorHost();
+		const hostSetups = [];
 		const originalPath = process.env.PATH;
 		process.env.PATH = `${fake.directory}:${originalPath}`;
 		try {
 			await runInstall(
 				'v4.1.0',
 				{ ...OPTIONS, scope: 'system', runAs: 'ada', expose: 'hosted' },
-				{ ...installDependencies, systemRoot, uid: 0 },
+				{ ...installDependencies, systemRoot, uid: 0, appArmor },
 			);
 			const layout = installLayout('system', home, systemRoot);
 			await pointHealthAtFixture(layout, health.port);
@@ -1899,6 +1911,8 @@ async function withSystemInstall(run) {
 				...machine,
 				layout,
 				systemRoot,
+				appArmor,
+				hostSetups,
 				context: async () => ({
 					layout,
 					record: await readInstallRecord(layout),
@@ -1913,6 +1927,10 @@ async function withSystemInstall(run) {
 					readinessTimeoutMs: 5_000,
 					uid: 0,
 					env: {},
+					appArmor,
+					runReleaseHostSetup: async (directory) => {
+						hostSetups.push(directory);
+					},
 				},
 			});
 		} finally {
@@ -2084,6 +2102,109 @@ test('uninstall removes the helper units and the request directory', async () =>
 			disabled < calls.lastIndexOf('systemctl daemon-reload'),
 			'systemd is reloaded after the units are gone',
 		);
+	});
+});
+
+const PROFILE_LOAD =
+	'/usr/sbin/apparmor_parser -r -W /etc/apparmor.d/terminay-bot';
+
+test('a system-scope install writes and loads the bot AppArmor profile before starting', async () => {
+	await withSystemInstall(async ({ appArmor, fake }) => {
+		assert.deepEqual(loads(appArmor), [PROFILE_LOAD]);
+		const file = appArmor.files.get('/etc/apparmor.d/terminay-bot');
+		assert.deepEqual([file.uid, file.gid, file.mode], [0, 0, 0o644]);
+		assert.ok(
+			fake
+				.invocations()
+				.some((line) => /systemctl enable --now terminay-server/u.test(line)),
+		);
+	});
+});
+
+test('a user-scope install writes no AppArmor profile', async () => {
+	await withMachine({ releases: TWO_TAGS }, async ({ installDependencies }) => {
+		const appArmor = fakeAppArmorHost();
+		await runInstall(
+			'v4.1.0',
+			{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+			{ ...installDependencies, appArmor },
+		);
+		assert.deepEqual(appArmor.calls, []);
+	});
+});
+
+test('a root upgrade loads the profile even with nothing to do, and runs the new release host setup', async () => {
+	await withSystemInstall(
+		async ({ layout, appArmor, hostSetups, context, upgradeDependencies }) => {
+			const result = await runUpgrade(
+				undefined,
+				OPTIONS,
+				await context(),
+				upgradeDependencies,
+			);
+			assert.equal(result.to, '4.1.1');
+			assert.deepEqual(hostSetups, [
+				versionDirectory(layout, await activeVersion(layout)),
+			]);
+			assert.equal(loads(appArmor).length, 2, 'install, then upgrade');
+
+			const again = await runUpgrade(
+				undefined,
+				OPTIONS,
+				await context(),
+				upgradeDependencies,
+			);
+			assert.equal(again.upToDate, true);
+			assert.equal(loads(appArmor).length, 3, 'nothing to do still loads');
+			assert.equal(hostSetups.length, 1, 'no switch, no release host setup');
+		},
+	);
+});
+
+test('a failed release host setup is a warning, and the upgrade completes', async () => {
+	await withSystemInstall(async ({ context, upgradeDependencies, lines }) => {
+		const result = await runUpgrade(undefined, OPTIONS, await context(), {
+			...upgradeDependencies,
+			runReleaseHostSetup: async () => {
+				throw new Error('timed out');
+			},
+		});
+		assert.equal(result.rolledBack, false);
+		assert.equal(result.to, '4.1.1');
+		assert.ok(
+			lines.some((line) =>
+				/host setup did not complete \(timed out\)/u.test(line),
+			),
+		);
+	});
+});
+
+test('an upgrade that is not root touches no AppArmor profile', async () => {
+	await withSystemInstall(
+		async ({ appArmor, hostSetups, context, upgradeDependencies }) => {
+			const before = appArmor.calls.length;
+			await runUpgrade(undefined, OPTIONS, await context(), {
+				...upgradeDependencies,
+				uid: 1000,
+			}).catch(() => undefined);
+			assert.equal(appArmor.calls.length, before);
+			assert.deepEqual(hostSetups, []);
+		},
+	);
+});
+
+test('uninstall removes the profile file and never unloads it', async () => {
+	await withSystemInstall(async ({ appArmor, context }) => {
+		const loaded = loads(appArmor).length;
+		await runUninstall(
+			{ ...OPTIONS, yes: true },
+			await context(),
+			pipe(),
+			appArmor,
+		);
+		assert.equal(appArmor.files.has('/etc/apparmor.d/terminay-bot'), false);
+		assert.equal(loads(appArmor).length, loaded);
+		assert.ok(!appArmor.calls.some((line) => / -R /u.test(line)));
 	});
 });
 
@@ -2294,7 +2415,13 @@ const TAGGED_RELEASE = {
 };
 
 /** A canary install from the machine's release fixture, ready to upgrade. */
-async function installCanary({ health, fake, layout, installDependencies, write }) {
+async function installCanary({
+	health,
+	fake,
+	layout,
+	installDependencies,
+	write,
+}) {
 	await runInstall(
 		'canary',
 		{ ...OPTIONS, scope: 'user', expose: 'hosted' },
@@ -2317,7 +2444,10 @@ test('canary installs the canary prerelease and records the canary channel', asy
 			const record = await readInstallRecord(machine.layout);
 			assert.equal(record.channel, 'canary');
 			assert.equal(record.revision, 'c'.repeat(40));
-			assert.equal(await activeVersion(machine.layout), `canary-${'c'.repeat(12)}`);
+			assert.equal(
+				await activeVersion(machine.layout),
+				`canary-${'c'.repeat(12)}`,
+			);
 		},
 	);
 });
@@ -2334,7 +2464,10 @@ test('a canary upgrade with nothing newer on canary installs nothing, whatever n
 				releasePublicKeyPem: machine.installDependencies.releasePublicKeyPem,
 			});
 			assert.equal(result.upToDate, true);
-			assert.equal(await activeVersion(machine.layout), `canary-${'c'.repeat(12)}`);
+			assert.equal(
+				await activeVersion(machine.layout),
+				`canary-${'c'.repeat(12)}`,
+			);
 			assert.equal((await readInstallRecord(machine.layout)).channel, 'canary');
 		},
 	);
@@ -2352,7 +2485,11 @@ test('a canary upgrade follows the canary channel to a newer revision', async ()
 				releases: [
 					TAGGED_RELEASE,
 					NIGHTLY_RELEASE,
-					{ ...CANARY_RELEASE, revision: 'e'.repeat(40), publishedAt: '2026-10-11T00:00:00Z' },
+					{
+						...CANARY_RELEASE,
+						revision: 'e'.repeat(40),
+						publishedAt: '2026-10-11T00:00:00Z',
+					},
 				],
 			});
 			try {
@@ -2364,7 +2501,10 @@ test('a canary upgrade follows the canary channel to a newer revision', async ()
 					readinessTimeoutMs: 5_000,
 				});
 				assert.notEqual(result.upToDate, true);
-				assert.equal(await activeVersion(machine.layout), `canary-${'e'.repeat(12)}`);
+				assert.equal(
+					await activeVersion(machine.layout),
+					`canary-${'e'.repeat(12)}`,
+				);
 				const record = await readInstallRecord(machine.layout);
 				assert.equal(record.channel, 'canary');
 				assert.equal(record.revision, 'e'.repeat(40));
@@ -2388,7 +2528,10 @@ test('upgrade main moves a canary install to the nightly channel', async () => {
 				releasePublicKeyPem: machine.installDependencies.releasePublicKeyPem,
 				readinessTimeoutMs: 5_000,
 			});
-			assert.equal(await activeVersion(machine.layout), `main-${'d'.repeat(12)}`);
+			assert.equal(
+				await activeVersion(machine.layout),
+				`main-${'d'.repeat(12)}`,
+			);
 			const record = await readInstallRecord(machine.layout);
 			assert.equal(record.channel, 'main');
 			assert.equal(record.revision, 'd'.repeat(40));
@@ -2398,9 +2541,22 @@ test('upgrade main moves a canary install to the nightly channel', async () => {
 
 test('start is not ready when health is but terminals cannot start, and says how to fix it', async () => {
 	await withMachine(
-		{ releases: [{ tag: 'v4.1.1', version: '4.1.1', revision: 'a'.repeat(40), latest: true }] },
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
 		async ({ health, fake, layout, installDependencies, lines, write }) => {
-			await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port, {
 				ok: false,
 				shell: '/usr/sbin/nologin',
@@ -2425,63 +2581,118 @@ test('start is not ready when health is but terminals cannot start, and says how
 	);
 });
 
-const USABLE = { usable: true, checks: [{ name: 'health', ok: true }, { name: 'socket', ok: true }, { name: 'terminal', ok: true }], health: { status: 'ok', ready: true } };
+const USABLE = {
+	usable: true,
+	checks: [
+		{ name: 'health', ok: true },
+		{ name: 'socket', ok: true },
+		{ name: 'terminal', ok: true },
+	],
+	health: { status: 'ok', ready: true },
+};
 
 test('an interactive install ends in pairing; a piped one prints the command', async () => {
 	await withMachine(
-		{ releases: [{ tag: 'v4.1.1', version: '4.1.1', revision: 'a'.repeat(40), latest: true }] },
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
 		async ({ installDependencies, lines }) => {
 			const paired = [];
-			const tty = { input: Object.assign(new PassThrough(), { isTTY: true }), output: new PassThrough() };
-			const result = await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, {
-				...installDependencies,
-				streams: tty,
-				verify: async () => USABLE,
-				pair: async (context) => {
-					paired.push(context.record.runAs);
-					lines.push('<pairing>');
+			const tty = {
+				input: Object.assign(new PassThrough(), { isTTY: true }),
+				output: new PassThrough(),
+			};
+			const result = await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				{
+					...installDependencies,
+					streams: tty,
+					verify: async () => USABLE,
+					pair: async (context) => {
+						paired.push(context.record.runAs);
+						lines.push('<pairing>');
+					},
 				},
-			});
+			);
 			assert.equal(result.ready, true);
 			assert.equal(paired.length, 1);
 			const output = lines.join('\n');
-			assert.ok(output.indexOf('installed and running') < output.indexOf('<pairing>'));
+			assert.ok(
+				output.indexOf('installed and running') < output.indexOf('<pairing>'),
+			);
 			assert.match(output, /Ctrl\+C ends pairing; the server keeps running/u);
 
 			lines.length = 0;
-			await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, {
-				...installDependencies,
-				verify: async () => USABLE,
-				pair: async () => paired.push('piped'),
-			});
+			await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				{
+					...installDependencies,
+					verify: async () => USABLE,
+					pair: async () => paired.push('piped'),
+				},
+			);
 			assert.equal(paired.length, 1);
-			assert.match(lines.join('\n'), /Pair a device with: {2}terminay daemon qr-code/u);
+			assert.match(
+				lines.join('\n'),
+				/Pair a device with: {2}terminay daemon qr-code/u,
+			);
 		},
 	);
 });
 
 test('install does not call a server running whose terminals cannot start', async () => {
 	await withMachine(
-		{ releases: [{ tag: 'v4.1.1', version: '4.1.1', revision: 'a'.repeat(40), latest: true }] },
+		{
+			releases: [
+				{
+					tag: 'v4.1.1',
+					version: '4.1.1',
+					revision: 'a'.repeat(40),
+					latest: true,
+				},
+			],
+		},
 		async ({ installDependencies, lines }) => {
-			const result = await runInstall(undefined, { ...OPTIONS, scope: 'user', expose: 'hosted' }, {
-				...installDependencies,
-				verify: async () => ({
-					usable: false,
-					health: { status: 'ok', ready: true },
-					checks: [
-						{ name: 'health', ok: true },
-						{ name: 'socket', ok: true },
-						{ name: 'terminal', ok: false, detail: '/usr/sbin/nologin exited with status 1', fix: 'give ada a login shell: sudo usermod -s /bin/bash ada' },
-					],
-				}),
-				pair: async () => assert.fail('an unusable server is not paired with'),
-			});
+			const result = await runInstall(
+				undefined,
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				{
+					...installDependencies,
+					verify: async () => ({
+						usable: false,
+						health: { status: 'ok', ready: true },
+						checks: [
+							{ name: 'health', ok: true },
+							{ name: 'socket', ok: true },
+							{
+								name: 'terminal',
+								ok: false,
+								detail: '/usr/sbin/nologin exited with status 1',
+								fix: 'give ada a login shell: sudo usermod -s /bin/bash ada',
+							},
+						],
+					}),
+					pair: async () =>
+						assert.fail('an unusable server is not paired with'),
+				},
+			);
 			assert.equal(result.ready, false);
 			const output = lines.join('\n');
 			assert.match(output, /installed, but it is not usable yet/u);
 			assert.doesNotMatch(output, /and running/u);
-			assert.match(output, /terminal\s+\/usr\/sbin\/nologin exited with status 1/u);
+			assert.match(
+				output,
+				/terminal\s+\/usr\/sbin\/nologin exited with status 1/u,
+			);
 			assert.match(output, /fix: give ada a login shell/u);
 		},
 	);
@@ -2534,27 +2745,54 @@ async function breakUnit(layout) {
 	const good = await readFile(layout.unitPath, 'utf8');
 	await writeFile(
 		layout.unitPath,
-		good.replace('NoNewPrivileges=true\n', 'NoNewPrivileges=true\nPrivateTmp=true\n'),
+		good.replace(
+			'NoNewPrivileges=true\n',
+			'NoNewPrivileges=true\nPrivateTmp=true\n',
+		),
 	);
 	return good;
 }
 
 test('install writes PrivateTmp only for a release that has not declared it may share /tmp', async () => {
-	await withMachine({ releases: UNSAFE_THEN_SAFE }, async ({ layout, installDependencies }) => {
-		await runInstall('v4.1.0', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
-		assert.match(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=true$/mu);
-	});
-	await withMachine({ releases: UNSAFE_THEN_SAFE }, async ({ layout, installDependencies }) => {
-		await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
-		assert.doesNotMatch(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=/mu);
-	});
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ layout, installDependencies }) => {
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			assert.match(
+				await readFile(layout.unitPath, 'utf8'),
+				/^PrivateTmp=true$/mu,
+			);
+		},
+	);
+	await withMachine(
+		{ releases: UNSAFE_THEN_SAFE },
+		async ({ layout, installDependencies }) => {
+			await runInstall(
+				'v4.1.1',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
+			assert.doesNotMatch(
+				await readFile(layout.unitPath, 'utf8'),
+				/^PrivateTmp=/mu,
+			);
+		},
+	);
 });
 
 test('upgrading to a release that may share /tmp drops PrivateTmp between the stop and the start', async () => {
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write, lines }) => {
-			await runInstall('v4.1.0', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port);
 			const before = fake.invocations().length;
 			await runUpgrade(
@@ -2563,11 +2801,18 @@ test('upgrading to a release that may share /tmp drops PrivateTmp between the st
 				upgradeContext(layout, fake, write, await readInstallRecord(layout)),
 				upgradeDependenciesFor(installDependencies),
 			);
-			assert.doesNotMatch(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=/mu);
+			assert.doesNotMatch(
+				await readFile(layout.unitPath, 'utf8'),
+				/^PrivateTmp=/mu,
+			);
 			const calls = fake.invocations().slice(before);
-			const stop = calls.indexOf('systemctl --user stop terminay-server.service');
+			const stop = calls.indexOf(
+				'systemctl --user stop terminay-server.service',
+			);
 			const reload = calls.lastIndexOf(RELOAD);
-			const start = calls.indexOf('systemctl --user start terminay-server.service');
+			const start = calls.indexOf(
+				'systemctl --user start terminay-server.service',
+			);
 			assert.ok(stop >= 0 && reload > stop && start > reload, calls.join('\n'));
 			assert.ok(lines.some((line) => /keep a working \/tmp/u.test(line)));
 			assert.equal(await activeVersion(layout), '4.1.1');
@@ -2579,7 +2824,11 @@ test('a rollback puts the unit back exactly as it was', async () => {
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ fake, layout, installDependencies, write }) => {
-			await runInstall('v4.1.0', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.0',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, 1);
 			const unitBefore = await readFile(layout.unitPath, 'utf8');
 			await assert.rejects(
@@ -2587,7 +2836,9 @@ test('a rollback puts the unit back exactly as it was', async () => {
 					undefined,
 					OPTIONS,
 					upgradeContext(layout, fake, write, await readInstallRecord(layout)),
-					upgradeDependenciesFor(installDependencies, { readinessTimeoutMs: 200 }),
+					upgradeDependenciesFor(installDependencies, {
+						readinessTimeoutMs: 200,
+					}),
 				),
 				/did not become ready/u,
 			);
@@ -2601,9 +2852,16 @@ test('a downgrade to a release that has not declared it puts PrivateTmp back', a
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write }) => {
-			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.1',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port);
-			assert.doesNotMatch(await readFile(layout.unitPath, 'utf8'), /^PrivateTmp=/mu);
+			assert.doesNotMatch(
+				await readFile(layout.unitPath, 'utf8'),
+				/^PrivateTmp=/mu,
+			);
 			await runUpgrade(
 				'v4.1.0',
 				{ ...OPTIONS, allowDowngrade: true },
@@ -2611,7 +2869,10 @@ test('a downgrade to a release that has not declared it puts PrivateTmp back', a
 				upgradeDependenciesFor(installDependencies),
 			);
 			assert.equal(await activeVersion(layout), '4.1.0');
-			assert.match(await readFile(layout.unitPath, 'utf8'), /^NoNewPrivileges=true\nPrivateTmp=true$/mu);
+			assert.match(
+				await readFile(layout.unitPath, 'utf8'),
+				/^NoNewPrivileges=true\nPrivateTmp=true$/mu,
+			);
 		},
 	);
 });
@@ -2620,7 +2881,11 @@ test('an install already current repairs a faulty unit, restarts once, and leave
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write, lines }) => {
-			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.1',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port);
 			const good = await breakUnit(layout);
 			await writeFile(layout.resultPath, '{"kept":true}\n');
@@ -2636,7 +2901,10 @@ test('an install already current repairs a faulty unit, restarts once, and leave
 			const calls = fake.invocations().slice(before);
 			assert.equal(calls.filter((call) => call === RESTART).length, 1);
 			assert.ok(calls.indexOf(RELOAD) < calls.indexOf(RESTART));
-			assert.equal(await readFile(layout.resultPath, 'utf8'), '{"kept":true}\n');
+			assert.equal(
+				await readFile(layout.resultPath, 'utf8'),
+				'{"kept":true}\n',
+			);
 			assert.ok(lines.some((line) => /keep a working \/tmp/u.test(line)));
 		},
 	);
@@ -2646,7 +2914,11 @@ test('a faulty unit is repaired when the release server cannot be reached, and t
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write }) => {
-			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.1',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port);
 			const good = await breakUnit(layout);
 			const before = fake.invocations().length;
@@ -2662,7 +2934,13 @@ test('a faulty unit is repaired when the release server cannot be reached, and t
 				),
 			);
 			assert.equal(await readFile(layout.unitPath, 'utf8'), good);
-			assert.equal(fake.invocations().slice(before).filter((call) => call === RESTART).length, 1);
+			assert.equal(
+				fake
+					.invocations()
+					.slice(before)
+					.filter((call) => call === RESTART).length,
+				1,
+			);
 		},
 	);
 });
@@ -2671,15 +2949,29 @@ test('a source install with a faulty unit is repaired before it is told it needs
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write }) => {
-			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.1',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port);
 			const good = await breakUnit(layout);
-			const record = { ...(await readInstallRecord(layout)), channel: 'source' };
+			const record = {
+				...(await readInstallRecord(layout)),
+				channel: 'source',
+			};
 			await assert.rejects(
-				runUpgrade(undefined, OPTIONS, upgradeContext(layout, fake, write, record), {
-					readinessTimeoutMs: 5_000,
-				}),
-				(error) => error instanceof UpgradeError && /no channel to follow/u.test(error.message),
+				runUpgrade(
+					undefined,
+					OPTIONS,
+					upgradeContext(layout, fake, write, record),
+					{
+						readinessTimeoutMs: 5_000,
+					},
+				),
+				(error) =>
+					error instanceof UpgradeError &&
+					/no channel to follow/u.test(error.message),
 			);
 			assert.equal(await readFile(layout.unitPath, 'utf8'), good);
 		},
@@ -2690,7 +2982,11 @@ test('a unit that already matches its release is not touched by an upgrade with 
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write }) => {
-			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.1',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port);
 			const good = await readFile(layout.unitPath, 'utf8');
 			const before = fake.invocations().length;
@@ -2716,10 +3012,18 @@ test('status says when the server runs under a private /tmp, and what is being d
 		await withMachine(
 			{ releases: UNSAFE_THEN_SAFE },
 			async ({ health, fake, layout, installDependencies, write, lines }) => {
-				await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
-				await pointHealthAtFixture(layout, health.port, undefined, { unitRepair });
+				await runInstall(
+					'v4.1.1',
+					{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+					installDependencies,
+				);
+				await pointHealthAtFixture(layout, health.port, undefined, {
+					unitRepair,
+				});
 				lines.length = 0;
-				const report = await runStatus(upgradeContext(layout, fake, write, await readInstallRecord(layout)));
+				const report = await runStatus(
+					upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+				);
 				assert.equal(report.unitRepair, unitRepair);
 				assert.match(lines.join('\n'), expected);
 			},
@@ -2728,10 +3032,16 @@ test('status says when the server runs under a private /tmp, and what is being d
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write, lines }) => {
-			await runInstall('v4.1.1', { ...OPTIONS, scope: 'user', expose: 'hosted' }, installDependencies);
+			await runInstall(
+				'v4.1.1',
+				{ ...OPTIONS, scope: 'user', expose: 'hosted' },
+				installDependencies,
+			);
 			await pointHealthAtFixture(layout, health.port);
 			lines.length = 0;
-			const report = await runStatus(upgradeContext(layout, fake, write, await readInstallRecord(layout)));
+			const report = await runStatus(
+				upgradeContext(layout, fake, write, await readInstallRecord(layout)),
+			);
 			assert.equal(report.unitRepair, undefined);
 			assert.doesNotMatch(lines.join('\n'), /repair/u);
 		},
