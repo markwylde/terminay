@@ -22,4 +22,4 @@ None.
 
 ## Impact
 
-Gitea workflow, build/test scripts, E2E selection and fixtures, CI timing evidence and runner operations. One worktree and PR; preserve Electron Docker isolation, native ABI floor and existing security checks.
+Gitea workflow, build/test scripts, E2E selection and fixtures, CI timing evidence and runner operations. Keep the Terminay implementation and planning in one worktree and PR, with a second infrastructure PR explicitly authorized to address shared-fleet scheduling. Preserve Electron Docker isolation, native ABI floor and existing security checks.

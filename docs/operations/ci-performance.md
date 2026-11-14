@@ -293,3 +293,35 @@ seconds and CPU time 208.332 versus 135.749 seconds. A deliberate first-attempt
 failure separately proved screenshot/error context retention and successful
 retry trace/video files. This saves routine recording work but an initial
 failure’s trace/video comes from the retry, not the original attempt.
+
+
+Run 25369 (head `550f714f`) is fully green: all 30 required commit statuses
+and jobs succeeded, including all 718 E2E cases. Original creation was
+2026-11-14 16:41:58 UTC and readiness was 17:00:02 UTC: **1,084 seconds**,
+a budget miss. A main run started six seconds earlier on the shared fleet.
+The image waited 153 seconds and then executed in 33 seconds. The producer
+executed in 191 seconds; floor and systemd then waited 585 and 587 seconds,
+respectively, before executing in 46 and 97 seconds. Both artifact handoff
+fixes passed their real runtime probes. Warm bot smoke took 184 seconds
+(previous cold run: 521), and official-image smoke took 212 seconds.
+Four E2E first attempts recovered on retry; these remain included in timing.
+
+Read-only cluster inspection found 32 CPUs/30 GiB on pop-os and 16 CPUs/28 GiB
+on home3. Crucially, nested Docker test containers are not constrained by the
+DinD pod's two-CPU limit: their CPU quota is unset and observed throttling is
+zero. Increasing that daemon limit would not increase test CPU allocation.
+Kubernetes pod metrics also omit these nested containers, so fleet sizing
+must consider node and Docker-container measurements. Public Forgejo twins
+are separate pools and must retain their credential isolation. A companion
+infrastructure PR is authorized; no additional capacity has yet been deployed.
+
+The companion infrastructure proposal adds two home3 workers with only the
+`terminay-ci-build` label and capacity one per isolated Docker daemon. The four
+critical jobs select repository variable `TERMINAY_CI_BUILD_RUNNER`, falling
+back to `ubuntu-latest` while it is unset. Deploy and verify both registrations
+before setting the variable to `terminay-ci-build`. Clear it before draining
+the new pool for rollback; already-created jobs must finish or be explicitly
+handled before deleting runners. Existing general and public pools are unchanged.
+Two reserved slots protect this pipeline from the general E2E queue, but do
+not provide a five-minute guarantee for concurrent pipelines. Measure admission,
+whole-node resource pressure and full readiness after activation.

@@ -4,7 +4,7 @@ Successful runs 25299 and 25305 took 18m18s and 19m29s from creation. The E2E li
 
 ## Goals / Non-Goals
 
-Goals: complete creation-to-green below 300 seconds, retain all required scenarios, provide reproducible timing evidence and deliver one PR.
+Goals: complete creation-to-green below 300 seconds, retain all required scenarios, provide reproducible timing evidence and deliver the Terminay changes in one PR with the authorized infrastructure companion PR.
 
 Non-goals: reducing production durability, skipping slow tests, moving required checks outside the run, bypassing Docker Electron isolation, or declaring success from partial statuses.
 
@@ -16,7 +16,7 @@ Non-goals: reducing production durability, skipping slow tests, moving required 
 - Build the Linux application once in its ABI floor environment, package AppImage and standalone outputs without rebuilding, and hand revision-matched archives to consumers. Publish distributable files from a shared producer so floor probes and systemd consumers can proceed independently; do not transfer the unpacked Electron staging tree. Use explicit completion/provenance checks for prebuilt paths. Cache pinned tool downloads and correctly scoped build outputs. Do not reuse native artifacts across platforms.
 - Cache production JavaScript/UI bundles with explicit source, configuration, helper, environment and workspace dependency inputs; stage release payloads after restoration. Keep native binaries outside this cache. Cache the E2E browser optimizer separately with checkout-root and runtime identity, verifying committed metadata and every referenced output after restoration. Combine image setup into one layer to avoid repeated filesystem snapshots.
 - Bound Linux dependency installation, retain npm lifecycle scripts and reuse the integrity-checked npm download cache. Disable opportunistic audit/funding requests during installation; required security checks remain independent. Publish the verified standalone payload directly into the official image instead of compressing and immediately extracting it. Use explicit deterministic gzip level 1 for CI archive transfers while release archives retain level 9; verify identical extracted payloads and metadata. Make the local upgrade-description smoke explicitly offline while preserving the separate live-upgrade scenario.
-- Schedule producer jobs first and measure runner availability. Optimize total work and scheduling for the intended thirteen Linux workers; preserve one job per isolated Docker store because cleanup assumes exclusive ownership. Unlimited concurrency is rejected.
+- Schedule producer jobs first and measure runner availability. Keep thirteen general Linux workers and propose two additional home3 workers reserved for image production, Linux artifact production and its two consumers. Each new worker has an isolated Docker store and capacity one. Activate the reserved label with `TERMINAY_CI_BUILD_RUNNER` only after both registrations are healthy; an unset variable uses the existing general pool. Size reservations from node/Docker measurements because nested test containers escape daemon pod limits. The two-slot pool does not guarantee immediate admission for overlapping runs. Unlimited concurrency is rejected.
 - Report all required checks and original creation time through a read-only timing CLI, retaining attempt ambiguity. Failed, incomplete, cold and queued runs count against the target instead of being hidden.
 
 ## Risks / Trade-offs
@@ -29,8 +29,8 @@ Non-goals: reducing production durability, skipping slow tests, moving required 
 
 ## Migration Plan
 
-Implement and verify in one worktree/PR. Run bounded targeted tests and Gitea full runs, inspect all head statuses, retain timing evidence. Rollback is reverting the PR; no product state migration.
+Implement and verify Terminay in one worktree/PR; keep runner manifests and their contract tests in the separately authorized infrastructure worktree/PR. Run bounded targeted tests and Gitea full runs, inspect all head statuses, retain timing evidence. Rollback is reverting the PR; no product state migration.
 
 ## Open Questions
 
-Scheduling and workload must fit the intended thirteen Linux workers; the removed stale registrations do not imply an infrastructure repair requirement. Exact workspace split and artifact transfer design will be selected from measurements. ADR-0036's conditional budget is superseded by strict measured readiness; shard assignment is refined using recorded durations; all platform and coverage boundaries remain.
+The thirteen general Linux workers are healthy. Run 25369 demonstrated 585–587 seconds of consumer queueing after the producer completed, during overlapping main/PR runs. A separate infrastructure PR is authorized to address scheduling; added capacity must use isolated Docker stores and measured node headroom, without restoring the previously overloaded fifteen-runner pop-os fleet. The single macOS runner remains a separate contention limit. Exact workspace split and artifact transfer design will be selected from measurements. ADR-0036's conditional budget is superseded by strict measured readiness; shard assignment is refined using recorded durations; all platform and coverage boundaries remain.

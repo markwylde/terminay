@@ -26,5 +26,5 @@
 
 - [x] 4.1 Add readiness timing report with queue, retry and incomplete-status handling; verify synthetic regression cases and real Gitea captures.
 - [ ] 4.2 Run appropriate bounded local checks and openspec validation, resolve regressions and review the combined diff.
-- [ ] 4.3 Deliver one Gitea PR and verify every head check success/skipped plus full creation-to-green under 300 seconds; retain measured evidence.
+- [ ] 4.3 Deliver the Terminay Gitea PR and authorized infrastructure companion PR, and verify every head check success/skipped plus full creation-to-green under 300 seconds; retain measured evidence.
 - [ ] 4.4 Verify implementation against artifacts and sync/archive completed change in this same PR.
