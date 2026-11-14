@@ -40,7 +40,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   }
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "standalone-systemd-restart", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "bot-mcp-runtime", "mcp-cli-compatibility", "e2e-image", "e2e-test"],
+    ["e2e-image", "packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "standalone-systemd-restart", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "bot-mcp-runtime", "mcp-cli-compatibility", "e2e-test"],
   );
   // The official image is built and paired with on every pull request, by the
   // same client code Desktop ships, before a release can publish it.
@@ -89,7 +89,9 @@ test("Gitea is the only provider that runs verification CI", async () => {
   const giteaGlibcFloor = job(giteaCi, "linux-glibc-floor");
   assert.match(giteaGlibcFloor, /^ {4}runs-on: ubuntu-latest$/mu);
   assert.match(giteaGlibcFloor, /test "\$\(docker info --format '\{\{\.Architecture\}\}'\)" = x86_64/u);
-  assert.match(giteaGlibcFloor, /sh scripts\/run-in-linux-floor\.sh --output release [^\n]*\\\n\s+sh -c '[^']*npm run build:linux && sh scripts\/build-linux-standalone-archive\.sh linux-x64 main /u);
+  assert.match(giteaGlibcFloor, /standalone-prebuilt-application\.mjs build linux-x64.*&& sh scripts\/build-linux-standalone-archive\.sh --prebuilt/u);
+  assert.match(giteaGlibcFloor, /electron-builder --linux AppImage --x64 --publish never/u);
+  assert.match(giteaGlibcFloor, /build-linux-standalone-archive\.sh --prebuilt linux-x64 main/u);
   assert.match(giteaGlibcFloor, /node scripts\/linux-glibc-floor\.mjs check --target linux-x64 \\\n\s+release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage \\\n\s+release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
   assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh appimage release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage/u);
   assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh server-archive release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
@@ -148,7 +150,8 @@ test("Gitea CI retains its shared-image fan-out and declared runner bounds", () 
 test("Gitea CI uses its compatible shared-image transport", () => {
   const giteaE2e = job(giteaCi, "e2e-test");
   assert.match(giteaE2e, /uses: actions\/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5/u);
-  assert.doesNotMatch(giteaCi, /d3f86a106a0bac45b974a628896c90dbdf5c8093|ea165f8d65b6e75b540449e92b4886f43607fa02|actions\/download-artifact/u);
+  assert.doesNotMatch(giteaCi, /d3f86a106a0bac45b974a628896c90dbdf5c8093|ea165f8d65b6e75b540449e92b4886f43607fa02/u);
+  assert.doesNotMatch(giteaE2e, /actions\/download-artifact/u);
   assert.match(giteaE2e, /docker login git\.i\.wylde\.net/u);
   assert.match(giteaE2e, /docker pull "\$IMAGE_TAG"/u);
   assert.match(giteaE2e, /TERMINAY_E2E_IMAGE_IS_PRELOADED: "1"/u);
@@ -181,7 +184,7 @@ test("every CI test job explains itself before its timeout", async () => {
     const timeout = /^ {4}timeout-minutes: (\d+)$/mu.exec(block)?.[1];
     assert.ok(timeout, `${name} declares a timeout`);
     // The watchdog reads the job's budget; it must be the job's own.
-    assert.match(block, new RegExp(`^ {4}env:\\n {6}TERMINAY_CI_JOB_TIMEOUT_MINUTES: ${timeout}$`, "mu"), `${name} tells the watchdog its timeout`);
+    assert.match(block, new RegExp(`^ {6}TERMINAY_CI_JOB_TIMEOUT_MINUTES: ${timeout}$`, "mu"), `${name} tells the watchdog its timeout`);
     const [first, ...rest] = steps(block);
     assert.match(first, /- name: Arm the timeout watchdog\n {8}run: echo "TERMINAY_CI_JOB_STARTED_AT=\$\(date \+%s\)" >> "\$GITHUB_ENV"/u,
       `${name} records when it started before anything else`);

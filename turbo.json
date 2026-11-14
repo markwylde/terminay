@@ -6,6 +6,7 @@
     "signature": true
   },
   "globalDependencies": ["package-lock.json"],
+  "globalPassThroughEnv": ["TMPDIR", "PYTHONDONTWRITEBYTECODE"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -34,6 +35,16 @@
     },
     "test:ci": {
       "dependsOn": ["^build", "build"],
+      "outputs": [],
+      "cache": false
+    },
+    "@terminay/server#test:ci": {
+      "dependsOn": ["^build", "build", "terminay-builtin-agents#compile", "terminay-language-typescript#compile", "terminay-gitea#compile", "terminay-github#compile", "terminay-builtin-agents#test:ci", "terminay-language-typescript#test:ci", "terminay-gitea#test:ci", "terminay-github#test:ci"],
+      "outputs": [],
+      "cache": false
+    },
+    "@terminay/desktop#test:ci": {
+      "dependsOn": ["^build", "build", "@terminay/server#test:ci"],
       "outputs": [],
       "cache": false
     },

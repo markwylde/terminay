@@ -34,7 +34,7 @@ test('Electron opens Remote Access as the Local server\'s exposure page', async 
 	await expect(manager.locator('#section-remote-access-host')).toHaveCount(0);
 });
 
-test('This device › Servers lists saved servers and adds one', async ({
+test('This device: Servers lists saved servers and adds one', async ({
 	appHarness,
 	mainWindow,
 }) => {
@@ -76,7 +76,7 @@ test('This device › Servers lists saved servers and adds one', async ({
 	).toBeVisible();
 });
 
-test('Connect a server on the rail opens This device › Servers with the add form', async ({
+test('Connect a server on the rail opens This device: Servers with the add form', async ({
 	appHarness,
 	mainWindow,
 }) => {
@@ -91,7 +91,7 @@ test('Connect a server on the rail opens This device › Servers with the add fo
 	).toBeVisible();
 });
 
-test('the header connection menu opens Settings at This device › Servers', async ({
+test('the header connection menu opens Settings at This device: Servers', async ({
 	appHarness,
 	mainWindow,
 }) => {

@@ -136,7 +136,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
 
   assert.equal(packageData.devDependencies.turbo, "2.11.10");
   assert.match(packageData.scripts["build:workspaces"], /^turbo run build --filter=!terminay-\* && turbo run compile --filter=terminay-\*$/u);
-  assert.match(packageData.scripts["test:workspaces"], /^turbo run test:ci --concurrency=1$/u);
+  assert.match(packageData.scripts["test:workspaces"], /^turbo run test:ci --concurrency=2$/u);
   assert.deepEqual(turbo.remoteCache, {
     apiUrl: "https://turborepo.i.wylde.net",
     teamSlug: "wylde",
@@ -144,6 +144,13 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
   });
   assert.equal(turbo.tasks.build.outputs.includes("dist/**"), true);
   assert.equal(turbo.tasks["test:ci"].cache, false);
+  assert.ok(turbo.globalPassThroughEnv.includes("TMPDIR"), "workspace test processes receive the isolated temporary filesystem");
+  assert.ok(turbo.globalPassThroughEnv.includes("PYTHONDONTWRITEBYTECODE"));
+  assert.ok(turbo.tasks["@terminay/desktop#test:ci"].dependsOn.includes("@terminay/server#test:ci"), "Desktop packs only after standalone staging completes");
+  for (const extension of ["terminay-builtin-agents", "terminay-language-typescript", "terminay-gitea", "terminay-github"]) {
+    assert.ok(turbo.tasks["@terminay/server#test:ci"].dependsOn.includes(`${extension}#compile`), "staging reuses completed extension compilation");
+    assert.ok(turbo.tasks["@terminay/server#test:ci"].dependsOn.includes(`${extension}#test:ci`), "staging cache restores cannot overlap packed extension tests");
+  }
 
   assert.match(job(workflow, "packaged-macos-smoke"), cacheEnvironment);
   assert.match(job(workflow, "build-and-test"), cacheEnvironment);
@@ -316,6 +323,10 @@ test("E2E shards split by test and report per-test timings without changing the 
   assert.match(entrypoint, /node scripts\/support\/run-e2e-playwright\.mjs "\$@"\nstatus=\$\?/u);
   assert.match(runner, /spawn\('xvfb-run', \['--auto-servernum', 'npx', 'playwright', 'test', \.\.\.args\]/u);
   assert.match(runner, /--test-list=/u);
+  assert.match(runner, /e2e-duration-snapshot\.json/u);
+  const image = await text("Dockerfile.e2e");
+  const realListingCheck = image.indexOf("node --test --test-force-exit --test-timeout=120000 scripts/e2e-real-shard-list.test.mjs");
+  assert.ok(realListingCheck > image.indexOf("npm run build:app"), "actual shard selection is checked after its workspace imports are built");
   // A deal that cannot be computed falls back to Playwright's own sharding.
   assert.match(runner, /Playwright will shard it instead/u);
   assert.match(entrypoint, /node scripts\/summarize-e2e-timings\.mjs test-results\/e2e-timings\.json \|\| true/u);

@@ -34,6 +34,109 @@ concurrency:
 # the test files still running, and each Node process's JavaScript stack and
 # open handles; it never stops or fails anything.
 jobs:
+  e2e-image:
+    name: Build E2E image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.tag }}
+      image-key: ${{ steps.image.outputs.key }}
+      base-image: ${{ steps.image.outputs.base-tag }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Require amd64 Docker host
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            x86_64|amd64) ;;
+            *)
+              echo "The shared Linux E2E image requires an amd64 runner." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Resolve E2E image reference
+        id: image
+        shell: bash
+        run: |
+          IMAGE_KEY="$(node scripts/e2e-image-cache-key.mjs)"
+          echo "key=$IMAGE_KEY" >> "$GITHUB_OUTPUT"
+          echo "tag=git.i.wylde.net/markwylde/terminay-e2e:$IMAGE_KEY" >> "$GITHUB_OUTPUT"
+          BASE_KEY="$(node scripts/e2e-base-image-key.mjs)"
+          echo "base-tag=git.i.wylde.net/markwylde/terminay-e2e-base:$BASE_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate internal container registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
+
+      # The dependency base is keyed by exactly its inputs, so it is rebuilt
+      # only when dependencies change and its layers stay identical, and
+      # cached on runners, across commits.
+      - name: Build or restore the dependency base image
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          BASE_TAG: ${{ steps.image.outputs.base-tag }}
+        run: |
+          if docker manifest inspect "$IMAGE_TAG" >/dev/null; then
+            echo "The E2E image already exists; its base is not needed."
+            exit 0
+          fi
+          if docker manifest inspect "$BASE_TAG" >/dev/null; then
+            docker pull "$BASE_TAG"
+            echo "Restored $BASE_TAG from the internal registry."
+            exit 0
+          fi
+          # shellcheck disable=SC2046 # one docker build argument per line
+          DOCKER_BUILDKIT=1 docker build \
+            --pull \
+            --platform linux/amd64 \
+            $(sh scripts/docker-hub-build-args.sh) \
+            --file Dockerfile.e2e-base \
+            --tag "$BASE_TAG" \
+            .
+          docker push "$BASE_TAG"
+
+      - name: Build or restore the content-addressed E2E image
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          IMAGE_KEY: ${{ steps.image.outputs.key }}
+          BASE_TAG: ${{ steps.image.outputs.base-tag }}
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+        run: |
+          if docker manifest inspect "$IMAGE_TAG" >/dev/null; then
+            echo "Restored $IMAGE_TAG from the internal registry."
+            exit 0
+          fi
+          DOCKER_BUILDKIT=1 docker build \
+            --platform linux/amd64 \
+            --file Dockerfile.e2e \
+            --build-arg E2E_BASE_IMAGE="$BASE_TAG" \
+            --build-arg TURBO_TEAM="$TURBO_TEAM" \
+            --secret id=turbo_token,env=TURBO_TOKEN \
+            --secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY \
+            --label "net.wylde.terminay.e2e-cache-key=$IMAGE_KEY" \
+            --tag "$IMAGE_TAG" \
+            .
+          docker push "$IMAGE_TAG"
+
+      - name: Free this job's Docker images
+        if: ${{ always() }}
+        env:
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          BASE_TAG: ${{ steps.image.outputs.base-tag }}
+        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG" "$BASE_TAG"
+
   packaged-macos-smoke:
     name: Packaged macOS startup smoke
     runs-on: macos
@@ -183,10 +286,26 @@ jobs:
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         env:
           TERMINAY_REVISION: ${{ github.sha }}
+          TURBO_TEAM: wylde
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
         run: |
           test ! -e release
-          sh scripts/run-in-linux-floor.sh --output release --env TERMINAY_REVISION -- \
-            sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && npm run build:linux && sh scripts/build-linux-standalone-archive.sh linux-x64 main "$TERMINAY_REVISION" release/standalone/terminay-server-main-linux-x64.tar.gz'
+          sh scripts/run-in-linux-floor.sh --output release --env TERMINAY_REVISION --env TURBO_TEAM --env TURBO_TOKEN --env TURBO_REMOTE_CACHE_SIGNATURE_KEY -- \
+            sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && node scripts/standalone-prebuilt-application.mjs build linux-x64 "$TERMINAY_REVISION" && sh scripts/build-linux-standalone-archive.sh --prebuilt linux-x64 main "$TERMINAY_REVISION" release/standalone/terminay-server-main-linux-x64.tar.gz && npx electron-builder --linux AppImage --x64 --publish never'
+          # Stage Node-native archive bytes before electron-builder may rebuild native modules.
+
+      - name: Record the standalone archive digest
+        run: |
+          cd release/standalone
+          sha256sum terminay-server-main-linux-x64.tar.gz > SHA256SUMS
+
+      - name: Publish this revision's standalone archive for restart verification
+        uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3
+        with:
+          name: standalone-floor-${{ github.sha }}
+          path: release/standalone
+          retention-days: 1
 
       - name: Check every ELF file against the glibc floor
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
@@ -210,6 +329,7 @@ jobs:
   standalone-systemd-restart:
     name: Standalone systemd restart (linux-x64)
     runs-on: ubuntu-latest
+    needs: linux-glibc-floor
     timeout-minutes: 60
     env:
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 60
@@ -237,14 +357,16 @@ jobs:
       - name: Require an x64 Docker daemon
         run: test "$(docker info --format '{{.Architecture}}')" = x86_64
 
-      - name: Build this commit's standalone archive in the floor image
-        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
-        env:
-          TERMINAY_REVISION: ${{ github.sha }}
+      - name: Download the verified archive from this run
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3
+        with:
+          name: standalone-floor-${{ github.sha }}
+          path: release/standalone
+
+      - name: Verify the transferred archive
         run: |
-          test ! -e release
-          sh scripts/run-in-linux-floor.sh --output release --env TERMINAY_REVISION -- \
-            sh -c 'node scripts/stage-selected-secure-werift-runtime.mjs && sh scripts/build-linux-standalone-archive.sh linux-x64 main "$TERMINAY_REVISION" release/standalone/terminay-server-main-linux-x64.tar.gz'
+          cd release/standalone
+          sha256sum --check SHA256SUMS
 
       - name: Install dependencies and build the CLI that drives the install
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
@@ -266,8 +388,12 @@ jobs:
   build-and-test:
     name: Build, lint, and unit tests
     runs-on: ubuntu-latest
+    container:
+      image: git.i.wylde.net/docker/dind:latest
+      options: --tmpfs /test-tmp:rw,size=2g,mode=1777
     timeout-minutes: 10
     env:
+      TMPDIR: /test-tmp
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 10
 
     steps:
@@ -307,8 +433,12 @@ jobs:
   workspace-tests:
     name: Workspace tests
     runs-on: ubuntu-latest
+    container:
+      image: git.i.wylde.net/docker/dind:latest
+      options: --tmpfs /test-tmp:rw,size=2g,mode=1777
     timeout-minutes: 10
     env:
+      TMPDIR: /test-tmp
       TERMINAY_CI_JOB_TIMEOUT_MINUTES: 10
 
     steps:
@@ -526,109 +656,6 @@ jobs:
       - name: Free this job's Docker images
         if: ${{ always() }}
         run: sh scripts/prune-ci-docker-images.sh
-
-  e2e-image:
-    name: Build E2E image
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image: ${{ steps.image.outputs.tag }}
-      image-key: ${{ steps.image.outputs.key }}
-      base-image: ${{ steps.image.outputs.base-tag }}
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-
-      - name: Require amd64 Docker host
-        shell: bash
-        run: |
-          case "$(uname -m)" in
-            x86_64|amd64) ;;
-            *)
-              echo "The shared Linux E2E image requires an amd64 runner." >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Resolve E2E image reference
-        id: image
-        shell: bash
-        run: |
-          IMAGE_KEY="$(node scripts/e2e-image-cache-key.mjs)"
-          echo "key=$IMAGE_KEY" >> "$GITHUB_OUTPUT"
-          echo "tag=git.i.wylde.net/markwylde/terminay-e2e:$IMAGE_KEY" >> "$GITHUB_OUTPUT"
-          BASE_KEY="$(node scripts/e2e-base-image-key.mjs)"
-          echo "base-tag=git.i.wylde.net/markwylde/terminay-e2e-base:$BASE_KEY" >> "$GITHUB_OUTPUT"
-
-      - name: Authenticate internal container registry
-        env:
-          REGISTRY_TOKEN: ${{ secrets.TERMINAY_E2E_REGISTRY_TOKEN }}
-        run: printf '%s' "$REGISTRY_TOKEN" | docker login git.i.wylde.net --username "$GITHUB_ACTOR" --password-stdin
-
-      # The dependency base is keyed by exactly its inputs, so it is rebuilt
-      # only when dependencies change and its layers stay identical, and
-      # cached on runners, across commits.
-      - name: Build or restore the dependency base image
-        env:
-          IMAGE_TAG: ${{ steps.image.outputs.tag }}
-          BASE_TAG: ${{ steps.image.outputs.base-tag }}
-        run: |
-          if docker manifest inspect "$IMAGE_TAG" >/dev/null; then
-            echo "The E2E image already exists; its base is not needed."
-            exit 0
-          fi
-          if docker manifest inspect "$BASE_TAG" >/dev/null; then
-            docker pull "$BASE_TAG"
-            echo "Restored $BASE_TAG from the internal registry."
-            exit 0
-          fi
-          # shellcheck disable=SC2046 # one docker build argument per line
-          DOCKER_BUILDKIT=1 docker build \
-            --pull \
-            --platform linux/amd64 \
-            $(sh scripts/docker-hub-build-args.sh) \
-            --file Dockerfile.e2e-base \
-            --tag "$BASE_TAG" \
-            .
-          docker push "$BASE_TAG"
-
-      - name: Build or restore the content-addressed E2E image
-        env:
-          IMAGE_TAG: ${{ steps.image.outputs.tag }}
-          IMAGE_KEY: ${{ steps.image.outputs.key }}
-          BASE_TAG: ${{ steps.image.outputs.base-tag }}
-          TURBO_TEAM: wylde
-          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
-          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
-        run: |
-          if docker manifest inspect "$IMAGE_TAG" >/dev/null; then
-            echo "Restored $IMAGE_TAG from the internal registry."
-            exit 0
-          fi
-          DOCKER_BUILDKIT=1 docker build \
-            --platform linux/amd64 \
-            --file Dockerfile.e2e \
-            --build-arg E2E_BASE_IMAGE="$BASE_TAG" \
-            --build-arg TURBO_TEAM="$TURBO_TEAM" \
-            --secret id=turbo_token,env=TURBO_TOKEN \
-            --secret id=turbo_signature_key,env=TURBO_REMOTE_CACHE_SIGNATURE_KEY \
-            --label "net.wylde.terminay.e2e-cache-key=$IMAGE_KEY" \
-            --tag "$IMAGE_TAG" \
-            .
-          docker push "$IMAGE_TAG"
-
-      - name: Free this job's Docker images
-        if: ${{ always() }}
-        env:
-          IMAGE_TAG: ${{ steps.image.outputs.tag }}
-          BASE_TAG: ${{ steps.image.outputs.base-tag }}
-        run: sh scripts/prune-ci-docker-images.sh "$IMAGE_TAG" "$BASE_TAG"
 
   e2e-test:
     name: E2E (${{ matrix.shard }}/18)

@@ -3,14 +3,16 @@
 // Playwright's own `--shard` cuts the ordered test list into contiguous
 // slices. Slow tests sit together in a few spec files, so some slices carried
 // three times the test time of others and the slowest set the length of the
-// whole run. Dealing tests out in turn gives every shard a share of each file.
+// whole run. Recorded durations let the longest independent units go first;
+// each is assigned to the shard with the least estimated work.
 //
 // A spec whose tests share setup stays whole: one that starts something in
 // `beforeAll`, or that declares itself one group. Splitting it would repeat
 // the setup in every shard, or break tests that rely on running in order.
 
 //
-// A test tagged `@heavy` counts for several: one that packages the application
+// A test without timing evidence falls back to ten seconds. `@heavy` counts
+// for several: one that packages the application
 // or waits for a real minute boundary takes as long as a handful of ordinary
 // tests, and its shard should be dealt that many fewer.
 
@@ -18,8 +20,16 @@ const TITLE_SEPARATOR = ' › ';
 /** How many ordinary tests a `@heavy` one stands for when shards are filled. */
 export const HEAVY_TEST_WEIGHT = 6;
 
+/** Conservative estimate for a new ordinary test, including app startup. */
+export const DEFAULT_TEST_DURATION_MS = 10_000;
+
+/** Unambiguous identity shared by the snapshot producer and shard planner. */
+export function timingKey(test) {
+	return JSON.stringify([test.file, ...test.titles]);
+}
+
 /** Every test in a `playwright test --list --reporter=json` report, in order. */
-export function listedTests(report) {
+export function listedTests(report, durations) {
 	const tests = [];
 	const visit = (suite, titles) => {
 		for (const spec of suite.specs ?? [])
@@ -37,6 +47,14 @@ export function listedTests(report) {
 	// A file's own suite is titled with its path, which is not part of a
 	// test's title path.
 	for (const fileSuite of report.suites ?? []) visit(fileSuite, []);
+	if (durations) {
+		for (const test of tests) {
+			const measured = durations[timingKey(test)];
+			test.weight = Number.isFinite(measured) && measured > 0
+				? measured
+				: test.weight * DEFAULT_TEST_DURATION_MS;
+		}
+	}
 	return tests;
 }
 
@@ -74,10 +92,15 @@ export function shardUnits(tests, keepsTogether) {
 
 /**
  * Deal units to `total` shards: each goes to the shard holding the least so
- * far, the earliest on a tie. For ordinary single tests that is a plain deal
- * in turn; a whole file counts for all its tests, and a heavy test for several.
+ * far, the earliest on a tie. Duration-backed plans place the longest units
+ * first. Whole-file units count the sum of their test estimates; their tests
+ * retain declaration order. Without estimates the original weighted deal remains.
  */
-export function dealToShards(units, total) {
+export function dealToShards(units, total, longestFirst = false) {
+	if (!Number.isInteger(total) || total < 1) throw new Error('shard count must be a positive integer');
+	const weight = (unit) => unit.tests.reduce((sum, test) => sum + (test.weight ?? 1), 0);
+	// Stable ties retain declaration order; no machine-local timing enters the plan.
+	if (longestFirst) units = [...units].sort((a, b) => weight(b) - weight(a));
 	const shards = Array.from({ length: total }, () => ({ load: 0, units: [] }));
 	for (const unit of units) {
 		let target = shards[0];
@@ -93,9 +116,9 @@ export function dealToShards(units, total) {
  * selected by exactly one shard under Playwright's own matching, so a title
  * this format cannot express fails the split rather than dropping a test.
  */
-export function shardTestLists(report, keepsTogether, total) {
-	const tests = listedTests(report);
-	const lists = dealToShards(shardUnits(tests, keepsTogether), total).map(
+export function shardTestLists(report, keepsTogether, total, durations) {
+	const tests = listedTests(report, durations);
+	const lists = dealToShards(shardUnits(tests, keepsTogether), total, Boolean(durations)).map(
 		(units) => units.map((unit) => unit.line),
 	);
 	for (const test of tests) {

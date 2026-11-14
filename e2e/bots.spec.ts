@@ -153,7 +153,7 @@ async function openBotChat(page: Page, name: string): Promise<Locator> {
 	return tab;
 }
 
-test.describe('Home › Bots', () => {
+test.describe('Home: Bots', () => {
 	test('image build opens a compact banner and a live step timeline with failure and retry', async ({
 		mainWindow,
 		tempDir,

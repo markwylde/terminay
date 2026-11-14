@@ -1,0 +1,8 @@
+# The runtime has real systemd as PID 1. Package installation belongs in the
+# cached image layer, before the privileged scenario container is started.
+ARG SYSTEMD_BASE_IMAGE=docker.io/library/debian:bookworm-slim
+FROM ${SYSTEMD_BASE_IMAGE}
+RUN apt-get update -qq \
+    && apt-get install -y -qq systemd systemd-sysv nodejs procps util-linux sudo \
+    && rm -rf /var/lib/apt/lists/*
+CMD ["/lib/systemd/systemd"]

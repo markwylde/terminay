@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { durationSnapshot } from './update-e2e-duration-snapshot.mjs';
 import {
 	HEAVY_TEST_WEIGHT,
+	DEFAULT_TEST_DURATION_MS,
+	timingKey,
 	dealToShards,
 	listedTests,
 	shardTestLists,
@@ -127,4 +130,46 @@ test('the real suite splits so every shard has work and whole specs stay whole',
 	const whole = lists.flat().filter((line) => !line.includes('›'));
 	assert.ok(whole.includes('server-ui-sandbox.spec.ts'), 'the sandbox spec shares one application');
 	assert.equal(new Set(whole).size, whole.length, 'a whole spec was dealt twice');
+});
+
+
+test('duration estimates use successful measurements and conservative fallback weights', () => {
+	const listing = report({ 'a.spec.ts': ['measured', 'unknown', 'new heavy'] });
+	listing.suites[0].specs[2].tags = ['@heavy'];
+	const durations = { [JSON.stringify(['a.spec.ts', 'measured'])]: 1234 };
+	assert.deepEqual(listedTests(listing, durations).map((test) => test.weight), [
+		1234, DEFAULT_TEST_DURATION_MS, DEFAULT_TEST_DURATION_MS * HEAVY_TEST_WEIGHT,
+	]);
+});
+
+test('longest-first measured assignment avoids a slow unit arriving after all shards fill', () => {
+	const listing = report({ 'a.spec.ts': ['short a', 'short b', 'short c', 'long'] });
+	const durations = Object.fromEntries(listedTests(listing).map((test, index) => [timingKey(test), [10, 10, 10, 30][index]]));
+	const lists = shardTestLists(listing, () => false, 2, durations);
+	assert.deepEqual(lists, [
+		['a.spec.ts › long'],
+		['a.spec.ts › short a', 'a.spec.ts › short b', 'a.spec.ts › short c'],
+	]);
+	assert.deepEqual(shardTestLists(listing, () => false, 2, durations), lists);
+});
+
+test('delimiter characters inside actual title components are diagnosed', () => {
+	assert.throws(() => shardTestLists(report({ 'bots.spec.ts': [['Home › Bots', ['build']]] }), () => false, 2), /would run in 0 shards/u);
+	assert.throws(() => shardTestLists(report({ 'connection.spec.ts': ['This device › Servers'] }), () => false, 2), /would run in 0 shards/u);
+});
+
+test('snapshot refresh records successful attempt medians, evidence hashes and repaired titles', () => {
+	const listing = report({ 'bots.spec.ts': [['Home: Bots', ['build', 'unknown']]] });
+	const snapshot = durationSnapshot(listing, [{
+		name: 'job-123.log',
+		content: [
+			'2026-11-14Z   ✓  1 e2e/bots.spec.ts:1:1 › Home › Bots › build (2.0s)',
+			'2026-11-14Z   ✓  1 e2e/bots.spec.ts:1:1 › Home › Bots › build @heavy (retry #1) (4.0s)',
+			'2026-11-14Z   ✘  1 e2e/bots.spec.ts:1:1 › Home › Bots › build (30.0s)',
+		].join('\n'),
+	}], 'https://git.example/actions/runs/123');
+	assert.deepEqual(snapshot.durations, { [JSON.stringify(['bots.spec.ts', 'Home: Bots', 'build'])]: 3000 });
+	assert.equal(snapshot.source, 'https://git.example/actions/runs/123');
+	assert.match(snapshot.inputs[0].sha256, /^[a-f0-9]{64}$/u);
+	assert.throws(() => durationSnapshot(listing, [{ name: 'empty', content: '' }], 'source'), /no successful test durations/u);
 });

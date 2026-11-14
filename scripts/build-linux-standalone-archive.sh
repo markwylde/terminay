@@ -6,6 +6,14 @@
 #   build-linux-standalone-archive.sh <linux-x64|linux-arm64> <tag|main|canary> <revision> <output-file>
 set -eu
 
+# Internal composition path: the caller has just built this same checkout.
+# Keep ordinary release callers building by default.
+prebuilt=0
+if [ "${1:-}" = "--prebuilt" ]; then
+  prebuilt=1
+  shift
+fi
+
 if [ "$#" -ne 4 ]; then
   echo "Usage: $0 <linux-x64|linux-arm64> <tag|main|canary> <revision> <output-file>" >&2
   exit 64
@@ -29,7 +37,11 @@ trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 # The archive carries the compiled server, its workspace packages, and the UI
 # bundle it serves, so the whole application graph is built here rather than
 # compiling the server in isolation.
-npm run build:app
+if [ "$prebuilt" = 0 ]; then
+  npm run build:app
+else
+  node scripts/standalone-prebuilt-application.mjs verify "$target" "$revision"
+fi
 npm run verify:built-in-extensions
 node scripts/stage-selected-secure-werift-runtime.mjs
 node_archive_url=$(node -e 'import("./scripts/pty-runtime-platforms.mjs").then((module) => process.stdout.write(module.getPtyRuntimePlatform(process.argv[1]).nodeArchive))' "$target")

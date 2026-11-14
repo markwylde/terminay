@@ -21,6 +21,7 @@ import {
 } from '@playwright/test';
 import { startBotSocketServer } from '../packages/server-core/test/fixtures/bot-socket-server.mjs';
 import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-artifact.mjs';
+import { createWorkerRendererArtifact } from './support/renderer-artifact.mjs';
 import {
 	openChildWindow,
 	openMacroLauncher,
@@ -41,6 +42,15 @@ import {
 	type FixtureWorkspace,
 	type WorkspaceOptions,
 } from './support/workspace';
+
+type RendererArtifact = {
+	rootDirectory: string;
+	assertUnchanged: () => Promise<void>;
+};
+
+// Worker-scoped setup populates this before tests or their beforeAll hooks.
+// Relaunch helpers share application bytes, never userData or temporary state.
+let workerRendererArtifact: RendererArtifact | undefined;
 
 type ElectronFixtures = {
 	appHarness: {
@@ -390,14 +400,13 @@ export async function launchDesktopApp(options: {
 			path.basename(testInfo.file) === 'extension-agent-runtime.spec.ts'
 				? { CLAUDE_CONFIG_DIR: agentFixtureClaudeHome(tempDir) }
 				: {};
-		const rendererArtifactParent = await mkdtemp(
+		const rendererArtifactParent = workerRendererArtifact ? undefined : await mkdtemp(
 			path.join(os.tmpdir(), 'terminay-e2e-renderer-'),
 		);
-		const rendererArtifact = await stageImmutableRendererArtifact({
+		const rendererArtifact = workerRendererArtifact ?? await stageImmutableRendererArtifact({
 			sourceRoot: path.resolve('dist'),
-			// The app owns both userData and TMP. Keep the immutable application
-			// bytes in an independent fixture root until after Electron exits.
-			destinationParent: rendererArtifactParent,
+			// Standalone callers outside the worker fixture still own their copy.
+			destinationParent: rendererArtifactParent!,
 		});
 		const staticServer = await createStaticServer(
 			rendererArtifact.rootDirectory,
@@ -526,7 +535,7 @@ export async function launchDesktopApp(options: {
 				await staticServer.close();
 				await botApi?.close();
 				await rendererArtifact.assertUnchanged();
-				await rm(rendererArtifactParent, { recursive: true, force: true });
+				if (rendererArtifactParent) await rm(rendererArtifactParent, { recursive: true, force: true });
 			},
 		};
 }
@@ -552,7 +561,17 @@ function liveSessionHolderPids(userDataDir: string): number[] {
 	return pids;
 }
 
-export const test = base.extend<ElectronFixtures>({
+export const test = base.extend<ElectronFixtures, { _rendererArtifact: RendererArtifact }>({
+	// biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
+	_rendererArtifact: [async ({}, use) => {
+		const artifact = await createWorkerRendererArtifact(path.resolve('dist'));
+		workerRendererArtifact = artifact;
+		try { await use(artifact); }
+		finally {
+			workerRendererArtifact = undefined;
+			await artifact.close();
+		}
+	}, { scope: 'worker', auto: true }],
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
 	userDataDir: async ({}, use) => {
 		const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-'));

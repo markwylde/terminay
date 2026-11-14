@@ -1,52 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { packAndExtract } from "./fixtures/packed-workspace.mjs";
 import { stageProductionDependencyClosure } from "../../../scripts/standalone-runtime-dependencies.mjs";
 
 const repositoryRoot = new URL("../../..", import.meta.url).pathname;
-
-function run(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code}: ${stderr}`));
-    });
-  });
-}
-
-async function packAndExtract(workspace, destination) {
-  await mkdir(destination, { recursive: true });
-  const packed = normalizePackResult(JSON.parse((await run("npm", ["pack", "--workspace", workspace, "--json", "--pack-destination", destination], {
-    cwd: repositoryRoot,
-  })).stdout));
-  assert.equal(packed.length, 1);
-  const extracted = join(destination, "extracted");
-  await mkdir(extracted);
-  await run("tar", ["-xzf", join(destination, packed[0].filename), "-C", extracted]);
-  return join(extracted, "package");
-}
-
-function normalizePackResult(value) {
-  return Array.isArray(value) ? value : Object.values(value ?? {});
-}
 
 async function reserveLoopbackPort() {
   const server = createServer();
