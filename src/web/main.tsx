@@ -42,6 +42,12 @@ import {
 } from '../shared/pairingAttemptState';
 import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
+import {
+	ServerUpgradeBoardHost,
+	ServerUpgradeModal,
+	showsUpgradeModal,
+	useServerUpgradeProgress,
+} from '../workspace/ServerUpgradeBoardHost.tsx';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import { ConnectionStateServers } from './ConnectionStateServers';
 import {
@@ -332,47 +338,47 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					host={connectionHost}
 					registry={registry}
 				>
-					<div
-						className={
-							phase === 'reconnecting'
-								? 'session-workspace session-workspace--reconnecting'
-								: 'session-workspace'
-						}
-					>
-						{phase === 'reconnecting' && (
-							<div
-								className="session-workspace__reconnecting"
-								role="status"
-								aria-live="polite"
-								aria-busy="true"
-							>
-								<LoadingDots />
-								<p>{error ?? 'Terminal stream stalled. Reconnecting…'}</p>
-							</div>
-						)}
-						<ConnectedWebRendererWorkspace
-							connectionRoute={connectionRoute}
-							hostContext={desktopContext}
-							onBack={() => {
-								if (leaveManagerSession()) return;
-								void registry.dispose();
-							}}
-							subscribeAppCommands={
-								desktopContext === undefined ||
-								window.terminayHost === undefined
-									? undefined
-									: (listener: (command: AppCommand) => Promise<void> | void) =>
-											(
-												window.terminayHost as unknown as DesktopHostBridge
-											).subscribeEvent((event) => {
-												if (event.event.type === 'menu.command') {
-													return listener(event.event.command);
-												}
-											})
+					<ServerUpgradeBoardHost>
+						<div
+							className={
+								phase === 'reconnecting'
+									? 'session-workspace session-workspace--reconnecting'
+									: 'session-workspace'
 							}
-							terminalClientContext={terminalClientContext}
-						/>
-					</div>
+						>
+							{phase === 'reconnecting' && (
+								<SessionReconnecting
+									profileId={primary?.profileId}
+									error={error}
+								/>
+							)}
+							<ServerUpgradeModal profileId={primary?.profileId} />
+							<ConnectedWebRendererWorkspace
+								connectionRoute={connectionRoute}
+								hostContext={desktopContext}
+								onBack={() => {
+									if (leaveManagerSession()) return;
+									void registry.dispose();
+								}}
+								subscribeAppCommands={
+									desktopContext === undefined ||
+									window.terminayHost === undefined
+										? undefined
+										: (
+												listener: (command: AppCommand) => Promise<void> | void,
+											) =>
+												(
+													window.terminayHost as unknown as DesktopHostBridge
+												).subscribeEvent((event) => {
+													if (event.event.type === 'menu.command') {
+														return listener(event.event.command);
+													}
+												})
+								}
+								terminalClientContext={terminalClientContext}
+							/>
+						</div>
+					</ServerUpgradeBoardHost>
 				</ConnectionsProvider>
 			</WorkspaceErrorBoundary>
 		);
@@ -421,6 +427,30 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				)}
 			</section>
 		</main>
+	);
+}
+
+/**
+ * The dim over a workspace whose connection is coming back. While the window's
+ * server is being upgraded, the upgrade's modal card is already up and the drop
+ * is one of its steps: nothing more is drawn, so the card never moves.
+ */
+function SessionReconnecting({
+	error,
+	profileId,
+}: Readonly<{ error: string | undefined; profileId: string | undefined }>) {
+	const upgrade = useServerUpgradeProgress(profileId);
+	if (showsUpgradeModal(upgrade)) return null;
+	return (
+		<div
+			className="session-workspace__reconnecting"
+			role="status"
+			aria-live="polite"
+			aria-busy="true"
+		>
+			<LoadingDots />
+			<p>{error ?? 'Terminal stream stalled. Reconnecting…'}</p>
+		</div>
 	);
 }
 

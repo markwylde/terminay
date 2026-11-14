@@ -158,3 +158,23 @@ test('a host that cannot switch shows the one server this window is on', () => {
 		detail: 'no route to host',
 	});
 });
+
+test('a server restarting for an upgrade this window follows is not called a reconnect', () => {
+	const rendered = ConnectionsControl({
+		connection: { profileId: 'session', label: 'Studio', phase: 'reconnecting' },
+		currentServerLabel: 'Studio',
+		servers: [],
+		upgradeRestarting: true,
+	});
+	assert.equal(
+		find(rendered, (props) => props.children === 'Restarting for upgrade…').length,
+		1,
+	);
+	assert.equal(find(rendered, (props) => props.children === 'Reconnecting…').length, 0);
+	assert.deepEqual(describeConnection({ phase: 'reconnecting' }, { upgradeRestarting: true }), {
+		tone: 'pending',
+		summary: 'Restarting for upgrade…',
+	});
+	// Any other reconnect is still one.
+	assert.equal(describeConnection({ phase: 'reconnecting' }).summary, 'Reconnecting…');
+});

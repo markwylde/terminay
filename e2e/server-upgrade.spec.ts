@@ -240,6 +240,58 @@ const confirmationOf = (window: Page) =>
 	window.locator('[data-server-upgrade-dialog]');
 const notificationsBell = (window: Page) =>
 	window.getByRole('button', { name: /^Notifications/ });
+const progressCard = (window: Page) =>
+	window.locator('[data-server-upgrade-progress]');
+const stepState = (window: Page, step: string) =>
+	progressCard(window).locator(`[data-step="${step}"]`);
+
+/** The ticklist's step states, in order. */
+async function expectTicks(window: Page, states: readonly string[]) {
+	for (const [index, step] of [
+		'start',
+		'install',
+		'restart',
+		'running',
+	].entries())
+		await expect(stepState(window, step)).toHaveAttribute(
+			'data-step-state',
+			states[index] ?? '',
+			{ timeout: 120_000 },
+		);
+}
+
+/**
+ * The card's centre, after checking it sits on a backdrop that covers the
+ * whole window. The centre is what must not move: the card grows a line or a
+ * button as the upgrade goes on, and stays centred.
+ */
+async function modalCardCentre(window: Page) {
+	const modal = window.locator('[data-server-upgrade-modal]');
+	await expect(modal).toBeVisible();
+	await expect(modal.locator('[data-server-upgrade-progress]')).toBeVisible();
+	const viewport = await window.evaluate(() => ({
+		width: window.innerWidth,
+		height: window.innerHeight,
+	}));
+	const backdrop = await modal.boundingBox();
+	expect(backdrop).toEqual({ x: 0, y: 0, ...viewport });
+	const box = await progressCard(window).boundingBox();
+	if (box === null) throw new Error('The upgrade card has no box.');
+	return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+function expectSamePlace(
+	actual: { x: number; y: number },
+	expected: { x: number; y: number },
+) {
+	expect(Math.abs(actual.x - expected.x)).toBeLessThanOrEqual(1);
+	expect(Math.abs(actual.y - expected.y)).toBeLessThanOrEqual(1);
+}
+
+/** A screenshot for the pull request, kept with the run's artifacts. */
+async function capture(window: Page, name: string) {
+	await window.screenshot({ path: test.info().outputPath(`${name}.png`) });
+}
 
 /** Opens the header Notifications list at the upgrade's outcome. */
 async function openUpgradeNotice(window: Page, tone?: 'success' | 'failure') {
@@ -318,17 +370,39 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 			.getByRole('button', { name: 'Upgrade', exact: true })
 			.click();
 		await expect(confirmation).toHaveCount(0);
+		// The confirmation became the upgrade's ticklist.
+		const card = progressCard(mainWindow);
+		await expect(card).toBeVisible();
+		await expect(card).toHaveAttribute('role', 'status');
+		await expect(card).toHaveAccessibleName(`Upgrading ${serverHost}`);
+		await expect(card).toContainText('5.1.1 → 5.2.0');
+		await expect(stepState(mainWindow, 'install')).toContainText(
+			'Installing 5.2.0',
+		);
+		await expectTicks(mainWindow, ['done', 'running', 'waiting', 'waiting']);
+		// It is modal over the whole window, centred, with nothing to dismiss.
+		const installing = await modalCardCentre(mainWindow);
+		await expect(card.getByRole('button')).toHaveCount(0);
+		await capture(mainWindow, '01-upgrade-installing');
 		await expect
 			.poll(() => upgrader.upgrades(), { timeout: 15_000 })
 			.toEqual(['daemon upgrade --user']);
 
-		// While it runs the row says so and offers no action.
-		menu = await openConnectionMenu(mainWindow);
-		await expect(upgradeRow(menu)).toContainText('Upgrading…');
-		await expect(
-			menu.getByRole('menuitem', { name: 'Upgrade server…' }),
-		).toHaveCount(0);
-		await mainWindow.keyboard.press('Escape');
+		// The ticklist ends with every step done, and stays until closed.
+		await expect(card).toHaveAttribute(
+			'data-server-upgrade-outcome',
+			'success',
+			{ timeout: 45_000 },
+		);
+		await expectTicks(mainWindow, ['done', 'done', 'done', 'done']);
+		await expect(card).toHaveAccessibleName(`${serverHost} is upgraded`);
+		expectSamePlace(await modalCardCentre(mainWindow), installing);
+		await capture(mainWindow, '03-upgrade-succeeded');
+		await card.getByRole('button', { name: 'Close' }).click();
+		await expect(card).toHaveCount(0);
+		await expect(mainWindow.locator('[data-server-upgrade-modal]')).toHaveCount(
+			0,
+		);
 
 		// The outcome is told once, in Notifications, and the warning is gone.
 		// Nothing is drawn over the workspace.
@@ -432,12 +506,31 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 		await confirmationOf(mainWindow)
 			.getByRole('button', { name: 'Upgrade', exact: true })
 			.click();
-		menu = await openConnectionMenu(mainWindow);
-		await expect(upgradeRow(menu)).toContainText('Upgrading…');
-		await mainWindow.keyboard.press('Escape');
 
-		// The server goes away mid-upgrade and the previous release comes back.
+		const card = progressCard(mainWindow);
+		await expect(card).toBeVisible();
+		await expect(stepState(mainWindow, 'install')).toHaveAttribute(
+			'data-step-state',
+			'running',
+		);
+		const installing = await modalCardCentre(mainWindow);
+		await expect(card.getByRole('button')).toHaveCount(0);
+
+		// The server goes away mid-upgrade. The drop is the restart step, not a
+		// stall, and the card stays where it was.
 		await server.stop();
+		await expectTicks(mainWindow, ['done', 'done', 'running', 'waiting']);
+		await expect(card).toContainText('Disconnected while the server restarts', {
+			timeout: 60_000,
+		});
+		expectSamePlace(await modalCardCentre(mainWindow), installing);
+		await expect(mainWindow.getByText('Terminal stream stalled')).toHaveCount(
+			0,
+		);
+		await expect(mainWindow.getByText('Connection lost')).toHaveCount(0);
+		await capture(mainWindow, '02-upgrade-restarting');
+
+		// The previous release comes back.
 		await upgrader.answer(
 			checkAnswer({
 				lastResult: {
@@ -457,6 +550,24 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 		await mainWindow
 			.locator('.project-tabbar')
 			.waitFor({ state: 'visible', timeout: 120_000 });
+
+		// The ticklist ends on the failed step, with why and what runs now.
+		await expect(card).toHaveAttribute(
+			'data-server-upgrade-outcome',
+			'failure',
+			{
+				timeout: 120_000,
+			},
+		);
+		await expectTicks(mainWindow, ['done', 'done', 'done', 'failed']);
+		await expect(stepState(mainWindow, 'running')).toContainText(
+			'the new release did not become ready. 5.1.1 is running again.',
+		);
+		await expect(card).toHaveAccessibleName(`${serverHost} was not upgraded`);
+		expectSamePlace(await modalCardCentre(mainWindow), installing);
+		await capture(mainWindow, '04-upgrade-rolled-back');
+		await card.getByRole('button', { name: 'Close' }).click();
+		await expect(card).toHaveCount(0);
 
 		await expect(notificationsBell(mainWindow)).toHaveAccessibleName(
 			/Notifications, \d+ notification/,

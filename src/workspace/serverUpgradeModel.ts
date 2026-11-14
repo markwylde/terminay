@@ -44,6 +44,8 @@ export type ServerUpgradeSource = Readonly<{
 	/** Absent while the connection is down, or when the server publishes no
 	 * upgrade status at all. */
 	client?: Readonly<{ store: UpgradeStatusStore }>;
+	/** The connection's own words for why it cannot be used, when it says. */
+	error?: string;
 }>;
 
 type LocalCandidate = Readonly<{
@@ -92,6 +94,8 @@ export function serverUpgradeSources(
 		Readonly<{
 			label: string;
 			phase: ConnectionPhase;
+			error?: string;
+			compatibility?: Readonly<{ state: string; message?: string }>;
 			context?: Readonly<{
 				serverUpgradeClient?: Readonly<{ store: UpgradeStatusStore }>;
 			}>;
@@ -100,17 +104,25 @@ export function serverUpgradeSources(
 ): readonly ServerUpgradeSource[] {
 	return connections
 		.filter((connection) => !isLocalConnection(connection, profiles))
-		.map((connection) => ({
-			profileId: connection.profileId,
-			label: connection.label,
-			phase: connection.phase,
-			...(connection.serverId === undefined
-				? {}
-				: { serverId: connection.serverId }),
-			...(connection.context?.serverUpgradeClient === undefined
-				? {}
-				: { client: connection.context.serverUpgradeClient }),
-		}));
+		.map((connection) => {
+			const error =
+				connection.compatibility?.state === 'incompatible' &&
+				connection.compatibility.message !== undefined
+					? connection.compatibility.message
+					: connection.error;
+			return {
+				profileId: connection.profileId,
+				label: connection.label,
+				phase: connection.phase,
+				...(error === undefined ? {} : { error }),
+				...(connection.serverId === undefined
+					? {}
+					: { serverId: connection.serverId }),
+				...(connection.context?.serverUpgradeClient === undefined
+					? {}
+					: { client: connection.context.serverUpgradeClient }),
+			};
+		});
 }
 
 /** A server's latest status, and whether it can be asked for anything now. */
@@ -133,10 +145,46 @@ export type ServerUpgradeNotice = Readonly<{
 	raisedAt: number;
 }>;
 
+/** One step of a followed upgrade's ticklist. */
+export type ServerUpgradeStepState = 'waiting' | 'running' | 'done' | 'failed';
+export type ServerUpgradeStepId = 'start' | 'install' | 'restart' | 'running';
+export type ServerUpgradeStep = Readonly<{
+	id: ServerUpgradeStepId;
+	label: string;
+	state: ServerUpgradeStepState;
+	/** Why it failed, when it did. */
+	detail?: string;
+}>;
+
+/**
+ * A followed upgrade as a ticklist. The steps are what this window has seen:
+ * the server accepting, its published status, and the connection dropping and
+ * returning. Nothing is asked for to fill them in.
+ */
+export type ServerUpgradeProgressView = Readonly<{
+	profileId: string;
+	label: string;
+	mode?: ServerUpgradeMode;
+	/** The version it was running when the upgrade began. */
+	from?: string;
+	/** The version it is moving to. */
+	to?: string;
+	/** This device asked for the upgrade. */
+	initiatedHere: boolean;
+	/** The connection is down because the server is restarting for it. */
+	restarting: boolean;
+	/** How it ended, once it has; the ticklist then has no running step. */
+	outcome?: 'success' | 'failure';
+	steps: readonly ServerUpgradeStep[];
+}>;
+
 export type ServerUpgradeBoardSnapshot = Readonly<{
 	/** In connection order; only servers that have published a status. */
 	entries: readonly ServerUpgradeEntry[];
 	notices: readonly ServerUpgradeNotice[];
+	/** In connection order; only servers whose upgrade is followed, or whose
+	 * upgrade this device started and has not closed. */
+	progress: readonly ServerUpgradeProgressView[];
 }>;
 
 export function upgradeSucceededText(label: string, version: string): string {
@@ -157,6 +205,31 @@ export function upgradeLostText(label: string): string {
 	return `${label} did not come back after the upgrade.`;
 }
 
+export function upgradeStillOnText(label: string, version: string): string {
+	return `${label} is still on ${version}.`;
+}
+
+export function upgradeSilentText(label: string): string {
+	return `${label} came back but did not say how the upgrade ended.`;
+}
+
+/** The labels of a followed upgrade's steps, in order. */
+export function upgradeStepLabels(
+	to: string | undefined,
+	mode: ServerUpgradeMode | undefined,
+): Readonly<Record<ServerUpgradeStepId, string>> {
+	const target = to ?? 'the new release';
+	return Object.freeze({
+		start: 'Starting the upgrade',
+		install: `Installing ${target}`,
+		restart:
+			mode === 'recreate'
+				? 'Recreating the container'
+				: 'Restarting the server',
+		running: `Running ${target}`,
+	});
+}
+
 /**
  * What this device remembers of one server's upgrade between documents.
  *
@@ -172,6 +245,11 @@ export type RememberedServerUpgrade = Readonly<{
 		startedAt?: number;
 		/** The version it was running. */
 		from?: string;
+		/** The version it was moving to. */
+		to?: string;
+		mode?: ServerUpgradeMode;
+		/** This device asked for it. */
+		initiated?: true;
 	}>;
 	/** The times of the outcomes this device has already been shown. */
 	seen: readonly number[];
@@ -234,6 +312,9 @@ export function createServerUpgradeMemory(
 							notedAt?: unknown;
 							startedAt?: unknown;
 							from?: unknown;
+							to?: unknown;
+							mode?: unknown;
+							initiated?: unknown;
 						})
 					: undefined;
 			const live =
@@ -253,6 +334,13 @@ export function createServerUpgradeMemory(
 									: {}),
 								...(typeof marker.from === 'string'
 									? { from: marker.from }
+									: {}),
+								...(typeof marker.to === 'string' ? { to: marker.to } : {}),
+								...(marker.mode === 'in-place' || marker.mode === 'recreate'
+									? { mode: marker.mode }
+									: {}),
+								...(marker.initiated === true
+									? { initiated: true as const }
 									: {}),
 							},
 						}
@@ -317,11 +405,29 @@ type Tracked = {
 	/** Every outcome this window has been shown, by its time, so a status that
 	 * is published again, or read again after a reconnect, is not news. */
 	seenOutcomes: Set<number>;
+	/** The ticklist of the upgrade followed, or the last one started here. */
+	attempt: Attempt | undefined;
+};
+
+type Attempt = {
+	mode: ServerUpgradeMode | undefined;
+	from: string | undefined;
+	to: string | undefined;
+	initiatedHere: boolean;
+	/** A status arrived on the connection that replaced the dropped one. */
+	returned: boolean;
+	end:
+		| Readonly<{
+				failed?: 'restart' | 'running';
+				detail?: string;
+		  }>
+		| undefined;
 };
 
 const EMPTY_BOARD: ServerUpgradeBoardSnapshot = Object.freeze({
 	entries: Object.freeze([]),
 	notices: Object.freeze([]),
+	progress: Object.freeze([]),
 });
 
 export class ServerUpgradeBoard {
@@ -330,6 +436,7 @@ export class ServerUpgradeBoard {
 	private notices: readonly ServerUpgradeNotice[] = EMPTY_BOARD.notices;
 	private order: readonly string[] = [];
 	private current: ServerUpgradeBoardSnapshot = EMPTY_BOARD;
+	private progressKey = '[]';
 	private lostCount = 0;
 	private readonly deadlineMs: number;
 	private readonly setTimer: (run: () => void, delayMs: number) => unknown;
@@ -400,6 +507,7 @@ export class ServerUpgradeBoard {
 					droppedClient: undefined,
 					deadline: undefined,
 					seenOutcomes: new Set(),
+					attempt: undefined,
 				};
 				this.tracked.set(source.profileId, record);
 			}
@@ -414,11 +522,33 @@ export class ServerUpgradeBoard {
 
 	/** This window asked the server to begin. Said separately from the status
 	 * because a server can restart before its in-progress status arrives. */
-	markStarted(profileId: string): void {
+	markStarted(
+		profileId: string,
+		details: Readonly<{ mode?: ServerUpgradeMode; to?: string }> = {},
+	): void {
 		const record = this.tracked.get(profileId);
 		if (record === undefined) return;
+		// A finished ticklist still on screen belongs to the last attempt.
+		if (record.attempt?.end !== undefined) record.attempt = undefined;
 		this.follow(record);
+		const attempt = record.attempt;
+		if (attempt !== undefined) {
+			// The status may have said it began before the reply did: the
+			// ticklist is now this device's own.
+			attempt.initiatedHere = true;
+			if (details.mode !== undefined) attempt.mode = details.mode;
+			if (details.to !== undefined) attempt.to = details.to;
+			this.remember(record);
+		}
 		this.noteConnection(record);
+		this.publish();
+	}
+
+	/** Close a ticklist whose upgrade has ended. */
+	closeProgress(profileId: string): void {
+		const record = this.tracked.get(profileId);
+		if (record?.attempt?.end === undefined) return;
+		record.attempt = undefined;
 		this.publish();
 	}
 
@@ -451,6 +581,7 @@ export class ServerUpgradeBoard {
 			record.followedFrom = undefined;
 			record.startedAt = undefined;
 			record.expectsRestart = false;
+			record.attempt = undefined;
 		}
 		record.serverId = serverId;
 		const remembered = this.memory?.read(serverId);
@@ -462,6 +593,14 @@ export class ServerUpgradeBoard {
 		record.startedAt = remembered.following.startedAt;
 		record.dropped = true;
 		record.droppedClient = undefined;
+		record.attempt = {
+			mode: remembered.following.mode,
+			from: remembered.following.from,
+			to: remembered.following.to,
+			initiatedHere: remembered.following.initiated === true,
+			returned: false,
+			end: undefined,
+		};
 	}
 
 	private remember(record: Tracked): void {
@@ -477,6 +616,15 @@ export class ServerUpgradeBoard {
 							...(record.followedFrom === undefined
 								? {}
 								: { from: record.followedFrom }),
+							...(record.attempt?.to === undefined
+								? {}
+								: { to: record.attempt.to }),
+							...(record.attempt?.mode === undefined
+								? {}
+								: { mode: record.attempt.mode }),
+							...(record.attempt?.initiatedHere === true
+								? { initiated: true as const }
+								: {}),
 						},
 					}
 				: {}),
@@ -516,7 +664,11 @@ export class ServerUpgradeBoard {
 		// Any status from the connection that replaced the dropped one means the
 		// server came back, whatever it goes on to say.
 		const returned = record.dropped && record.client !== record.droppedClient;
-		if (returned) this.settleConnection(record);
+		if (returned) {
+			this.settleConnection(record);
+			if (record.attempt !== undefined && record.following)
+				record.attempt.returned = true;
+		}
 		const progress = status.upgrade;
 		if (progress.state === 'in-progress') {
 			this.follow(record, progress.startedAt);
@@ -533,8 +685,20 @@ export class ServerUpgradeBoard {
 			// The outcome was replaced before this window reconnected. The version
 			// the server now runs still says how a followed upgrade ended.
 			const from = record.followedFrom;
-			this.unfollow(record);
-			if (from !== undefined && from !== status.version)
+			const to = record.attempt?.to;
+			const moved =
+				(from !== undefined && from !== status.version) ||
+				(to !== undefined && to === status.version);
+			this.unfollow(
+				record,
+				moved
+					? {}
+					: {
+							failed: 'running',
+							detail: upgradeStillOnText(record.source.label, status.version),
+						},
+			);
+			if (moved)
 				this.tell(
 					record,
 					`moved:${status.version}`,
@@ -556,7 +720,19 @@ export class ServerUpgradeBoard {
 			if (unseen) this.remember(record);
 			return;
 		}
-		this.unfollow(record);
+		this.unfollow(
+			record,
+			progress.state === 'succeeded'
+				? {}
+				: {
+						failed: 'running',
+						detail: upgradeFailedText(
+							record.source.label,
+							progress.from,
+							progress.reason,
+						),
+					},
+		);
 		if (progress.state === 'succeeded')
 			this.tell(
 				record,
@@ -585,10 +761,29 @@ export class ServerUpgradeBoard {
 		record.expectsRestart = true;
 		record.followedFrom = record.status?.version;
 		record.startedAt = startedAt;
+		const progress = record.status?.upgrade;
+		record.attempt = {
+			mode: progress?.state === 'in-progress' ? progress.mode : undefined,
+			from: record.status?.version,
+			to: record.status?.available?.version,
+			initiatedHere: false,
+			returned: false,
+			end: undefined,
+		};
 		this.remember(record);
 	}
 
-	private unfollow(record: Tracked): void {
+	/**
+	 * Stop following. With an ending, the ticklist shows it, on the device
+	 * that asked for the upgrade; a device that only watched keeps nothing.
+	 */
+	private unfollow(record: Tracked, end?: Attempt['end']): void {
+		const attempt = record.attempt;
+		if (attempt !== undefined && attempt.end === undefined) {
+			if (end === undefined || !attempt.initiatedHere)
+				record.attempt = undefined;
+			else attempt.end = end;
+		}
 		record.following = false;
 		record.expectsRestart = false;
 		record.followedFrom = undefined;
@@ -617,7 +812,12 @@ export class ServerUpgradeBoard {
 		// Reached, and refused: it came back, as a server this bundle cannot
 		// speak to. The connection's own presentation says which side to update.
 		if (phase === 'incompatible') {
-			this.unfollow(record);
+			this.unfollow(record, {
+				failed: 'running',
+				...(record.source.error === undefined
+					? {}
+					: { detail: record.source.error }),
+			});
 			return;
 		}
 		if (!record.expectsRestart) return;
@@ -635,7 +835,11 @@ export class ServerUpgradeBoard {
 				record.source.phase === 'ready' &&
 				record.client !== record.droppedClient
 			) {
-				this.unfollow(record);
+				this.unfollow(record, {
+					failed: 'running',
+					detail: upgradeSilentText(record.source.label),
+				});
+				this.publish();
 				return;
 			}
 			this.lose(record);
@@ -644,7 +848,10 @@ export class ServerUpgradeBoard {
 	}
 
 	private lose(record: Tracked): void {
-		this.unfollow(record);
+		this.unfollow(record, {
+			failed: 'restart',
+			detail: upgradeLostText(record.source.label),
+		});
 		// Whatever it last said is no longer known to be true.
 		record.status = undefined;
 		this.lostCount += 1;
@@ -698,8 +905,16 @@ export class ServerUpgradeBoard {
 				}),
 			);
 		}
+		const progress: ServerUpgradeProgressView[] = [];
+		for (const profileId of this.order) {
+			const record = this.tracked.get(profileId);
+			if (record?.attempt === undefined) continue;
+			progress.push(progressView(record, record.attempt));
+		}
+		const progressKey = JSON.stringify(progress);
 		const previous = this.current;
 		const unchanged =
+			progressKey === this.progressKey &&
 			previous.notices === this.notices &&
 			previous.entries.length === entries.length &&
 			entries.every((entry, index) => {
@@ -713,12 +928,108 @@ export class ServerUpgradeBoard {
 				);
 			});
 		if (unchanged) return;
+		this.progressKey = progressKey;
 		this.current = Object.freeze({
 			entries: Object.freeze(entries),
 			notices: this.notices,
+			progress: Object.freeze(progress),
 		});
 		for (const listener of [...this.listeners]) listener();
 	}
+}
+
+function progressView(
+	record: Tracked,
+	attempt: Attempt,
+): ServerUpgradeProgressView {
+	const labels = upgradeStepLabels(attempt.to, attempt.mode);
+	const { end } = attempt;
+	const restarting =
+		end === undefined &&
+		record.following &&
+		record.dropped &&
+		record.source.phase !== 'ready';
+	let states: Record<ServerUpgradeStepId, ServerUpgradeStepState>;
+	if (end !== undefined) {
+		states =
+			end.failed === 'restart'
+				? {
+						start: 'done',
+						install: 'done',
+						restart: 'failed',
+						running: 'waiting',
+					}
+				: end.failed === 'running'
+					? {
+							start: 'done',
+							install: 'done',
+							restart: 'done',
+							running: 'failed',
+						}
+					: {
+							start: 'done',
+							install: 'done',
+							restart: 'done',
+							running: 'done',
+						};
+	} else if (record.dropped) {
+		states = {
+			start: 'done',
+			install: 'done',
+			restart: 'running',
+			running: 'waiting',
+		};
+	} else if (attempt.returned || !record.expectsRestart) {
+		states = {
+			start: 'done',
+			install: 'done',
+			restart: 'done',
+			running: 'running',
+		};
+	} else {
+		states = {
+			start: 'done',
+			install: 'running',
+			restart: 'waiting',
+			running: 'waiting',
+		};
+	}
+	const order: readonly ServerUpgradeStepId[] = [
+		'start',
+		'install',
+		'restart',
+		'running',
+	];
+	const steps = order.map((id) =>
+		Object.freeze({
+			id,
+			label: labels[id],
+			state: states[id],
+			...(states[id] === 'failed' && end?.detail !== undefined
+				? { detail: end.detail }
+				: {}),
+		}),
+	);
+	return Object.freeze({
+		profileId: record.source.profileId,
+		label: record.source.label,
+		...(attempt.mode === undefined ? {} : { mode: attempt.mode }),
+		...(attempt.from === undefined ? {} : { from: attempt.from }),
+		...(attempt.to === undefined ? {} : { to: attempt.to }),
+		initiatedHere: attempt.initiatedHere,
+		restarting,
+		...(end === undefined
+			? {}
+			: { outcome: end.failed === undefined ? 'success' : 'failure' }),
+		steps: Object.freeze(steps),
+	} satisfies ServerUpgradeProgressView);
+}
+
+/** The step a followed upgrade is on, while it has one. */
+export function runningUpgradeStep(
+	progress: ServerUpgradeProgressView | undefined,
+): ServerUpgradeStep | undefined {
+	return progress?.steps.find((step) => step.state === 'running');
 }
 
 /** What a server's row in the connection menu says and offers. */
@@ -740,11 +1051,14 @@ export type ServerUpgradeRow = Readonly<{
 	command?: string;
 	/** How the last attempt ended, when it failed and was rolled back. */
 	failure?: string;
+	/** The step a followed upgrade is on, said in place of "Upgrading…". */
+	step?: string;
 }>;
 
 /** The row for one server, or `undefined` when it has nothing to say. */
 export function serverUpgradeRow(
 	entry: ServerUpgradeEntry,
+	followed?: ServerUpgradeProgressView,
 ): ServerUpgradeRow | undefined {
 	const { status } = entry;
 	const available = status.available?.version;
@@ -767,11 +1081,14 @@ export function serverUpgradeRow(
 				: manual !== undefined
 					? 'manual'
 					: 'none';
+	const step =
+		action === 'upgrading' ? runningUpgradeStep(followed)?.label : undefined;
 	return Object.freeze({
 		profileId: entry.profileId,
 		label: entry.label,
 		version: status.version,
 		action,
+		...(step === undefined ? {} : { step }),
 		reachable: entry.reachable,
 		...(available === undefined ? {} : { available }),
 		...(action === 'manual' && manual !== undefined
@@ -791,8 +1108,15 @@ export function serverUpgradeRow(
 
 export function serverUpgradeRows(
 	entries: readonly ServerUpgradeEntry[],
+	progress: readonly ServerUpgradeProgressView[] = [],
 ): readonly ServerUpgradeRow[] {
-	return entries.flatMap((entry) => serverUpgradeRow(entry) ?? []);
+	return entries.flatMap(
+		(entry) =>
+			serverUpgradeRow(
+				entry,
+				progress.find((candidate) => candidate.profileId === entry.profileId),
+			) ?? [],
+	);
 }
 
 /** The version the header's warning names: the active tab's server's, and no

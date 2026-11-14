@@ -559,3 +559,156 @@ html.is-framed .responsive-workspace-shell {
 .connected-web-compact-menu__popup .connected-web-menu__item {
 	width: 100%;
 }
+
+/* A server upgrade's ticklist: centred and modal over the whole window, in
+ * the same place whether the connection is up or down. */
+.server-upgrade-modal {
+	position: fixed;
+	z-index: 4100;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	padding: 16px;
+	background: rgba(13, 17, 23, 0.72);
+	pointer-events: auto;
+}
+
+.server-upgrade-progress {
+	box-sizing: border-box;
+	width: min(340px, calc(100vw - 32px));
+	padding: 14px 16px;
+	border: 1px solid rgba(155, 169, 186, 0.22);
+	border-radius: 10px;
+	background: #161b22;
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+	color: #c9d4e0;
+	font-size: 13px;
+	font-weight: 400;
+	text-align: left;
+}
+
+.server-upgrade-progress__header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.server-upgrade-progress__title {
+	margin: 0;
+	color: #e6edf3;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.server-upgrade-progress__versions {
+	margin: 0;
+	color: #8b98a8;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.server-upgrade-progress__steps {
+	display: grid;
+	gap: 7px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.server-upgrade-progress__step {
+	display: grid;
+	grid-template-columns: 16px 1fr;
+	align-items: center;
+	column-gap: 8px;
+	color: #8b98a8;
+}
+
+.server-upgrade-progress__step--running {
+	color: #e6edf3;
+}
+
+.server-upgrade-progress__step--done {
+	color: #c9d4e0;
+}
+
+.server-upgrade-progress__step--done .server-upgrade-progress__icon {
+	color: #57db8c;
+}
+
+.server-upgrade-progress__step--failed {
+	color: #ffb3b3;
+}
+
+.server-upgrade-progress__step--failed .server-upgrade-progress__icon {
+	color: #ff6a6a;
+}
+
+.server-upgrade-progress__step--waiting .server-upgrade-progress__icon {
+	opacity: 0.45;
+}
+
+.server-upgrade-progress__step--running .server-upgrade-progress__icon {
+	color: #ffe7a6;
+	animation: server-upgrade-progress-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.server-upgrade-progress__step--running .server-upgrade-progress__icon {
+		animation: none;
+	}
+}
+
+@keyframes server-upgrade-progress-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* The state is said in words to assistive technology; the icon shows it. */
+.server-upgrade-progress__state {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+.server-upgrade-progress__detail {
+	grid-column: 2;
+	margin: 2px 0 0;
+	color: #ffb3b3;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.server-upgrade-progress__note {
+	margin: 12px 0 0;
+	color: #8b98a8;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.server-upgrade-progress__actions {
+	display: flex;
+	justify-content: flex-end;
+	margin-top: 12px;
+}
+
+.server-upgrade-progress__actions button {
+	padding: 4px 12px;
+	border: 1px solid rgba(155, 169, 186, 0.3);
+	border-radius: 6px;
+	background: transparent;
+	color: #c9d4e0;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.server-upgrade-progress__actions button:hover {
+	background: rgba(155, 169, 186, 0.12);
+}

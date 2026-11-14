@@ -28,10 +28,18 @@ export type ConnectionsControlProps = Readonly<{
 	/** Why the last switch did not happen. */
 	switchError?: string;
 	currentServerLabel: string;
+	/** The window's server is restarting for an upgrade this window follows. */
+	upgradeRestarting?: boolean;
 }>;
 
 /** What the control says about the window's connection. */
-export function describeConnection(connection: WorkspaceConnection): Readonly<{
+export function describeConnection(
+	connection: WorkspaceConnection,
+	options: Readonly<{
+		/** The server is restarting for an upgrade this window follows. */
+		upgradeRestarting?: boolean;
+	}> = {},
+): Readonly<{
 	tone: 'ready' | 'pending' | 'failed' | 'incompatible';
 	summary: string;
 	detail?: string;
@@ -46,9 +54,19 @@ export function describeConnection(connection: WorkspaceConnection): Readonly<{
 					})
 				: Object.freeze({ tone: 'ready', summary: 'Connected' });
 		case 'connecting':
-			return Object.freeze({ tone: 'pending', summary: 'Connecting…' });
+			return Object.freeze({
+				tone: 'pending',
+				summary: options.upgradeRestarting
+					? 'Restarting for upgrade…'
+					: 'Connecting…',
+			});
 		case 'reconnecting':
-			return Object.freeze({ tone: 'pending', summary: 'Reconnecting…' });
+			return Object.freeze({
+				tone: 'pending',
+				summary: options.upgradeRestarting
+					? 'Restarting for upgrade…'
+					: 'Reconnecting…',
+			});
 		case 'incompatible':
 			return Object.freeze({
 				tone: 'incompatible',
@@ -109,9 +127,14 @@ export function ConnectionsControl({
 	servers,
 	switchError,
 	switchingProfileId,
+	upgradeRestarting,
 }: ConnectionsControlProps) {
 	const described =
-		connection === undefined ? undefined : describeConnection(connection);
+		connection === undefined
+			? undefined
+			: describeConnection(connection, {
+					upgradeRestarting: upgradeRestarting === true,
+				});
 	const rows = serverRows(servers, currentProfileId, switchingProfileId);
 	// A host that lists no servers shows the one this window is on.
 	if (rows.length === 0 || onSwitch === undefined) {
