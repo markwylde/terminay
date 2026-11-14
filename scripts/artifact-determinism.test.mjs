@@ -89,3 +89,82 @@ function runBuilder(args) {
     child.once('close', (code) => resolve({ code, stdout, stderr }))
   })
 }
+
+test('direct image payload and distribution archive preserve identical verified bytes and modes', async () => {
+  const { publishStandalonePayload } = await import('./publish-standalone-payload.mjs');
+  const { cp, chmod } = await import('node:fs/promises');
+  const { execFileSync } = await import('node:child_process');
+  const root = await mkdtemp(join(tmpdir(), 'terminay-unpacked-artifact-'));
+  try {
+    const source = join(root, 'source');
+    const name = 'terminay-server-fixture';
+    await mkdir(join(source, name, 'bin'), { recursive: true });
+    await writeFile(join(source, name, 'bin/node'), 'runtime');
+    await chmod(join(source, name, 'bin/node'), 0o755);
+    await writeFile(join(source, name, 'artifact-manifest.json'), JSON.stringify({ files: [{ path: 'bin/node', mode: '755' }] }));
+    const expected = await describeArtifactFiles(join(source, name));
+    await cp(source, join(root, 'archive-source'), { recursive: true });
+    const archived = await publishStandalonePayload({ stagingDirectory: join(root, 'archive-source'), rootName: name, outputDirectory: join(root, 'archives') });
+    const tree = await publishStandalonePayload({ stagingDirectory: source, rootName: name, outputTree: join(root, 'image/terminay') });
+    assert.equal(tree.archivePath, undefined, 'image publication does not compress an archive');
+    await mkdir(join(root, 'extracted'));
+    execFileSync('tar', ['--same-permissions', '-xzf', archived.archivePath, '-C', join(root, 'extracted')], { timeout: 5000 });
+    assert.deepEqual(await describeArtifactFiles(tree.rootDirectory), expected);
+    assert.deepEqual(await describeArtifactFiles(join(root, 'extracted', name)), expected);
+    await assert.rejects(publishStandalonePayload({ stagingDirectory: source, rootName: name, outputTree: tree.rootDirectory }), /Output already exists/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('fast CI compression preserves reproducible tar bytes, metadata, payload modes and digests', async () => {
+  const { publishStandalonePayload } = await import('./publish-standalone-payload.mjs');
+  const { chmod, utimes } = await import('node:fs/promises');
+  const { execFileSync } = await import('node:child_process');
+  const { gunzipSync } = await import('node:zlib');
+  const { sha256File } = await import('./artifact-determinism.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'terminay-compression-parity-'));
+  try {
+    const stagingDirectory = join(root, 'staged');
+    const rootName = 'terminay-server-fixture';
+    const payload = join(stagingDirectory, rootName);
+    await mkdir(join(payload, 'bin'), { recursive: true });
+    await writeFile(join(payload, 'bin/node'), Buffer.from('native-runtime-content\0'.repeat(4096)));
+    await chmod(join(payload, 'bin/node'), 0o755);
+    await writeFile(join(payload, 'artifact-manifest.json'), JSON.stringify({ version: 'fixture', files: [{ path: 'bin/node', mode: '755' }] }));
+    const inventory = await describeArtifactFiles(payload);
+    const archives = [];
+    for (const [index, compressionLevel] of [undefined, 9, 1, 1].entries()) {
+      // Input/output timestamps and archive paths differ between repetitions.
+      await utimes(join(payload, 'bin/node'), 1000 + index, 2000 + index);
+      const published = await publishStandalonePayload({ stagingDirectory, rootName, outputDirectory: join(root, `archive-${index}`), ...(compressionLevel === undefined ? {} : { compressionLevel }) });
+      assert.equal(published.archiveSha256, await sha256File(published.archivePath));
+      const bytes = await readFile(published.archivePath);
+      assert.equal(bytes.readUInt32LE(4), 0, 'gzip omits source timestamps');
+      assert.equal(bytes[3] & 8, 0, 'gzip omits source filenames');
+      archives.push(bytes);
+      const extracted = join(root, `extracted-${index}`);
+      await mkdir(extracted);
+      execFileSync('tar', ['--same-permissions', '-xzf', published.archivePath, '-C', extracted], { timeout: 5000 });
+      assert.deepEqual(await describeArtifactFiles(join(extracted, rootName)), inventory);
+    }
+    assert.deepEqual(archives[0], archives[1], 'release callers still default to level 9');
+    assert.deepEqual(archives[2], archives[3], 'level 1 remains byte-reproducible');
+    assert.equal(archives[0][8], 2, 'default uses gzip maximum compression');
+    assert.equal(archives[2][8], 4, 'explicit CI option reaches the gzip compressor');
+    for (const bytes of archives.slice(1)) assert.deepEqual(gunzipSync(bytes), gunzipSync(archives[0]), 'compression levels preserve the exact normalized tar');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('invalid archive compression levels fail before building or touching output', async () => {
+  const { createDeterministicTarGz } = await import('./artifact-determinism.mjs');
+  for (const compressionLevel of [0, 10, -1, 1.5, '1', NaN]) {
+    await assert.rejects(createDeterministicTarGz({ compressionLevel, archivePath: '/missing/output.tar.gz', rootName: 'payload', stagingDirectory: '/missing' }), /compression level must be an integer from 1 to 9/u);
+  }
+  const cli = await runBuilder(['--compression-level', '0']);
+  assert.notEqual(cli.code, 0);
+  assert.match(cli.stderr, /compression level must be an integer from 1 to 9/u);
+  const { execFileSync } = await import('node:child_process');
+  assert.throws(() => execFileSync('sh', [fileURLToPath(new URL('./build-linux-standalone-archive.sh', import.meta.url)), '--prebuilt', '--compression-level', '0'], { encoding: 'utf8', timeout: 5000, stdio: 'pipe' }), error => {
+    assert.match(error.stderr, /Compression level must be an integer from 1 to 9/u);
+    return true;
+  });
+});

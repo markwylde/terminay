@@ -9,7 +9,8 @@ import {
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { type ElectronApplication, expect, test } from '@playwright/test';
+import { type ElectronApplication, expect} from '@playwright/test';
+import { test } from './support/isolated-test';
 import {
 	closeDesktop,
 	diagnosticsDirectory,

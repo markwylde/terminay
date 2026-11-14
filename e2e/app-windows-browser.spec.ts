@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Browser, FrameLocator, Locator, Page } from '@playwright/test';
-import { expect, test } from '@playwright/test';
+import { expect} from '@playwright/test';
+import { test } from './support/isolated-test';
 import { build } from 'esbuild';
 import {
 	APP_VIEW_PROXY_CONTENT_SECURITY_POLICY,

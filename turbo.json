@@ -5,65 +5,189 @@
     "teamSlug": "wylde",
     "signature": true
   },
-  "globalDependencies": ["package-lock.json"],
+  "globalDependencies": [
+    "package-lock.json"
+  ],
+  "globalPassThroughEnv": [
+    "TMPDIR",
+    "PYTHONDONTWRITEBYTECODE"
+  ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", "*.tsbuildinfo"],
-      "env": ["NODE_ENV"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        "*.tsbuildinfo"
+      ],
+      "env": [
+        "NODE_ENV"
+      ]
     },
     "@terminay/server-core#build": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/docker/terminay-bot/**",
         "$TURBO_ROOT$/scripts/stage-bot-image.mjs"
       ],
-      "outputs": ["dist/**", "*.tsbuildinfo"],
-      "env": ["NODE_ENV"]
+      "outputs": [
+        "dist/**",
+        "*.tsbuildinfo"
+      ],
+      "env": [
+        "NODE_ENV"
+      ]
     },
     "typecheck": {
-      "dependsOn": ["^build", "build"],
+      "dependsOn": [
+        "^build",
+        "build"
+      ],
       "outputs": [],
       "cache": false
     },
     "compile": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", "*.tsbuildinfo"],
-      "env": ["NODE_ENV"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        "*.tsbuildinfo"
+      ],
+      "env": [
+        "NODE_ENV"
+      ]
     },
     "test:ci": {
-      "dependsOn": ["^build", "build"],
+      "dependsOn": [
+        "^build",
+        "build"
+      ],
+      "outputs": [],
+      "cache": false
+    },
+    "@terminay/server#test:ci": {
+      "dependsOn": [
+        "^build",
+        "build",
+        "terminay-builtin-agents#compile",
+        "terminay-language-typescript#compile",
+        "terminay-gitea#compile",
+        "terminay-github#compile",
+        "terminay-builtin-agents#test:ci",
+        "terminay-language-typescript#test:ci",
+        "terminay-gitea#test:ci",
+        "terminay-github#test:ci"
+      ],
+      "outputs": [],
+      "cache": false
+    },
+    "@terminay/desktop#test:ci": {
+      "dependsOn": [
+        "^build",
+        "build",
+        "@terminay/server#test:ci"
+      ],
       "outputs": [],
       "cache": false
     },
     "@terminay/client-core#test:ci": {
-      "dependsOn": ["@terminay/protocol-conformance#build", "^build", "build"],
+      "dependsOn": [
+        "@terminay/protocol-conformance#build",
+        "^build",
+        "build"
+      ],
       "outputs": [],
       "cache": false
     },
     "terminay-builtin-agents#test:ci": {
-      "dependsOn": ["compile", "^build"],
+      "dependsOn": [
+        "compile",
+        "^build"
+      ],
       "outputs": [],
       "cache": false
     },
     "terminay-language-typescript#test:ci": {
-      "dependsOn": ["compile", "^build"],
+      "dependsOn": [
+        "compile",
+        "^build"
+      ],
       "outputs": [],
       "cache": false
     },
     "terminay-gitea#test:ci": {
-      "dependsOn": ["compile", "^build"],
+      "dependsOn": [
+        "compile",
+        "^build"
+      ],
       "outputs": [],
       "cache": false
     },
     "terminay-github#test:ci": {
-      "dependsOn": ["compile", "^build"],
+      "dependsOn": [
+        "compile",
+        "^build"
+      ],
       "outputs": [],
       "cache": false
     },
     "lint": {
       "outputs": []
+    },
+    "//#build:production-bundles": {
+      "dependsOn": [
+        "@terminay/client-core#build",
+        "@terminay/cron#build",
+        "@terminay/desktop#build",
+        "@terminay/extension-api#build",
+        "@terminay/protocol#build",
+        "@terminay/protocol-conformance#build",
+        "@terminay/responsive-ui#build",
+        "@terminay/server#build",
+        "@terminay/server-core#build",
+        "@terminay/ui-bundle#build",
+        "@terminay/web#build",
+        "terminay-builtin-agents#compile",
+        "terminay-language-typescript#compile",
+        "terminay-gitea#compile",
+        "terminay-github#compile"
+      ],
+      "inputs": [
+        "electron/**",
+        "src/**",
+        "public/**",
+        "server.html",
+        "remote.html",
+        "vite.config.ts",
+        "vite.server-ui.config.ts",
+        "vite.server-preload.config.ts",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "tsconfig.base.json",
+        "package.json",
+        "scripts/development-workspace-aliases.mjs",
+        "scripts/build-ui-bundle-manifest.mjs",
+        "scripts/run-together.mjs",
+        "scripts/server-ui-bundle-language-workers.mjs",
+        ".env*"
+      ],
+      "outputs": [
+        "dist-web/**",
+        "dist-electron/**",
+        "dist/**"
+      ],
+      "env": [
+        "NODE_ENV",
+        "CI",
+        "VITE_*",
+        "TERMINAY_DEVELOPMENT_SOURCE_WORKSPACES",
+        "TERMINAY_SERVER_UI_WATCH"
+      ]
     },
     "//#build:dev-desktop": {
       "dependsOn": [
@@ -99,8 +223,42 @@
         "scripts/development-workspace-aliases.mjs",
         "scripts/build-ui-bundle-manifest.mjs"
       ],
-      "outputs": ["dist-web/**", "dist-electron/**", "dist/**"],
-      "env": ["NODE_ENV"]
+      "outputs": [
+        "dist-web/**",
+        "dist-electron/**",
+        "dist/**"
+      ],
+      "env": [
+        "NODE_ENV"
+      ]
+    },
+    "//#prebundle:e2e-vite": {
+      "dependsOn": [
+        "//#build:production-bundles"
+      ],
+      "inputs": [
+        "scripts/prebundle-e2e-vite-deps.mjs",
+        "e2e/support/shared-web-shell-fixture.ts",
+        "e2e/fixtures/**",
+        "src/**",
+        "packages/*/src/**",
+        "apps/*/src/**",
+        "public/**",
+        "*.html",
+        "tsconfig*.json",
+        "package.json",
+        ".env*"
+      ],
+      "outputs": [
+        "node_modules/.vite/deps/**"
+      ],
+      "env": [
+        "TERMINAY_E2E_VITE_ROOT",
+        "TERMINAY_E2E_VITE_RUNTIME",
+        "NODE_ENV",
+        "CI",
+        "VITE_*"
+      ]
     }
   }
 }

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { packAndExtract } from "./fixtures/packed-workspace.mjs";
 import { stageProductionDependencyClosure } from "../../../scripts/standalone-runtime-dependencies.mjs";
 
 const repositoryRoot = new URL("../../..", import.meta.url).pathname;
@@ -101,20 +102,7 @@ async function reserveLoopbackPort() {
   return address.port;
 }
 
-async function packAndExtract(workspace, destination) {
-  await mkdir(destination, { recursive: true });
-  const packed = normalizePackResult(JSON.parse((await run("npm", ["pack", "--workspace", workspace, "--json", "--pack-destination", destination], { cwd: repositoryRoot })).stdout));
-  assert.equal(packed.length, 1);
-  const archive = join(destination, packed[0].filename);
-  const extracted = join(destination, "extracted");
-  await mkdir(extracted);
-  await run("tar", ["-xzf", archive, "-C", extracted]);
-  return join(extracted, "package");
-}
 
-function normalizePackResult(value) {
-  return Array.isArray(value) ? value : Object.values(value ?? {});
-}
 
 async function assertNoSymlinks(root) {
   const { lstat, readdir } = await import("node:fs/promises");

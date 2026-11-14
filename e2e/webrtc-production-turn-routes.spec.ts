@@ -2,7 +2,8 @@ import { createHmac, randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { expect, test, type Browser } from '@playwright/test'
+import { expect, type Browser } from '@playwright/test';
+import { test } from './support/isolated-test';
 import { runHost, type HostApi, type HostConfig } from '../scripts/support/webRtcHostRuntime'
 
 const dependencyRoot = process.env.TERMINAY_WEBRTC_SPIKE_ROOT

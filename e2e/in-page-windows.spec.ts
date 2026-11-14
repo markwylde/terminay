@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { Locator, Page } from '@playwright/test';
-import { expect, test } from '@playwright/test';
+import { expect} from '@playwright/test';
+import { test } from './support/isolated-test';
 import { build } from 'esbuild';
 import { DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY } from '../packages/ui-bundle/src/index';
 

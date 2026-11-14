@@ -79,7 +79,7 @@ test("busy torn-off window E2E waits for a non-shell process the container can r
 
 test("Gitea CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
   const workflow = await text(".gitea/workflows/ci.yml");
-  assert.match(workflow, /npm install --global npm@12\.2\.1/u);
+  assert.match(await text("scripts/install-ci-dependencies.sh"), /npm install --global npm@12\.2\.1/u);
 
   const e2eJob = job(workflow, "e2e-test");
   assert.match(e2eJob, /shard: \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18\]/u, "Gitea E2E job must retain eighteen shards");
@@ -136,7 +136,7 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
 
   assert.equal(packageData.devDependencies.turbo, "2.11.10");
   assert.match(packageData.scripts["build:workspaces"], /^turbo run build --filter=!terminay-\* && turbo run compile --filter=terminay-\*$/u);
-  assert.match(packageData.scripts["test:workspaces"], /^turbo run test:ci --concurrency=1$/u);
+  assert.match(packageData.scripts["test:workspaces"], /^turbo run test:ci --concurrency=2$/u);
   assert.deepEqual(turbo.remoteCache, {
     apiUrl: "https://turborepo.i.wylde.net",
     teamSlug: "wylde",
@@ -144,6 +144,13 @@ test("trusted Gitea builds use the signed internal Turborepo cache without bakin
   });
   assert.equal(turbo.tasks.build.outputs.includes("dist/**"), true);
   assert.equal(turbo.tasks["test:ci"].cache, false);
+  assert.ok(turbo.globalPassThroughEnv.includes("TMPDIR"), "workspace test processes receive the isolated temporary filesystem");
+  assert.ok(turbo.globalPassThroughEnv.includes("PYTHONDONTWRITEBYTECODE"));
+  assert.ok(turbo.tasks["@terminay/desktop#test:ci"].dependsOn.includes("@terminay/server#test:ci"), "Desktop packs only after standalone staging completes");
+  for (const extension of ["terminay-builtin-agents", "terminay-language-typescript", "terminay-gitea", "terminay-github"]) {
+    assert.ok(turbo.tasks["@terminay/server#test:ci"].dependsOn.includes(`${extension}#compile`), "staging reuses completed extension compilation");
+    assert.ok(turbo.tasks["@terminay/server#test:ci"].dependsOn.includes(`${extension}#test:ci`), "staging cache restores cannot overlap packed extension tests");
+  }
 
   assert.match(job(workflow, "packaged-macos-smoke"), cacheEnvironment);
   assert.match(job(workflow, "build-and-test"), cacheEnvironment);
@@ -296,7 +303,7 @@ test("the base image key ignores npm scripts an install never runs", async () =>
 test("the per-commit image ships a committed browser-fixture dependency cache", async () => {
   const dockerfile = await text("Dockerfile.e2e");
   const buildAt = dockerfile.indexOf("npm run build:app");
-  const prebundleAt = dockerfile.indexOf("RUN node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs");
+  const prebundleAt = dockerfile.indexOf("node --experimental-strip-types scripts/prebundle-e2e-vite-deps.mjs --cached");
   assert.ok(buildAt !== -1 && prebundleAt > buildAt, "the Vite dependency cache is built after the application");
   const script = await text("scripts/prebundle-e2e-vite-deps.mjs");
   assert.match(script, /prebundleSharedWebShellDependencies/u);
@@ -316,8 +323,22 @@ test("E2E shards split by test and report per-test timings without changing the 
   assert.match(entrypoint, /node scripts\/support\/run-e2e-playwright\.mjs "\$@"\nstatus=\$\?/u);
   assert.match(runner, /spawn\('xvfb-run', \['--auto-servernum', 'npx', 'playwright', 'test', \.\.\.args\]/u);
   assert.match(runner, /--test-list=/u);
+  assert.match(runner, /e2e-duration-snapshot\.json/u);
+  const image = await text("Dockerfile.e2e");
+  const realListingCheck = image.indexOf("node --test --test-force-exit --test-timeout=120000 scripts/e2e-real-shard-list.test.mjs");
+  assert.ok(realListingCheck > image.indexOf("npm run build:app"), "actual shard selection is checked after its workspace imports are built");
   // A deal that cannot be computed falls back to Playwright's own sharding.
   assert.match(runner, /Playwright will shard it instead/u);
   assert.match(entrypoint, /node scripts\/summarize-e2e-timings\.mjs test-results\/e2e-timings\.json \|\| true/u);
   assert.match(entrypoint, /exit "\$status"$/mu);
+});
+
+
+test("CI captures retry traces/video and preserves first-failure screenshots and logs", async () => {
+  const config = await text("playwright.config.ts");
+  assert.match(config, /trace: process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/u);
+  assert.match(config, /video: process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/u);
+  assert.match(config, /screenshot: 'only-on-failure'/u);
+  assert.match(config, /retries: process\.env\.CI \? 2 : 0/u);
+  assert.match(config, /\['list'\]/u);
 });

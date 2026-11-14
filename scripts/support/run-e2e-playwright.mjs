@@ -11,8 +11,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sharesSetup, shardTestLists } from './e2e-shard-test-list.mjs';
+import { shardWorkerPolicy } from './e2e-worker-policy.mjs';
 
 const args = process.argv.slice(2);
+let isolateWorkerDisplays = false;
 const shardAt = args.findIndex((arg) => /^--shard=\d+\/\d+$/u.test(arg));
 
 if (shardAt !== -1) {
@@ -23,7 +25,7 @@ if (shardAt !== -1) {
 		const listing = spawnSync(
 			'npx',
 			['playwright', 'test', '--list', '--reporter=json', ...others],
-			{ encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+			{ encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120_000 },
 		);
 		if (listing.status !== 0)
 			throw new Error(`listing the suite failed:\n${listing.stderr}`);
@@ -34,12 +36,26 @@ if (shardAt !== -1) {
 				sources.set(file, sharesSetup(readFileSync(join(report.config.rootDir, file), 'utf8')));
 			return sources.get(file);
 		};
-		const lines = shardTestLists(report, keepsTogether, total)[current - 1];
+		const snapshot = JSON.parse(readFileSync(new URL('./e2e-duration-snapshot.json', import.meta.url), 'utf8'));
+		if (snapshot.version !== 1 || !snapshot.durations || typeof snapshot.durations !== 'object' || Array.isArray(snapshot.durations))
+			throw new Error('invalid E2E duration snapshot');
+		const lines = shardTestLists(report, keepsTogether, total, snapshot.durations)[current - 1];
 		const listPath = join(mkdtempSync(join(tmpdir(), 'terminay-e2e-shard-')), 'tests.txt');
 		writeFileSync(listPath, `${lines.join('\n')}\n`);
-		args.splice(0, args.length, ...others, `--test-list=${listPath}`);
-		process.stdout.write(`Shard ${current} of ${total}: ${lines.length} entries dealt from the suite\n`);
+		const workerAt = others.findIndex((arg) => /^--workers(?:=|$)/u.test(arg));
+		const requested = workerAt === -1 ? 2 : Number(others[workerAt] === '--workers' ? others[workerAt + 1] : others[workerAt].slice('--workers='.length));
+		const policy = shardWorkerPolicy(lines, requested);
+		isolateWorkerDisplays = policy.workers > 1;
+		if (workerAt !== -1) others.splice(workerAt, others[workerAt] === '--workers' ? 2 : 1);
+		args.splice(0, args.length, ...others, `--test-list=${listPath}`, `--workers=${policy.workers}`);
+		process.stdout.write(`Shard workers: ${policy.workers} (${policy.reason})\n`);
+		process.stdout.write(`Shard ${current} of ${total}: ${lines.length} entries dealt from the suite using recorded durations (${snapshot.source})\n`);
 	} catch (error) {
+		// A fallback may contain the native-packaging case. Keep its original
+		// single-worker safety even when a caller requested parallel execution.
+		const workerAt = args.findIndex((arg) => /^--workers(?:=|$)/u.test(arg));
+		if (workerAt !== -1) args.splice(workerAt, args[workerAt] === '--workers' ? 2 : 1);
+		args.push('--workers=1');
 		process.stderr.write(
 			`Could not deal the suite to shards; Playwright will shard it instead: ${error instanceof Error ? error.message : String(error)}\n`,
 		);
@@ -48,6 +64,7 @@ if (shardAt !== -1) {
 
 const child = spawn('xvfb-run', ['--auto-servernum', 'npx', 'playwright', 'test', ...args], {
 	stdio: 'inherit',
+	env: { ...process.env, TERMINAY_E2E_WORKER_DISPLAY: isolateWorkerDisplays ? '1' : '0' },
 });
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'])
 	process.on(signal, () => child.kill(signal));

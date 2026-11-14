@@ -1,7 +1,12 @@
-import { expect, test } from '@playwright/test'
+import { expect} from '@playwright/test';
+import { test } from './support/isolated-test';
 import { startSharedWebShellFixture, type SharedWebShellFixture } from './support/shared-web-shell-fixture'
 
 let fixture: SharedWebShellFixture
+// One fixture instance owns this file; keep its tests in declaration order
+// when other independent files share the container's worker pool.
+test.describe.configure({ mode: 'default' });
+
 test.beforeAll(async () => { fixture = await startSharedWebShellFixture() })
 test.afterAll(async () => { await fixture.close() })
 

@@ -14,12 +14,20 @@
 # the base's layers. Cleanup is best effort: it never fails the job it runs in.
 set -u
 
+timed_prune() {
+  phase=$1
+  shift
+  prune_started=$(date +%s)
+  "$@" >/dev/null || true
+  echo "CI Docker cleanup $phase: $(($(date +%s) - prune_started))s"
+}
+
 keep_image=${1:-}
 keep_base=${2:-}
 
 # A stopped container pins its image. Runners take one job at a time, so any
 # stopped container here belongs to a job that has already finished.
-docker container prune --force >/dev/null || true
+timed_prune containers docker container prune --force
 
 # Keep the newest image in a repository and the one this job used; remove the
 # rest. For the dependency base this keeps the layers every later per-commit
@@ -37,14 +45,14 @@ prune_repository() {
   done
 }
 
-prune_repository git.i.wylde.net/markwylde/terminay-e2e "$keep_image"
-prune_repository git.i.wylde.net/markwylde/terminay-e2e-base "$keep_base"
+timed_prune e2e-images prune_repository git.i.wylde.net/markwylde/terminay-e2e "$keep_image"
+timed_prune dependency-images prune_repository git.i.wylde.net/markwylde/terminay-e2e-base "$keep_base"
 
-docker image prune --force || true
+timed_prune dangling-images docker image prune --force
 
 # Keep the most recently used build cache. Dockerfile builds such as the bot
 # image download hundreds of megabytes of apt packages in one layer; wiping the
 # cache after every job made each run fetch them again over the internet. The
 # cap matches the runner fleet's scheduled prune (gitea-runner-docker-prune).
-docker builder prune --force --keep-storage 10GB >/dev/null || true
-docker volume prune --force >/dev/null || true
+timed_prune build-cache docker builder prune --force --keep-storage 10GB
+timed_prune anonymous-volumes docker volume prune --force

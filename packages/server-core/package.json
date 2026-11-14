@@ -53,7 +53,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/stage-bot-image.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test --test-force-exit --test-timeout=120000 test/*.test.mjs",
-    "test:ci": "node --test --test-force-exit --test-timeout=120000 test/*.test.mjs"
+    "test": "npm run build && node --test --test-force-exit --test-timeout=120000 --test-concurrency=6 test/*.test.mjs",
+    "test:ci": "node --test --test-force-exit --test-timeout=120000 --test-concurrency=6 test/*.test.mjs"
   }
 }

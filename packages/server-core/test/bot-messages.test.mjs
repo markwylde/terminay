@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,readdirSync} from 'node:fs';
+import {mkdtempSync,rmSync,readdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import test from 'node:test';
@@ -39,8 +39,29 @@ test('attachments survive store restart and disappear with message deletion',t=>
  const message=store.post(bot,'bot','Screenshot','a'.repeat(24),'image',[attachment]);assert.deepEqual(new BotMessageStore(root).attachment(bot,attachment.id).bytes,png);assert.throws(()=>store.attachment(other,attachment.id),/not found/);store.edit(bot,message.id,1,null);assert.throws(()=>store.attachment(bot,attachment.id),/not found/);
 });
 test('retained event gaps require resync and snapshot edits preserve earlier pages',t=>{
- const {store}=setup(t);const first=store.post(bot,'user','oldest',null,'oldest');store.post(bot,'user','newest',null,'newest');const page=store.list(bot,{limit:1});store.edit(bot,first.id,1,'revised');assert.equal(store.list(bot,{cursor:page.nextCursor,limit:1}).items[0].excerpt,'oldest');
- const cursor=store.eventCursor(bot);for(let n=0;n<2001;n++)store.emitEvent(bot,'execution.changed','a'.repeat(24),n);assert.equal(store.events(bot,cursor).gap,true);assert.throws(()=>store.list(bot,{cursor:page.nextCursor+'corrupt'}),/cursor/i);
+ const {root,store}=setup(t);const first=store.post(bot,'user','oldest',null,'oldest');store.post(bot,'user','newest',null,'newest');const page=store.list(bot,{limit:1});store.edit(bot,first.id,1,'revised');assert.equal(store.list(bot,{cursor:page.nextCursor,limit:1}).items[0].excerpt,'oldest');
+ const cursor=store.eventCursor(bot);
+ // Seed valid retained history from a real event shape. Only the boundary
+ // append needs a durable mutation; thousands of fsyncs add no gap coverage.
+ store.emitEvent(bot,'execution.changed','a'.repeat(24),0);
+ const path=join(root,bot,'messages.json');
+ const state=JSON.parse(readFileSync(path,'utf8'));
+ const event=state.events.at(-1);
+ state.events=Array.from({length:2000},(_,n)=>({...event,sequence:event.sequence+n,revision:n}));
+ state.sequence=state.events.at(-1).sequence;
+ writeFileSync(path,JSON.stringify(state));
+ const retained=new BotMessageStore(root);
+ assert.equal(retained.events(bot,cursor).gap,false,'the cursor immediately before retained history is still valid');
+ retained.emitEvent(bot,'execution.changed','a'.repeat(24),2000);
+ assert.equal(retained.events(bot,cursor).gap,true);
+ const reopened=new BotMessageStore(root);
+ assert.equal(reopened.events(bot,cursor).gap,true,'retention survives reopening');
+ const persisted=JSON.parse(readFileSync(path,'utf8'));
+ assert.equal(persisted.events.length,2000);
+ assert.equal(persisted.events.at(-1).revision,2000);
+ assert.equal(reopened.get(bot,first.id).text,'revised');
+ assert.equal(reopened.list(bot,{cursor:page.nextCursor,limit:1}).items[0].excerpt,'oldest');
+ assert.throws(()=>reopened.list(bot,{cursor:page.nextCursor+'corrupt'}),/cursor/i);
 });
 test('shared attachment references survive deletion of one message',t=>{const {store}=setup(t);const image=store.putAttachment(bot,'same.png',Buffer.from('89504e470d0a1a0a','hex'));const a=store.post(bot,'bot','one','a'.repeat(24),'one',[image]);store.post(bot,'bot','two','b'.repeat(24),'two',[image]);store.edit(bot,a.id,1,null);assert.equal(store.attachment(bot,image.id).bytes.length,8);});
 test('execution pagination retains imported records with tied sequence values',t=>{const {store}=setup(t);const records=Array.from({length:35},(_,n)=>({id:(35-n).toString(16).padStart(24,'0'),order:0,state:'completed'}));let cursor;const seen=[];do{const page=store.pageRecords(bot,'executions','all',records,cursor,10);seen.push(...page.items.map(row=>row.id));cursor=page.nextCursor;}while(cursor);assert.deepEqual(seen,records.map(row=>row.id));assert.equal(new Set(seen).size,35);});

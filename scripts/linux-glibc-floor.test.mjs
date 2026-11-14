@@ -251,7 +251,7 @@ test('the floor image installs dependencies from the same manifests as the E2E b
 	const manifests = (text) =>
 		[...text.matchAll(/^COPY (?:--chown=\S+ )?(\S+) /gmu)]
 			.map(([, source]) => source)
-			.filter((source) => source.endsWith('package.json') || source.endsWith('.mjs') || source === 'package-lock.json');
+			.filter((source) => source.endsWith('package.json') || source === 'package-lock.json');
 	const floor = await readFile(new URL('../Dockerfile.linux-floor', import.meta.url), 'utf8');
 	const e2e = await readFile(new URL('../Dockerfile.e2e-base', import.meta.url), 'utf8');
 	assert.deepEqual(manifests(floor), manifests(e2e));
@@ -334,10 +334,51 @@ test('the probe launches the holder with the environment the server gives it', a
 
 test('the floor scripts reach Docker without bind-mounting the repository', async () => {
 	// A CI job's Docker daemon cannot see the job's filesystem, so sources go
-	// in as the build context or by `docker cp`, never as a volume.
+	// in as the build context or by `docker cp`. The named tool cache is
+	// daemon-owned and contains no repository sources.
 	for (const name of ['run-in-linux-floor.sh', 'probe-linux-glibc-floor.sh']) {
 		const script = await readFile(new URL(`./${name}`, import.meta.url), 'utf8');
-		assert.doesNotMatch(script, /^\s+(?:--volume|--mount|-v(?:[ =]|$))/mu, name);
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: Match the shell parameter expansion literally.
+		const withoutToolCache = script.replace('--volume "terminay-floor-tools-${platform#linux/}:/home/node/.cache"', '');
+		assert.doesNotMatch(withoutToolCache, /^\s+(?:--volume|--mount|-v(?:[ =]|$))/mu, name);
 		assert.match(script, /docker cp /u, name);
 	}
+});
+
+test('floor wrapper copies selected distributables without transferring unpacked staging output', async () => {
+	const { cp, chmod } = await import('node:fs/promises');
+	const { execFileSync } = await import('node:child_process');
+	const root = await mkdtemp(join(tmpdir(), 'terminay-floor-selective-output-'));
+	try {
+		await mkdir(join(root, 'scripts'), { recursive: true });
+		await mkdir(join(root, 'bin'), { recursive: true });
+		const wrapper = join(root, 'scripts/run-in-linux-floor.sh');
+		await cp(new URL('./run-in-linux-floor.sh', import.meta.url), wrapper);
+		await writeFile(join(root, 'scripts/docker-hub-build-args.sh'), '#!/bin/sh\nexit 0\n');
+		const payload = join(root, 'payload');
+		await mkdir(join(payload, 'release/0.0.0/linux-unpacked'), { recursive: true });
+		await mkdir(join(payload, 'release/standalone'), { recursive: true });
+		await writeFile(join(payload, 'release/0.0.0/Terminay-Linux-0.0.0.AppImage'), 'appimage bytes');
+		await writeFile(join(payload, 'release/0.0.0/linux-unpacked/unwanted'), 'unpacked bytes');
+		await writeFile(join(payload, 'release/standalone/server.tar.gz'), 'archive bytes');
+		const docker = join(root, 'bin/docker');
+		await writeFile(docker, `#!${process.execPath}\nimport {cpSync} from 'node:fs';import {join} from 'node:path';const args=process.argv.slice(2);if(args[0]==='cp'){const relative=args[1].split(':/workspace/')[1];if(!relative)process.exit(2);cpSync(join(process.env.FLOOR_TEST_PAYLOAD,relative),args[2],{recursive:true});}\n`);
+		await chmod(docker, 0o755);
+		execFileSync('sh', [wrapper, '--output', 'release/0.0.0/Terminay-Linux-0.0.0.AppImage', '--output', 'release/standalone', '--', 'true'], { cwd: root, timeout: 5000, env: { ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, FLOOR_TEST_PAYLOAD: payload } });
+		assert.equal(await readFile(join(root, 'release/0.0.0/Terminay-Linux-0.0.0.AppImage'), 'utf8'), 'appimage bytes');
+		assert.equal(await readFile(join(root, 'release/standalone/server.tar.gz'), 'utf8'), 'archive bytes');
+		await assert.rejects(readFile(join(root, 'release/0.0.0/linux-unpacked/unwanted')), /ENOENT/u);
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('downloaded AppImage regains executable mode only after digest verification', async () => {
+	const workflow = await readFile(new URL('../.gitea/workflows/ci.yml', import.meta.url), 'utf8');
+	const start = workflow.indexOf('- name: Verify both transferred artifacts');
+	const end = workflow.indexOf('- name: Run terminals from both artifacts', start);
+	assert.ok(start >= 0 && end > start);
+	const block = workflow.slice(start, end);
+	const digest = block.indexOf('(cd release/0.0.0 && sha256sum --check SHA256SUMS)');
+	const executable = block.indexOf('chmod 755 release/0.0.0/Terminay-Linux-0.0.0.AppImage');
+	const elfCheck = block.indexOf('node scripts/linux-glibc-floor.mjs check');
+	assert.ok(digest >= 0 && executable > digest && elfCheck > executable);
 });

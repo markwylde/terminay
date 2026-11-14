@@ -172,6 +172,11 @@ async function bare() {
 			'--hostname', name(suffix),
 			'--volume', `${volume}:/var/lib/terminay`,
 			...hardened,
+			// This case checks local upgrade capability, not a published release.
+			// Fail the unasserted external lookup immediately and prove its failure
+			// does not prevent describing a usable upgrade mechanism.
+			'--add-host', 'api.github.com:127.0.0.1',
+			'--add-host', 'github.com:127.0.0.1',
 			// A name only: it gives the direct origin a host the device can
 			// resolve on this network and derives no advertised address.
 			'--env', `TERMINAY_PUBLIC_HOST=${alias}`,
@@ -192,9 +197,13 @@ async function bare() {
 		`the container's main process is not the entrypoint: ${mainProcess.replaceAll('\0', ' ')}`,
 	);
 	// The upgrader is the CLI inside the release, and it can describe this
-	// container with a read-only root filesystem. Whether anything newer
-	// exists depends on the network, so only the description is asserted.
+	// container with a read-only root filesystem. This local confidence case
+	// deliberately denies the release API and verifies that lookup failure is
+	// reported while the installed capability is still described. The explicit
+	// upgrade case below exercises actual published-release discovery and install.
 	const described = upgradeCheck(first);
+	if (described.installed?.channel !== 'source')
+		assert(typeof described.checkError === 'string' && described.checkError.length > 0, 'an offline release check must report its lookup failure');
 	assert(described.environment === 'container', `the check does not see a container: ${JSON.stringify(described)}`);
 	assert(described.canUpgrade === true, `a supervised container cannot upgrade itself: ${JSON.stringify(described)}`);
 	assert(described.trigger?.kind === 'spawn', `unexpected trigger: ${JSON.stringify(described.trigger)}`);
@@ -679,7 +688,9 @@ function pairingUrl(server) {
 
 /** What the release's own upgrader says about this container. */
 function upgradeCheck(server) {
+	const started = Date.now();
 	const { stdout } = run([engine, 'exec', server, 'terminay', 'daemon', 'upgrade', '--check']);
+	log(`  upgrade description completed in ${Date.now() - started}ms`);
 	assert(stdout.trim().split('\n').length === 1, `the check printed more than one line:\n${stdout}`);
 	return JSON.parse(stdout);
 }
@@ -808,7 +819,7 @@ function assert(condition, message) {
 }
 
 function log(message) {
-	process.stdout.write(`${message}\n`);
+	process.stdout.write(`[${new Date().toISOString()}] ${message}\n`);
 }
 
 function fail(message) {

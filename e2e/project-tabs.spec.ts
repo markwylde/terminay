@@ -39,22 +39,6 @@ import {
 	submitEditWindow,
 } from './support/ui';
 
-async function readCssVariableFromStyle(
-	locator: Locator,
-	variableName: string,
-): Promise<string> {
-	const style = await locator.getAttribute('style');
-	const match = style?.match(new RegExp(`${variableName}:\\s*([^;]+)`));
-
-	if (!match?.[1]) {
-		throw new Error(
-			`Missing ${variableName} in style attribute: ${style ?? '(none)'}`,
-		);
-	}
-
-	return match[1].trim();
-}
-
 async function expectTerminalInputFocused(page: Page): Promise<void> {
 	await expect
 		.poll(async () =>
@@ -748,12 +732,19 @@ test.describe('project tabs', () => {
 		const projectTabs = mainWindow.locator('.project-tab');
 		await expect(projectTabs).toHaveCount(20);
 
-		const colors = await Promise.all(
-			Array.from({ length: 20 }, (_, index) =>
-				readCssVariableFromStyle(projectTabs.nth(index), '--project-color'),
-			),
+		// Pending tabs can be replaced while individual locator reads are in
+		// flight. Sample all colors atomically from one DOM state.
+		const colors = await projectTabs.evaluateAll((tabs) =>
+			tabs.map((tab) => {
+				const color = (tab as HTMLElement).style
+					.getPropertyValue('--project-color')
+					.trim();
+				if (!color) throw new Error('A project tab has no inline --project-color');
+				return color;
+			}),
 		);
 
+		expect(colors).toHaveLength(20);
 		expect(new Set(colors).size, JSON.stringify(colors)).toBe(20);
 
 		await addProjectButton.click();

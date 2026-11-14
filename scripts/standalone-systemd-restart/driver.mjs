@@ -7,6 +7,7 @@
 // the session holder, the unit, or systemd.
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import {
 	existsSync,
@@ -45,7 +46,20 @@ function asSourceArchive(built) {
 	rmSync(work, { recursive: true, force: true });
 	return repacked;
 }
-const ARCHIVE = asSourceArchive(BUILT_ARCHIVE);
+function preparedSourceArchive(archive) {
+	const expected = process.env.TERMINAY_SYSTEMD_PREPARED_SHA256;
+	assert.match(expected ?? '', /^[a-f0-9]{64}$/u);
+	assert.equal(createHash('sha256').update(readFileSync(archive)).digest('hex'), expected, 'prepared source archive changed during transfer');
+	const root = process.env.TERMINAY_SYSTEMD_PREPARED_ROOT;
+	assert.match(root ?? '', /^terminay-server-node24\.15\.0-linux-(?:x64|arm64)$/u);
+	// Full artifact manifests can exceed Node's default 1 MiB stdout buffer.
+	const manifest = JSON.parse(execFileSync('tar', ['--occurrence=1', '-xOzf', archive, `${root}/artifact-manifest.json`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 60000 }));
+	assert.equal(manifest.channel, 'source');
+	assert.equal(manifest.revision, process.env.TERMINAY_SYSTEMD_PREPARED_REVISION);
+	assert.equal(manifest.target, process.env.TERMINAY_SYSTEMD_PREPARED_TARGET);
+	return archive;
+}
+const ARCHIVE = process.env.TERMINAY_SYSTEMD_PREPARED_SHA256 ? preparedSourceArchive(BUILT_ARCHIVE) : asSourceArchive(BUILT_ARCHIVE);
 const SCENARIOS = (process.argv[3] ?? 'A,B,C').split(',');
 // The negative control: the same scenario with the helper's watch stopped, so
 // nothing can act on the server's request. It must fail.

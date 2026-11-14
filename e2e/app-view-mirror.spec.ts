@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { FrameLocator, Page } from '@playwright/test';
-import { expect, test } from '@playwright/test';
+import { expect} from '@playwright/test';
+import { test } from './support/isolated-test';
 import { build } from 'esbuild';
 import {
 	APP_VIEW_PROXY_CONTENT_SECURITY_POLICY,
@@ -68,6 +69,10 @@ const VIEW = `
 
 /** How long the recorder gathers changes before it sends them together. */
 const RECORDER_BATCH_MS = 40;
+
+// One fixture instance owns this file; keep its tests in declaration order
+// when other independent files share the container's worker pool.
+test.describe.configure({ mode: 'default' });
 
 test.beforeAll(async () => {
 	directory = await mkdtemp(path.join(os.tmpdir(), 'terminay-app-view-mirror-'));

@@ -5,12 +5,11 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import {
+	artifactCompressionLevel,
 	assertElfArchitecture,
 	assertSha256,
-	createDeterministicTarGz,
 	describeArtifactFiles,
 	normalizeArtifactModes,
-	sha256File,
 	walkRegularTree,
 } from './artifact-determinism.mjs';
 import {
@@ -24,14 +23,17 @@ import {
 	stageArchiveCli,
 } from './standalone-cli-bundle.mjs';
 import { stageProductionDependencyClosure } from './standalone-runtime-dependencies.mjs';
+import { publishStandalonePayload } from './publish-standalone-payload.mjs';
 
 const execFileAsync = promisify(execFile);
 const args = parseArgs(process.argv.slice(2));
+const compressionLevel = artifactCompressionLevel(Number(args['compression-level'] ?? 9));
 const target = required(args, 'target');
 const platform = getPtyRuntimePlatform(target);
 const nodeArchive = resolve(required(args, 'node-archive'));
 const runtimeModules = resolve(required(args, 'runtime-modules'));
-const outputDirectory = resolve(required(args, 'output-dir'));
+const outputTree = args['output-tree'] ? resolve(args['output-tree']) : undefined;
+const outputDirectory = outputTree ? undefined : resolve(required(args, 'output-dir'));
 const serverRoot = resolve(args['server-root'] ?? 'apps/terminay-server');
 // The server-served workspace UI, not the Desktop renderer bundle. They are
 // different builds with different entries: `dist-web` carries `server.html`,
@@ -195,14 +197,11 @@ try {
 		`${JSON.stringify(manifest, null, 2)}\n`,
 	);
 	await normalizeArtifactModes(root, executables);
-	await mkdir(outputDirectory, { recursive: true });
-	const archivePath = await createDeterministicTarGz({
-		archivePath: join(outputDirectory, `${rootName}.tar.gz`),
-		rootName,
-		stagingDirectory: stagingParent,
-	});
+	// Image assembly consumes the verified tree itself. Distribution callers
+	// retain the exact deterministic gzip archive path and digest as before.
+	const published = await publishStandalonePayload({ stagingDirectory: stagingParent, rootName, outputDirectory, outputTree, compressionLevel });
 	process.stdout.write(
-		`${JSON.stringify({ archivePath, archiveSha256: await sha256File(archivePath), target, channel: release.channel, revision: release.revision, architecture: release.architecture }, null, 2)}\n`,
+		`${JSON.stringify({ ...published, target, channel: release.channel, revision: release.revision, architecture: release.architecture }, null, 2)}\n`,
 	);
 } finally {
 	await rm(temporary, { force: true, recursive: true });

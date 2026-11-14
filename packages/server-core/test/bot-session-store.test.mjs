@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
 	mkdtempSync,
+	mkdirSync,
 	readdirSync,
 	readFileSync,
 	rmSync,
@@ -94,20 +95,34 @@ test('5.5 transcript never exceeds 8 MiB and runner retains at most its last 256
 });
 test('5.5 retention keeps newest 200 or all from last 30 days, whichever is more', (t) => {
 	let now = 0;
-	const { root, store } = setup(t, () => now);
+	const { root, store: initial } = setup(t, () => now);
+	// Derive the on-disk fixture from a real completed session, then load it
+	// normally. Retention exercises real removal without 404 setup fsyncs.
+	const seed = initial.create(botId, { kind: 'chat' }, snapshot);
+	initial.patch(seed.id, { open: false, state: 'completed', endedAt: now });
+	const record = JSON.parse(readFileSync(join(root, seed.id, 'session.json'), 'utf8'));
+	rmSync(join(root, seed.id), { recursive: true });
 	const ids = [];
 	for (let n = 0; n < 202; n++) {
-		now = n;
-		const s = store.create(botId, { kind: 'chat' }, snapshot);
-		store.patch(s.id, { open: false, state: 'completed', endedAt: now });
-		ids.push(s.id);
+		const id = n.toString(16).padStart(24, '0');
+		mkdirSync(join(root, id));
+		writeFileSync(join(root, id, 'session.json'), JSON.stringify({
+			...record, id, startedAt: n, endedAt: n,
+		}));
+		ids.push(id);
 	}
+	now = 202;
+	const store = new BotSessionStore(root, undefined, () => now);
+	assert.equal(store.list(botId).length, 202, 'recent sessions exceed the 200-session floor');
+	store.retain(botId);
+	assert.equal(store.list(botId).length, 202, 'all sessions from the last 30 days survive');
 	now = 31 * 24 * 60 * 60_000;
 	const fresh = store.create(botId, { kind: 'chat' }, snapshot);
 	store.patch(fresh.id, { open: false, state: 'completed' });
 	store.retain(botId);
 	assert.equal(store.list(botId).length, 200);
-	assert.throws(() => store.get(ids[0]));
+	for (const id of ids.slice(0, 3)) assert.throws(() => store.get(id));
+	assert.deepEqual(new Set(store.list(botId).map((record) => record.id)), new Set([...ids.slice(3), fresh.id]));
 	assert.ok(store.get(fresh.id));
 	assert.equal(new BotSessionStore(root).list(botId).length, 200);
 });

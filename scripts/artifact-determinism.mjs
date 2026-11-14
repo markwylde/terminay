@@ -61,14 +61,20 @@ export async function describeArtifactFiles(root) {
   return files.sort((left, right) => left.path.localeCompare(right.path))
 }
 
-export async function createDeterministicTarGz({ archivePath, rootName, stagingDirectory }) {
+export function artifactCompressionLevel(value = 9) {
+  if (!Number.isInteger(value) || value < 1 || value > 9) throw new Error('artifact compression level must be an integer from 1 to 9')
+  return value
+}
+
+export async function createDeterministicTarGz({ archivePath, rootName, stagingDirectory, compressionLevel = 9 }) {
+  artifactCompressionLevel(compressionLevel)
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(rootName)) throw new Error('artifact root name is unsafe')
   const tarPath = archivePath.endsWith('.gz') ? archivePath.slice(0, -3) : `${archivePath}.tar`
   await execFileAsync('tar', [
     '--format=gnu', '--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner',
     '-cf', tarPath, '-C', stagingDirectory, rootName,
   ])
-  await execFileAsync('gzip', ['-n', '-9', tarPath])
+  await execFileAsync('gzip', ['-n', `-${compressionLevel}`, tarPath])
   return archivePath.endsWith('.gz') ? archivePath : `${tarPath}.gz`
 }
 
