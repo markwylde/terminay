@@ -332,3 +332,13 @@ test("E2E shards split by test and report per-test timings without changing the 
   assert.match(entrypoint, /node scripts\/summarize-e2e-timings\.mjs test-results\/e2e-timings\.json \|\| true/u);
   assert.match(entrypoint, /exit "\$status"$/mu);
 });
+
+
+test("CI captures retry traces/video and preserves first-failure screenshots and logs", async () => {
+  const config = await text("playwright.config.ts");
+  assert.match(config, /trace: process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/u);
+  assert.match(config, /video: process\.env\.CI \? 'on-first-retry' : 'retain-on-failure'/u);
+  assert.match(config, /screenshot: 'only-on-failure'/u);
+  assert.match(config, /retries: process\.env\.CI \? 2 : 0/u);
+  assert.match(config, /\['list'\]/u);
+});

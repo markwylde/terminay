@@ -219,3 +219,77 @@ the prohibition on repository bind mounts. This run took 819 seconds from
 creation to completion and is a budget miss. Its E2E image took 377 seconds
 and several Linux dependency installs took about four minutes. It must not be
 used as evidence of a five-minute green run.
+
+## Linux artifact producer and independent consumers
+
+`Build Linux floor artifacts (linux-x64)` builds the standalone archive and
+AppImage once in the floor environment, records their SHA-256 digests and
+uploads two revision-named artifacts. It copies only those distributable bytes
+out of Docker; the unpacked Electron staging directory stays in the producer.
+Both `Linux glibc floor (linux-x64)` and `Standalone systemd restart (linux-x64)`
+depend directly on that producer. Each checks transferred digests before use;
+the floor's static and clean-runtime probes can run alongside the real systemd
+scenarios. Readiness requires the producer and both consumers successful.
+Record both artifact transfers when comparing the added handoff cost with the
+removed serial dependency. Queue delays from overlapping runs remain separate
+from the dependency wait.
+
+The final local workspace concurrency comparison capped server-core at six test
+files: all 31 tasks passed in 168.502 seconds, with core tests in 70.812 seconds.
+Both watcher responsiveness assertions retain their 250 ms limit and the wide
+directory fixture retains all 30,000 files. A four-file trial slowed core tests
+to 138.84 seconds and is not the selected configuration.
+
+## Bot production-image build cache
+
+The bot MCP CI driver may use `TERMINAY_BOT_MCP_IMAGE_CACHE` as an internal
+registry repository for disposable build cache. Its key binds the complete
+production context fingerprint, generated Dockerfile (including the CI mirror)
+and actual Docker daemon architecture. A pulled cache must report the expected
+platform and production fingerprint. The driver still builds the original
+production Dockerfile with that image as BuildKit `--cache-from` and runs every
+agent, desktop, source and MCP ownership suite. It never caches test success.
+Only after all suites pass does it publish the resulting image with inline
+build-cache metadata. Production bots keep their local-only image build path.
+
+A cache miss still pays for the full production desktop image and counts toward
+the run budget. Run 25353 spent 96.3 seconds installing system packages and
+176.3 seconds installing pinned creative applications and browser tooling;
+downloading the creative packages itself took only 16 seconds. The bottleneck
+was installation, so parallel downloads would not remove most of that cost.
+Actual registry transfer/cache-hit performance requires a subsequent CI run.
+
+Run 25353 (head `93c066f7`) verified the cache and isolation rollout: Linux
+installs took 19–24 seconds, the E2E image took 58 seconds, and official-image
+smoke took 173 seconds. Every E2E shard passed, finishing 412 seconds after
+creation. The workspace gate failed its unchanged responsiveness assertion;
+the six-file concurrency fix was then verified locally. Systemd ran for
+129 seconds after waiting 495 seconds beyond its floor dependency. Another
+main run began at 16:05:22 UTC, two minutes into this run, followed by another
+PR; shared-fleet contention remains included. Final completion was 16:17:49
+UTC, 867 seconds after creation, so this is another failed budget observation.
+
+The parallel systemd driver prepares its source-channel test archive once in
+the parent using gzip level 1. Before host extraction it rejects unsafe tar
+paths, duplicates, links, special files and special permissions, then validates
+the original complete payload, modes and native architecture. Preparation
+changes only the manifest's channel to `source`; private provenance binds both
+archive digests and both manifests. Each child checks those digests and the
+permitted metadata edit before copying the same prepared bytes into its own
+container; the in-container driver checks the transferred digest and source
+identity again. The parent removes the shared temporary archive after all
+children finish or are stopped. Serial API callers retain their existing path.
+
+The allocator now reserves the native-packaging bin at capacity one and assigns
+remaining units by predicted completion time at each bin’s worker capacity.
+On run 25350 evidence this reduces the native bin from about 165 to 85 seconds
+and keeps ordinary bins near 85 seconds, with exactly-once native selection
+validated for all 718 identities. Eighteen shards remain the selected plan.
+
+CI collects trace/video on the first retry; local retain-on-failure defaults,
+first-failure screenshots/logs and retry counts are unchanged. Four serialized
+Docker trials (32 passed cases) measured mean wall time 87.868 versus 63.617
+seconds and CPU time 208.332 versus 135.749 seconds. A deliberate first-attempt
+failure separately proved screenshot/error context retention and successful
+retry trace/video files. This saves routine recording work but an initial
+failure’s trace/video comes from the retry, not the original attempt.

@@ -21,3 +21,5 @@
 ## Notes
 
 Reviewed the repository supersession fields; highest existing sequence was 0120. No prior accepted record is modified.
+
+The measured installer follow-up is recorded in ADR-0122, which permits daemon-owned npm download-cache volumes while preserving integrity verification and scoped native-header selection. ADR-0121 remains immutable.

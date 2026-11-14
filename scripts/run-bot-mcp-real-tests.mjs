@@ -6,6 +6,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { build } from 'esbuild';
+import { botCiImageCache, restoreBotCiImageCache, publishBotCiImageCache } from './bot-ci-image-cache.mjs';
 import { BOT_BROWSER_SECCOMP } from '../packages/server-core/dist/botService/browserSandbox.js';
 import { planBotImage } from '../packages/server-core/dist/botService/image.js';
 
@@ -16,13 +17,15 @@ const context = await mkdtemp(path.join(tmpdir(), 'terminay-bot-mcp-ci-'));
 const suffix = randomBytes(6).toString('hex');
 const image = `terminay-bot-mcp-test:${suffix}`;
 const harness = `terminay-bot-mcp-harness:${suffix}`;
-const docker = (...args) =>
-	execFileSync('docker', args, { stdio: 'inherit', cwd: root });
+const runDocker = (args, { capture = false } = {}) =>
+	execFileSync('docker', args, { stdio: capture ? 'pipe' : 'inherit', encoding: capture ? 'utf8' : undefined, cwd: root, timeout: ['build'].includes(args[0]) ? 600000 : ['pull', 'push', 'run'].includes(args[0]) ? 240000 : 30000 });
+const docker = (...args) => runDocker(args);
+let cache;
 try {
 	execFileSync(
 		process.execPath,
 		['--test', '--test-force-exit', '--test-timeout=120000', 'scripts/bot-runtime-public-inputs.test.mjs'],
-		{ stdio: 'inherit', cwd: root },
+		{ stdio: 'inherit', cwd: root, timeout: 120000 },
 	);
 	execFileSync(
 		'python3',
@@ -36,7 +39,7 @@ try {
 			'-p',
 			'test_desktop_*.py',
 		],
-		{ stdio: 'inherit', cwd: root },
+		{ stdio: 'inherit', cwd: root, timeout: 120000 },
 	);
 	execFileSync(
 		'python3',
@@ -50,7 +53,7 @@ try {
 			'-p',
 			'test_desktop_*.py',
 		],
-		{ stdio: 'inherit', cwd: root },
+		{ stdio: 'inherit', cwd: root, timeout: 120000 },
 	);
 	docker('info');
 	const pkg = JSON.parse(
@@ -91,14 +94,22 @@ try {
 	// The shipped Dockerfile pulls from Docker Hub. The internal Gitea CI takes
 	// its base from the mirror instead (scripts/docker-hub-build-args.sh).
 	const mirror = process.env.TERMINAY_DOCKER_HUB_MIRROR;
-	await writeFile(
-		path.join(botContext, 'Dockerfile'),
-		mirror
-			? plan.dockerfile.replace(/^FROM docker\.io\/library\//gmu, `FROM ${mirror}/`)
-			: plan.dockerfile,
-	);
+	const dockerfile = mirror
+		? plan.dockerfile.replace(/^FROM docker\.io\/library\//gmu, `FROM ${mirror}/`)
+		: plan.dockerfile;
+	await writeFile(path.join(botContext, 'Dockerfile'), dockerfile);
+	const cacheRepository = process.env.TERMINAY_BOT_MCP_IMAGE_CACHE;
+	if (cacheRepository) {
+		const platform = runDocker(['info', '--format', '{{.OSType}}/{{.Architecture}}'], { capture: true }).trim();
+		cache = botCiImageCache({ repository: cacheRepository, platform, fingerprint: plan.fingerprint, dockerfile });
+	}
+	const restored = restoreBotCiImageCache(cache, runDocker);
 	docker(
 		'build',
+		'--build-arg',
+		'BUILDKIT_INLINE_CACHE=1',
+		...(cache ? ['--platform', cache.platform] : []),
+		...(restored ? ['--cache-from', cache.reference] : []),
 		'--build-arg',
 		'BOT_UID=1000',
 		'--build-arg',
@@ -128,7 +139,7 @@ try {
 	);
 	await writeFile(
 		path.join(runnerContext, 'Dockerfile'),
-		`FROM ${image}\nCOPY test.mjs /test.mjs\nCOPY bots /tmp/bots\nENTRYPOINT ["node", "--test", "/test.mjs"]\n`,
+		`FROM ${image}\nCOPY test.mjs /test.mjs\nCOPY bots /tmp/bots\nENTRYPOINT ["node", "--test", "--test-force-exit", "--test-timeout=120000", "/test.mjs"]\n`,
 	);
 	docker('build', '-t', harness, runnerContext);
 	const seccompPath = path.join(context, 'browser-seccomp.json');
@@ -188,11 +199,20 @@ try {
 		`TERMINAY_BOT_MCP_SMOKE_IMAGE=${image}`,
 		harness,
 	);
+	if (cache) {
+		publishBotCiImageCache(cache, image, runDocker);
+	}
 } finally {
 	try {
 		docker('image', 'rm', '--no-prune', harness, image);
 	} catch {
 		/* Keep the test's failure. */
+	}
+	if (cache) {
+		try {
+			runDocker(['image', 'inspect', cache.reference], { capture: true });
+			docker('image', 'rm', '--no-prune', cache.reference);
+		} catch { /* a miss or a tag still used by another job */ }
 	}
 	await rm(context, { recursive: true, force: true });
 }

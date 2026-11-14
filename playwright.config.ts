@@ -47,8 +47,10 @@ export default defineConfig({
   use: {
     actionTimeout: 5_000,
     navigationTimeout: 5_000,
-    trace: 'retain-on-failure',
+    // First-attempt screenshots and logs remain available. Record the costly
+    // continuous trace/video on a retry, including one that recovers the failure.
+    trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
+    video: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
   },
 })

@@ -11,6 +11,7 @@ import {
 	DEFAULT_TEST_DURATION_MS,
 	timingKey,
 	dealToShards,
+	dealToWorkerShards,
 	listedTests,
 	shardTestLists,
 	shardUnits,
@@ -262,4 +263,31 @@ test('all E2E test definitions share the worker display fixture before hooks run
 		const source = await readFile(new URL(name, directory), 'utf8');
 		assert.doesNotMatch(source, /import\s*\{[^}]*\btest(?:\s+as\s+\w+)?[^}]*\}\s*from\s*['"]@playwright\/test['"]/u, name);
 	}
+});
+
+
+test('capacity-aware allocation gives the exclusive worker half the work of two-worker shards', () => {
+	const unit = (line, weight) => ({ line, tests: [{ weight }] });
+	const units = [unit('canonical-runtime-executable-parity.spec.ts › pack', 40), ...Array.from({ length: 8 }, (_, index) => unit(`ordinary.spec.ts › ${index}`, 20))];
+	const shards = dealToWorkerShards(units, 2);
+	const loads = shards.map((entries) => entries.flatMap((entry) => entry.tests).reduce((sum, test) => sum + test.weight, 0));
+	assert.deepEqual(loads, [60, 140]);
+	assert.equal(shardWorkerPolicy(shards[0].map((entry) => entry.line)).workers, 1);
+	assert.equal(shardWorkerPolicy(shards[1].map((entry) => entry.line)).workers, 2);
+	assert.equal(new Set(shards.flat()).size, units.length);
+	assert.deepEqual(dealToWorkerShards(units, 2), shards);
+	// An equal-work deal would give each 100 units and a 100-unit wall-time
+	// tail; the capacity-aware plan finishes in max(60, 140/2) = 70.
+	assert.equal(Math.max(loads[0], loads[1] / 2), 70);
+});
+
+test('multiple native units stay together and shared file units never split', () => {
+	const a = { line: 'canonical-runtime-executable-parity.spec.ts › first', tests: [{ weight: 20 }] };
+	const b = { line: 'canonical-runtime-executable-parity.spec.ts › second', tests: [{ weight: 30 }] };
+	const shared = { line: 'shared.spec.ts', tests: [{ weight: 10 }, { weight: 10 }] };
+	const shards = dealToWorkerShards([a, shared, b], 2);
+	assert.deepEqual(shards[0], [a, b]);
+	assert.deepEqual(shards[1], [shared]);
+	assert.deepEqual(shards[1][0].tests, [{ weight: 10 }, { weight: 10 }]);
+	assert.deepEqual(dealToWorkerShards([a, shared, b], 1), [[a, b, shared]]);
 });

@@ -34,6 +34,16 @@ The E2E suite SHALL distribute tests across eighteen shards using recorded durat
 - **WHEN** the planner cannot express a test identity
 - **THEN** CI reports the invalid identity explicitly and does not report a partial suite as successful
 
+#### Scenario: Isolated parallel workers
+
+- **WHEN** a shard uses multiple workers
+- **THEN** each owns its virtual display, test profiles and mutable fixture state, while tests sharing setup stay ordered within one worker
+
+#### Scenario: Native packaging requires exclusive execution
+
+- **WHEN** a shard contains a test that rebuilds shared native modules
+- **THEN** it uses one worker and its assigned load accounts for that reduced capacity
+
 ### Requirement: Five-minute run budget
 
 A full CI run for a pull request or main SHALL reach all required checks successful or legitimately skipped within 300 seconds from original run creation. Measurement SHALL include queueing, setup, tests, reporting and teardown. Retries SHALL NOT reset the original creation time or conceal failed attempts. Cache misses and unavailable runners SHALL be reported as budget misses, not silently excluded.
@@ -58,6 +68,20 @@ A full CI run for a pull request or main SHALL reach all required checks success
 - **WHEN** Gitea preserves earlier jobs across retries or a required check remains pending or failed
 - **THEN** the report preserves attempt context and does not claim an incomplete or over-budget run meets the target
 
+### Requirement: npm download cache stays on the runner
+
+CI jobs that install npm dependencies SHALL retain npm's integrity-verified download cache in persistent storage owned by the runner or its execution daemon, such as a tool-cache directory or named cache volume. Jobs SHALL NOT archive, upload or download that cache as a job step, and SHALL NOT share installed node_modules trees through it.
+
+#### Scenario: A job ends without uploading the cache
+
+- **WHEN** a job that ran npm ci finishes
+- **THEN** no step archives or uploads the npm cache
+
+#### Scenario: A later job reuses the cache
+
+- **WHEN** a job runs npm ci on a runner whose persistent cache contains packages from the same lockfile
+- **THEN** npm verifies and reads those cached packages instead of fetching their tarballs again
+
 ## ADDED Requirements
 
 ### Requirement: Reusable revision-matched verification artifacts
@@ -68,6 +92,12 @@ CI SHALL reuse build outputs within a run where consumers require identical inpu
 
 - **WHEN** multiple jobs exercise the same standalone archive
 - **THEN** each receives verified bytes produced for that run's revision and supported Linux floor
+
+#### Scenario: Independent Linux verification consumers
+
+- **WHEN** one Linux producer has built revision-matched standalone and AppImage artifacts inside the supported floor environment
+- **THEN** the floor verification and systemd restart checks depend directly on that producer and may run in parallel
+- **AND** each consumer verifies transferred digests before execution and final readiness still requires both checks
 
 ### Requirement: Critical-path timing evidence
 

@@ -40,7 +40,7 @@ test("Gitea is the only provider that runs verification CI", async () => {
   }
   assert.deepEqual(
     [...giteaCi.slice(giteaCi.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["e2e-image", "packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "standalone-systemd-restart", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "bot-mcp-runtime", "mcp-cli-compatibility", "e2e-test"],
+    ["e2e-image", "linux-artifacts", "packaged-macos-smoke", "packaged-linux-built-in-lifecycle", "linux-glibc-floor", "standalone-systemd-restart", "build-and-test", "workspace-tests", "real-webrtc", "container-image-smoke", "bot-mcp-runtime", "mcp-cli-compatibility", "e2e-test"],
   );
   // The official image is built and paired with on every pull request, by the
   // same client code Desktop ships, before a release can publish it.
@@ -89,9 +89,10 @@ test("Gitea is the only provider that runs verification CI", async () => {
   const giteaGlibcFloor = job(giteaCi, "linux-glibc-floor");
   assert.match(giteaGlibcFloor, /^ {4}runs-on: ubuntu-latest$/mu);
   assert.match(giteaGlibcFloor, /test "\$\(docker info --format '\{\{\.Architecture\}\}'\)" = x86_64/u);
-  assert.match(giteaGlibcFloor, /standalone-prebuilt-application\.mjs build linux-x64.*&& sh scripts\/build-linux-standalone-archive\.sh --prebuilt/u);
-  assert.match(giteaGlibcFloor, /electron-builder --linux AppImage --x64 --publish never/u);
-  assert.match(giteaGlibcFloor, /build-linux-standalone-archive\.sh --prebuilt --compression-level 1 linux-x64 main/u);
+  const producer = job(giteaCi, "linux-artifacts");
+  assert.match(producer, /standalone-prebuilt-application\.mjs build linux-x64.*&& sh scripts\/build-linux-standalone-archive\.sh --prebuilt/u);
+  assert.match(producer, /electron-builder --linux AppImage --x64 --publish never/u);
+  assert.match(producer, /build-linux-standalone-archive\.sh --prebuilt --compression-level 1 linux-x64 main/u);
   assert.match(giteaGlibcFloor, /node scripts\/linux-glibc-floor\.mjs check --target linux-x64 \\\n\s+release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage \\\n\s+release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
   assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh appimage release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage/u);
   assert.match(giteaGlibcFloor, /sh scripts\/probe-linux-glibc-floor\.sh server-archive release\/standalone\/terminay-server-main-linux-x64\.tar\.gz/u);
@@ -341,4 +342,26 @@ test('node-gyp header reuse requires exact runtime major, minor and patch versio
     assert.match(floor, /npm_config_nodedir="\$header_prefix" timeout/u);
     assert.doesNotMatch(floor, /^ENV .*npm_config_nodedir/gmu, 'Electron packaging must choose its own headers');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Linux floor and systemd gates consume one producer directly and verify revision-matched transfers', () => {
+  const producer = job(giteaCi, 'linux-artifacts');
+  const floor = job(giteaCi, 'linux-glibc-floor');
+  const restart = job(giteaCi, 'standalone-systemd-restart');
+  assert.ok(giteaCi.indexOf('\n  linux-artifacts:') < giteaCi.indexOf('\n  packaged-macos-smoke:'), 'the producer is admitted before unrelated consumers');
+  assert.doesNotMatch(producer, /^ {4}needs:/mu, 'producer is independent');
+  assert.match(producer, /--output release\/0\.0\.0\/Terminay-Linux-0\.0\.0\.AppImage --output release\/standalone/u);
+  assert.doesNotMatch(producer, /--output release(?:\s|$)/mu, 'the unpacked Electron staging tree is not transferred');
+  assert.match(producer, /sha256sum Terminay-Linux-0\.0\.0\.AppImage > SHA256SUMS/u);
+  assert.match(producer, /sha256sum terminay-server-main-linux-x64\.tar\.gz > SHA256SUMS/u);
+  for (const consumer of [floor, restart]) {
+    assert.match(consumer, /^ {4}needs: linux-artifacts$/mu);
+    assert.match(consumer, /standalone-floor-\$\{\{ github.sha \}\}/u);
+    assert.match(consumer, /sha256sum --check SHA256SUMS/u);
+    assert.doesNotMatch(consumer, /build-linux-standalone-archive\.sh/u, 'a consumer does not rebuild the transferred archive');
+  }
+  assert.match(floor, /appimage-floor-\$\{\{ github.sha \}\}/u);
+  assert.match(producer, /appimage-floor-\$\{\{ github.sha \}\}/u);
+  assert.ok(floor.indexOf('Verify both transferred artifacts') < floor.indexOf('Check every ELF file'));
+  assert.ok(restart.indexOf('Verify the transferred archive') < restart.indexOf('Restart under systemd'));
 });

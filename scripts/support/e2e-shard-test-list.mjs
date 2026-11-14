@@ -6,7 +6,7 @@ import { shardWorkerPolicy } from './e2e-worker-policy.mjs';
 // slices. Slow tests sit together in a few spec files, so some slices carried
 // three times the test time of others and the slowest set the length of the
 // whole run. Recorded durations let the longest independent units go first;
-// each is assigned to the shard with the least estimated work.
+// each is assigned by predicted completion time for its worker capacity.
 //
 // A spec whose tests share setup stays whole: one that starts something in
 // `beforeAll`, or that declares itself one group. Splitting it would repeat
@@ -114,13 +114,43 @@ export function dealToShards(units, total, longestFirst = false) {
 }
 
 /**
+ * Reserve native-mutating units in one single-worker container, then fill all
+ * bins by predicted completion time instead of giving unequal capacities the
+ * same amount of CPU work. Stable ties preserve declaration/shard order.
+ */
+export function dealToWorkerShards(units, total) {
+	if (!Number.isInteger(total) || total < 1) throw new Error('shard count must be a positive integer');
+	const weight = (unit) => unit.tests.reduce((sum, test) => sum + (test.weight ?? 1), 0);
+	const exclusive = units.filter((unit) => shardWorkerPolicy([unit.line]).workers === 1);
+	const regular = units.filter((unit) => shardWorkerPolicy([unit.line]).workers !== 1);
+	const shards = Array.from({ length: total }, (_, index) => ({
+		workers: index === 0 && exclusive.length ? 1 : 2, load: 0, units: [],
+	}));
+	for (const unit of exclusive) {
+		shards[0].units.push(unit);
+		shards[0].load += weight(unit);
+	}
+	for (const unit of [...regular].sort((a, b) => weight(b) - weight(a))) {
+		let target = shards[0];
+		const duration = weight(unit);
+		for (const shard of shards) {
+			if ((shard.load + duration) / shard.workers < (target.load + duration) / target.workers) target = shard;
+		}
+		target.units.push(unit);
+		target.load += duration;
+	}
+	return shards.map((shard) => shard.units);
+}
+
+/**
  * The `--test-list` lines of every shard. Throws unless each listed test is
  * selected by exactly one shard under Playwright's own matching, so a title
  * this format cannot express fails the split rather than dropping a test.
  */
 export function shardTestLists(report, keepsTogether, total, durations) {
 	const tests = listedTests(report, durations);
-	const shards = dealToShards(shardUnits(tests, keepsTogether), total, Boolean(durations));
+	const units = shardUnits(tests, keepsTogether);
+	const shards = durations ? dealToWorkerShards(units, total) : dealToShards(units, total);
 	if (durations) {
 		const wallTime = (units) => {
 			const weights = units.map((unit) => unit.tests.reduce((sum, test) => sum + test.weight, 0));
@@ -128,9 +158,10 @@ export function shardTestLists(report, keepsTogether, total, durations) {
 			// Shared groups are indivisible, even when other groups run in parallel.
 			return Math.max(0, ...weights, weights.reduce((sum, weight) => sum + weight, 0) / workers);
 		};
-		// Start the longest predicted wall-time shards first. In particular a
-		// native-packaging shard cannot use two workers to halve its workload.
-		shards.sort((a, b) => wallTime(b) - wallTime(a));
+		// Keep the reserved native bin first: packaging startup is exclusive and
+		// cannot borrow another worker. Order the remaining bins by wall time.
+		const exclusive = (units) => shardWorkerPolicy(units.map((unit) => unit.line)).workers === 1;
+		shards.sort((a, b) => Number(exclusive(b)) - Number(exclusive(a)) || wallTime(b) - wallTime(a));
 	}
 	const lists = shards.map((units) => units.map((unit) => unit.line));
 	for (const test of tests) {

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { prepareSystemdSourceArchive, verifyPreparedSystemdSourceArchive } from './systemd-source-archive.mjs';
 
 /**
  * Restart a real standalone server under a real systemd and prove, from shell
@@ -92,12 +93,14 @@ export function buildSystemdImage({ image = DEFAULT_IMAGE, runCommand = run } = 
 	}
 }
 
-export function runSystemdRestart({ archive, scenarios = SCENARIOS, image = DEFAULT_IMAGE, negative = false, preparedImage, containerName }) {
+export function runSystemdRestart({ archive, scenarios = SCENARIOS, image = DEFAULT_IMAGE, negative = false, preparedImage, containerName, preparedArchive, preparedProvenance }) {
 	if (preparedImage && !/^terminay-systemd-test:[a-f0-9]{20}$/u.test(preparedImage)) throw new Error('Invalid prepared systemd image');
 	if (containerName && !/^terminay-systemd-restart-[a-f0-9-]+$/u.test(containerName)) throw new Error('Invalid systemd container name');
 	const repositoryRoot = resolve(new URL('..', import.meta.url).pathname);
 	const container = containerName ?? `terminay-systemd-restart-${randomUUID().slice(0, 8)}`;
-	const archivePath = resolve(archive);
+	if (Boolean(preparedArchive) !== Boolean(preparedProvenance)) throw new Error('Prepared archive needs provenance');
+	const provenance = preparedArchive ? verifyPreparedSystemdSourceArchive(resolve(archive), resolve(preparedArchive), resolve(preparedProvenance)) : undefined;
+	const archivePath = resolve(preparedArchive ?? archive);
 	const stage = mkdtempSync(join(tmpdir(), 'terminay-systemd-restart-'));
 	try {
 		const runtimeImage = preparedImage ?? buildSystemdImage({ image });
@@ -138,6 +141,7 @@ export function runSystemdRestart({ archive, scenarios = SCENARIOS, image = DEFA
 			'docker',
 			'exec',
 			...(negative ? ['-e', 'TERMINAY_SYSTEMD_NEGATIVE=1'] : []),
+			...(provenance ? ['-e', `TERMINAY_SYSTEMD_PREPARED_SHA256=${provenance.preparedSha256}`, '-e', `TERMINAY_SYSTEMD_PREPARED_ROOT=${provenance.rootName}`, '-e', `TERMINAY_SYSTEMD_PREPARED_REVISION=${provenance.revision}`, '-e', `TERMINAY_SYSTEMD_PREPARED_TARGET=${provenance.target}`] : []),
 			container,
 			'node',
 			'/driver/driver.mjs',
@@ -153,25 +157,30 @@ export function runSystemdRestart({ archive, scenarios = SCENARIOS, image = DEFA
 }
 
 /** Independent scenarios share the immutable runtime image, never a container. */
-export async function runSystemdScenarios({ archive, scenarios = SCENARIOS, negative = false, buildImage = buildSystemdImage, spawnChild = spawn, stopChild = (child) => {
+export async function runSystemdScenarios({ archive, scenarios = SCENARIOS, negative = false, buildImage = buildSystemdImage, prepareArchive = prepareSystemdSourceArchive, spawnChild = spawn, stopChild = (child) => {
 	try { if (process.platform === 'win32') child.kill('SIGKILL'); else process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
 }, removeContainer = (container) => spawnSync('docker', ['rm', '-f', container], { stdio: 'ignore', timeout: 30000 }) }) {
 	if (!scenarios.length || scenarios.some(scenario => !SCENARIOS.includes(scenario)) || new Set(scenarios).size !== scenarios.length) throw new Error('Scenarios must be a nonempty unique subset of A,B,C');
 	const image = buildImage();
+	let prepared;
+	let interrupted;
 	const children = new Set();
 	const containers = [];
 	const completions = [];
 	let rejectAbort;
 	const abort = new Promise((_resolve, reject) => { rejectAbort = reject; });
-	const onSignal = signal => rejectAbort(new Error(`Systemd scenarios interrupted by ${signal}`));
+	abort.catch(() => {}); // Signals may arrive while bounded archive preparation finishes.
+	const onSignal = signal => { interrupted = new Error(`Systemd scenarios interrupted by ${signal}`); rejectAbort(interrupted); };
 	const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 	const handlers = signals.map(signal => { const handler = () => onSignal(signal); process.on(signal, handler); return handler; });
 	const deadline = setTimeout(() => rejectAbort(new Error('Systemd scenarios exceeded 1500 seconds')), 1500000);
 	try {
+		prepared = await prepareArchive(archive);
+		if (interrupted) throw interrupted;
 		for (const scenario of scenarios) {
 			const container = `terminay-systemd-restart-${randomUUID()}`;
 			containers.push(container);
-			const child = spawnChild(process.execPath, [new URL(import.meta.url).pathname, '--archive', resolve(archive), '--scenarios', scenario, '--prepared-image', image, '--container-name', container], { detached: process.platform !== 'win32', stdio: 'inherit', env: { ...process.env, ...(negative ? { TERMINAY_SYSTEMD_NEGATIVE: '1' } : {}) } });
+			const child = spawnChild(process.execPath, [new URL(import.meta.url).pathname, '--archive', resolve(archive), '--scenarios', scenario, '--prepared-image', image, '--prepared-archive', prepared.archivePath, '--prepared-provenance', prepared.provenancePath, '--container-name', container], { detached: process.platform !== 'win32', stdio: 'inherit', env: { ...process.env, ...(negative ? { TERMINAY_SYSTEMD_NEGATIVE: '1' } : {}) } });
 			children.add(child);
 			completions.push(new Promise((resolveChild, reject) => {
 				child.once('error', error => { children.delete(child); reject(error); });
@@ -186,6 +195,7 @@ export async function runSystemdScenarios({ archive, scenarios = SCENARIOS, nega
 		// Removing a container also ends an exec that outlived a killed Docker client.
 		if (process.env.TERMINAY_SYSTEMD_KEEP !== '1') for (const container of containers) removeContainer(container);
 		await Promise.allSettled(completions);
+		await prepared?.close();
 	}
 }
 
@@ -198,7 +208,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.
 	const options = { archive, scenarios: argument('--scenarios', SCENARIOS.join(',')).split(','), negative: process.env.TERMINAY_SYSTEMD_NEGATIVE === '1' };
 	const preparedImage = argument('--prepared-image');
 	try {
-		if (preparedImage) runSystemdRestart({ ...options, preparedImage, containerName: argument('--container-name') });
+		if (preparedImage) runSystemdRestart({ ...options, preparedImage, containerName: argument('--container-name'), preparedArchive: argument('--prepared-archive'), preparedProvenance: argument('--prepared-provenance') });
 		else await runSystemdScenarios(options);
 		process.stdout.write('Standalone systemd restart passed.\n');
 	} catch (error) {
