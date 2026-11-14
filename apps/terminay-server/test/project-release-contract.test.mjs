@@ -12,7 +12,8 @@ const source = await readFile(new URL("../src/cli.ts", import.meta.url), "utf8")
 
 test("the standalone server releases its per-project records when a project closes", () => {
   const operations = source.match(/workspaceOperations: \{[\s\S]*?\n\t\t\},\n/u)?.[0] ?? "";
-  assert.match(operations, /releaseProject: \(projectId\) => \{[\s\S]*?files\.releaseProject\(projectId\);[\s\S]*?agentScope\.removeProject\(projectId\);/u);
+  assert.match(operations, /\n\t\t\treleaseProject: releaseProjectBinding,\n/u);
+  assert.match(source, /const releaseProjectBinding = \(projectId: string\) => \{[\s\S]*?files\.releaseProject\(projectId\);[\s\S]*?agentScope\.removeProject\(projectId\);/u);
 
   const release = source.match(/releaseProject: \(projectId\) => \{\n\t\t\tmdxRuntime\.disposeProject[\s\S]*?\n\t\t\},/u)?.[0] ?? "";
   for (const map of ["sessionProjects", "contentProjects", "catalogProjects", "documentationProjects", "mdxRuntimeProjects"])

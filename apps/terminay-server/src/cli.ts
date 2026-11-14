@@ -1189,6 +1189,48 @@ async function createServerComposition(
 		hosts: () => extensions.hosts,
 		serverCommand: () => mcpServerCommand,
 	});
+	// The one way a project is bound to its root in this process: files,
+	// content, catalog, Documentation and MDX, Git, agent scope, and folders.
+	// Creating a project, changing its root, and restoring it all go through it.
+	const prepareProjectBinding = async (projectId: string, root: string) => {
+		const prepared = await files.prepareProjectRootUpdate(projectId, root);
+		return Object.freeze({
+			canonicalRoot: prepared.canonicalRoot,
+			commit: () => {
+				prepared.commit();
+				agentScope.setProject(projectId, prepared.canonicalRoot);
+				// Preparing bound the project to Git at its new root.
+				folders.projectBound(projectId);
+			},
+		});
+	};
+	const releaseProjectBinding = (projectId: string) => {
+		files.releaseProject(projectId);
+		agentScope.removeProject(projectId);
+		folders.releaseProject(projectId);
+	};
+	// Every binding is process-local, so a restart starts with none but the
+	// boot-time `default`. Each restored project with a root is bound again
+	// before the restore; one whose root cannot be resolved holds no authority
+	// and gets no replacement terminal until its root is repaired.
+	const bindRestoredProjects = async (): Promise<ReadonlySet<string>> => {
+		const unavailable = new Set<string>();
+		for (const project of Object.values(workspace.state.projects)) {
+			if (project.rootOrigin === 'none') continue;
+			try {
+				(await prepareProjectBinding(project.id, project.root)).commit();
+			} catch (error) {
+				if (!isUnresolvableProjectRoot(error)) throw error;
+				releaseProjectBinding(project.id);
+				gitService.unbindProject(project.id);
+				unavailable.add(project.id);
+				process.stderr.write(
+					`[terminay-server] restored project ${project.id} is unavailable: its root cannot be resolved\n`,
+				);
+			}
+		}
+		return unavailable;
+	};
 	composition = createServerCoreComposition({
 		...(bots ? { bots } : {}),
 		connectionMetrics: {
@@ -1256,25 +1298,10 @@ async function createServerComposition(
 		},
 		workspace,
 		workspaceOperations: {
-			prepareProjectRootUpdate: async (projectId, root) => {
-				const prepared = await files.prepareProjectRootUpdate(projectId, root);
-				return Object.freeze({
-					canonicalRoot: prepared.canonicalRoot,
-					commit: () => {
-						prepared.commit();
-						agentScope.setProject(projectId, prepared.canonicalRoot);
-						// Preparing bound the project to Git at its new root.
-						folders.projectBound(projectId);
-					},
-				});
-			},
+			prepareProjectRootUpdate: prepareProjectBinding,
 			// Git, file observations, and language sessions are released by the
 			// composition; these are this host's own per-project records.
-			releaseProject: (projectId) => {
-				files.releaseProject(projectId);
-				agentScope.removeProject(projectId);
-				folders.releaseProject(projectId);
-			},
+			releaseProject: releaseProjectBinding,
 			// A terminal's MCP capability follows it to its new project
 			// (ADR-0074).
 			rehomeTerminalSession: (move) => mcp.onTerminalRehomed(move),
@@ -1285,6 +1312,7 @@ async function createServerComposition(
 		// that they had exited.
 		workspaceStartup: {
 			firstRun: workspaceRepository.wasCreated,
+			prepare: bindRestoredProjects,
 			createTerminal: async (request) => {
 				const resolver = composition.terminalLaunchResolver;
 				if (resolver === undefined)
@@ -2554,6 +2582,17 @@ function logSessionHolderObservation(
 ): void {
 	process.stderr.write(
 		`[terminay-server] session holder ${JSON.stringify(report)}\n`,
+	);
+}
+
+/** A project root the server cannot resolve — absent, unreadable, or failing
+ * `realpath` — is a recoverable project condition, as on Desktop. */
+function isUnresolvableProjectRoot(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		(error as { readonly code?: unknown }).code === 'path_missing'
 	);
 }
 
