@@ -21,6 +21,13 @@ export const UPGRADE_RESULT = 'upgrade-result.json';
 export const UPGRADE_PATH_UNIT_NAME = 'terminay-upgrade.path';
 export const UPGRADE_SERVICE_UNIT_NAME = 'terminay-upgrade.service';
 export const UPGRADE_REQUEST_FILE = 'request';
+/**
+ * The second, backward-capable pair (ADR-0117): it installs the newest release
+ * on the installed channel even when that is older than the running one.
+ */
+export const INSTALL_LATEST_PATH_UNIT_NAME = 'terminay-upgrade-latest.path';
+export const INSTALL_LATEST_SERVICE_UNIT_NAME = 'terminay-upgrade-latest.service';
+export const INSTALL_LATEST_REQUEST_FILE = 'install-latest';
 
 /**
  * The part of a layout that staging and switching a version needs. A container
@@ -53,6 +60,10 @@ export interface UpgradeHelperLayout {
 	readonly serviceUnitPath: string;
 	readonly requestDirectory: string;
 	readonly requestFile: string;
+	/** The install-latest pair, beside the upgrade pair, in the same directory. */
+	readonly latestPathUnitPath: string;
+	readonly latestServiceUnitPath: string;
+	readonly latestRequestFile: string;
 }
 
 export interface InstallLayout extends ReleaseTree {
@@ -93,6 +104,9 @@ export function installLayout(
 				serviceUnitPath: join(units, UPGRADE_SERVICE_UNIT_NAME),
 				requestDirectory,
 				requestFile: join(requestDirectory, UPGRADE_REQUEST_FILE),
+				latestPathUnitPath: join(units, INSTALL_LATEST_PATH_UNIT_NAME),
+				latestServiceUnitPath: join(units, INSTALL_LATEST_SERVICE_UNIT_NAME),
+				latestRequestFile: join(requestDirectory, INSTALL_LATEST_REQUEST_FILE),
 			}),
 		});
 	}

@@ -746,6 +746,44 @@ test('updater install is a closed, capability-gated host action', () => {
 	);
 });
 
+test('updater install-latest carries only the confirmed version', () => {
+	assert.deepEqual(
+		parseTerminayHostAction({
+			type: 'updater.install-latest',
+			version: '6.3.0-main.3300.nightly',
+		}),
+		{ type: 'updater.install-latest', version: '6.3.0-main.3300.nightly' },
+	);
+	for (const version of [
+		undefined,
+		6,
+		'',
+		'https://example.com/evil.zip',
+		'../6.2.4',
+		'6.2',
+	])
+		assert.throws(
+			() => parseTerminayHostAction({ type: 'updater.install-latest', version }),
+			/updater version is invalid|updater action/u,
+		);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'updater.install-latest',
+				version: '6.2.4',
+				url: 'https://example.com/evil.zip',
+			}),
+		/updater action/u,
+	);
+	assert.equal(
+		requiredTerminayHostCapability({
+			type: 'updater.install-latest',
+			version: '6.2.4',
+		}),
+		'updater',
+	);
+});
+
 test('device settings use a closed host action and bound event snapshot', () => {
 	const settings = { keyboardShortcuts: { 'new-terminal': 'CmdOrCtrl+Y' } };
 	assert.deepEqual(

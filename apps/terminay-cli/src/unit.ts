@@ -1,4 +1,15 @@
-import { type InstallLayout, UPGRADE_SERVICE_UNIT_NAME } from './layout.js';
+import {
+	INSTALL_LATEST_SERVICE_UNIT_NAME,
+	type InstallLayout,
+	UPGRADE_SERVICE_UNIT_NAME,
+} from './layout.js';
+
+/**
+ * Which helper pair a unit belongs to: `upgrade` only ever moves forward;
+ * `install-latest` installs the channel's newest release in either direction
+ * (ADR-0117). Each has its own request file and its own fixed command line.
+ */
+export type UpgradeHelperKind = 'upgrade' | 'install-latest';
 
 /**
  * The unit and environment file the installer writes.
@@ -251,28 +262,38 @@ export const UPGRADE_HELPER_ENVIRONMENT = 'TERMINAY_UPGRADE_HELPER';
  * passes the file on, and the service never opens it, so nothing the run-as
  * account writes can choose what is installed.
  */
-export function renderUpgradePathUnit(layout: InstallLayout): string {
+export function renderUpgradePathUnit(
+	layout: InstallLayout,
+	kind: UpgradeHelperKind = 'upgrade',
+): string {
 	const helper = requireHelper(layout);
+	const latest = kind === 'install-latest';
 	return `[Unit]
-Description=Terminay Server upgrade request
+Description=Terminay Server ${latest ? 'install-latest' : 'upgrade'} request
 Documentation=https://terminay.com/docs/installation
 
 [Path]
-PathChanged=${helper.requestFile}
-Unit=${UPGRADE_SERVICE_UNIT_NAME}
+PathChanged=${latest ? helper.latestRequestFile : helper.requestFile}
+Unit=${latest ? INSTALL_LATEST_SERVICE_UNIT_NAME : UPGRADE_SERVICE_UNIT_NAME}
 
 [Install]
 WantedBy=multi-user.target
 `;
 }
 
-export function renderUpgradeServiceUnit(layout: InstallLayout): string {
+export function renderUpgradeServiceUnit(
+	layout: InstallLayout,
+	kind: UpgradeHelperKind = 'upgrade',
+): string {
 	requireHelper(layout);
 	// No reference and no flag beyond the scope: the upgrade follows the
-	// recorded channel, verifies the release signature, and refuses to move
-	// backwards, exactly as an operator's own `daemon upgrade --system` does.
+	// recorded channel and verifies the release signature, exactly as an
+	// operator's own `daemon upgrade --system` does. The upgrade pair refuses
+	// to move backwards; the install-latest pair's one fixed extra flag lets it
+	// install the channel's newest release when that is older (ADR-0117).
+	const latest = kind === 'install-latest';
 	return `[Unit]
-Description=Terminay Server upgrade
+Description=Terminay Server ${latest ? 'install latest on channel' : 'upgrade'}
 Documentation=https://terminay.com/docs/installation
 After=network-online.target
 Wants=network-online.target
@@ -282,7 +303,7 @@ Type=oneshot
 User=root
 Group=root
 Environment=${UPGRADE_HELPER_ENVIRONMENT}=1
-ExecStart=${layout.currentLink}/bin/terminay daemon upgrade --system
+ExecStart=${layout.currentLink}/bin/terminay daemon upgrade --system${latest ? ' --allow-downgrade' : ''}
 TimeoutStartSec=30min
 StandardOutput=journal
 StandardError=journal

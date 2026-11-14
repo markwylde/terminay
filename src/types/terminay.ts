@@ -518,6 +518,23 @@ export type AppUpdateStatus = {
 	downloadPercent?: number | null;
 	releaseNotes?: AppReleaseNote[] | null;
 	releaseNotesError?: string | null;
+	/**
+	 * The latest build the selected channel publishes, whether or not it is
+	 * newer than the running one, as the last check resolved it. Null before a
+	 * check, for a development build, and where the build cannot update itself
+	 * in place.
+	 */
+	channelLatest?: AppChannelLatest | null;
+	/** The version an Install latest download is fetching, or null. */
+	installingLatest?: string | null;
+};
+
+export type AppChannelLatest = {
+	version: string;
+	/** Which release it comes from: the stable release, or the channel's own prerelease. */
+	source: AppUpdateChannel;
+	/** How it orders against the running build. */
+	order: 'newer' | 'same' | 'older';
 };
 
 export type AiTabMetadataProvider = 'claudeCode' | 'codex';

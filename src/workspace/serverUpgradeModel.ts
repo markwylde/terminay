@@ -864,6 +864,10 @@ export function upgradeStartErrorText(cause: unknown): string {
 			return 'This server no longer offers that way of upgrading.';
 		case 'trigger-failed':
 			return 'The server could not start the upgrade.';
+		case 'already-latest':
+			return 'This server already runs the latest release on its channel.';
+		case 'cannot-install-latest':
+			return 'This server cannot install that release itself. Install it from its host instead.';
 		default:
 			return 'The upgrade could not be started.';
 	}
@@ -877,14 +881,20 @@ export function upgradeStartErrorText(cause: unknown): string {
 export async function requestServerUpgrade(
 	client:
 		| Readonly<{
-				startServerUpgrade: (mode: ServerUpgradeMode) => Promise<unknown>;
+				startServerUpgrade: (
+					mode: ServerUpgradeMode,
+					options?: { readonly allowOlder?: boolean },
+				) => Promise<unknown>;
 		  }>
 		| undefined,
 	mode: ServerUpgradeMode,
+	options: { readonly allowOlder?: boolean } = {},
 ): Promise<string | undefined> {
 	if (client === undefined) return 'This server is not connected.';
 	try {
-		await client.startServerUpgrade(mode);
+		if (options.allowOlder === true)
+			await client.startServerUpgrade(mode, { allowOlder: true });
+		else await client.startServerUpgrade(mode);
 	} catch (cause) {
 		if (!upgradeStartOutcomeUnknown(cause)) return upgradeStartErrorText(cause);
 	}

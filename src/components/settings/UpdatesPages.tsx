@@ -1,10 +1,15 @@
+import { TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { checkForAppUpdate } from '../../host/nativeActions';
+import { createPortal } from 'react-dom';
+import { checkForAppUpdate, installLatestAppUpdate } from '../../host/nativeActions';
 import { subscribeAppUpdateStatusChanged } from '../../host/nativeEvents';
+import { InPageWindow } from '../../shared/inPageWindow/InPageWindow';
 import type { AppUpdateStatus } from '../../types/terminay';
 import {
 	type DeviceUpdateStatusLike,
+	deviceInstallLatest,
 	deviceVersionLines,
+	type InstallLatestAction,
 	type ServerUpdatesModel,
 	type TrackCommand,
 	type VersionLine,
@@ -46,6 +51,129 @@ export function VersionLines({ lines }: Readonly<{ lines: readonly VersionLine[]
 	);
 }
 
+/**
+ * The Install latest row: the target build, and a button that opens the
+ * confirmation. Disabled with its reason when it cannot run.
+ */
+export function InstallLatestRow({
+	action,
+	onChoose,
+}: Readonly<{ action: InstallLatestAction; onChoose: () => void }>) {
+	const [copied, setCopied] = useState(false);
+	const { command } = action;
+	return (
+		<div className="settings-row" data-install-latest={action.enabled ? 'enabled' : 'disabled'}>
+			<div className="settings-row-info">
+				<span className="settings-row-label">{action.label}</span>
+				<span className="settings-row-description">
+					{action.reason ??
+						(action.downgrade
+							? `Installs ${action.version}, which is older than the running build.`
+							: `Installs ${action.version}.`)}
+				</span>
+				{command === undefined ? null : (
+					<code className="settings-code settings-track-command">{command}</code>
+				)}
+			</div>
+			<div className="settings-row-control">
+				{command === undefined ? null : (
+					<button
+						type="button"
+						className="settings-secondary-button settings-secondary-button--small"
+						onClick={() => {
+							void navigator.clipboard
+								?.writeText(command)
+								.then(() => setCopied(true))
+								.catch(() => undefined);
+						}}
+					>
+						{copied ? 'Copied' : 'Copy'}
+					</button>
+				)}
+				<button
+					type="button"
+					className="settings-secondary-button"
+					disabled={!action.enabled}
+					onClick={onChoose}
+				>
+					Install latest…
+				</button>
+			</div>
+		</div>
+	);
+}
+
+/** What moving to an older build may cost, said once wherever it is confirmed. */
+export const DOWNGRADE_WARNING =
+	'This is older than what is running now. Settings and state written by the newer release might not carry over.';
+
+/** The confirmation before Terminay Desktop installs its channel's latest build. */
+export function DeviceInstallLatestConfirmation({
+	action,
+	currentVersion,
+	error,
+	progress,
+	onCancel,
+	onConfirm,
+}: Readonly<{
+	action: InstallLatestAction;
+	currentVersion: string;
+	error?: string;
+	/** Set once confirmed: what the download is doing. */
+	progress?: string;
+	onCancel: () => void;
+	onConfirm: () => void;
+}>) {
+	const busy = progress !== undefined;
+	return (
+		<div className="project-edit-modal server-upgrade-dialog" data-install-latest-dialog="device">
+			<p className="server-upgrade-dialog__summary">
+				Terminay is running <strong>{currentVersion}</strong>. {action.label} installs{' '}
+				<strong>{action.version}</strong>.
+			</p>
+			{action.downgrade ? (
+				<p className="server-upgrade-dialog__warning" data-install-latest-downgrade>
+					{DOWNGRADE_WARNING}
+				</p>
+			) : null}
+			<p className="server-upgrade-dialog__consequence">
+				Terminay downloads and verifies it, then restarts into it. Terminals keep running.
+			</p>
+			{progress === undefined ? null : (
+				<p className="server-upgrade-dialog__consequence" role="status">
+					{progress}
+				</p>
+			)}
+			{error === undefined ? null : (
+				<div className="server-upgrade-dialog__error" role="alert">
+					{error}
+				</div>
+			)}
+			<div className="project-edit-actions">
+				<button type="button" onClick={onCancel}>
+					Cancel
+				</button>
+				<button
+					type="button"
+					className="server-upgrade-dialog__primary"
+					disabled={busy}
+					onClick={onConfirm}
+				>
+					{busy ? 'Installing…' : 'Install and restart'}
+				</button>
+			</div>
+		</div>
+	);
+}
+
+function downloadProgress(status: DeviceUpdateStatusLike): string | undefined {
+	if (status.installingLatest == null) return undefined;
+	const percent = (status as AppUpdateStatus).downloadPercent;
+	return typeof percent === 'number'
+		? `Downloading ${status.installingLatest}… ${Math.round(percent)}%`
+		: `Downloading ${status.installingLatest}…`;
+}
+
 /** What this device's update channel reaches, in one line. */
 export function DeviceUpdatesNote({ deviceName }: Readonly<{ deviceName: string }>) {
 	return (
@@ -79,12 +207,71 @@ export function DeviceUpdateVersions({ channel }: Readonly<{ channel: string | u
 			stop();
 		};
 	}, [channel]);
+	const [confirming, setConfirming] = useState(false);
+	const [starting, setStarting] = useState(false);
+	const [error, setError] = useState<string>();
+	const install = deviceInstallLatest(status, channel);
+	// A download in progress is reported while the dialog stays open; the host
+	// restarts once it is verified.
+	const progress =
+		status === null ? undefined : (downloadProgress(status) ?? (starting ? 'Starting…' : undefined));
+	const confirm = (version: string) => {
+		setError(undefined);
+		setStarting(true);
+		void installLatestAppUpdate(version)
+			.then((next) => {
+				if (next === null) {
+					setError('This host cannot install updates.');
+					return;
+				}
+				setStatus(next);
+				if (next.installingLatest == null && next.errorMessage !== null)
+					setError(next.errorMessage);
+			})
+			.catch((reason: unknown) => {
+				setError(reason instanceof Error ? reason.message : String(reason));
+			})
+			.finally(() => setStarting(false));
+	};
 	return (
 		<section className="settings-section" id="section-device-versions" aria-label="Versions">
 			<div className="settings-section-title-row">
 				<h3 className="settings-section-title">Versions</h3>
 			</div>
 			<VersionLines lines={deviceVersionLines(status, channel, formatCheckTime)} />
+			{install === null ? null : (
+				<div className="settings-group">
+					<InstallLatestRow
+						action={install}
+						onChoose={() => {
+							setError(undefined);
+							setConfirming(true);
+						}}
+					/>
+				</div>
+			)}
+			{confirming && status !== null && install?.version !== undefined
+				? createPortal(
+						<InPageWindow
+							icon={<TriangleAlert size={14} className="server-upgrade-dialog__title-icon" />}
+							kind={{ resizable: false, width: 440 }}
+							name="install-latest"
+							title={install.label}
+							onClose={() => setConfirming(false)}
+							busy={progress !== undefined}
+						>
+							<DeviceInstallLatestConfirmation
+								action={install}
+								currentVersion={status.currentVersion}
+								{...(error === undefined ? {} : { error })}
+								{...(progress === undefined || error !== undefined ? {} : { progress })}
+								onCancel={() => setConfirming(false)}
+								onConfirm={() => confirm(install.version as string)}
+							/>
+						</InPageWindow>,
+						document.body,
+					)
+				: null}
 		</section>
 	);
 }
@@ -120,11 +307,13 @@ export function ServerUpdatesPage({
 	model,
 	serverName,
 	onUpgrade,
+	onInstallLatest,
 	onOpenDeviceUpdates,
 }: Readonly<{
 	model: ServerUpdatesModel;
 	serverName: string;
 	onUpgrade?: () => void;
+	onInstallLatest?: () => void;
 	onOpenDeviceUpdates?: () => void;
 }>) {
 	if (model.kind === 'local')
@@ -169,6 +358,11 @@ export function ServerUpdatesPage({
 					</span>
 				</div>
 				<VersionLines lines={[model.running, model.latest]} />
+				{model.installLatest === undefined || onInstallLatest === undefined ? null : (
+					<div className="settings-group">
+						<InstallLatestRow action={model.installLatest} onChoose={onInstallLatest} />
+					</div>
+				)}
 				{model.upgradeAvailable && onUpgrade !== undefined ? (
 					<div className="settings-inline-actions settings-detail-buttons">
 						<button type="button" className="settings-primary-button" onClick={onUpgrade}>

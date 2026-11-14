@@ -5017,6 +5017,16 @@ body.project-tabbar-reordering .project-tabbar {
 	font-weight: 400;
 }
 
+.server-upgrade-dialog__warning {
+	margin: 0;
+	padding: 8px 10px;
+	border: 1px solid rgba(255, 214, 102, 0.35);
+	border-radius: 6px;
+	color: #ffe7a6;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
 .server-upgrade-dialog__error {
 	padding: 8px 10px;
 	border: 1px solid rgba(255, 106, 106, 0.35);

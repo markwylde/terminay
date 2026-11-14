@@ -728,3 +728,78 @@ test('an upgrade that ends while the server is still running stops being in prog
 	assert.equal(second.service.status.upgrade.state, 'none');
 	assert.equal(system.checks, 2);
 });
+
+const ahead = (overrides = {}) =>
+	report({
+		installed: { channel: 'main', version: '5.3.0-main.40.nightly', revision: 'cccc333' },
+		available: null,
+		latest: { version: '5.3.0-main.38.nightly', order: 'older' },
+		installLatestUnavailable: null,
+		...overrides,
+	});
+
+test("the status names the channel's latest release and whether it can be installed", async (t) => {
+	const upgrader = fakeUpgrader([ahead()]);
+	const { service } = served(t, upgrader);
+	await service.check();
+	assert.equal(service.status.available, undefined);
+	assert.deepEqual(service.status.latest, {
+		version: '5.3.0-main.38.nightly',
+		order: 'older',
+		canInstall: true,
+	});
+
+	// A system install whose helper predates install-latest says why, and what to run.
+	upgrader.answer(
+		ahead({
+			environment: 'system',
+			trigger: { kind: 'request-file', path: '/var/lib/terminay-upgrade/request' },
+			installLatestUnavailable: { reason: 'installed before', command: 'sudo terminay daemon upgrade --allow-downgrade --system' },
+		}),
+	);
+	await service.check();
+	assert.equal(service.status.latest.canInstall, false);
+	assert.equal(service.status.latest.unavailable.reason, 'installed before');
+
+	// An upgrader that predates install-latest says nothing of the latest release.
+	upgrader.answer(report());
+	await service.check();
+	assert.equal(service.status.latest, undefined);
+});
+
+test('allowOlder installs the latest release in place and is refused otherwise', async (t) => {
+	const upgrader = fakeUpgrader([ahead()]);
+	const { service } = served(t, upgrader);
+	await service.check();
+	// Without consent an older release is never installed.
+	await assert.rejects(service.startUpgrade('in-place'), refused('none-available'));
+	await assert.rejects(
+		service.startUpgrade('recreate', { allowOlder: true }),
+		refused('mode-not-offered'),
+	);
+	await service.startUpgrade('in-place', { allowOlder: true });
+	assert.deepEqual(upgrader.handovers, [
+		{ environment: 'user', mode: 'in-place', trigger: { kind: 'spawn' }, allowOlder: true },
+	]);
+	assert.equal(service.status.upgrade.state, 'in-progress');
+
+	const same = fakeUpgrader([ahead({ latest: { version: '5.3.0-main.40.nightly', order: 'same' } })]);
+	const second = served(t, same);
+	await second.service.check();
+	await assert.rejects(
+		second.service.startUpgrade('in-place', { allowOlder: true }),
+		refused('already-latest'),
+	);
+
+	const blocked = fakeUpgrader([
+		ahead({ installLatestUnavailable: { reason: 'below the image', command: 'docker pull <image>' } }),
+	]);
+	const third = served(t, blocked);
+	await third.service.check();
+	await assert.rejects(
+		third.service.startUpgrade('in-place', { allowOlder: true }),
+		refused('cannot-install-latest'),
+	);
+	assert.deepEqual(same.handovers, []);
+	assert.deepEqual(blocked.handovers, []);
+});

@@ -65,11 +65,12 @@ export function createServerUpgradeOperationRegistry(options: {
 					} catch {
 						throw protocolError(
 							'validation',
-							'a server upgrade request names a mode and nothing else',
+							'a server upgrade request names a mode, optionally allowOlder, and nothing else',
 						);
 					}
 					return (await service.startUpgrade(
 						parsed.mode,
+						parsed.allowOlder === true ? { allowOlder: true } : {},
 					)) as unknown as JsonValue;
 				},
 			},

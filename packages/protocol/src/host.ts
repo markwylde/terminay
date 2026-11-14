@@ -342,6 +342,13 @@ export type TerminayHostAction =
 	| Readonly<{ type: 'updater.check' }>
 	/** Restart into an update the host has already downloaded and verified. */
 	| Readonly<{ type: 'updater.install' }>
+	/**
+	 * Download and restart into the latest build the selected channel
+	 * publishes, even when it is older than the running one. `version` is only
+	 * the version the user confirmed: the host resolves the build itself and
+	 * refuses when its own resolution differs.
+	 */
+	| Readonly<{ type: 'updater.install-latest'; version: string }>
 	| Readonly<{
 			/** A bounded preview payload. The host alone chooses its destination. */
 			type: 'preview.download';
@@ -1266,6 +1273,20 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 		case 'updater.install':
 			exactKeys(action, ['type'], 'updater action');
 			return Object.freeze({ type: 'updater.install' });
+		case 'updater.install-latest': {
+			exactKeys(action, ['type', 'version'], 'updater action');
+			if (
+				typeof action.version !== 'string' ||
+				!/^\d{1,9}\.\d{1,9}\.\d{1,9}(?:-[0-9A-Za-z.-]{1,96})?$/.test(
+					action.version,
+				)
+			)
+				throw new TypeError('updater version is invalid');
+			return Object.freeze({
+				type: 'updater.install-latest',
+				version: action.version,
+			});
+		}
 		case 'preview.download': {
 			exactKeys(
 				action,
@@ -1523,6 +1544,7 @@ export function requiredTerminayHostCapability(
 			return 'notifications';
 		case 'updater.check':
 		case 'updater.install':
+		case 'updater.install-latest':
 			return 'updater';
 		case 'preview.download':
 		case 'import-export.bundle.save':

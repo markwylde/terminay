@@ -2,6 +2,7 @@ import {
 	parseServerUpgradeStatus,
 	protocolError,
 	type ServerUpgradeChannel,
+	type ServerUpgradeLatestOrder,
 	type ServerUpgradeMode,
 	type ServerUpgradeProgress,
 	type ServerUpgradeRefusal,
@@ -19,7 +20,12 @@ export type ServerUpgradeEnvironment = 'user' | 'system' | 'container';
 /** How this server asks for its upgrade to be carried out. */
 export type ServerUpgradeTrigger =
 	| { readonly kind: 'spawn' }
-	| { readonly kind: 'request-file'; readonly path: string };
+	| {
+			readonly kind: 'request-file';
+			readonly path: string;
+			/** The install-latest helper's request file (ADR-0117), when installed. */
+			readonly latestPath?: string;
+	  };
 
 /**
  * What the release's own upgrader says about this install: the one contract
@@ -45,6 +51,19 @@ export interface ServerUpgradeCheckReport {
 		readonly reason: string;
 		readonly command: string;
 	};
+	/** The newest release on the channel, whichever way it orders. Absent from
+	 * an upgrader that predates install-latest. */
+	readonly latest?: null | {
+		readonly version: string;
+		readonly revision?: string;
+		readonly publishedAt?: string;
+		readonly order: ServerUpgradeLatestOrder;
+	};
+	/** Why `latest` cannot be installed from here; null when it can. */
+	readonly installLatestUnavailable?: null | {
+		readonly reason: string;
+		readonly command: string;
+	};
 	readonly lastResult: null | {
 		readonly from: string;
 		readonly to: string;
@@ -63,6 +82,8 @@ export interface ServerUpgradeHandover {
 	readonly environment: ServerUpgradeEnvironment;
 	readonly mode: ServerUpgradeMode;
 	readonly trigger: ServerUpgradeTrigger;
+	/** Install the channel's latest release even when it is older (ADR-0117). */
+	readonly allowOlder?: true;
 }
 
 /** The release's upgrader, as the host runs it. */
@@ -134,6 +155,7 @@ export class ServerUpgradeService {
 	private readonly attached = new Set<string>();
 	private report: ServerUpgradeCheckReport | undefined;
 	private available: { readonly version: string } | undefined;
+	private latest: ServerUpgradeCheckReport['latest'];
 	private outcome: ServerUpgradeProgress | undefined;
 	private inProgress:
 		| Extract<ServerUpgradeProgress, { state: 'in-progress' }>
@@ -271,28 +293,52 @@ export class ServerUpgradeService {
 	 * One runs at a time, whichever device asked. The mode is the only thing
 	 * taken from the request; where the upgrade goes is the upgrader's answer.
 	 */
-	async startUpgrade(mode: ServerUpgradeMode): Promise<ServerUpgradeStatus> {
+	async startUpgrade(
+		mode: ServerUpgradeMode,
+		options: { readonly allowOlder?: true } = {},
+	): Promise<ServerUpgradeStatus> {
 		const upgrader = this.upgrader;
 		const report = this.report;
+		const allowOlder = options.allowOlder === true;
 		if (this.inProgress !== undefined)
 			throw refusal('in-progress', 'a server upgrade is already in progress');
-		if (
-			this.disposed ||
-			upgrader === undefined ||
-			report === undefined ||
-			this.current.available === undefined
-		)
-			throw refusal('none-available', 'no server upgrade is available');
-		if (!this.current.canUpgrade)
-			throw refusal(
-				'cannot-upgrade',
-				'this server cannot carry out its own upgrade',
-			);
-		if (!this.current.modes.includes(mode))
-			throw refusal(
-				'mode-not-offered',
-				'this server does not offer that upgrade mode',
-			);
+		if (allowOlder) {
+			// Install latest (ADR-0117): the target is still the upgrader's own
+			// answer for this channel. Only the direction is the client's consent.
+			const latest = this.current.latest;
+			if (this.disposed || upgrader === undefined || report === undefined || latest === undefined)
+				throw refusal('none-available', 'no latest release is known for this channel');
+			if (latest.order === 'same')
+				throw refusal('already-latest', 'this server already runs the latest release on its channel');
+			if (!latest.canInstall)
+				throw refusal(
+					'cannot-install-latest',
+					'this server cannot install the latest release on its channel itself',
+				);
+			if (mode !== 'in-place')
+				throw refusal(
+					'mode-not-offered',
+					'the latest release is installed in place only',
+				);
+		} else {
+			if (
+				this.disposed ||
+				upgrader === undefined ||
+				report === undefined ||
+				this.current.available === undefined
+			)
+				throw refusal('none-available', 'no server upgrade is available');
+			if (!this.current.canUpgrade)
+				throw refusal(
+					'cannot-upgrade',
+					'this server cannot carry out its own upgrade',
+				);
+			if (!this.current.modes.includes(mode))
+				throw refusal(
+					'mode-not-offered',
+					'this server does not offer that upgrade mode',
+				);
+		}
 		const attempt = ++this.attempt;
 		this.inProgress = Object.freeze({
 			state: 'in-progress',
@@ -306,6 +352,7 @@ export class ServerUpgradeService {
 				environment: report.environment,
 				mode,
 				trigger: report.trigger,
+				...(allowOlder ? { allowOlder: true as const } : {}),
 			});
 		} catch (error) {
 			this.diagnose({ kind: 'trigger-failed', message: messageOf(error) });
@@ -360,16 +407,19 @@ export class ServerUpgradeService {
 		const previous = {
 			report: this.report,
 			available: this.available,
+			latest: this.latest,
 			outcome: this.outcome,
 		};
 		this.report = report;
 		// Without release metadata the upgrader cannot say what is available,
 		// so what was last known stands.
-		if (report.checkError === undefined)
+		if (report.checkError === undefined) {
 			this.available =
 				report.available === null
 					? undefined
 					: Object.freeze({ version: report.available.version });
+			this.latest = report.latest ?? null;
+		}
 		try {
 			this.outcome = outcomeOf(report.lastResult);
 			this.publish();
@@ -377,6 +427,7 @@ export class ServerUpgradeService {
 			// A report the status cannot carry is a failed check.
 			this.report = previous.report;
 			this.available = previous.available;
+			this.latest = previous.latest;
 			this.outcome = previous.outcome;
 			throw error;
 		}
@@ -420,8 +471,43 @@ export class ServerUpgradeService {
 							command: report.unavailable.command,
 						},
 					}),
+			...(report === undefined || this.latest == null
+				? {}
+				: { latest: this.latestStatus(report, this.latest) }),
 			upgrade: this.inProgress ?? this.outcome ?? { state: 'none' },
 		});
+	}
+
+	/**
+	 * The channel's latest release as clients see it, and whether a request
+	 * with `allowOlder` can install it here. A system-scope server reaches root
+	 * only through the install-latest helper's own request file.
+	 */
+	private latestStatus(
+		report: ServerUpgradeCheckReport,
+		latest: NonNullable<ServerUpgradeCheckReport['latest']>,
+	) {
+		const blocked = report.installLatestUnavailable ?? null;
+		const triggerReady =
+			report.trigger.kind === 'spawn' || report.trigger.latestPath !== undefined;
+		const canInstall =
+			latest.order !== 'same' &&
+			report.installLatestUnavailable !== undefined &&
+			blocked === null &&
+			triggerReady;
+		return {
+			version: latest.version,
+			order: latest.order,
+			canInstall,
+			...(blocked === null
+				? {}
+				: {
+						unavailable: {
+							reason: blocked.reason,
+							command: blocked.command,
+						},
+					}),
+		};
 	}
 
 	private disarmCheckTimer(): void {

@@ -700,6 +700,31 @@ test('nothing is sent until asked, and a refusal is put into words', async () =>
 	);
 	assert.deepEqual(sent, ['in-place', 'in-place', 'recreate']);
 	assert.equal(
+		await requestServerUpgrade(refusing('already-latest'), 'in-place', { allowOlder: true }),
+		'This server already runs the latest release on its channel.',
+	);
+	const options: unknown[] = [];
+	await requestServerUpgrade(
+		{
+			startServerUpgrade: async (_mode: string, given?: unknown) => {
+				options.push(given);
+				return status();
+			},
+		},
+		'in-place',
+		{ allowOlder: true },
+	);
+	await requestServerUpgrade(
+		{
+			startServerUpgrade: async (_mode: string, given?: unknown) => {
+				options.push(given);
+				return status();
+			},
+		},
+		'in-place',
+	);
+	assert.deepEqual(options, [{ allowOlder: true }, undefined]);
+	assert.equal(
 		await requestServerUpgrade(undefined, 'in-place'),
 		'This server is not connected.',
 	);

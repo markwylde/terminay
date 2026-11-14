@@ -148,17 +148,38 @@ test('installing the helper hands only the request directory to the run-as accou
 
 		// Writable by the run-as account alone, and by nobody else at all.
 		assert.equal((await stat(helper.requestDirectory)).mode & 0o777, 0o700);
-		assert.equal((await stat(helper.requestFile)).mode & 0o777, 0o600);
-		assert.equal((await readFile(helper.requestFile, 'utf8')).length, 0);
+		for (const request of [helper.requestFile, helper.latestRequestFile]) {
+			assert.equal((await stat(request)).mode & 0o777, 0o600);
+			assert.equal((await readFile(request, 'utf8')).length, 0);
+		}
 		// The units are root's: nothing chowns them, and their mode keeps the
 		// run-as account from writing them.
-		for (const unit of [helper.pathUnitPath, helper.serviceUnitPath]) {
+		for (const unit of [
+			helper.pathUnitPath,
+			helper.serviceUnitPath,
+			helper.latestPathUnitPath,
+			helper.latestServiceUnitPath,
+		]) {
 			assert.equal((await stat(unit)).mode & 0o777, 0o644);
 		}
+		// Each pair watches its own request file and runs its own fixed command.
+		const latestPath = await readFile(helper.latestPathUnitPath, 'utf8');
+		assert.match(latestPath, new RegExp(`PathChanged=${helper.latestRequestFile}\n`, 'u'));
+		assert.match(latestPath, /Unit=terminay-upgrade-latest\.service\n/u);
+		const latestService = await readFile(helper.latestServiceUnitPath, 'utf8');
+		assert.match(
+			latestService,
+			/\nExecStart=\S+\/bin\/terminay daemon upgrade --system --allow-downgrade\n/u,
+		);
+		assert.doesNotMatch(
+			await readFile(helper.serviceUnitPath, 'utf8'),
+			/allow-downgrade/u,
+		);
 		assert.deepEqual(fake.invocations(), [
 			`chown -R ada:ada ${helper.requestDirectory}`,
 			'systemctl daemon-reload',
 			'systemctl enable --now terminay-upgrade.path',
+			'systemctl enable --now terminay-upgrade-latest.path',
 		]);
 
 		// A second pass finds everything as it should be. Touching the request
@@ -178,6 +199,7 @@ test('installing the helper hands only the request directory to the run-as accou
 		assert.deepEqual(fake.invocations().slice(before), [
 			'id -u ada',
 			'systemctl enable --now terminay-upgrade.path',
+			'systemctl enable --now terminay-upgrade-latest.path',
 		]);
 		assert.deepEqual(await stamp(), stamped);
 
@@ -189,14 +211,18 @@ test('installing the helper hands only the request directory to the run-as accou
 		assert.deepEqual(fake.invocations().slice(rearm), [
 			'id -u eve',
 			'systemctl stop terminay-upgrade.path',
+			'systemctl stop terminay-upgrade-latest.path',
 			`chown -R eve:eve ${helper.requestDirectory}`,
 			'systemctl enable --now terminay-upgrade.path',
+			'systemctl enable --now terminay-upgrade-latest.path',
 		]);
 
 		await removeUpgradeHelper({ layout, systemd });
 		assert.equal(await upgradeHelperInstalled(layout), false);
 		await assert.rejects(() => stat(helper.pathUnitPath));
 		await assert.rejects(() => stat(helper.serviceUnitPath));
+		await assert.rejects(() => stat(helper.latestPathUnitPath));
+		await assert.rejects(() => stat(helper.latestServiceUnitPath));
 		await assert.rejects(() => stat(helper.requestDirectory));
 		assert.ok(
 			fake

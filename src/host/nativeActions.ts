@@ -245,6 +245,21 @@ function parseUpdateStatus(value: unknown): AppUpdateStatus {
 				)))
 	)
 		throw new TypeError('native updater returned an invalid status');
+	const latest = status.channelLatest;
+	if (
+		(latest !== undefined &&
+			latest !== null &&
+			(typeof latest !== 'object' ||
+				typeof (latest as Record<string, unknown>).version !== 'string' ||
+				typeof (latest as Record<string, unknown>).source !== 'string' ||
+				!['newer', 'same', 'older'].includes(
+					(latest as Record<string, unknown>).order as string,
+				))) ||
+		(status.installingLatest !== undefined &&
+			status.installingLatest !== null &&
+			typeof status.installingLatest !== 'string')
+	)
+		throw new TypeError('native updater returned an invalid status');
 	return status as AppUpdateStatus;
 }
 
@@ -257,6 +272,18 @@ export async function checkForAppUpdate(): Promise<AppUpdateStatus | null> {
 export async function installAppUpdate(): Promise<boolean> {
 	const response = await request({ type: 'updater.install' });
 	return response.handled;
+}
+
+/**
+ * Download the latest build on the selected channel, even when it is older,
+ * and restart into it. `version` is the one the user confirmed; the host
+ * refuses when its own resolution differs. Null when there is no host.
+ */
+export async function installLatestAppUpdate(
+	version: string,
+): Promise<AppUpdateStatus | null> {
+	const response = await request({ type: 'updater.install-latest', version });
+	return response.handled ? parseUpdateStatus(response.result) : null;
 }
 
 export async function closeHostPresentation(): Promise<void> {

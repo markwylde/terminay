@@ -154,6 +154,13 @@ test('status for one attached server does not affect another', async () => {
 	);
 	assert.deepEqual(workClient.status.available, { version: 'main-abc1234' });
 	assert.equal(homeClient.status.upgrade.state, 'in-progress');
+	// Consent to move backwards is sent only when given, and names no release.
+	await workClient.startServerUpgrade('in-place', { allowOlder: true });
+	await workClient.startServerUpgrade('in-place', { allowOlder: false });
+	assert.deepEqual(
+		work.commands.map((command) => command.payload),
+		[{ mode: 'in-place', allowOlder: true }, { mode: 'in-place' }],
+	);
 	workClient.close();
 });
 

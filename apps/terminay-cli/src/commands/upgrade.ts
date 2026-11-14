@@ -12,6 +12,7 @@ import {
 } from '../download.js';
 import { waitForReady } from '../health.js';
 import {
+	installLatestHelperInstalled,
 	installUpgradeHelper,
 	isUpgradeHelperProcess,
 	upgradeHelperInstalled,
@@ -226,7 +227,8 @@ async function upgradeRelease(
 		layout.upgradeHelper !== undefined &&
 		(dependencies.uid ?? process.getuid?.()) === 0 &&
 		!isUpgradeHelperProcess(dependencies.env) &&
-		!(await upgradeHelperInstalled(layout))
+		(!(await upgradeHelperInstalled(layout)) ||
+			!(await installLatestHelperInstalled(layout)))
 	) {
 		await installUpgradeHelper({ layout, runAs: record.runAs, systemd });
 		write('Installed the upgrade helper, so this server can upgrade itself.');

@@ -126,15 +126,18 @@ export class ServerUpgradeClient {
 
 	/**
 	 * Ask the server to upgrade itself. The mode is one its status offers; the
-	 * server chooses the release. A refusal rejects with the server's
-	 * structured error, whose `details.reason` says why.
+	 * server chooses the release. `allowOlder` asks for the channel's latest
+	 * release even when it is older than the running one (ADR-0117); it is sent
+	 * only when set. A refusal rejects with the server's structured error,
+	 * whose `details.reason` says why.
 	 */
 	async startServerUpgrade(
 		mode: ServerUpgradeMode,
+		options: { readonly allowOlder?: boolean } = {},
 	): Promise<ServerUpgradeStatus> {
 		const status = await this.transport.command(
 			SERVER_UPGRADE_OPERATIONS.start,
-			{ mode },
+			options.allowOlder === true ? { mode, allowOlder: true } : { mode },
 		);
 		this.store.apply(status);
 		return this.store.status as ServerUpgradeStatus;

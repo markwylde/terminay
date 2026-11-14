@@ -11,6 +11,7 @@ import type { ServerUpgradeMode } from '@terminay/client-core';
 import { TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { DOWNGRADE_WARNING } from '../components/settings/UpdatesPages';
 import { InPageWindow } from '../shared/inPageWindow/InPageWindow';
 import {
 	preselectedUpgradeMode,
@@ -33,6 +34,8 @@ export type ServerUpgradeConfirmationProps = Readonly<{
 	error?: string;
 	onCancel: () => void;
 	onConfirm: () => void;
+	/** Confirms Install latest on the channel instead of an upgrade. */
+	installLatest?: Readonly<{ version: string; downgrade: boolean }>;
 }>;
 
 /** The confirmation's body. It holds no state of its own. */
@@ -44,25 +47,37 @@ export function ServerUpgradeConfirmation({
 	onCancel,
 	onConfirm,
 	onModeChange,
+	installLatest,
 }: ServerUpgradeConfirmationProps) {
 	const { status } = entry;
 	const isRunning = status.upgrade.state === 'in-progress';
-	const available = status.available?.version;
+	const available = installLatest?.version ?? status.available?.version;
 	return (
 		<div
 			className="project-edit-modal server-upgrade-dialog"
 			data-server-upgrade-dialog={entry.profileId}
+			{...(installLatest === undefined ? {} : { 'data-install-latest-dialog': 'server' })}
 		>
 			<p className="server-upgrade-dialog__summary">
 				{entry.label} is running <strong>{status.version}</strong>.
-				{available === undefined ? null : (
+				{available === undefined ? null : installLatest !== undefined ? (
+					<>
+						{' '}
+						The latest release on its channel is <strong>{available}</strong>.
+					</>
+				) : (
 					<>
 						{' '}
 						Version <strong>{available}</strong> is available.
 					</>
 				)}
 			</p>
-			{status.modes.length > 1 ? (
+			{installLatest?.downgrade === true ? (
+				<p className="server-upgrade-dialog__warning" data-install-latest-downgrade>
+					{DOWNGRADE_WARNING}
+				</p>
+			) : null}
+			{installLatest === undefined && status.modes.length > 1 ? (
 				<div
 					className="server-upgrade-dialog__modes"
 					role="radiogroup"
@@ -118,7 +133,7 @@ export function ServerUpgradeConfirmation({
 					}
 					onClick={onConfirm}
 				>
-					{isStarting ? 'Starting…' : 'Upgrade'}
+					{isStarting ? 'Starting…' : installLatest === undefined ? 'Upgrade' : 'Install'}
 				</button>
 			</div>
 		</div>
@@ -128,8 +143,9 @@ export function ServerUpgradeConfirmation({
 export function ServerUpgradeDialog({
 	confirmation,
 }: Readonly<{ confirmation: ServerUpgradeConfirmationState }>) {
-	const { close, entry, start } = confirmation;
-	const { modes } = entry.status;
+	const { close, entry, installLatest, start } = confirmation;
+	// Install latest is in place only: recreating would pull the same image.
+	const modes = installLatest === undefined ? entry.status.modes : (['in-place'] as const);
 	const [mode, setMode] = useState(() => preselectedUpgradeMode(modes));
 	const [isStarting, setIsStarting] = useState(false);
 	const [error, setError] = useState<string>();
@@ -158,7 +174,11 @@ export function ServerUpgradeDialog({
 			}
 			kind={{ resizable: false, width: 440 }}
 			name="server-upgrade"
-			title={`Upgrade ${entry.label}`}
+			title={
+				installLatest === undefined
+					? `Upgrade ${entry.label}`
+					: `Install latest on ${entry.label}`
+			}
 			onClose={close}
 			busy={isStarting}
 		>
@@ -168,6 +188,7 @@ export function ServerUpgradeDialog({
 				onModeChange={setMode}
 				isStarting={isStarting}
 				{...(error === undefined ? {} : { error })}
+				{...(installLatest === undefined ? {} : { installLatest })}
 				onCancel={close}
 				onConfirm={confirm}
 			/>
