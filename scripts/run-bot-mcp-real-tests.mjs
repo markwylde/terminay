@@ -38,6 +38,20 @@ try {
 		],
 		{ stdio: 'inherit', cwd: root },
 	);
+	execFileSync(
+		'python3',
+		[
+			'-B',
+			'-m',
+			'unittest',
+			'discover',
+			'-s',
+			'extensions/builtin-agents/test/bots',
+			'-p',
+			'test_desktop_*.py',
+		],
+		{ stdio: 'inherit', cwd: root },
+	);
 	docker('info');
 	const pkg = JSON.parse(
 		await readFile(
