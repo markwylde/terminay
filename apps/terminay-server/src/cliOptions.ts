@@ -97,6 +97,8 @@ export interface ServerCliOptions {
 	readonly aiProviders: readonly ('codex' | 'claude-code')[];
 	/** One-shot inherited descriptor containing the vault passphrase. */
 	readonly vaultUnlockFd?: number;
+	/** Convert a descriptor-unlocked vault to the server's key file (ADR-0118). */
+	readonly vaultConvertToKeyFile?: boolean;
 }
 
 /** Expand only an explicitly configured loopback HTTP web origin to the
@@ -168,6 +170,9 @@ export function parseServerCliOptions(
 	const aiProvidersValue =
 		value(argv, '--ai-providers') ?? env.TERMINAY_AI_PROVIDERS;
 	const vaultUnlockFdValue = value(argv, '--vault-unlock-fd');
+	const vaultConvertToKeyFile = argv.includes('--vault-convert-to-key-file');
+	if (vaultConvertToKeyFile && vaultUnlockFdValue === undefined)
+		throw new Error('--vault-convert-to-key-file requires --vault-unlock-fd');
 	const hostedDomain = parseHostedDomain(
 		value(argv, '--hosted-domain') ?? env.TERMINAY_HOSTED_DOMAIN,
 	);
@@ -291,6 +296,7 @@ export function parseServerCliOptions(
 		...(vaultUnlockFdValue === undefined
 			? {}
 			: { vaultUnlockFd: parseInheritedFd(vaultUnlockFdValue) }),
+		...(vaultConvertToKeyFile ? { vaultConvertToKeyFile: true } : {}),
 	});
 }
 
@@ -320,7 +326,8 @@ export function formatServerHelp(): string {
 		'  --ai-providers LIST  opt in to bounded server CLI providers: codex,claude-code (TERMINAY_AI_PROVIDERS)',
 		'  --health-host HOST unauthenticated liveness/readiness bind host (TERMINAY_HEALTH_HOST)',
 		'  --health-port PORT unauthenticated liveness/readiness port (TERMINAY_HEALTH_PORT)',
-		'  --vault-unlock-fd FD  consume vault passphrase from inherited FD >= 3; otherwise use an echo-disabled controlling terminal',
+		'  --vault-unlock-fd FD  unlock the vault with a passphrase read once from inherited FD >= 3; otherwise the vault unlocks with <data-root>/vault/headless-v1.key, created on first start',
+		'  --vault-convert-to-key-file  with --vault-unlock-fd, move the vault to <data-root>/vault/headless-v1.key so later starts need no passphrase',
 		'  --pairing          ask the running server for its live pairing handoff, one line per exposure mode',
 		'  approvals          list devices waiting for pairing approval on the running server',
 		'  approve ID         approve a pending device by its approval id after comparing the match code',

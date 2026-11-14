@@ -162,3 +162,15 @@ test("vault lifecycle errors are audit-safe and restart lock fences secret reads
   assert.equal(diagnostics.state, "locked");
   assert.equal(JSON.stringify(diagnostics).includes("vault-plaintext-sentinel"), false);
 });
+
+test("vault failures are named to the client", async () => {
+  const { vaultServiceError } = await import("../dist/dispatcher.js");
+  assert.deepEqual(vaultServiceError(new VaultServiceError("put", "locked", "vault is locked")), {
+    code: "unavailable",
+    message: "The server vault is locked",
+    retryable: false,
+  });
+  assert.equal(vaultServiceError(new VaultServiceError("put", "unavailable", "vault is unavailable")).message, "The server vault is unavailable");
+  assert.equal(vaultServiceError(new VaultServiceError("get", "missing", "missing secret")).code, "not_found");
+  assert.equal(vaultServiceError(new Error("other")), undefined);
+});

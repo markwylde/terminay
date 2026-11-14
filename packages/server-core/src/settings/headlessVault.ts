@@ -212,6 +212,12 @@ export class HeadlessPassphraseVaultAdapter implements SecretVaultAdapter {
 		);
 	}
 
+	/** Whether an envelope exists yet. The first unlock of an empty vault
+	 * creates one under that unlock secret. */
+	get initialized(): boolean {
+		return this.envelope !== undefined;
+	}
+
 	status(): VaultState {
 		if (this.unavailable) return 'unavailable';
 		return this.dataEncryptionKey ? 'unlocked' : 'locked';
@@ -350,6 +356,64 @@ export class HeadlessPassphraseVaultAdapter implements SecretVaultAdapter {
 		await this.persist(candidate);
 		this.envelope = candidate;
 		return true;
+	}
+
+	/** Wraps the current data key under a new unlock secret. Entries are left
+	 * as they are; the old secret no longer unlocks the vault. */
+	async rewrap(request: { readonly secret: Uint8Array }): Promise<void> {
+		if (!(request?.secret instanceof Uint8Array))
+			throw new TypeError('unlock secret must be bytes');
+		if (
+			request.secret.byteLength < HEADLESS_VAULT_MIN_PASSPHRASE_BYTES ||
+			request.secret.byteLength > MAX_VAULT_UNLOCK_BYTES
+		)
+			throw new RangeError('unlock secret length is outside the policy');
+		const dataKey = this.requireKey();
+		const current = this.envelope;
+		if (!current) throw new HeadlessVaultError('vault is locked');
+		if (current.revision >= HEADLESS_VAULT_MAX_REVISION)
+			throw new HeadlessVaultError('vault revision limit reached');
+		const passphrase = Buffer.from(request.secret);
+		const salt = randomBytes(SCRYPT.saltBytes);
+		let nextProtectorKey: Buffer | undefined;
+		try {
+			nextProtectorKey = await deriveKey(passphrase, salt);
+			const usedNonces = new Set(current.entries.map((entry) => entry.nonce));
+			const wrapped = encryptAesGcm(
+				dataKey,
+				nextProtectorKey,
+				keyAad(this.serverId),
+				usedNonces,
+			);
+			const keyEnvelope: KeyEnvelope = {
+				protector: HEADLESS_VAULT_PROTECTOR,
+				version: 1,
+				kdf: SCRYPT,
+				salt: salt.toString('base64url'),
+				...wrapped,
+			};
+			const candidate = createEnvelope(
+				this.serverId,
+				keyEnvelope,
+				dataKey,
+				current.entries.slice(),
+				current.revision + 1,
+				usedNonces,
+			);
+			await this.persist(candidate);
+			this.envelope = candidate;
+			this.protectorKey?.fill(0);
+			this.protectorKey = nextProtectorKey;
+			nextProtectorKey = undefined;
+		} catch (error) {
+			throw error instanceof HeadlessVaultError
+				? error
+				: new HeadlessVaultError();
+		} finally {
+			passphrase.fill(0);
+			salt.fill(0);
+			nextProtectorKey?.fill(0);
+		}
 	}
 
 	/** Re-encrypts every entry under a fresh data key and refreshes its wrapped key. */

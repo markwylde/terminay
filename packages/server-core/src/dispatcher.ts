@@ -20,6 +20,7 @@ import {
 import { FileServiceError } from './fileService/types.js';
 import { ForgeServiceError } from './forge/service.js';
 import { GitServiceError } from './gitService/types.js';
+import { VaultServiceError } from './settings/vault.js';
 import { TerminalServiceError } from './terminalService/errors.js';
 import type {
 	BinaryQueryHandlerResult,
@@ -428,9 +429,39 @@ function dispatchError(error: unknown, fallback: string): ProtocolError {
 			message: error.message.slice(0, 1_000),
 			retryable: error.code === 'unavailable',
 		};
+	const vault = vaultServiceError(error);
+	if (vault) return vault;
 	// The client sees only the fallback; the operator needs the cause.
 	console.error(`[terminay] ${fallback}:`, error);
 	return { code: 'internal', message: fallback, retryable: false };
+}
+
+/** A vault failure is named to the client. The error's message is already
+ * sanitized and carries no secret. */
+export function vaultServiceError(error: unknown): ProtocolError | undefined {
+	if (!(error instanceof VaultServiceError)) return undefined;
+	switch (error.code) {
+		case 'locked':
+			return {
+				code: 'unavailable',
+				message: 'The server vault is locked',
+				retryable: false,
+			};
+		case 'unavailable':
+			return {
+				code: 'unavailable',
+				message: 'The server vault is unavailable',
+				retryable: false,
+			};
+		case 'missing':
+			return {
+				code: 'not_found',
+				message: 'The secret is not in the server vault',
+				retryable: false,
+			};
+		default:
+			return undefined;
+	}
 }
 
 function terminalServiceError(error: TerminalServiceError): ProtocolError {

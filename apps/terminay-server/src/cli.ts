@@ -999,6 +999,9 @@ async function createServerComposition(
 		...(options.vaultUnlockFd === undefined
 			? {}
 			: { unlockFd: options.vaultUnlockFd }),
+		...(options.vaultConvertToKeyFile === true
+			? { convertToKeyFile: true }
+			: {}),
 	});
 	// Extensions publish worktree facts (pull requests, checks); the Git
 	// listing carries them to the project's clients, and a change re-lists.

@@ -136,3 +136,47 @@ test("a corrupt envelope file opens an empty vault that cannot read old secrets,
 		await rm(directory, { recursive: true, force: true });
 	}
 });
+
+test("rewrap moves the data key to a new secret and keeps every entry", async () => {
+	const storage = new MemoryStorage();
+	const adapter = await HeadlessPassphraseVaultAdapter.open({ serverId: "server-a", storage });
+	const encode = (text) => new TextEncoder().encode(text);
+	assert.equal(adapter.initialized, false);
+	await assert.rejects(adapter.rewrap({ secret: encode("new-secret-for-vault") }), /locked/);
+	await adapter.unlock({ secret: passphrase() });
+	assert.equal(adapter.initialized, true);
+	await adapter.put({ id: "provider.token", label: "", value: encode("kept-value") });
+	await assert.rejects(adapter.rewrap({ secret: encode("short") }), RangeError);
+
+	const next = encode("new-secret-for-vault");
+	await adapter.rewrap({ secret: next });
+	await adapter.put({ id: "after.rewrap", label: "", value: encode("second") });
+
+	const reopenedOld = await HeadlessPassphraseVaultAdapter.open({ serverId: "server-a", storage });
+	await assert.rejects(reopenedOld.unlock({ secret: passphrase() }), /unlock failed/);
+
+	const reopened = await HeadlessPassphraseVaultAdapter.open({ serverId: "server-a", storage });
+	await reopened.unlock({ secret: encode("new-secret-for-vault") });
+	for (const [id, expected] of [["provider.token", "kept-value"], ["after.rewrap", "second"]]) {
+		await reopened.withSecret(id, (value) => assert.equal(new TextDecoder().decode(value), expected));
+	}
+});
+
+test("a rewrap whose write fails leaves the adapter on its previous envelope", async () => {
+	const storage = new MemoryStorage();
+	const adapter = await HeadlessPassphraseVaultAdapter.open({ serverId: "server-a", storage });
+	const encode = (text) => new TextEncoder().encode(text);
+	await adapter.unlock({ secret: passphrase() });
+	await adapter.put({ id: "provider.token", label: "", value: encode("kept-value") });
+	const before = storage.serialized;
+	storage.write = async () => { throw new Error("disk full"); };
+	await assert.rejects(adapter.rewrap({ secret: encode("new-secret-for-vault") }), /write failed/);
+	assert.equal(adapter.status(), "unlocked");
+	await adapter.withSecret("provider.token", (value) => assert.equal(new TextDecoder().decode(value), "kept-value"));
+	assert.equal(storage.serialized, before);
+	delete storage.write;
+	await adapter.put({ id: "after.failure", label: "", value: encode("second") });
+	const reopened = await HeadlessPassphraseVaultAdapter.open({ serverId: "server-a", storage });
+	await reopened.unlock({ secret: passphrase() });
+	await reopened.withSecret("after.failure", (value) => assert.equal(new TextDecoder().decode(value), "second"));
+});
