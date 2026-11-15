@@ -17,7 +17,11 @@ import {
 	DEFAULT_PROTOCOL_LIMITS,
 	type ProtocolLimits,
 } from '@terminay/protocol';
-import type { AuthenticatedClient, ServerCore } from '@terminay/server-core';
+import type {
+	AuthenticatedClient,
+	ConnectionDeliveryDiagnostic,
+	ServerCore,
+} from '@terminay/server-core';
 import {
 	APP_VIEW_PROXY_CONTENT_SECURITY_POLICY,
 	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
@@ -75,6 +79,10 @@ export interface LocalUiServerOptions {
 	/** Host-owned bounded diagnostics for a protocol connection that failed
 	 * after its WebSocket upgrade completed. */
 	readonly onConnectionError?: (error: unknown) => void;
+	/** Told why each protocol connection on this listener failed or closed. */
+	readonly onConnectionDiagnostic?: (
+		diagnostic: ConnectionDeliveryDiagnostic,
+	) => void;
 	/** Accepts a short-lived protocol ticket in addition to the bootstrap
 	 * credential.  The ticket authority stays at the server boundary. */
 	readonly acceptCredential?: (token: string) => boolean | Promise<boolean>;
@@ -413,6 +421,9 @@ export class LocalUiServer {
 				`stream-${Date.now().toString(36)}`,
 			),
 			...(authenticatedClient === undefined ? {} : { authenticatedClient }),
+			...(this.options.onConnectionDiagnostic === undefined
+				? {}
+				: { onDeliveryDiagnostic: this.options.onConnectionDiagnostic }),
 		});
 		void connection.start().catch((error) => {
 			try {

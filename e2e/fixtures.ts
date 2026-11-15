@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import {
-	mkdir,
-	mkdtemp,
-	readdir,
-	readFile,
-	rm,
-	stat,
-} from 'node:fs/promises';
+	createReadStream,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+} from 'node:fs';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,10 +17,8 @@ import {
 	type Page,
 	type TestInfo,
 } from '@playwright/test';
-import { test as base } from './support/isolated-test';
 import { startBotSocketServer } from '../packages/server-core/test/fixtures/bot-socket-server.mjs';
 import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-artifact.mjs';
-import { createWorkerRendererArtifact } from './support/renderer-artifact.mjs';
 import {
 	openChildWindow,
 	openMacroLauncher,
@@ -37,6 +34,8 @@ import {
 	createDialogController,
 	type DialogController,
 } from './support/dialogs';
+import { test as base } from './support/isolated-test';
+import { createWorkerRendererArtifact } from './support/renderer-artifact.mjs';
 import {
 	createFixtureWorkspace,
 	type FixtureWorkspace,
@@ -63,7 +62,11 @@ type ElectronFixtures = {
 		openMacrosSettings: (page?: Page) => Promise<Page>;
 		openRemoteAccessSettings: (page?: Page) => Promise<Page>;
 		openServersSettings: (page?: Page) => Promise<Page>;
-		openSettingsAt: (place: 'device' | string, categoryId: string, page?: Page) => Promise<Page>;
+		openSettingsAt: (
+			place: 'device' | string,
+			categoryId: string,
+			page?: Page,
+		) => Promise<Page>;
 		openSettingsWindow: (options?: {
 			page?: Page;
 			sectionId?: string;
@@ -115,13 +118,18 @@ async function printFailureDiagnostics(
 		// Lifecycle metadata pinpoints where a congested stream stopped without
 		// collecting terminal bytes. Read every renderer frame before teardown.
 		for (const frame of page.frames()) {
-			const stream = await frame.evaluate(() => {
-				const diagnostics = (globalThis as typeof globalThis & {
-					__terminayStream?: { snapshot(): unknown };
-				}).__terminayStream;
-				return diagnostics?.snapshot() ?? null;
-			}).catch(() => null);
-			if (stream !== null) lines.push(`terminal stream: ${JSON.stringify(stream)}`);
+			const stream = await frame
+				.evaluate(() => {
+					const diagnostics = (
+						globalThis as typeof globalThis & {
+							__terminayStream?: { snapshot(): unknown };
+						}
+					).__terminayStream;
+					return diagnostics?.snapshot() ?? null;
+				})
+				.catch(() => null);
+			if (stream !== null)
+				lines.push(`terminal stream: ${JSON.stringify(stream)}`);
 		}
 		// What the terminal on screen last showed: whether a typed command ran.
 		const rows = await page
@@ -393,151 +401,157 @@ export async function launchDesktopApp(options: {
 			? path.join(tempDir, 'first-launch-tmp')
 			: tempDir);
 	mkdirSync(temporaryDirectory, { recursive: true });
-		// The built-in agents extension watches each harness's home. Point the
-		// ones the agent specs drive at isolated fixture homes so the library's
-		// fixture drivers, not the host account, decide what is live.
-		const agentHomes: Record<string, string> =
-			path.basename(testInfo.file) === 'extension-agent-runtime.spec.ts'
-				? { CLAUDE_CONFIG_DIR: agentFixtureClaudeHome(tempDir) }
-				: {};
-		const rendererArtifactParent = workerRendererArtifact ? undefined : await mkdtemp(
-			path.join(os.tmpdir(), 'terminay-e2e-renderer-'),
-		);
-		const rendererArtifact = workerRendererArtifact ?? await stageImmutableRendererArtifact({
+	// The built-in agents extension watches each harness's home. Point the
+	// ones the agent specs drive at isolated fixture homes so the library's
+	// fixture drivers, not the host account, decide what is live.
+	const agentHomes: Record<string, string> =
+		path.basename(testInfo.file) === 'extension-agent-runtime.spec.ts'
+			? { CLAUDE_CONFIG_DIR: agentFixtureClaudeHome(tempDir) }
+			: {};
+	const rendererArtifactParent = workerRendererArtifact
+		? undefined
+		: await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-renderer-'));
+	const rendererArtifact =
+		workerRendererArtifact ??
+		(await stageImmutableRendererArtifact({
 			sourceRoot: path.resolve('dist'),
 			// Standalone callers outside the worker fixture still own their copy.
 			destinationParent: rendererArtifactParent!,
-		});
-		const staticServer = await createStaticServer(
-			rendererArtifact.rootDirectory,
-		);
-		const botApi = path.basename(testInfo.file) === 'bots.spec.ts'
-			? await startBotSocketServer(path.join(tempDir, 'fake-bots'), { emitLifecycleEvents: true }) : undefined;
-		const electronApp = await electron.launch({
-			args: ['.', ...(options.args ?? [])],
-			env: {
-				...process.env,
-				CI: '1',
-				TEMP: temporaryDirectory,
-				TERMINAY_E2E_TEMP_DIR: tempDir,
-				TERMINAY_TEST: '1',
-				...agentHomes,
-				...(path.basename(testInfo.file) ===
-				'embedded-workspace-persistence-recovery.spec.ts'
-					? {
-							TERMINAY_TEST_WORKSPACE_PERSISTENCE_FAULT:
-								persistenceFaultForTest(testInfo.title),
-						}
-					: {}),
-				// Pixel's Claude Code provider runs a fake that speaks the real
-				// streaming-JSON protocol, so no agent account is needed.
-				// The terminal launcher spec starts the same fake bare in a terminal.
-				...([
-					'pixel.spec.ts',
-					'mcp-app-control.spec.ts',
-					'terminal-launchers.spec.ts',
-					'forge-pull-requests-and-issues.spec.ts',
-				].includes(
-					path.basename(testInfo.file),
-				)
-					? {
-							TERMINAY_CLAUDE_CODE_COMMAND: path.resolve(
-								'e2e/fixtures/fake-claude-chat.mjs',
-							),
-						}
-					: {}),
-				// Shell integration defines `codex` with --no-daemon only when a
-				// Codex that lists the option is installed; a fake one is on PATH.
-				...(path.basename(testInfo.file) === 'shell-integration.spec.ts'
-					? {
-							PATH: [
-								path.resolve('e2e/fixtures/fake-codex-bin'),
-								process.env.PATH ?? '',
-							].join(path.delimiter),
-						}
-					: {}),
-				// Bots use a socket API fixture whose containers host a fake ACP
-				// agent, so the suite needs no engine, image, or agent account.
-				...(path.basename(testInfo.file) === 'bots.spec.ts'
-					? {
-							TERMINAY_FAKE_BOT_ROOT: path.join(tempDir, 'fake-bots'),
-							DOCKER_HOST: `unix://${botApi!.socketPath}`,
-							DOCKER_CONTEXT: '',
-							// Nothing in the suite may read the runner's own agent
-							// logins under HOME.
-							HOME: tempDir,
-						}
-					: {}),
-				// The corrupted-data suite relaunches the app itself after a
-				// recovery choice, and reads the vault across launches.
-				...(path.basename(testInfo.file) === 'corrupt-state.spec.ts'
-					? {
-							TERMINAY_TEST_EXIT_INSTEAD_OF_RELAUNCH: '1',
-							TERMINAY_TEST_CREDENTIAL_KEY: createHash('sha256')
-								.update(userDataDir)
-								.digest('hex'),
-						}
-					: {}),
-				...(path.basename(testInfo.file) === 'remote-access.spec.ts'
-					? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
-					: {}),
-				// A notification is published five seconds after it arises. The suite
-				// reads the header count constantly, so it runs with a short settle
-				// period. Where activity and notification timing is what is under
-				// test, the server keeps the test's clock instead, and the test ends
-				// each period itself: the whole of terminal-signals.spec.ts, and any
-				// test tagged HELD_SERVER_CLOCK.
-				...(path.basename(testInfo.file) === 'terminal-signals.spec.ts' ||
-				testInfo.tags.includes(HELD_SERVER_CLOCK)
-					? { TERMINAY_TEST_SERVER_CLOCK: 'manual' }
-					: { TERMINAY_TEST_NOTIFICATION_SETTLE_MS: '300' }),
-				// Terminals held outside the app, so they survive a relaunch
-				// (ADR-0035). Off everywhere else until the rollout turns it on.
-				...([
-					'terminals-survive-restart.spec.ts',
-					'app-windows-survive-restart.spec.ts',
-					'holder-relaunch.spec.ts',
-					'holder-tmp-unusable.spec.ts',
-					'workflows.spec.ts',
-				].includes(path.basename(testInfo.file))
-					? { TERMINAY_SESSION_HOLDER: '1' }
-					: {}),
-				// A 16 KiB replay window so a sustained flood outruns it during the
-				// sub-second gap a Local transport loss leaves. Inert in production.
-				...(path.basename(testInfo.file) ===
-				'terminal-recovery-beyond-replay-window.spec.ts'
-					? { TERMINAY_TEST_TERMINAL_REPLAY_BYTES: '16384' }
-					: {}),
-				// A paired server's credential has to be readable by the next
-				// launch, so every launch on one data directory shares a key.
-				...(path.basename(testInfo.file) ===
-				'desktop-loopback-standalone-pairing.spec.ts'
-					? {
-							TERMINAY_TEST_CREDENTIAL_KEY: createHash('sha256')
-								.update(userDataDir)
-								.digest('hex'),
-						}
-					: {}),
-				TERMINAY_USER_DATA_DIR: userDataDir,
-				TMP: temporaryDirectory,
-				TMPDIR: temporaryDirectory,
-				VITE_DEV_SERVER_URL: staticServer.url,
-			},
-		});
+		}));
+	const staticServer = await createStaticServer(rendererArtifact.rootDirectory);
+	const botApi =
+		path.basename(testInfo.file) === 'bots.spec.ts'
+			? await startBotSocketServer(path.join(tempDir, 'fake-bots'), {
+					emitLifecycleEvents: true,
+				})
+			: undefined;
+	const electronApp = await electron.launch({
+		args: ['.', ...(options.args ?? [])],
+		env: {
+			...process.env,
+			CI: '1',
+			TEMP: temporaryDirectory,
+			TERMINAY_E2E_TEMP_DIR: tempDir,
+			TERMINAY_TEST: '1',
+			...agentHomes,
+			...(path.basename(testInfo.file) ===
+			'embedded-workspace-persistence-recovery.spec.ts'
+				? {
+						TERMINAY_TEST_WORKSPACE_PERSISTENCE_FAULT: persistenceFaultForTest(
+							testInfo.title,
+						),
+					}
+				: {}),
+			// Pixel's Claude Code provider runs a fake that speaks the real
+			// streaming-JSON protocol, so no agent account is needed.
+			// The terminal launcher spec starts the same fake bare in a terminal.
+			...([
+				'pixel.spec.ts',
+				'mcp-app-control.spec.ts',
+				'terminal-launchers.spec.ts',
+				'forge-pull-requests-and-issues.spec.ts',
+			].includes(path.basename(testInfo.file))
+				? {
+						TERMINAY_CLAUDE_CODE_COMMAND: path.resolve(
+							'e2e/fixtures/fake-claude-chat.mjs',
+						),
+					}
+				: {}),
+			// Shell integration defines `codex` with --no-daemon only when a
+			// Codex that lists the option is installed; a fake one is on PATH.
+			...(path.basename(testInfo.file) === 'shell-integration.spec.ts'
+				? {
+						PATH: [
+							path.resolve('e2e/fixtures/fake-codex-bin'),
+							process.env.PATH ?? '',
+						].join(path.delimiter),
+					}
+				: {}),
+			// Bots use a socket API fixture whose containers host a fake ACP
+			// agent, so the suite needs no engine, image, or agent account.
+			...(path.basename(testInfo.file) === 'bots.spec.ts'
+				? {
+						TERMINAY_FAKE_BOT_ROOT: path.join(tempDir, 'fake-bots'),
+						DOCKER_HOST: `unix://${botApi!.socketPath}`,
+						DOCKER_CONTEXT: '',
+						// Nothing in the suite may read the runner's own agent
+						// logins under HOME.
+						HOME: tempDir,
+					}
+				: {}),
+			// The corrupted-data suite relaunches the app itself after a
+			// recovery choice, and reads the vault across launches.
+			...(path.basename(testInfo.file) === 'corrupt-state.spec.ts'
+				? {
+						TERMINAY_TEST_EXIT_INSTEAD_OF_RELAUNCH: '1',
+						TERMINAY_TEST_CREDENTIAL_KEY: createHash('sha256')
+							.update(userDataDir)
+							.digest('hex'),
+					}
+				: {}),
+			...(path.basename(testInfo.file) === 'remote-access.spec.ts'
+				? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
+				: {}),
+			// A notification is published five seconds after it arises. The suite
+			// reads the header count constantly, so it runs with a short settle
+			// period. Where activity and notification timing is what is under
+			// test, the server keeps the test's clock instead, and the test ends
+			// each period itself: the whole of terminal-signals.spec.ts, and any
+			// test tagged HELD_SERVER_CLOCK.
+			...(path.basename(testInfo.file) === 'terminal-signals.spec.ts' ||
+			testInfo.tags.includes(HELD_SERVER_CLOCK)
+				? { TERMINAY_TEST_SERVER_CLOCK: 'manual' }
+				: { TERMINAY_TEST_NOTIFICATION_SETTLE_MS: '300' }),
+			// Terminals held outside the app, so they survive a relaunch
+			// (ADR-0035). Off everywhere else until the rollout turns it on.
+			...([
+				'terminals-survive-restart.spec.ts',
+				'app-windows-survive-restart.spec.ts',
+				'holder-relaunch.spec.ts',
+				'holder-tmp-unusable.spec.ts',
+				'workflows.spec.ts',
+			].includes(path.basename(testInfo.file))
+				? { TERMINAY_SESSION_HOLDER: '1' }
+				: {}),
+			// A 16 KiB replay window so a sustained flood outruns it during the
+			// sub-second gap a Local transport loss leaves. Inert in production.
+			...(path.basename(testInfo.file) ===
+			'terminal-recovery-beyond-replay-window.spec.ts'
+				? { TERMINAY_TEST_TERMINAL_REPLAY_BYTES: '16384' }
+				: {}),
+			// A paired server's credential has to be readable by the next
+			// launch, so every launch on one data directory shares a key.
+			...([
+				'desktop-loopback-standalone-pairing.spec.ts',
+				'desktop-remote-large-app-windows.spec.ts',
+			].includes(path.basename(testInfo.file))
+				? {
+						TERMINAY_TEST_CREDENTIAL_KEY: createHash('sha256')
+							.update(userDataDir)
+							.digest('hex'),
+					}
+				: {}),
+			TERMINAY_USER_DATA_DIR: userDataDir,
+			TMP: temporaryDirectory,
+			TMPDIR: temporaryDirectory,
+			VITE_DEV_SERVER_URL: staticServer.url,
+		},
+	});
 
-		let closed = false;
-		return {
-			electronApp,
-			close: async () => {
-				if (closed) return;
-				closed = true;
-				await closeElectronAppGracefully(electronApp);
-				await staticServer.close();
-				await botApi?.close();
-				await rendererArtifact.assertUnchanged();
-				if (rendererArtifactParent) await rm(rendererArtifactParent, { recursive: true, force: true });
-			},
-		};
+	let closed = false;
+	return {
+		electronApp,
+		close: async () => {
+			if (closed) return;
+			closed = true;
+			await closeElectronAppGracefully(electronApp);
+			await staticServer.close();
+			await botApi?.close();
+			await rendererArtifact.assertUnchanged();
+			if (rendererArtifactParent)
+				await rm(rendererArtifactParent, { recursive: true, force: true });
+		},
+	};
 }
 
 /** Session holders recorded under a data directory that are still running. */
@@ -561,17 +575,24 @@ function liveSessionHolderPids(userDataDir: string): number[] {
 	return pids;
 }
 
-export const test = base.extend<ElectronFixtures, { _rendererArtifact: RendererArtifact }>({
+export const test = base.extend<
+	ElectronFixtures,
+	{ _rendererArtifact: RendererArtifact }
+>({
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
-	_rendererArtifact: [async ({}, use) => {
-		const artifact = await createWorkerRendererArtifact(path.resolve('dist'));
-		workerRendererArtifact = artifact;
-		try { await use(artifact); }
-		finally {
-			workerRendererArtifact = undefined;
-			await artifact.close();
-		}
-	}, { scope: 'worker', auto: true }],
+	_rendererArtifact: [
+		async ({}, use) => {
+			const artifact = await createWorkerRendererArtifact(path.resolve('dist'));
+			workerRendererArtifact = artifact;
+			try {
+				await use(artifact);
+			} finally {
+				workerRendererArtifact = undefined;
+				await artifact.close();
+			}
+		},
+		{ scope: 'worker', auto: true },
+	],
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
 	userDataDir: async ({}, use) => {
 		const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-'));
