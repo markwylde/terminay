@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { hostedPairingDiagnosticEvent } from '../../../electron/remote/hostedPairingDiagnostics.ts';
-import { createHostedDiagnosticLogger } from '../src/remote/hostedDiagnosticLog.ts';
+import {
+	createHostedDiagnosticLogger,
+	createServerConnectionLogger,
+} from '../src/remote/hostedDiagnosticLog.ts';
 import { selectedIceCandidatePair } from '../src/remote/hostedPeerLifecycle.ts';
 import {
 	classifyPeerCloseReason,
@@ -35,14 +38,21 @@ test('application-lane events carry counters, never frame bytes', () => {
 	now = 5_000;
 	stream.noteInbound(new Uint8Array([7]));
 	const lane = events.filter((event) => event.type === 'application-lane');
-	assert.equal(lane.length, 1, 'only the first inbound frame reports a lane transition');
+	assert.equal(
+		lane.length,
+		1,
+		'only the first inbound frame reports a lane transition',
+	);
 	assert.equal(lane[0].inboundFrames, 1);
 	assert.equal(lane[0].inboundKind, 'bytes');
 	assert.doesNotMatch(JSON.stringify(events), /1,2,3,4/u);
 	assert.equal('payload' in lane[0], false);
 	assert.equal('data' in lane[0], false);
 	// Quiet output is not a liveness signal. Nothing classifies a stall.
-	assert.equal(events.some((event) => 'stallClass' in event), false);
+	assert.equal(
+		events.some((event) => 'stallClass' in event),
+		false,
+	);
 	stream.stop();
 });
 
@@ -120,13 +130,16 @@ test('Desktop candidate-pair diagnostics keep route classes and omit addresses a
 			Object.entries(mapped.fields).filter(([, value]) => value !== undefined),
 		),
 		{
-		localType: 'host',
-		pairState: 'succeeded',
-		protocol: 'udp',
-		remoteType: 'srflx',
+			localType: 'host',
+			pairState: 'succeeded',
+			protocol: 'udp',
+			remoteType: 'srflx',
 		},
 	);
-	assert.doesNotMatch(JSON.stringify(mapped.fields), /192\.168\.1\.20|203\.0\.113\.8|51000|52000/u);
+	assert.doesNotMatch(
+		JSON.stringify(mapped.fields),
+		/192\.168\.1\.20|203\.0\.113\.8|51000|52000/u,
+	);
 });
 
 test('a required lane closing after it opened is reported as a hangup', () => {
@@ -179,12 +192,82 @@ test('standalone logger writes JSON lines to stderr without pairing URLs', async
 	}
 });
 
+test('server connection logger records why each connection ended, by route, and nothing else', async () => {
+	const lines = [];
+	const original = process.stderr.write;
+	process.stderr.write = (chunk) => {
+		lines.push(String(chunk));
+		return true;
+	};
+	try {
+		const log = createServerConnectionLogger(undefined, 'hosted');
+		log({
+			phase: 'terminal_congestion',
+			code: 'terminal_congestion',
+			queuedBytes: 9,
+			queuedFrames: 1,
+		});
+		log({
+			phase: 'failure',
+			code: 'timeout',
+			queuedBytes: 1_048_576,
+			queuedFrames: 12,
+		});
+		log({
+			phase: 'closed',
+			code: 'unavailable',
+			queuedBytes: 0,
+			queuedFrames: 0,
+		});
+		const records = lines.map((line) => JSON.parse(line));
+		// Congestion is a delivery signal, not an ending; only endings are logged.
+		assert.equal(records.length, 2);
+		const { timestamp: _failedAt, ...failed } = records[0];
+		assert.deepEqual(failed, {
+			component: 'server-connection',
+			event: 'connection-failed',
+			route: 'hosted',
+			code: 'timeout',
+			queuedBytes: 1_048_576,
+			queuedFrames: 12,
+		});
+		assert.equal(records[1].event, 'connection-closed');
+		assert.equal(records[1].code, 'unavailable');
+	} finally {
+		process.stderr.write = original;
+	}
+});
+
 test('standalone candidate-pair logs preserve route classes and omit addresses and ports', async () => {
 	const stats = new Map([
 		['transport', { type: 'transport', selectedCandidatePairId: 'pair' }],
-		['pair', { type: 'candidate-pair', state: 'succeeded', localCandidateId: 'local', remoteCandidateId: 'remote' }],
-		['local', { candidateType: 'host', protocol: 'udp', address: '192.168.1.20', port: 51000 }],
-		['remote', { candidateType: 'srflx', protocol: 'udp', ip: '203.0.113.8', port: 52000 }],
+		[
+			'pair',
+			{
+				type: 'candidate-pair',
+				state: 'succeeded',
+				localCandidateId: 'local',
+				remoteCandidateId: 'remote',
+			},
+		],
+		[
+			'local',
+			{
+				candidateType: 'host',
+				protocol: 'udp',
+				address: '192.168.1.20',
+				port: 51000,
+			},
+		],
+		[
+			'remote',
+			{
+				candidateType: 'srflx',
+				protocol: 'udp',
+				ip: '203.0.113.8',
+				port: 52000,
+			},
+		],
 	]);
 	const selected = await selectedIceCandidatePair({
 		async getStats() {

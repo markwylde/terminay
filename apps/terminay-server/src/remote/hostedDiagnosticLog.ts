@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import type { ConnectionDeliveryDiagnostic } from '@terminay/server-core';
 import type { HostedPairingDiagnostic } from './hostedPairingHost.js';
 
 const STREAM_TYPES = new Set([
@@ -20,9 +21,10 @@ const OMITTED_NETWORK_IDENTIFIER_FIELDS = new Set([
 	'remotePort',
 ]);
 
-export function createHostedDiagnosticLogger(
+/** One line per record, to stderr and, when configured, the log sink. */
+function createDiagnosticLineWriter(
 	logSink?: string,
-): (event: HostedPairingDiagnostic) => void {
+): (record: Record<string, unknown>) => void {
 	let sinkReady = logSink === undefined;
 	if (logSink) {
 		void mkdir(dirname(logSink), { recursive: true })
@@ -33,17 +35,53 @@ export function createHostedDiagnosticLogger(
 				sinkReady = false;
 			});
 	}
-
-	return (event) => {
+	return (record) => {
 		const line = `${JSON.stringify({
 			timestamp: new Date().toISOString(),
-			component: 'hosted-remote',
-			event: event.type,
-			...omitUndefined(event),
+			...record,
 		})}\n`;
 		process.stderr.write(line);
 		if (!logSink || !sinkReady) return;
 		void appendFile(logSink, line).catch(() => undefined);
+	};
+}
+
+export function createHostedDiagnosticLogger(
+	logSink?: string,
+): (event: HostedPairingDiagnostic) => void {
+	const write = createDiagnosticLineWriter(logSink);
+	return (event) =>
+		write({
+			component: 'hosted-remote',
+			event: event.type,
+			...omitUndefined(event),
+		});
+}
+
+/**
+ * Why each protocol connection ended. A connection the server fails says
+ * which limit or deadline failed it; a closed one says whether the client
+ * left (`normal`) or its transport went away (`unavailable`). Only the close
+ * class and queue sizes are recorded: no payload, identity, or address.
+ */
+export function createServerConnectionLogger(
+	logSink: string | undefined,
+	route: 'hosted' | 'local',
+): (diagnostic: ConnectionDeliveryDiagnostic) => void {
+	const write = createDiagnosticLineWriter(logSink);
+	return (diagnostic) => {
+		if (diagnostic.phase === 'terminal_congestion') return;
+		write({
+			component: 'server-connection',
+			event:
+				diagnostic.phase === 'failure'
+					? 'connection-failed'
+					: 'connection-closed',
+			route,
+			code: diagnostic.code,
+			queuedBytes: diagnostic.queuedBytes,
+			queuedFrames: diagnostic.queuedFrames,
+		});
 	};
 }
 

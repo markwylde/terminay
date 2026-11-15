@@ -106,14 +106,18 @@ function observed() {
 		entries,
 		push(entry) {
 			entries.push(entry);
-			for (const waiter of waiters.filter(({ count }) => entries.length >= count)) {
+			for (const waiter of waiters.filter(
+				({ count }) => entries.length >= count,
+			)) {
 				waiters.splice(waiters.indexOf(waiter), 1);
 				waiter.resolve();
 			}
 		},
 		reach(count) {
 			if (entries.length >= count) return Promise.resolve();
-			return new Promise((resolveWait) => waiters.push({ count, resolve: resolveWait }));
+			return new Promise((resolveWait) =>
+				waiters.push({ count, resolve: resolveWait }),
+			);
 		},
 	};
 }
@@ -157,7 +161,8 @@ test('a window whose first reconnect attempt fails is reconnected by a later one
 		transport: first,
 		reconnect: async () => {
 			attempts.push('attempt');
-			if (attempts.entries.length === 1) throw new Error('the server did not answer');
+			if (attempts.entries.length === 1)
+				throw new Error('the server did not answer');
 			return replacement;
 		},
 		diagnostic: (resource) => diagnostics.push(resource),
@@ -185,6 +190,100 @@ test('a window whose first reconnect attempt fails is reconnected by a later one
 		assert.equal(endpoints.entries.length, 2);
 		assert.equal(attempts.entries.length, 2);
 		assert.deepEqual(diagnostics.entries, ['remote-reconnect']);
+	} finally {
+		unbind();
+		for (const endpoint of endpoints.entries) endpoint.close();
+	}
+});
+
+/** A remote window's sender whose main frame is or is not loading, recording
+ * every document endpoint it is handed. */
+function documentSender(id, endpoints) {
+	const sender = Object.assign(new EventEmitter(), {
+		id,
+		mainFrameLoading: false,
+		isLoadingMainFrame: () => sender.mainFrameLoading,
+		postMessage: (channel, _payload, ports) => {
+			if (channel !== 'server-ui-host:byte-endpoint') return;
+			ports[0].start();
+			endpoints.push(ports[0]);
+		},
+	});
+	return sender;
+}
+
+// An app window's view is a frame inside the workspace document. Its loading
+// is not the document reloading: the window keeps the lane it has, and is not
+// left waiting for a document that never comes back to say it is ready.
+test('a frame loading inside a remote window keeps its lane', async () => {
+	const endpoints = observed();
+	const sender = documentSender(8, endpoints);
+	const current = lane();
+	let closed = false;
+	const close = current.close;
+	current.close = async () => {
+		closed = true;
+		await close();
+	};
+	const attempts = observed();
+	const unbind = bindRemoteServerUiDocumentEndpoint({
+		sender,
+		launch: {
+			context: { serverId: 'pop-os' },
+			byteEndpointHandle: 'endpoint-2',
+		},
+		transport: current,
+		reconnect: async () => {
+			attempts.push('attempt');
+			return lane();
+		},
+	});
+	try {
+		ipcMain.emit('server-ui-host:document-ready', { sender });
+		await endpoints.reach(1);
+
+		// An iframe starts loading; the workspace document does not.
+		sender.emit('did-start-loading');
+		await new Promise((resolveTurn) => setImmediate(resolveTurn));
+		assert.equal(closed, false, 'the lane was closed for a frame load');
+		assert.deepEqual(attempts.entries, []);
+		assert.equal(endpoints.entries.length, 1);
+	} finally {
+		unbind();
+		for (const endpoint of endpoints.entries) endpoint.close();
+	}
+});
+
+// A reload of the workspace document itself still starts a fresh lane, handed
+// to the new document once it says it is ready.
+test('a remote window reloading its document gets a fresh lane', async () => {
+	const endpoints = observed();
+	const sender = documentSender(9, endpoints);
+	const replacement = lane();
+	const attempts = observed();
+	const unbind = bindRemoteServerUiDocumentEndpoint({
+		sender,
+		launch: {
+			context: { serverId: 'pop-os' },
+			byteEndpointHandle: 'endpoint-3',
+		},
+		transport: lane(),
+		reconnect: async () => {
+			attempts.push('attempt');
+			return replacement;
+		},
+	});
+	try {
+		ipcMain.emit('server-ui-host:document-ready', { sender });
+		await endpoints.reach(1);
+
+		sender.mainFrameLoading = true;
+		sender.emit('did-start-loading');
+		await attempts.reach(1);
+		sender.mainFrameLoading = false;
+		ipcMain.emit('server-ui-host:document-ready', { sender });
+		await replacement.reading;
+		assert.equal(endpoints.entries.length, 2);
 	} finally {
 		unbind();
 		for (const endpoint of endpoints.entries) endpoint.close();
