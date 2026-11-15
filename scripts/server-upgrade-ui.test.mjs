@@ -549,8 +549,8 @@ test('at phone width the title block carries the upgrade warning and names it', 
 	assert.match(unreachable, /aria-label="Switch terminal — Paged — VPS unreachable"/);
 });
 
-test('at phone width the drawer server menu lists the same server updates', async () => {
-	// The drawer's server menu is a layer opened from the rail; the rows it is
+test('at phone width the drawer Servers panel lists the same server updates', async () => {
+	// The drawer's Servers panel is a rail place like Home; the rows it is
 	// given are the sheet variant of the same server update rows.
 	const sheetRows = renderToStaticMarkup(
 		React.createElement(ServerUpgradeMenuRows, {
@@ -567,12 +567,13 @@ test('at phone width the drawer server menu lists the same server updates', asyn
 	assert.match(sheetRows, /Build box ·/);
 	assert.match(sheetRows, /Upgrade server…/);
 	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
-	const serverLayer = source.slice(
-		source.indexOf("layer?.kind === 'server'"),
-		source.indexOf("key: 'add-connection'"),
+	const panel = source.slice(
+		source.indexOf('function ServersPanel('),
+		source.indexOf('function FolderPicker('),
 	);
-	assert.match(serverLayer, /if \(props\.serverUpgrades\)/);
-	assert.match(serverLayer, /Server updates<\/p>\s*\{props\.serverUpgrades\}/);
+	assert.match(panel, /\{upgrades \? \(/);
+	assert.match(panel, /Server updates<\/h3>\s*\{upgrades\}/);
+	assert.match(source, /upgrades: props\.serverUpgrades/);
 	assert.equal(typeof CompactSwitcher, 'function');
 });
 

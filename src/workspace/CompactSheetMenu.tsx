@@ -1,6 +1,6 @@
 /**
  * The compact switcher's action sheet: one menu shape for a row, a folder, and
- * the server control, so a phone learns one gesture for "what can I do here".
+ * the launcher dropup, so a phone learns one gesture for "what can I do here".
  *
  * It layers over the drawer, not the workspace: a press outside it or the
  * dismiss key closes only the sheet, and focus goes back to what opened it.
@@ -77,68 +77,74 @@ export function CompactSheetMenu({
 				data-compact-sheet="true"
 			>
 				{header}
-				<div
-					ref={menuRef}
-					role="menu"
-					aria-label={label}
-					className="compact-drawer__sheet-items"
-					onKeyDown={onKeyDown}
-				>
-					{items.map((item) => {
-						switch (item.kind) {
-							case 'separator':
-								return (
-									<hr
-										key={item.key}
-										className="compact-drawer__sheet-separator"
-									/>
-								);
-							case 'note':
-								return (
-									<p key={item.key} className="compact-drawer__sheet-note">
-										{item.text}
-									</p>
-								);
-							case 'custom':
-								return <div key={item.key}>{item.node}</div>;
-							case 'action':
-								return (
-									<button
-										key={item.key}
-										type="button"
-										role={
-											item.checked === undefined ? 'menuitem' : 'menuitemradio'
-										}
-										{...(item.checked === undefined
-											? {}
-											: { 'aria-checked': item.checked })}
-										className={`compact-drawer__sheet-item${item.danger ? ' compact-drawer__sheet-item--danger' : ''}`}
-										disabled={item.disabled === true}
-										data-compact-sheet-item={item.key}
-										onClick={item.onSelect}
-									>
-										{item.icon === undefined ? null : (
-											<span
-												className="compact-drawer__sheet-icon"
-												aria-hidden="true"
-											>
-												{item.icon}
+				{/* A header can stand in for the entries for a while, as the
+				    launcher dropup's folder picker does; an empty menu is not drawn. */}
+				{items.length === 0 ? null : (
+					<div
+						ref={menuRef}
+						role="menu"
+						aria-label={label}
+						className="compact-drawer__sheet-items"
+						onKeyDown={onKeyDown}
+					>
+						{items.map((item) => {
+							switch (item.kind) {
+								case 'separator':
+									return (
+										<hr
+											key={item.key}
+											className="compact-drawer__sheet-separator"
+										/>
+									);
+								case 'note':
+									return (
+										<p key={item.key} className="compact-drawer__sheet-note">
+											{item.text}
+										</p>
+									);
+								case 'custom':
+									return <div key={item.key}>{item.node}</div>;
+								case 'action':
+									return (
+										<button
+											key={item.key}
+											type="button"
+											role={
+												item.checked === undefined
+													? 'menuitem'
+													: 'menuitemradio'
+											}
+											{...(item.checked === undefined
+												? {}
+												: { 'aria-checked': item.checked })}
+											className={`compact-drawer__sheet-item${item.danger ? ' compact-drawer__sheet-item--danger' : ''}`}
+											disabled={item.disabled === true}
+											data-compact-sheet-item={item.key}
+											onClick={item.onSelect}
+										>
+											{item.icon === undefined ? null : (
+												<span
+													className="compact-drawer__sheet-icon"
+													aria-hidden="true"
+												>
+													{item.icon}
+												</span>
+											)}
+											<span className="compact-drawer__sheet-label">
+												{item.label}
 											</span>
-										)}
-										<span className="compact-drawer__sheet-label">
-											{item.label}
-										</span>
-										{item.hint === undefined ? null : (
-											<span className="compact-drawer__sheet-hint">
-												{item.hint}
-											</span>
-										)}
-									</button>
-								);
-						}
-						return null;
-					})}
-				</div>
+											{item.hint === undefined ? null : (
+												<span className="compact-drawer__sheet-hint">
+													{item.hint}
+												</span>
+											)}
+										</button>
+									);
+							}
+							return null;
+						})}
+					</div>
+				)}
 			</div>
 		</div>
 	);

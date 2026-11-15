@@ -37,6 +37,7 @@ import {
 	type ServerScopedRow,
 } from './crossServerRows';
 import { filterDashboardGroups } from './dashboardFilter';
+import { HomeSectionOptions, useHomeOptionsCompact } from './HomeOptionsPanel';
 import type {
 	DashboardAgent,
 	DashboardPanelRow,
@@ -1088,6 +1089,10 @@ export function WorkspaceDashboard({
 	);
 	const namesServers = sources.length > 1;
 	const filtering = filter.trim().length > 0;
+	const compact = useHomeOptionsCompact();
+	// On a compact workspace the filter lives in the options panel, so the
+	// page itself says when the filter hides everything and offers to clear it.
+	const showCompactNoMatch = compact && filtering && groups.length === 0;
 
 	const selectMode = (next: DashboardViewMode) => {
 		setMode(next);
@@ -1097,6 +1102,68 @@ export function WorkspaceDashboard({
 		setBoardGrouped(next);
 		rememberDashboardBoardGrouped(next);
 	};
+
+	const controls = (
+		<div className="workspace-dashboard__controls">
+			<label className="workspace-dashboard__filter">
+				<Search aria-hidden="true" size={13} />
+				<input
+					aria-label="Filter the dashboard"
+					className="workspace-dashboard__filter-input"
+					data-terminay-dashboard-filter="true"
+					onChange={(event) => setFilter(event.target.value)}
+					placeholder="Filter projects, tabs, agents…"
+					type="search"
+					value={filter}
+				/>
+			</label>
+			{mode === 'board' ? (
+				<label className="workspace-dashboard__toggle">
+					<input
+						checked={boardGrouped}
+						data-terminay-dashboard-group-by-project="true"
+						onChange={(event) => selectBoardGrouped(event.target.checked)}
+						type="checkbox"
+					/>
+					Group by project
+				</label>
+			) : null}
+			<ViewModeSwitcher mode={mode} onChange={selectMode} />
+		</div>
+	);
+	const summaryLine = (
+		<div className="workspace-dashboard__summary">
+			<SummaryChip
+				count={summary.attention}
+				label="need you"
+				tone="attention"
+			/>
+			<SummaryChip count={summary.working} label="working" tone="working" />
+			<SummaryChip count={summary.done} label="done" tone="done" />
+			<SummaryChip count={summary.idle} label="idle" tone="idle" />
+			{summary.untracked > 0 ? (
+				<SummaryChip
+					count={summary.untracked}
+					label="untracked"
+					tone="untracked"
+				/>
+			) : null}
+			<span className="workspace-dashboard__summary-projects">
+				{summary.projects} project{summary.projects === 1 ? '' : 's'}
+			</span>
+			{filtering ? (
+				<button
+					className="workspace-dashboard__clear-filter"
+					data-terminay-dashboard-clear-filter="true"
+					onClick={() => setFilter('')}
+					type="button"
+				>
+					<X aria-hidden="true" size={12} />
+					Filtered by “{filter.trim()}” — clear
+				</button>
+			) : null}
+		</div>
+	);
 
 	return (
 		<section
@@ -1115,79 +1182,56 @@ export function WorkspaceDashboard({
 								: 'Every project, tab, and agent in this workspace.'}
 						</p>
 					</div>
-					<div className="workspace-dashboard__controls">
-						<label className="workspace-dashboard__filter">
-							<Search aria-hidden="true" size={13} />
-							<input
-								aria-label="Filter the dashboard"
-								className="workspace-dashboard__filter-input"
-								data-terminay-dashboard-filter="true"
-								onChange={(event) => setFilter(event.target.value)}
-								placeholder="Filter projects, tabs, agents…"
-								type="search"
-								value={filter}
-							/>
-						</label>
-						{mode === 'board' ? (
-							<label className="workspace-dashboard__toggle">
-								<input
-									checked={boardGrouped}
-									data-terminay-dashboard-group-by-project="true"
-									onChange={(event) => selectBoardGrouped(event.target.checked)}
-									type="checkbox"
-								/>
-								Group by project
-							</label>
-						) : null}
-						<ViewModeSwitcher mode={mode} onChange={selectMode} />
-					</div>
+					{compact ? null : (
+						<HomeSectionOptions title="Tabs" active={filtering}>
+							{controls}
+						</HomeSectionOptions>
+					)}
 				</div>
-				<div className="workspace-dashboard__summary">
-					<SummaryChip
-						count={summary.attention}
-						label="need you"
-						tone="attention"
-					/>
-					<SummaryChip count={summary.working} label="working" tone="working" />
-					<SummaryChip count={summary.done} label="done" tone="done" />
-					<SummaryChip count={summary.idle} label="idle" tone="idle" />
-					{summary.untracked > 0 ? (
-						<SummaryChip
-							count={summary.untracked}
-							label="untracked"
-							tone="untracked"
-						/>
-					) : null}
-					<span className="workspace-dashboard__summary-projects">
-						{summary.projects} project{summary.projects === 1 ? '' : 's'}
-					</span>
-					{filtering ? (
+				{compact ? (
+					<HomeSectionOptions title="Tabs" active={filtering}>
+						{controls}
+						{summaryLine}
+					</HomeSectionOptions>
+				) : (
+					summaryLine
+				)}
+			</header>
+			{showCompactNoMatch ? (
+				<div className="workspace-dashboard__list">
+					<div
+						className="workspace-dashboard__no-match"
+						data-home-no-match="true"
+					>
+						<p className="workspace-dashboard__empty">
+							Nothing matches this filter.
+						</p>
 						<button
-							className="workspace-dashboard__clear-filter"
-							data-terminay-dashboard-clear-filter="true"
+							className="workspace-dashboard__no-match-clear"
+							data-home-clear-filters="true"
 							onClick={() => setFilter('')}
 							type="button"
 						>
-							<X aria-hidden="true" size={12} />
-							Filtered by “{filter.trim()}” — clear
+							Clear filter
 						</button>
-					) : null}
+					</div>
 				</div>
-			</header>
-			<DashboardBody
-				boardGrouped={boardGrouped}
-				emptyLabel={
-					filtering
-						? 'Nothing matches this filter. The workspace is not empty — clear the filter to see it.'
-						: 'No projects in this workspace yet.'
-				}
-				groups={groups}
-				mode={mode}
-				now={now}
-				onActivate={onActivate}
-				onActivateAgent={onActivateAgent}
-				untracked={untracked}
-			/>
+			) : (
+				<DashboardBody
+					boardGrouped={boardGrouped}
+					emptyLabel={
+						filtering
+							? 'Nothing matches this filter. The workspace is not empty — clear the filter to see it.'
+							: 'No projects in this workspace yet.'
+					}
+					groups={groups}
+					mode={mode}
+					now={now}
+					onActivate={onActivate}
+					onActivateAgent={onActivateAgent}
+					untracked={untracked}
+				/>
+			)}
 		</section>
 	);
 }

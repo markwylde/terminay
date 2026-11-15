@@ -2,7 +2,8 @@
  * Home's Workflows section: every workflow on a terminal the dashboard lists,
  * as columns that scroll sideways, with filters, grouping, sort and density.
  * At 600px or less it is compact: columns stack and scroll with the section,
- * and most options fold behind View options.
+ * and most options fold behind View options. On a compact workspace the whole
+ * toolbar is in the Home options panel instead, every option shown directly.
  *
  * Read-only (ADR-0097): it never changes a step and never types into a
  * terminal. Its one action opens a workflow's terminal through the
@@ -12,6 +13,7 @@
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, SlidersHorizontal } from 'lucide-react';
 import { type ReactElement, type RefObject, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { TerminalTitleStoreContext } from '../../shared/useWorkspaceProjection';
+import { HomeSectionOptions, useHomeOptionsCompact } from '../HomeOptionsPanel';
 import { WorkflowStepMarker } from './workflowIcons';
 import { WORKFLOW_DIAL_TICK_MS, WorkflowDial } from './WorkflowTabBadge';
 import { elapsed, statusLabel, stepTime, tabSummary } from './workflowPanelModel';
@@ -162,6 +164,13 @@ export function WorkflowsHome(props: WorkflowsHomeProps): ReactElement {
 	const model = useMemo(() => applyWorkflowsHomeView(rows, view), [rows, view]);
 	const now = useSectionNow(model.shown, props.now);
 	const projectCount = new Set(model.shown.map((row) => row.projectKey)).size;
+	const panel = useHomeOptionsCompact();
+	// Filters that hide workflows; grouping, sort, notes and layout do not count.
+	const filtering =
+		view.text.trim() !== '' ||
+		view.statuses.length > 0 ||
+		model.projects.some((project) => !project.included) ||
+		!view.showFinished;
 
 	let body: ReactElement;
 	if (props.loading && props.rows.length === 0) {
@@ -184,6 +193,7 @@ export function WorkflowsHome(props: WorkflowsHomeProps): ReactElement {
 				<button
 					type="button"
 					className="workflows-home__button"
+					data-home-clear-filters="true"
 					onClick={() => setView(DEFAULT_WORKFLOWS_HOME_VIEW)}
 				>
 					Reset view
@@ -245,13 +255,16 @@ export function WorkflowsHome(props: WorkflowsHomeProps): ReactElement {
 						: ''}
 				</p>
 			</header>
-			<WorkflowsToolbar
-				view={view}
-				model={model}
-				compact={compact}
-				onChange={update}
-				onReset={() => setView(DEFAULT_WORKFLOWS_HOME_VIEW)}
-			/>
+			<HomeSectionOptions title="Workflows" active={filtering}>
+				<WorkflowsToolbar
+					view={view}
+					model={model}
+					compact={compact}
+					panel={panel}
+					onChange={update}
+					onReset={() => setView(DEFAULT_WORKFLOWS_HOME_VIEW)}
+				/>
+			</HomeSectionOptions>
 			<div className="workflows-home__body">{body}</div>
 		</div>
 	);
@@ -287,10 +300,16 @@ function WorkflowsToolbar(props: {
 	readonly view: WorkflowsHomeView;
 	readonly model: ReturnType<typeof applyWorkflowsHomeView>;
 	readonly compact: boolean;
+	/** In the Home options panel: every option shown directly, no View options. */
+	readonly panel: boolean;
 	readonly onChange: (patch: Partial<WorkflowsHomeView>) => void;
 	readonly onReset: () => void;
 }) {
-	const { view, model, compact, onChange } = props;
+	const { view, model, panel, onChange } = props;
+	// Layout and Narrow columns are offered only where columns sit side by side.
+	const narrow = props.compact || panel;
+	// View options folds the options away only in a narrow tab on the page.
+	const folds = props.compact && !panel;
 	const [optionsOpen, setOptionsOpen] = useState(false);
 	const changed = !isDefaultWorkflowsHomeView(view);
 	const options = (
@@ -302,7 +321,7 @@ function WorkflowsToolbar(props: {
 				value={view.group}
 				onChange={(group) => onChange({ group })}
 			/>
-			{view.group === 'none' || compact ? null : (
+			{view.group === 'none' || narrow ? null : (
 				<Segmented
 					label="Layout"
 					options={LAYOUT_OPTIONS}
@@ -338,7 +357,7 @@ function WorkflowsToolbar(props: {
 				/>
 				Show finished
 			</label>
-			{compact ? null : (
+			{narrow ? null : (
 				<label className="workflows-home__toggle">
 					<input
 						type="checkbox"
@@ -356,7 +375,10 @@ function WorkflowsToolbar(props: {
 		</>
 	);
 	return (
-		<div className="workflows-home__toolbar">
+		<div
+			className={`workflows-home__toolbar${panel ? ' workflows-home__toolbar--panel' : ''}`}
+			data-workflows-home-toolbar={panel ? 'panel' : 'page'}
+		>
 			<input
 				className="workflows-home__search"
 				type="search"
@@ -392,7 +414,7 @@ function WorkflowsToolbar(props: {
 					);
 				})}
 			</fieldset>
-			{compact ? (
+			{folds ? (
 				<button
 					type="button"
 					className="workflows-home__options-toggle"
@@ -416,7 +438,7 @@ function WorkflowsToolbar(props: {
 					/>
 				</button>
 			) : null}
-			{compact ? (
+			{folds ? (
 				optionsOpen ? (
 					<div
 						className="workflows-home__options"

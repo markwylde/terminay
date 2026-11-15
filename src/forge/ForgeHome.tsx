@@ -18,6 +18,7 @@ import {
 	type ForgeReference,
 	type ForgeRepositoryFocus,
 	type ForgeViewPreferences,
+	defaultPreferences,
 	itemKey,
 	preferencesKey,
 	projectPullRequestGroups,
@@ -220,6 +221,14 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 	const projectTitle = (projectId: string) =>
 		environment.projects.find((project) => project.projectId === projectId)?.title;
 	const title = kind === 'pullRequest' ? 'Pull Requests' : 'Issues';
+	const defaults = defaultPreferences(kind);
+	// Grouping never counts: it hides nothing.
+	const filtering =
+		preferences.scope !== defaults.scope || preferences.state !== defaults.state || filter !== undefined;
+	const changePreferences = (next: ForgeViewPreferences) => {
+		setPreferences(next);
+		rememberPreferences(kind, next);
+	};
 	return (
 		<div className="forge-home" data-forge-home={kind}>
 			<div className="forge-home__head">
@@ -234,10 +243,7 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 				<ForgeListPane
 					kind={kind}
 					preferences={preferences}
-					onPreferencesChange={(next) => {
-						setPreferences(next);
-						rememberPreferences(kind, next);
-					}}
+					onPreferencesChange={changePreferences}
 					items={list.items}
 					sources={list.sources}
 					noAccounts={list.noAccounts}
@@ -256,6 +262,11 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 					{...(ownersReachNote === undefined ? {} : { ownersReachNote })}
 					{...(filter === undefined ? {} : { repositoryFilter: filter })}
 					onClearRepositoryFilter={() => setFilter(undefined)}
+					filtering={filtering}
+					onResetFilters={() => {
+						changePreferences({ ...preferences, scope: defaults.scope, state: defaults.state });
+						setFilter(undefined);
+					}}
 					projectTitle={projectTitle}
 					projectOrder={environment.projects.map((project) => project.projectId)}
 					displayNames={environment.displayNames}

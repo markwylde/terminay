@@ -1138,3 +1138,73 @@ button.bots-build-step__toggle:hover {
 	gap: 2px;
 	overflow-wrap: anywhere;
 }
+
+/* Compact workspace: one column, the compact Home gutters (16px sides, 12px
+   between blocks), and the filters and engine summary in the Home options
+   panel instead of on the page. */
+.bots-section--compact .bots-dhead {
+	padding: 12px 16px;
+}
+.bots-section--compact .bots-dhead__row {
+	align-items: center;
+	flex-wrap: nowrap;
+	justify-content: space-between;
+}
+.bots-section--compact .bots-dhead__name {
+	min-width: 0;
+	overflow: hidden;
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--bots-strong);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bots-section--compact .bots-dhead__row .bots-btn {
+	flex: none;
+	min-height: 36px;
+}
+.bots-section--compact .bots-dhead__desc {
+	margin-top: 4px;
+	color: var(--bots-muted);
+	font-size: 12.5px;
+}
+.bots-section--compact .bots-dbody {
+	flex-direction: column;
+	overflow-y: auto;
+}
+.bots-section--compact .bots-dmain {
+	flex: none;
+	overflow: visible;
+	padding: 12px 16px 16px;
+	gap: 12px;
+}
+.bots-section--compact .bots-grid {
+	grid-template-columns: minmax(0, 1fr);
+	gap: 12px;
+}
+.bots-section--compact .bots-empty {
+	padding: 24px 0;
+}
+
+/* The bots controls inside the Home options panel. */
+.bots-ui.bots-options {
+	height: auto;
+	gap: 14px;
+	background: transparent;
+}
+.bots-options .bots-filter-input {
+	width: 100%;
+	height: 40px;
+	padding: 0 12px;
+	border-radius: 8px;
+}
+.bots-options .bots-dhead__chips {
+	margin-top: 0;
+}
+.bots-options .bots-chip {
+	height: 36px;
+	padding: 0 12px;
+}
+.bots-options .bots-link {
+	min-height: 36px;
+}

@@ -1,0 +1,64 @@
+/* A compact edge drawer (ADR-0125): one shell for every drawer that slides in
+   from an edge of a phone-width workspace. The scrim covers the workspace;
+   the drawer leaves a 52px strip of it beside the drawer, enough to press and
+   no more. Each drawer adds its own look on top through its own classes. */
+
+.compact-edge-scrim {
+	position: absolute;
+	inset: 0;
+	z-index: 4000;
+	/* The chrome row stays visible above the drawer; the drawer starts below
+	   the top safe area. */
+	padding-top: env(safe-area-inset-top, 0px);
+	background: rgba(5, 7, 10, 0.68);
+	-webkit-tap-highlight-color: transparent;
+}
+
+.compact-edge-drawer {
+	position: absolute;
+	top: env(safe-area-inset-top, 0px);
+	bottom: 0;
+	display: flex;
+	flex-direction: column;
+	background: #14171e;
+	animation: compact-edge-in-leading 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.compact-edge-drawer--leading {
+	left: 0;
+	width: min(420px, calc(100% - 52px));
+	border-right: 1px solid rgba(255, 255, 255, 0.1);
+	box-shadow: 16px 0 40px rgba(0, 0, 0, 0.5);
+}
+
+.compact-edge-drawer--trailing {
+	right: 0;
+	width: min(360px, calc(100% - 52px));
+	border-left: 1px solid rgba(255, 255, 255, 0.1);
+	box-shadow: -16px 0 40px rgba(0, 0, 0, 0.5);
+	animation-name: compact-edge-in-trailing;
+}
+
+@keyframes compact-edge-in-leading {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: none;
+	}
+}
+
+@keyframes compact-edge-in-trailing {
+	from {
+		transform: translateX(100%);
+	}
+	to {
+		transform: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.compact-edge-drawer {
+		animation: none;
+	}
+}

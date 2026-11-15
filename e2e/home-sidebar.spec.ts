@@ -302,12 +302,16 @@ test.describe('Home sidebar', () => {
 		await homeControl(mainWindow).click();
 		await expect(homeSidebar(mainWindow)).toBeVisible();
 
+		// Narrow but not compact: a compact workspace shows no Home sidebar.
 		await resize(mainWindow, electronApp, {
 			x: 40,
 			y: 40,
-			width: 600,
+			width: 712,
 			height: 760,
 		});
+		await expect(mainWindow.locator('[data-compact-chrome="true"]')).toHaveCount(
+			0,
+		);
 		const layout = homeView(mainWindow).locator('.workspace-split-layout');
 		await expect(layout).toHaveAttribute('data-navigation-drawer', 'true');
 		// The drawer takes focus, and the content behind it is inert.

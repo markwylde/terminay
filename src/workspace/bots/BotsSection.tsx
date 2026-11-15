@@ -9,6 +9,7 @@ import { BuildBanner } from './BotBuildProgress';
 
 import { MessageSquare, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { HomeSectionOptions, useHomeOptionsCompact } from '../HomeOptionsPanel';
 import { BotAvatar } from './BotAvatar';
 import { subscribeNewBot } from './botFocus';
 import {
@@ -66,6 +67,15 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 	const primary = servers.values().next().value as ServerBots | undefined;
 	const engine = useBotEngine(primary);
 	const loading = [...servers.values()].some((s) => s.status === 'loading');
+	// On a compact workspace the filters and the engine summary are in the
+	// Home options panel, and the page is one column.
+	const compact = useHomeOptionsCompact();
+	const [buildOpen, setBuildOpen] = useState(false);
+	const filtering = filter !== 'all' || search !== '';
+	const clearFilters = () => {
+		setFilter('all');
+		setSearch('');
+	};
 	const errors = [...servers.values()].filter((s) => s.status === 'error');
 
 	if (servers.size === 0)
@@ -81,70 +91,141 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 			</div>
 		);
 
+	const filterInput = (
+		<label className="bots-filter-input">
+			<Search size={14} aria-hidden="true" />
+			<span className="bots-sr">Filter bots</span>
+			<input
+				value={search}
+				placeholder="Filter bots…"
+				onChange={(event) => setSearch(event.target.value)}
+				data-terminay-bots-search="true"
+			/>
+		</label>
+	);
+	const statusChips = (
+		<fieldset className="bots-dhead__chips" aria-label="Show bots">
+			{BOT_FILTERS.map((candidate) => (
+				<button
+					key={candidate}
+					type="button"
+					className={`bots-chip bots-chip--${candidate}${filter === candidate ? ' bots-chip--on' : ''}`}
+					aria-pressed={filter === candidate}
+					onClick={() => setFilter(candidate)}
+					data-terminay-bots-filter={candidate}
+				>
+					<b>{counts[candidate]}</b> {BOT_FILTER_LABELS[candidate]}
+				</button>
+			))}
+			{filtering ? (
+				<button type="button" className="bots-link" onClick={clearFilters}>
+					Clear filter
+				</button>
+			) : null}
+		</fieldset>
+	);
+	const newBotButton = (
+		<button
+			type="button"
+			className="bots-btn bots-btn--primary"
+			onClick={() => setCreating(true)}
+			data-terminay-bots-new="true"
+		>
+			<Plus size={14} aria-hidden="true" /> New bot
+		</button>
+	);
+	const description =
+		'Long-lived teammates, each in its own container. Message them, schedule them, give them triggers.';
+	// In the options panel the heading stays: `compact` on EngineSummary is
+	// the bot tab's terse form, not this one.
+	const engineLabel = servers.size > 1 ? primary?.label : undefined;
+	// The build banner is how a build in progress is followed, so on a compact
+	// workspace it stays on the page rather than in the options panel. The
+	// progress page's open state lives here so it survives that move.
+	const engineSummary = (
+		<EngineSummary
+			engine={engine}
+			label={engineLabel}
+			visible={host.isVisible}
+			showBanner={!compact}
+			buildOpen={buildOpen}
+			onBuildOpenChange={setBuildOpen}
+		/>
+	);
+	const compactBuildBanner = compact ? (
+		<BuildBanner
+			engine={engine}
+			label={engineLabel}
+			visible={host.isVisible}
+			open={buildOpen}
+			onOpenChange={setBuildOpen}
+		/>
+	) : null;
+	const needsYouList = (
+		<NeedsYouList
+			entries={waiting}
+			now={now}
+			onOpen={(item) =>
+				host.openBot({
+					serverId: item.serverId,
+					botId: item.botId,
+					mode: 'chat',
+					sessionId: item.sessionId,
+				})
+			}
+		/>
+	);
+
 	return (
-		<div className="bots-ui bots-section" data-terminay-bots="dashboard">
+		<div
+			className={`bots-ui bots-section${compact ? ' bots-section--compact' : ''}`}
+			data-terminay-bots="dashboard"
+		>
 			{availabilityError ? (
 				<div role="alert" className="bots-note bots-note--error">
 					{availabilityError}
 				</div>
 			) : null}
-			<header className="bots-dhead">
-				<div className="bots-dhead__row">
-					<div className="bots-dhead__title">
-						<h2>Bots</h2>
-						<p>
-							Long-lived teammates, each in its own container. Message them,
-							schedule them, give them triggers.
-						</p>
+			{compact ? (
+				<header className="bots-dhead">
+					<div className="bots-dhead__row">
+						<h2 className="bots-dhead__name">Bots</h2>
+						{newBotButton}
 					</div>
-					<label className="bots-filter-input">
-						<Search size={14} aria-hidden="true" />
-						<span className="bots-sr">Filter bots</span>
-						<input
-							value={search}
-							placeholder="Filter bots…"
-							onChange={(event) => setSearch(event.target.value)}
-							data-terminay-bots-search="true"
-						/>
-					</label>
-					<button
-						type="button"
-						className="bots-btn bots-btn--primary"
-						onClick={() => setCreating(true)}
-						data-terminay-bots-new="true"
+					<p className="bots-dhead__desc">{description}</p>
+				</header>
+			) : (
+				<header className="bots-dhead">
+					<div className="bots-dhead__row">
+						<div className="bots-dhead__title">
+							<h2>Bots</h2>
+							<p>{description}</p>
+						</div>
+						<HomeSectionOptions title="Bots" active={filtering}>
+							{filterInput}
+						</HomeSectionOptions>
+						{newBotButton}
+					</div>
+					<HomeSectionOptions title="Bots" active={filtering}>
+						{statusChips}
+					</HomeSectionOptions>
+				</header>
+			)}
+			{compact ? (
+				<HomeSectionOptions title="Bots" active={filtering}>
+					<div
+						className="bots-ui bots-options"
+						data-terminay-bots-options="true"
 					>
-						<Plus size={14} aria-hidden="true" /> New bot
-					</button>
-				</div>
-				<fieldset className="bots-dhead__chips" aria-label="Show bots">
-					{BOT_FILTERS.map((candidate) => (
-						<button
-							key={candidate}
-							type="button"
-							className={`bots-chip bots-chip--${candidate}${filter === candidate ? ' bots-chip--on' : ''}`}
-							aria-pressed={filter === candidate}
-							onClick={() => setFilter(candidate)}
-							data-terminay-bots-filter={candidate}
-						>
-							<b>{counts[candidate]}</b> {BOT_FILTER_LABELS[candidate]}
-						</button>
-					))}
-					{filter !== 'all' || search !== '' ? (
-						<button
-							type="button"
-							className="bots-link"
-							onClick={() => {
-								setFilter('all');
-								setSearch('');
-							}}
-						>
-							Clear filter
-						</button>
-					) : null}
-				</fieldset>
-			</header>
+						{filterInput}
+						{statusChips}
+						{engineSummary}
+					</div>
+				</HomeSectionOptions>
+			) : null}
 			<div className="bots-dbody">
 				<div className="bots-scroll bots-dmain">
+					{compactBuildBanner}
 					{[...servers.values()]
 						.filter((s) => s.warning)
 						.map((s) => (
@@ -221,30 +302,31 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 							</button>
 						</div>
 					) : (
-						<div className="bots-empty">
+						<div
+							className="bots-empty"
+							data-home-no-match={loading ? undefined : 'true'}
+						>
 							{loading ? 'Loading bots…' : 'No bots match this filter.'}
+							{compact && !loading && filtering ? (
+								<button
+									type="button"
+									className="bots-btn"
+									onClick={clearFilters}
+									data-home-clear-filters="true"
+								>
+									Clear filter
+								</button>
+							) : null}
 						</div>
 					)}
+					{compact ? needsYouList : null}
 				</div>
-				<aside className="bots-rail bots-scroll" aria-label="Bots overview">
-					<EngineSummary
-						engine={engine}
-						label={servers.size > 1 ? primary?.label : undefined}
-						visible={host.isVisible}
-					/>
-					<NeedsYouList
-						entries={waiting}
-						now={now}
-						onOpen={(item) =>
-							host.openBot({
-								serverId: item.serverId,
-								botId: item.botId,
-								mode: 'chat',
-								sessionId: item.sessionId,
-							})
-						}
-					/>
-				</aside>
+				{compact ? null : (
+					<aside className="bots-rail bots-scroll" aria-label="Bots overview">
+						{engineSummary}
+						{needsYouList}
+					</aside>
+				)}
 			</div>
 			{creating ? (
 				<NewBotDialog
@@ -354,12 +436,19 @@ export function EngineSummary({
 	compact = false,
 	hideReady = false,
 	visible = true,
+	showBanner = true,
+	buildOpen,
+	onBuildOpenChange,
 }: Readonly<{
 	engine: BotEngineView;
 	label: string | undefined;
 	compact?: boolean;
 	hideReady?: boolean;
 	visible?: boolean;
+	/** False where the owner draws the build banner somewhere else. */
+	showBanner?: boolean;
+	buildOpen?: boolean;
+	onBuildOpenChange?: (open: boolean) => void;
 }>) {
 	const { status } = engine;
 	const [switching, setSwitching] = useState<string>();
@@ -373,7 +462,15 @@ export function EngineSummary({
 				: 'No engine';
 	return (
 		<section data-terminay-bots-engine={status?.available ? 'ready' : 'setup'}>
-			<BuildBanner engine={engine} label={label} visible={visible} />
+			{showBanner ? (
+				<BuildBanner
+					engine={engine}
+					label={label}
+					visible={visible}
+					open={buildOpen}
+					onOpenChange={onBuildOpenChange}
+				/>
+			) : null}
 			{!compact && !building ? (
 				<h3 className="bots-lab">
 					Container engine{label === undefined ? '' : ` · ${label}`}

@@ -318,11 +318,8 @@ test.describe('Home tabs', () => {
 			width: 600,
 			height: 760,
 		});
-		// The sidebar becomes a drawer over Home at this width; put it away.
-		await expect(
-			activeHome(mainWindow).locator('.workspace-split-layout'),
-		).toHaveAttribute('data-navigation-drawer', 'true');
-		await mainWindow.keyboard.press('Escape');
+		// A compact workspace shows no Home sidebar at all.
+		await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
 		await expect(
 			mainWindow.locator('[data-terminay-home-sidebar]'),
 		).toHaveCount(0);

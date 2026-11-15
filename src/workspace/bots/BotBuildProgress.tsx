@@ -79,14 +79,31 @@ export function BuildBanner({
 	engine,
 	label,
 	visible = true,
+	open: openProp,
+	onOpenChange,
 }: {
 	engine: BotEngineView;
 	label?: string;
 	/** False while the surface holding the banner is hidden, e.g. a background tab. */
 	visible?: boolean;
+	/**
+	 * Whether the progress page is open, when the owner keeps it: a banner that
+	 * moves between surfaces (a compact workspace's page and a wide window's
+	 * rail) keeps the page open across the move.
+	 */
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 }) {
-	const [open, setOpen] = useState(false);
-	const close = useCallback(() => setOpen(false), []);
+	const [ownOpen, setOwnOpen] = useState(false);
+	const open = openProp ?? ownOpen;
+	const setOpen = useCallback(
+		(next: boolean) => {
+			if (onOpenChange === undefined) setOwnOpen(next);
+			else onOpenChange(next);
+		},
+		[onOpenChange],
+	);
+	const close = useCallback(() => setOpen(false), [setOpen]);
 	const last = useRef<BotBuildProgress | null>(null);
 	const banner = useRef<HTMLDivElement>(null);
 	if (engine.status?.build) last.current = engine.status.build;

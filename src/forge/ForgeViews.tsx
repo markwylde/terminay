@@ -23,6 +23,7 @@ import {
 	X,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useId, useState } from 'react';
+import { HomeSectionOptions, useHomeOptionsCompact } from '../workspace/HomeOptionsPanel';
 import {
 	claimedProjects,
 	defaultIssueBranch,
@@ -274,6 +275,10 @@ export type ForgeListPaneProps = Readonly<{
 	ownersReachNote?: string;
 	repositoryFilter?: ForgeRepositoryFocus;
 	onClearRepositoryFilter?: () => void;
+	/** The scope, state, or repository differs from the default. */
+	filtering?: boolean;
+	/** Restore the default scope, state, and repository. */
+	onResetFilters?: () => void;
 	projectTitle: (projectId: string) => string | undefined;
 	projectOrder: readonly string[];
 	displayNames: ReadonlyMap<string, string>;
@@ -284,6 +289,11 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 	const scopes = kind === 'pullRequest' ? PULL_REQUEST_SCOPES : ISSUE_SCOPES;
 	const states = kind === 'pullRequest' ? PULL_REQUEST_STATES : ISSUE_STATES;
 	const noun = kind === 'pullRequest' ? 'pull requests' : 'issues';
+	// On a compact Home the scope, state, group, and repository filter are in
+	// the Home options panel; refresh stays on the page.
+	const optionsInPanel = useHomeOptionsCompact();
+	const optionsTitle = kind === 'pullRequest' ? 'Pull Requests' : 'Issues';
+	const filtering = props.filtering === true;
 	const reason = props.settled ? emptyReason(items.length, props.noAccounts ? 0 : 1, props.sources) : undefined;
 	const groups: ForgeGroup[] =
 		preferences.group === 'repo'
@@ -303,39 +313,73 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 				</button>
 			</div>
 		) : null;
+	const viewControls = (
+		<>
+			<fieldset className="forge-chips" aria-label="Scope">
+				{scopes.map((scope) => (
+					<button
+						key={scope.id}
+						type="button"
+						
+						aria-pressed={scope.id === preferences.scope}
+						className={`forge-scope${scope.id === preferences.scope ? ' forge-scope--on' : ''}`}
+						data-forge-scope={scope.id}
+						onClick={() => onPreferencesChange({ ...preferences, scope: scope.id })}
+					>
+						{scope.label}
+					</button>
+				))}
+			</fieldset>
+			<Segmented
+				label="State"
+				options={states}
+				value={preferences.state}
+				onChange={(state) => onPreferencesChange({ ...preferences, state })}
+			/>
+			<Segmented
+				label="Group"
+				options={[
+					{ id: 'repo', label: 'Repo' },
+					{ id: 'none', label: 'None' },
+				]}
+				value={preferences.group}
+				onChange={(group) => onPreferencesChange({ ...preferences, group: group === 'none' ? 'none' : 'repo' })}
+			/>
+		</>
+	);
+	const repositoryStrip =
+		props.repositoryFilter === undefined ? null : (
+			<div className="forge-filter" data-forge-repository-filter="true">
+				<span>
+					Showing <b>{props.repositoryFilter.owner}/{props.repositoryFilter.name}</b>
+				</span>
+				<button
+					type="button"
+					className="forge-icon-btn"
+					aria-label="Show every repository"
+					title="Show every repository"
+					onClick={props.onClearRepositoryFilter}
+				>
+					<X size={13} aria-hidden="true" />
+				</button>
+			</div>
+		);
 	return (
 		<div className="forge-list" data-forge-list={kind}>
+			{optionsInPanel ? (
+				<HomeSectionOptions title={optionsTitle} active={filtering}>
+					<div className="forge-options" data-forge-options="true">
+						{viewControls}
+						{repositoryStrip}
+					</div>
+				</HomeSectionOptions>
+			) : null}
 			<div className="forge-toolbar">
-				<fieldset className="forge-chips" aria-label="Scope">
-					{scopes.map((scope) => (
-						<button
-							key={scope.id}
-							type="button"
-							
-							aria-pressed={scope.id === preferences.scope}
-							className={`forge-scope${scope.id === preferences.scope ? ' forge-scope--on' : ''}`}
-							data-forge-scope={scope.id}
-							onClick={() => onPreferencesChange({ ...preferences, scope: scope.id })}
-						>
-							{scope.label}
-						</button>
-					))}
-				</fieldset>
-				<Segmented
-					label="State"
-					options={states}
-					value={preferences.state}
-					onChange={(state) => onPreferencesChange({ ...preferences, state })}
-				/>
-				<Segmented
-					label="Group"
-					options={[
-						{ id: 'repo', label: 'Repo' },
-						{ id: 'none', label: 'None' },
-					]}
-					value={preferences.group}
-					onChange={(group) => onPreferencesChange({ ...preferences, group: group === 'none' ? 'none' : 'repo' })}
-				/>
+				{optionsInPanel ? null : (
+					<HomeSectionOptions title={optionsTitle} active={filtering}>
+						{viewControls}
+					</HomeSectionOptions>
+				)}
 				<span className="forge-toolbar__end">
 					{updated === undefined ? null : <span className="forge-faint" data-forge-updated="true">{updated}</span>}
 					<button
@@ -350,21 +394,10 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 					</button>
 				</span>
 			</div>
-			{props.repositoryFilter === undefined ? null : (
-				<div className="forge-filter" data-forge-repository-filter="true">
-					<span>
-						Showing <b>{props.repositoryFilter.owner}/{props.repositoryFilter.name}</b>
-					</span>
-					<button
-						type="button"
-						className="forge-icon-btn"
-						aria-label="Show every repository"
-						title="Show every repository"
-						onClick={props.onClearRepositoryFilter}
-					>
-						<X size={13} aria-hidden="true" />
-					</button>
-				</div>
+			{optionsInPanel ? null : (
+				<HomeSectionOptions title={optionsTitle} active={filtering}>
+					{repositoryStrip}
+				</HomeSectionOptions>
 			)}
 			{preferences.scope === 'all' && props.ownersReachNote !== undefined ? (
 				<p className="forge-note" data-forge-owners-note="true">
@@ -395,8 +428,18 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 						{failedNote}
 					</div>
 				) : reason?.kind === 'noMatches' ? (
-					<div className="forge-empty" data-forge-empty="noMatches">
+					<div className="forge-empty" data-forge-empty="noMatches" data-home-no-match="true">
 						<p>No {noun} match this scope.</p>
+						{optionsInPanel && filtering && props.onResetFilters !== undefined ? (
+							<button
+								type="button"
+								className="forge-btn"
+								data-home-clear-filters="true"
+								onClick={props.onResetFilters}
+							>
+								Show all
+							</button>
+						) : null}
 					</div>
 				) : !props.settled && props.loading ? (
 					<div className="forge-empty forge-faint">Loading {noun}…</div>

@@ -54,6 +54,14 @@ export type CompactChromeRowProps = Readonly<{
 	onToggleNotifications: () => void;
 	onOpenSwitcher: () => void;
 	onToggleExplorer: () => void;
+	/**
+	 * While Home is selected the trailing toggle opens the Home options panel
+	 * instead of a sidebar. Absent with a project in front. `isOffered` is
+	 * false while the Home tab in front has no options; `isFiltered` marks a
+	 * filter that hides items.
+	 */
+	homeOptions?: Readonly<{ isOffered: boolean; isFiltered: boolean }>;
+	sidebarToggleRef?: RefObject<HTMLButtonElement | null>;
 	/** Present while Pixel is on: the element Pixel docks into, just before
 	 * the sidebar toggle. */
 	pixelSlotRef?: (element: HTMLSpanElement | null) => void;
@@ -95,6 +103,14 @@ export function compactTitleLabel(title: CompactTitle): string {
 		: `Switch terminal — ${title.panel.title}, ${where}`;
 }
 
+function homeOptionsLabel(
+	isOpen: boolean,
+	options: Readonly<{ isFiltered: boolean }>,
+): string {
+	const action = isOpen ? 'Hide options' : 'Show options';
+	return options.isFiltered ? `${action}, filters applied` : action;
+}
+
 export function CompactChromeRow({
 	breadcrumbButtonRef,
 	connection,
@@ -107,6 +123,8 @@ export function CompactChromeRow({
 	onOpenSwitcher,
 	onToggleNotifications,
 	onToggleExplorer,
+	homeOptions,
+	sidebarToggleRef,
 	pixelSlotRef,
 	title,
 	updateAction,
@@ -167,6 +185,10 @@ export function CompactChromeRow({
 			</>
 		);
 	}
+	const toggleLabel =
+		homeOptions === undefined
+			? 'Toggle file explorer'
+			: homeOptionsLabel(isExplorerOpen, homeOptions);
 	return (
 		<div className="compact-chrome" data-compact-chrome="true">
 			<button
@@ -248,31 +270,43 @@ export function CompactChromeRow({
 					data-compact-pixel-slot="true"
 				/>
 			)}
-			<button
-				type="button"
-				className={`compact-chrome__icon${isExplorerOpen ? ' compact-chrome__icon--active' : ''}`}
-				onClick={onToggleExplorer}
-				aria-label="Toggle file explorer"
-				aria-pressed={isExplorerOpen}
-				title="Toggle file explorer"
-				data-compact-sidebar-toggle="true"
-			>
-				<svg
-					aria-hidden="true"
-					width="14"
-					height="14"
-					viewBox="0 0 14 14"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
+			{homeOptions !== undefined && !homeOptions.isOffered ? null : (
+				<button
+					type="button"
+					className={`compact-chrome__icon${isExplorerOpen ? ' compact-chrome__icon--active' : ''}`}
+					ref={sidebarToggleRef}
+					onClick={onToggleExplorer}
+					aria-label={toggleLabel}
+					aria-pressed={isExplorerOpen}
+					title={toggleLabel}
+					data-compact-sidebar-toggle="true"
+					{...(homeOptions === undefined
+						? {}
+						: {
+								'data-compact-home-options-toggle': 'true',
+								'data-filtered': homeOptions.isFiltered ? 'true' : 'false',
+							})}
 				>
-					<path
-						d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
-						stroke="currentColor"
-						strokeWidth="1.4"
-					/>
-					<path d="M9 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
-				</svg>
-			</button>
+					<svg
+						aria-hidden="true"
+						width="14"
+						height="14"
+						viewBox="0 0 14 14"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<path
+							d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
+							stroke="currentColor"
+							strokeWidth="1.4"
+						/>
+						<path d="M9 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
+					</svg>
+					{homeOptions?.isFiltered === true ? (
+						<span className="compact-chrome__filtered-dot" aria-hidden="true" />
+					) : null}
+				</button>
+			)}
 		</div>
 	);
 }

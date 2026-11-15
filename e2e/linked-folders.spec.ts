@@ -1532,10 +1532,9 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 			.getByRole('button', { name: /^New terminal in alpha of / })
 			.click();
 		const dropup = switcher.getByRole('menu', { name: 'New terminal' });
-		await expect(switcher.getByRole('radio', { name: 'alpha' })).toHaveAttribute(
-			'aria-checked',
-			'true',
-		);
+		await expect(
+			switcher.locator('[data-compact-dropup-open-in="true"]'),
+		).toHaveAccessibleName('Open in alpha');
 		await dropup.getByRole('menuitem', { name: /Terminal/ }).first().click();
 	};
 

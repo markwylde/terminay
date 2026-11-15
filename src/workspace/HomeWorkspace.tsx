@@ -78,6 +78,7 @@ import {
 	recallHomeLayout,
 	rememberHomeLayout,
 } from './localViewState.ts';
+import { HomeOptionsTabContext } from './HomeOptionsPanel';
 
 type HomeTabParams = Readonly<{
 	descriptor: HomeTabDescriptor;
@@ -196,6 +197,13 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 		[forceClose, host.setTitle, id, isCompact, onScreen, openBot],
 	);
 
+	// The options panel shows the controls of the tab in front, and only
+	// while Home itself is in front.
+	const optionsTab = useMemo(
+		() => ({ tabId: id, isFront: onScreen }),
+		[id, onScreen],
+	);
+
 	let content: ReactNode;
 	switch (descriptor.kind) {
 		case 'section':
@@ -299,7 +307,9 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 				? { 'data-terminay-home-section': descriptor.section }
 				: {})}
 		>
-			{content}
+			<HomeOptionsTabContext.Provider value={optionsTab}>
+				{content}
+			</HomeOptionsTabContext.Provider>
 		</div>
 	);
 }
