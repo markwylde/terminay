@@ -24,26 +24,26 @@ Depth of review:
 
 In-force ADRs relevant to this change:
 
-- openspec/adr/0053-in-page-windows-share-one-modal-frame.md: one `InPageWindow` frame for in-page windows. Its exemption list is extended in part by ADR-0125 for compact edge drawers.
-- openspec/adr/0040-home-tabs-are-device-local-presentation-in-their-own-dockview.md: Home presentation is per device. The options panel's open state stays device-local and is not remembered.
-- openspec/adr/0101-the-home-overview-layout-is-a-server-setting.md: the overview's layout editing stays on its page. The overview has no options panel.
+- openspec/adr/0053-in-page-windows-share-one-modal-frame.md: one `InPageWindow` frame for in-page windows. Its exemption list is extended in part by ADR-0125 for compact drawers and sheets.
+- openspec/adr/0040-home-tabs-are-device-local-presentation-in-their-own-dockview.md: Home presentation is per device. A compact section page's selected tab, search, and View options are client-local section state; the sheet's open state is not remembered.
+- openspec/adr/0101-the-home-overview-layout-is-a-server-setting.md: the overview's layout editing stays on its page. The overview is not a compact section page and keeps its own layout.
 - openspec/adr/0075-management-lives-in-one-settings-surface.md and openspec/adr/0115-settings-are-organised-by-the-place-that-stores-them.md: the Servers panel switches servers and opens Add connection, but never renames, edits, or forgets saved servers.
 - openspec/adr/0047-a-window-is-one-server-running-the-host-bundle.md: the Servers panel shows reachability and upgrade state only for the window's attached connections (decision 6), and switches only on an explicit choice.
 - openspec/adr/0048-a-connection-belongs-to-a-window-and-authority-to-a-device.md: a switch from the Servers panel stays a per-window connection change.
 - openspec/adr/0062-a-server-upgrades-itself-to-its-own-channels-newest-signed-release.md and openspec/adr/0117-installing-a-channels-latest-build-may-move-backwards-only-on-explicit-request.md: the upgrade rows move into the Servers panel unchanged.
 - openspec/adr/0049-a-folder-groups-panels-and-is-not-an-identity-boundary.md and openspec/adr/0050-a-project-reaches-its-repositorys-worktrees-through-server-resolved-folder-roots.md: the launcher folder picker filters display names and chooses by folder id. It never builds paths.
 - openspec/adr/0124-a-command-default-may-set-environment-on-the-integrated-shell.md: launcher behaviour is unchanged by the new folder picker.
-- openspec/adr/0071-a-running-terminal-always-has-a-place-someone-can-see.md: Tabs still lists every terminal while its filters sit in the panel.
-- openspec/adr/0106-forge-pull-requests-and-issues-come-from-pull-based-on-demand-forge-sources.md: moving forge controls into the panel adds no fetch or refresh.
-- openspec/adr/0097-workflows-are-checklists-an-agent-drives-and-terminay-never-runs-a-step.md: the Workflows section's behaviour is unchanged.
-- openspec/adr/0092-bots-use-the-local-docker-compatible-socket.md: the Container engine card is presentation only and moves into the panel.
-- openspec/adr/0070-an-agents-view-operations-are-applied-by-the-client-it-is-talking-from.md: new panel and rail-selection state is client-local view state, never server layout.
+- openspec/adr/0071-a-running-terminal-always-has-a-place-someone-can-see.md: Tabs still lists every terminal; its status tabs filter the view and never hide a terminal from every route.
+- openspec/adr/0106-forge-pull-requests-and-issues-come-from-pull-based-on-demand-forge-sources.md: scope tabs reuse the scope queries the wide chips already make; a tab shows a count only once its scope has loaded, so no extra fetch is added.
+- openspec/adr/0097-workflows-are-checklists-an-agent-drives-and-terminay-never-runs-a-step.md: the compact workflow detail page only shows steps and opens the terminal; it never runs or answers a step.
+- openspec/adr/0092-bots-use-the-local-docker-compatible-socket.md: the container engine card and sheet are presentation only. Deciding a permission request from a Needs you card uses the same decide call as the bot's chat.
+- openspec/adr/0070-an-agents-view-operations-are-applied-by-the-client-it-is-talking-from.md: new tab, sheet, and rail-selection state is client-local view state, never server layout.
 
 The highest ADR sequence number in use before this change was 0124.
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0125-compact-edge-drawers-are-navigation-surfaces-not-in-page-windows.md: compact edge drawers (the switcher and the Home options panel) share one drawer shell and are not in-page windows. Supersedes ADR-0053 decision 1 in part.
+- openspec/adr/0125-compact-drawers-and-sheets-are-navigation-surfaces.md: compact drawers (the switcher) and sheets (each compact section page's View options sheet) share one shell and are not in-page windows. Supersedes ADR-0053 decision 1 in part.
 
 ## Notes
 
