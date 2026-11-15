@@ -312,7 +312,10 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		});
 		await expect(section.locator('.forge-home__grid--stacked')).toBeVisible();
 		await expect(separator).toHaveCount(0);
-		await shot(mainWindow, testInfo, '01b-preview-stacked');
+		// Only the narrowed section: the rest of the window is not part of it.
+		const stackedPath = testInfo.outputPath('screenshots', '01b-preview-stacked.png');
+		await section.screenshot({ path: stackedPath });
+		await testInfo.attach('01b-preview-stacked', { path: stackedPath, contentType: 'image/png' });
 		await section.evaluate((element) => {
 			(element as HTMLElement).style.width = '';
 		});
