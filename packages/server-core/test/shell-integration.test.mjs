@@ -198,6 +198,44 @@ test('arguments and environment per shell', async (t) => {
 	);
 });
 
+test("a default's environment is set on the shell unless the shell already inherits it (ADR-0124)", async (t) => {
+	const box = await sandbox(t);
+	const defaults = [
+		...DEFAULTS,
+		{
+			command: 'claude',
+			args: [],
+			environment: { CLAUDE_CODE_DISABLE_AGENT_VIEW: '1' },
+		},
+	];
+	const value = integration(box.directory, defaults);
+	const fresh = await value.inject({
+		shellPath: '/bin/bash',
+		args: [],
+		env: {},
+	});
+	assert.equal(fresh.env.CLAUDE_CODE_DISABLE_AGENT_VIEW, '1');
+	// The environment-only default adds no shell function.
+	assert.equal(
+		fresh.env.TERMINAY_COMMAND_DEFAULTS,
+		`codex\u001f--no-daemon\u001f${HOSTILE}`,
+	);
+	const inherited = await value.inject({
+		shellPath: '/bin/zsh',
+		args: [],
+		env: { CLAUDE_CODE_DISABLE_AGENT_VIEW: '0' },
+	});
+	assert.equal('CLAUDE_CODE_DISABLE_AGENT_VIEW' in inherited.env, false);
+	assert.equal(
+		await integration(box.directory, defaults, false).inject({
+			shellPath: '/bin/bash',
+			args: [],
+			env: {},
+		}),
+		undefined,
+	);
+});
+
 test('runtime files are private to the server account, and a loosened directory is not used', async (t) => {
 	const box = await sandbox(t);
 	const value = integration(box.directory);

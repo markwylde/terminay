@@ -173,6 +173,14 @@
 			],
 			"terminalCommandDefaults": [
 				{
+					"id": "com.terminay.builtin-agents/claude-no-agent-view",
+					"command": "claude",
+					"harness": {
+						"source": "com.terminay.builtin-agents/agents",
+						"harness": "claude-code"
+					}
+				},
+				{
 					"id": "com.terminay.builtin-agents/codex-no-daemon",
 					"command": "codex",
 					"harness": {

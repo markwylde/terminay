@@ -88,8 +88,17 @@ export type TerminalCommandDefaultSkipReason =
 	| 'unsupported'
 	| 'unavailable';
 
+/**
+ * What an applying default adds: flags placed before the user's arguments,
+ * environment set on the terminal's integrated shell (ADR-0124), or both. At
+ * least one of them is present.
+ */
 export type TerminalCommandDefaultResolution =
-	| { applies: true; args: string[] }
+	| {
+			applies: true;
+			args?: string[];
+			environment?: Record<string, string>;
+	  }
 	| {
 			applies: false;
 			reason: TerminalCommandDefaultSkipReason;
@@ -256,6 +265,35 @@ export function isTerminalCommandDefaultArgs(
 	);
 }
 
+/** An upper-case variable name; `TERMINAY_` names are Terminay's own. */
+const ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * Whether a record is a valid command default environment: one or more
+ * bounded, upper-case names that are not Terminay's own, each with a bounded
+ * value holding no control characters.
+ */
+export function isTerminalCommandDefaultEnvironment(
+	value: unknown,
+): value is Record<string, string> {
+	if (!isRecord(value)) return false;
+	const entries = Object.entries(value);
+	return (
+		entries.length > 0 &&
+		entries.length <= EXTENSION_LIMITS.commandDefaultEnvironment &&
+		entries.every(
+			([name, entry]) =>
+				name.length <= EXTENSION_LIMITS.commandDefaultEnvironmentNameLength &&
+				ENVIRONMENT_NAME_PATTERN.test(name) &&
+				!name.startsWith('TERMINAY_') &&
+				typeof entry === 'string' &&
+				entry.length <= EXTENSION_LIMITS.commandDefaultArgLength &&
+				// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is refused
+				!/[\u0000-\u001f\u007f-\u009f]/.test(entry),
+		)
+	);
+}
+
 const skipReasons: readonly string[] = [
 	'not_installed',
 	'unsupported',
@@ -268,9 +306,25 @@ export function validateTerminalCommandDefaultResolution(
 ): TerminalLauncherValidation<TerminalCommandDefaultResolution> {
 	if (!isRecord(value)) return invalid('resolution must be an object');
 	if (value.applies === true) {
-		if (!isTerminalCommandDefaultArgs(value.args))
+		if (value.args !== undefined && !isTerminalCommandDefaultArgs(value.args))
 			return invalid('args must be bounded flags');
-		return { ok: true, value: { applies: true, args: [...value.args] } };
+		if (
+			value.environment !== undefined &&
+			!isTerminalCommandDefaultEnvironment(value.environment)
+		)
+			return invalid('environment must be bounded upper-case names');
+		if (value.args === undefined && value.environment === undefined)
+			return invalid('an applying default adds flags or environment');
+		return {
+			ok: true,
+			value: {
+				applies: true,
+				...(value.args === undefined ? {} : { args: [...value.args] }),
+				...(value.environment === undefined
+					? {}
+					: { environment: { ...value.environment } }),
+			},
+		};
 	}
 	if (value.applies !== false) return invalid('applies must be a boolean');
 	if (!skipReasons.includes(value.reason as string))

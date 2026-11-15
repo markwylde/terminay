@@ -124,7 +124,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0100](./0100-a-notification-belongs-to-one-terminal-or-one-bot.md) | A notification belongs to one terminal or one bot | accepted, supersedes 0061 in part | 2026-11-06 |
 | [0101](./0101-the-home-overview-layout-is-a-server-setting.md) | The Home overview layout is a server setting | accepted | 2026-11-06 |
 | [0104](./0104-a-notification-is-acknowledged-only-by-what-the-user-does.md) | A notification is acknowledged only by what the user does | accepted | 2026-11-11 |
-| [0105](./0105-a-launcher-may-start-an-agent-with-a-user-confirmed-initial-prompt.md) | A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents | accepted, supersedes 0081 | 2026-11-11 |
+| [0105](./0105-a-launcher-may-start-an-agent-with-a-user-confirmed-initial-prompt.md) | A launcher may start an agent with a user-confirmed initial prompt, as an owner-approved exception to observing agents | accepted, supersedes 0081 (superseded by 0124) | 2026-11-11 |
 | [0106](./0106-forge-pull-requests-and-issues-come-from-pull-based-on-demand-forge-sources.md) | Forge pull requests and issues come from pull-based, on-demand forge sources; Terminay renders and joins them | accepted | 2026-11-11 |
 | [0108](./0108-every-server-host-composes-one-mcp-host-with-no-opt-outs.md) | Every server host composes one MCP host, and no host can opt out of approvals, app windows or workspace view | accepted | 2026-11-11 |
 | [0109](./0109-terminay-reports-execution-failures-as-facts-and-the-bot-judges-them.md) | Terminay reports execution failures as facts, retries only before task hand-over, and the bot judges what they mean | accepted, supersedes 0099 in part | 2026-11-11 |
@@ -141,3 +141,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0121](./0121-ci-readiness-is-measured-from-original-creation.md) | CI readiness is measured from original creation with complete coverage | accepted (superseded by 0123 in part) | 2026-11-14 |
 | [0122](./0122-ci-download-caches-can-live-in-daemon-owned-volumes.md) | CI download caches can live in daemon-owned volumes | accepted | 2026-11-14 |
 | [0123](./0123-ci-execution-budget-excludes-runner-queueing.md) | CI execution budget excludes runner queueing | accepted, supersedes 0121 in part | 2026-11-14 |
+| [0124](./0124-a-command-default-may-set-environment-on-the-integrated-shell.md) | A command default may set environment on the integrated shell, and Claude Code runs without agent view in Terminay terminals | accepted, supersedes 0105 | 2026-11-15 |

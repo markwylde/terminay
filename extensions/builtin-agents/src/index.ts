@@ -7,9 +7,13 @@ import type { CodexChatOptions } from './chat/codex.js';
 import { createCodexChatProvider } from './chat/codex.js';
 import type { LocatorOptions } from './chat/locate.js';
 import { createAgentLocator } from './chat/locate.js';
-import type { CodexCommandDefaultOptions } from './commandDefaults.js';
+import type {
+	ClaudeCommandDefaultOptions,
+	CodexCommandDefaultOptions,
+} from './commandDefaults.js';
 import {
 	COMMAND_DEFAULT_LOCAL_IDS,
+	createClaudeCommandDefault,
 	createCodexCommandDefault,
 } from './commandDefaults.js';
 import { createAgentLauncher, LAUNCHER_LOCAL_IDS } from './launchers.js';
@@ -26,6 +30,7 @@ export const CODEX_CHAT_PROVIDER_ID = `${EXTENSION_ID}/codex`;
 export const CLAUDE_CODE_LAUNCHER_ID = `${EXTENSION_ID}/${LAUNCHER_LOCAL_IDS.claude}`;
 export const CODEX_LAUNCHER_ID = `${EXTENSION_ID}/${LAUNCHER_LOCAL_IDS.codex}`;
 export const CODEX_COMMAND_DEFAULT_ID = `${EXTENSION_ID}/${COMMAND_DEFAULT_LOCAL_IDS.codex}`;
+export const CLAUDE_COMMAND_DEFAULT_ID = `${EXTENSION_ID}/${COMMAND_DEFAULT_LOCAL_IDS.claude}`;
 
 export type { ClaudeCodeChatOptions } from './chat/claudeCode.js';
 export {
@@ -41,13 +46,18 @@ export {
 export type { AgentLocator, LocatorOptions } from './chat/locate.js';
 export { createAgentLocator, OVERRIDE_VARIABLES } from './chat/locate.js';
 export type {
+	AgentViewProbe,
+	ClaudeCommandDefaultOptions,
 	CodexCommandDefaultOptions,
 	HelpProbe,
 } from './commandDefaults.js';
 export {
+	CLAUDE_DISABLE_AGENT_VIEW_ENVIRONMENT,
 	CODEX_NO_DAEMON_ARGS,
 	COMMAND_DEFAULT_LOCAL_IDS,
+	createClaudeCommandDefault,
 	createCodexCommandDefault,
+	readAgentViewRefusal,
 	readHelp,
 } from './commandDefaults.js';
 export { createAgentLauncher, LAUNCHER_LOCAL_IDS } from './launchers.js';
@@ -71,6 +81,7 @@ export type BuiltInAgentsOptions = {
 	claudeCode?: Partial<ClaudeCodeChatOptions>;
 	codex?: Partial<CodexChatOptions>;
 	codexCommandDefault?: CodexCommandDefaultOptions;
+	claudeCommandDefault?: ClaudeCommandDefaultOptions;
 };
 
 /** Builds the extension. The default export uses the real library providers and home directory. */
@@ -132,6 +143,14 @@ export function createBuiltInAgentsExtension(
 				context.terminals.registerCommandDefault(
 					CODEX_COMMAND_DEFAULT_ID,
 					createCodexCommandDefault(locator, options.codexCommandDefault),
+				),
+			);
+			// Claude Code runs without agent view's background daemon, so each
+			// conversation stays on its own terminal (ADR-0124).
+			context.subscriptions.add(
+				context.terminals.registerCommandDefault(
+					CLAUDE_COMMAND_DEFAULT_ID,
+					createClaudeCommandDefault(locator, options.claudeCommandDefault),
 				),
 			);
 			for (const target of createMcpInstallTargets(options.mcp)) {
