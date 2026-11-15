@@ -75,6 +75,9 @@ function useDismissed(key: string): boolean {
 	);
 }
 
+/** How many banners show each build, so a banner that moves is not "left". */
+const mountedBanners = new Map<string, number>();
+
 export function BuildBanner({
 	engine,
 	label,
@@ -126,9 +129,23 @@ export function BuildBanner({
 	useEffect(() => {
 		if (!visible && seen.current === key && key) dismissBuild(key);
 	}, [visible, key]);
+	// A banner that only moves (a compact page and a wide window's rail draw it
+	// in different places) has not been left: another one for the same build
+	// mounts in the same commit, and the notice stays.
+	useEffect(() => {
+		if (!key) return;
+		mountedBanners.set(key, (mountedBanners.get(key) ?? 0) + 1);
+		return () => {
+			mountedBanners.set(key, (mountedBanners.get(key) ?? 1) - 1);
+		};
+	}, [key]);
 	useEffect(
 		() => () => {
-			if (seen.current) dismissBuild(seen.current);
+			const left = seen.current;
+			if (!left) return;
+			window.setTimeout(() => {
+				if ((mountedBanners.get(left) ?? 0) === 0) dismissBuild(left);
+			}, 0);
 		},
 		[],
 	);
