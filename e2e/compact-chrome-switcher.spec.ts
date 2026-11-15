@@ -216,6 +216,10 @@ test.describe('compact chrome', () => {
 		await expect(mainWindow.locator('.compact-title__where')).toHaveText(
 			'Home',
 		);
+		// Home has no sidebar on a compact workspace, so the row offers no toggle.
+		await expect(
+			mainWindow.locator('[data-compact-sidebar-toggle="true"]'),
+		).toHaveCount(0);
 
 		const drawer = await openDrawer(mainWindow);
 		await railProject(mainWindow, project).click();

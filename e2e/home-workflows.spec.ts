@@ -364,33 +364,7 @@ async function showWorkflows(page: Page): Promise<void> {
 	await expect(section(page)).toBeVisible({ timeout: READY_TIMEOUT_MS });
 }
 
-/** On a phone, Home's navigation drawer may open over the section; dismiss it. */
-/** Overflow facts about the section, measured in the page. */
-function layoutFacts(page: Page) {
-	return section(page).evaluate((root) => {
-		const body = root.querySelector('.workflows-home__body') as HTMLElement;
-		const inner = [
-			...root.querySelectorAll<HTMLElement>(
-				'.workflows-home__column, .workflow-steps, .workflows-home__scroller, .workflows-home__rows, .workflows-home__row-scroller, .workflows-home__group-columns',
-			),
-		];
-		const columns = [...root.querySelectorAll<HTMLElement>('[data-workflows-home-column]')];
-		const bodyWidth = body.getBoundingClientRect().width;
-		return {
-			sideways: root.scrollWidth > root.clientWidth + 1,
-			innerScrolls: inner.filter(
-				(element) =>
-					element.scrollHeight > element.clientHeight + 1 || element.scrollWidth > element.clientWidth + 1,
-			).length,
-			// Each column spans the body less its padding, and they stack.
-			widths: columns.map((element) => Math.round(element.getBoundingClientRect().width)),
-			lefts: columns.map((element) => Math.round(element.getBoundingClientRect().left)),
-			bodyWidth: Math.round(bodyWidth),
-		};
-	});
-}
-
-test('On a phone, Home stacks workflows full width, puts its options in the Home options panel, and keeps the stored view', async ({
+test('On a phone, Workflows is a compact section page with tabs, a View options sheet, and a detail page, and keeps the stored view', async ({
 	mainWindow,
 	electronApp,
 	userDataDir,
@@ -419,6 +393,8 @@ test('On a phone, Home stacks workflows full width, puts its options in the Home
 	const panelB = terminalPanelForSession(mainWindow, b);
 	await mcp(panelB, 'create_workflow', { name: 'Short workflow', steps: [{ title: 'One' }, { title: 'Two' }] });
 	await mcp(panelB, 'rename_terminal', { terminal: b, name: 'short' });
+	// Changes made while Home is in front go through a long-running agent.
+	const agent = await agentIn(mainWindow, userDataDir, panelB);
 
 	// Wide: every option is shown directly; there is no View options control.
 	await showWorkflows(mainWindow);
@@ -454,123 +430,160 @@ test('On a phone, Home stacks workflows full width, puts its options in the Home
 	await expect(section(mainWindow)).toHaveAttribute('data-workflows-home-compact', 'false');
 	await sectionWidth(undefined);
 
-	// Phone width: the whole toolbar is in the Home options panel, every option shown directly.
+	// Phone width: a compact section page — header, status tabs, rows.
 	await setWindowSize(mainWindow, electronApp, { x: desktop.x, y: desktop.y, ...PHONE });
-	await expect(section(mainWindow)).toHaveAttribute('data-workflows-home-compact', 'true', {
-		timeout: READY_TIMEOUT_MS,
-	});
+	const phone = section(mainWindow).locator('[data-compact-section="workflows"]');
+	await expect(phone).toBeVisible({ timeout: READY_TIMEOUT_MS });
 	await expect(toggle).toHaveCount(0);
-	await expect(section(mainWindow).getByRole('searchbox', { name: 'Filter workflows' })).toHaveCount(0);
-	const optionsToggle = mainWindow.locator('[data-compact-home-options-toggle="true"]');
-	// Grouping, layout and notes are not filters.
-	await expect(optionsToggle).toHaveAttribute('data-filtered', 'false');
-	const panel = mainWindow.locator('[data-home-options-panel="true"]');
-	const openPanel = async () => {
-		await optionsToggle.click();
-		await expect(panel).toBeVisible();
-		await panel.evaluate((element) =>
-			Promise.all(element.getAnimations().map((animation) => animation.finished)),
-		);
-	};
-	const closePanel = async () => {
-		await panel.getByRole('button', { name: 'Close options' }).click();
-		await expect(panel).toHaveCount(0);
-	};
+	await expect(phone.getByRole('searchbox')).toHaveCount(0);
+	await expect(phone.getByRole('tablist', { name: 'Workflows status' })).toBeVisible();
+	const tab = (id: string) => phone.locator(`[data-compact-tab="${id}"]`);
+	const count = (id: string) => tab(id).locator('[data-compact-tab-count]');
+	const rows = phone.locator('[data-workflows-home-row]');
+	await expect(rows).toHaveCount(2);
+	await expect(count('all')).toHaveText('2');
+	await expect(count('alert')).toHaveText('0');
+	// The stored grouping (Project) groups the rows under a sticky header.
+	await expect(phone.locator('[data-compact-group]')).toHaveCount(1);
+	// Grouping is not a filter: no marker, no token row.
+	const viewOptions = phone.locator('[data-compact-view-options]');
+	await expect(viewOptions).toHaveAttribute('data-applied', 'false');
+	await expect(viewOptions).toHaveAccessibleName('View options');
+	await expect(phone.locator('[data-compact-applied]')).toHaveCount(0);
+	expect(await phone.evaluate((root) => root.scrollWidth <= root.clientWidth)).toBe(true);
 
-	// Grouped, the groups and their columns stack; nothing scrolls but the section.
-	await expect(section(mainWindow).locator('[data-workflows-home-group]')).toHaveCount(1);
-	let facts = await layoutFacts(mainWindow);
-	expect(facts.sideways).toBe(false);
-	expect(facts.innerScrolls).toBe(0);
-	expect(new Set(facts.lefts).size).toBe(1);
-	expect(facts.widths[0]).toBeGreaterThan(facts.bodyWidth - 60);
-	await shot(mainWindow, testInfo, '11-phone-grouped');
+	// A step that needs the user: Needs you counts it, marked, and the row says what.
+	await agent('update_workflow_step', {
+		terminal: a,
+		step_id: longIds[3],
+		status: 'needs_input',
+		note: 'Pick a database',
+	});
+	await expect(count('alert')).toHaveText('1', { timeout: READY_TIMEOUT_MS });
+	await expect(count('alert')).toHaveAttribute('data-marked', 'true');
+	const longRow = phone.locator('[data-workflows-home-column="long"]');
+	await expect(longRow.locator('.crow__detail--attention')).toContainText('Pick a database');
+	await expect(longRow.locator('.crow__trailing')).toHaveText('3/14');
+	await shot(mainWindow, testInfo, '11-phone-list');
+	await tab('alert').click();
+	await expect(tab('alert')).toHaveAttribute('aria-selected', 'true');
+	await expect(rows).toHaveCount(1);
+	await tab('all').click();
 
-	// The long workflow's last step is reached by scrolling the section.
-	const last = column(mainWindow, 'long').locator('.workflow-step').last();
-	await last.scrollIntoViewIfNeeded();
-	await expect(last).toBeInViewport();
-	expect(await section(mainWindow).evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+	// The sheet: Sort, Group, Finished; no Notes, Layout, or Narrow columns.
+	await viewOptions.click();
+	const sheet = mainWindow.locator('[data-compact-sheet="true"]');
+	await expect(sheet).toBeVisible();
+	await expect(sheet.getByRole('combobox', { name: 'Sort' })).toBeVisible();
+	await expect(sheet.locator('[data-compact-sheet-option="Group:project"]')).toHaveAttribute('aria-pressed', 'true');
+	await expect(sheet.getByRole('switch', { name: 'Finished workflows' })).toBeChecked();
+	await expect(sheet.getByText('Notes', { exact: true })).toHaveCount(0);
+	await expect(sheet.getByText('Narrow columns')).toHaveCount(0);
+	await expect(sheet.locator('[data-compact-sheet-option^="Layout:"]')).toHaveCount(0);
+	await shot(mainWindow, testInfo, '12-phone-sheet');
+	const heights = await sheet.evaluate((root) =>
+		[...root.querySelectorAll<HTMLElement>('button, select, input[role="switch"]')]
+			.filter((element) => element.getClientRects().length > 0)
+			.map((element) => ({ what: element.outerHTML.slice(0, 80), height: element.getBoundingClientRect().height })),
+	);
+	for (const { what, height } of heights) expect(height, what).toBeGreaterThanOrEqual(26);
+	// Escape closes only the sheet, and focus goes back to View options.
+	await mainWindow.keyboard.press('Escape');
+	await expect(sheet).toHaveCount(0);
+	await expect(viewOptions).toBeFocused();
+	// Hiding finished workflows is a filter: marker, token, and its own reset.
+	await viewOptions.click();
+	await sheet.getByRole('switch', { name: 'Finished workflows' }).uncheck();
+	await sheet.locator('[data-compact-sheet-done]').click();
+	await expect(viewOptions).toHaveAttribute('data-applied', 'true');
+	await expect(viewOptions).toHaveAccessibleName('View options, filters applied');
+	await phone.locator('[data-compact-applied-token="finished"]').click();
+	await expect(viewOptions).toHaveAttribute('data-applied', 'false');
+	// Reduced motion: the sheet appears without an entrance animation.
+	await mainWindow.emulateMedia({ reducedMotion: 'reduce' });
+	await viewOptions.click();
+	expect(await sheet.evaluate((element) => element.getAnimations().length)).toBe(0);
+	// One compact drawer at a time: the Command Bar closes the sheet.
+	await openMacroLauncher(mainWindow);
+	await expect(sheet).toHaveCount(0);
+	await mainWindow.keyboard.press('Escape');
+	await expect(mainWindow.getByRole('dialog', { name: 'Command bar' })).toHaveCount(0);
+	// ...and so does the switcher.
+	await viewOptions.click();
+	await expect(sheet).toBeVisible();
+	await mainWindow.locator('[data-compact-breadcrumb="true"]').click();
+	await expect(sheet).toHaveCount(0);
+	await mainWindow.keyboard.press('Escape');
+	await mainWindow.emulateMedia({ reducedMotion: 'no-preference' });
 
-	// Reload while narrow: the stored view is still Project / Rows / Narrow columns.
+	// Search replaces the header; counts follow it; Cancel restores it.
+	await phone.locator('[data-compact-search-open]').click();
+	const field = phone.locator('[data-compact-search-field]');
+	await expect(field).toBeFocused();
+	expect(await field.evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+	await field.fill('short');
+	await expect(count('all')).toHaveText('1');
+	await expect(count('alert')).toHaveText('0');
+	await field.fill('zzz');
+	await expect(phone.locator('[data-compact-empty]')).toContainText('No workflow matches “zzz”');
+	await phone.getByRole('button', { name: 'Clear search' }).click();
+	await expect(rows).toHaveCount(2);
+	// Clearing keeps the field open, for another try.
+	await expect(field).toHaveValue('');
+	await field.fill('long');
+	await phone.locator('[data-compact-search-cancel]').click();
+	await expect(field).toHaveCount(0);
+	await expect(phone.locator('[data-compact-search-open]')).toBeFocused();
+	await expect(rows).toHaveCount(2);
+
+	// A row opens its detail page: brief, every step, the one that needs you.
+	await longRow.locator('.crow__main').click();
+	const detail = section(mainWindow).locator('[data-workflows-home-detail]');
+	await expect(detail).toBeVisible();
+	await expect(detail.locator('.cdetail__step')).toHaveCount(14);
+	const waiting = detail.locator('.cdetail__step[data-status="needs_input"]');
+	await expect(waiting).toHaveClass(/cdetail__step--attention/);
+	await expect(waiting).toContainText('Pick a database');
+	await expect(waiting.getByRole('button', { name: 'Open terminal' })).toBeVisible();
+	await expect(detail.getByText('3 of 14 done', { exact: false })).toBeVisible();
+	await shot(mainWindow, testInfo, '13-phone-detail');
+	// It updates live.
+	await agent('update_workflow_step', { terminal: a, step_id: longIds[3], status: 'done' });
+	await expect(detail.locator('.cdetail__step[data-status="needs_input"]')).toHaveCount(0, { timeout: READY_TIMEOUT_MS });
+	// Escape goes back, to the same row.
+	await mainWindow.keyboard.press('Escape');
+	await expect(detail).toHaveCount(0);
+	await expect(longRow.locator('.crow__main')).toBeFocused();
+
+	// Reload while compact: the stored view is still Project / Rows / Narrow columns.
 	await mainWindow.reload({ waitUntil: 'domcontentloaded' });
 	await showWorkflows(mainWindow);
-	await expect(section(mainWindow)).toHaveAttribute('data-workflows-home-compact', 'true', {
-		timeout: READY_TIMEOUT_MS,
-	});
+	await expect(phone).toBeVisible({ timeout: READY_TIMEOUT_MS });
+	await expect(phone.locator('[data-compact-group]')).toHaveCount(1);
 
-	// The panel shows every option directly, and every control is touch-sized.
-	await openPanel();
-	await expect(panel.locator('[data-workflows-home-options-toggle]')).toHaveCount(0);
-	await expect(panel.getByRole('searchbox', { name: 'Filter workflows' })).toBeVisible();
-	await expect(panel.locator('[data-workflows-home-status="done"]')).toBeVisible();
-	await expect(panel.locator('[data-workflows-home-projects]')).toBeVisible();
-	await expect(panel.locator('[data-workflows-home-option="group:project"]')).toHaveAttribute('aria-pressed', 'true');
-	await expect(panel.getByRole('combobox').first()).toBeVisible();
-	await expect(panel.locator('[data-workflows-home-option="notes:full"]')).toBeVisible();
-	await expect(panel.getByLabel('Show finished')).toBeVisible();
-	await expect(panel.locator('[data-workflows-home-option^="layout:"]')).toHaveCount(0);
-	await expect(panel.getByLabel('Narrow columns')).toHaveCount(0);
-	await shot(mainWindow, testInfo, '12-phone-options');
-	const heights = await panel.evaluate((root) =>
-		[...root.querySelectorAll<HTMLElement>('[data-home-options-controls] input[type="search"], [data-home-options-controls] select, [data-home-options-controls] button')]
-			.filter((element) => element.getClientRects().length > 0)
-			.map((element) => ({
-				what: element.outerHTML.slice(0, 80),
-				height: element.getBoundingClientRect().height,
-			})),
-	);
-	expect(heights.length).toBeGreaterThan(5);
-	for (const { what, height } of heights) expect(height, what).toBeGreaterThanOrEqual(36);
-
-	// A short screen: Reset view is reached by scrolling the panel.
-	await setWindowSize(mainWindow, electronApp, { x: desktop.x, y: desktop.y, width: PHONE.width, height: 420 });
-	const reset = panel.getByRole('button', { name: 'Reset view' });
-	await reset.scrollIntoViewIfNeeded();
-	await expect(reset).toBeInViewport();
-	await shot(mainWindow, testInfo, '14-phone-short');
-
-	// Reset view on the phone: ungrouped, two stacked full-width columns.
-	await reset.click();
-	await closePanel();
-	await setWindowSize(mainWindow, electronApp, { x: desktop.x, y: desktop.y, ...PHONE });
-	await expect(section(mainWindow).locator('[data-workflows-home-layout="flat"]')).toBeVisible();
-	await section(mainWindow).evaluate((element) => element.scrollTo(0, 0));
-	facts = await layoutFacts(mainWindow);
-	expect(facts.sideways).toBe(false);
-	expect(facts.innerScrolls).toBe(0);
-	expect(facts.widths).toHaveLength(2);
-	expect(new Set(facts.lefts).size).toBe(1);
-	expect(facts.widths[0]).toBeGreaterThan(facts.bodyWidth - 40);
-	await shot(mainWindow, testInfo, '13-phone-default');
-
-	// Back to a phone-remembered Project view, then wide again: all kept.
-	await openPanel();
-	await panel.locator('[data-workflows-home-option="group:project"]').click();
-	await closePanel();
-	// Grouped Side by side stacks on a phone too.
-	await expect(section(mainWindow).locator('[data-workflows-home-layout="side"]')).toBeVisible();
-	facts = await layoutFacts(mainWindow);
-	expect(facts.sideways).toBe(false);
-	expect(facts.innerScrolls).toBe(0);
-	expect(new Set(facts.lefts).size).toBe(1);
+	// Two tones chosen on a wide window are one token on a phone, and survive.
 	await setWindowSize(mainWindow, electronApp, desktop);
 	await expect(section(mainWindow)).toHaveAttribute('data-workflows-home-compact', 'false', {
 		timeout: READY_TIMEOUT_MS,
 	});
-	await expect(toggle).toHaveCount(0);
+	await section(mainWindow).locator('[data-workflows-home-status="alert"]').click();
+	await section(mainWindow).locator('[data-workflows-home-status="running"]').click();
+	await setWindowSize(mainWindow, electronApp, { x: desktop.x, y: desktop.y, ...PHONE });
+	await expect(phone).toBeVisible({ timeout: READY_TIMEOUT_MS });
+	await expect(tab('all')).toHaveAttribute('aria-selected', 'true');
+	await expect(phone.locator('[data-compact-applied-token="statuses"]')).toHaveText('Needs you, Running');
+	await expect(rows).toHaveCount(0);
+	// A search typed on the phone is the wide filter's text.
+	await phone.locator('[data-compact-search-open]').click();
+	await field.fill('short');
+	await setWindowSize(mainWindow, electronApp, desktop);
+	await expect(section(mainWindow)).toHaveAttribute('data-workflows-home-compact', 'false', {
+		timeout: READY_TIMEOUT_MS,
+	});
+	await expect(section(mainWindow).getByRole('searchbox', { name: 'Filter workflows' })).toHaveValue('short');
+	await expect(section(mainWindow).locator('[data-workflows-home-status="alert"]')).toHaveAttribute('aria-pressed', 'true');
+	await expect(section(mainWindow).locator('[data-workflows-home-status="running"]')).toHaveAttribute('aria-pressed', 'true');
 	await expect(section(mainWindow).locator('[data-workflows-home-option="group:project"]')).toHaveAttribute('aria-pressed', 'true');
-	await section(mainWindow).locator('[data-workflows-home-option="layout:rows"]').click();
-	await section(mainWindow).getByLabel('Narrow columns').check();
-	await setWindowSize(mainWindow, electronApp, { x: desktop.x, y: desktop.y, ...PHONE });
-	await expect(section(mainWindow)).toHaveAttribute('data-workflows-home-compact', 'true', {
-		timeout: READY_TIMEOUT_MS,
-	});
-	await setWindowSize(mainWindow, electronApp, desktop);
-	await expect(section(mainWindow)).toHaveAttribute('data-workflows-home-compact', 'false', {
-		timeout: READY_TIMEOUT_MS,
-	});
 	await expect(section(mainWindow).locator('[data-workflows-home-option="layout:rows"]')).toHaveAttribute('aria-pressed', 'true');
 	await expect(section(mainWindow).getByLabel('Narrow columns')).toBeChecked();
-	await expect(section(mainWindow).locator('[data-workflows-home-layout="rows"]')).toBeVisible();
 });
