@@ -62,3 +62,34 @@
 		animation: none;
 	}
 }
+
+/* A sheet rises from the bottom edge: full width, the top of the page still
+   visible above it. */
+.compact-edge-drawer--bottom {
+	top: auto;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	max-height: 80%;
+	border-top: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 18px 18px 0 0;
+	box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.45);
+	animation-name: compact-edge-in-bottom;
+	animation-duration: 200ms;
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@keyframes compact-edge-in-bottom {
+	from {
+		transform: translateY(100%);
+	}
+	to {
+		transform: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.compact-edge-drawer--bottom {
+		animation: none;
+	}
+}

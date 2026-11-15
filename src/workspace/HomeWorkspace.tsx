@@ -78,7 +78,10 @@ import {
 	recallHomeLayout,
 	rememberHomeLayout,
 } from './localViewState.ts';
-import { HomeOptionsTabContext } from './HomeOptionsPanel';
+import {
+	CompactDrawerEpochContext,
+	CompactHomeContext,
+} from './compact/CompactHomeContext';
 
 type HomeTabParams = Readonly<{
 	descriptor: HomeTabDescriptor;
@@ -197,13 +200,6 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 		[forceClose, host.setTitle, id, isCompact, onScreen, openBot],
 	);
 
-	// The options panel shows the controls of the tab in front, and only
-	// while Home itself is in front.
-	const optionsTab = useMemo(
-		() => ({ tabId: id, isFront: onScreen }),
-		[id, onScreen],
-	);
-
 	let content: ReactNode;
 	switch (descriptor.kind) {
 		case 'section':
@@ -307,9 +303,7 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 				? { 'data-terminay-home-section': descriptor.section }
 				: {})}
 		>
-			<HomeOptionsTabContext.Provider value={optionsTab}>
-				{content}
-			</HomeOptionsTabContext.Provider>
+			{content}
 		</div>
 	);
 }
@@ -448,6 +442,8 @@ export type HomeWorkspaceProps = Readonly<{
 	isActive: boolean;
 	/** No tab strip is drawn at this width. */
 	isCompact: boolean;
+	/** Raised whenever another compact drawer opens; section sheets close. */
+	compactDrawerEpoch?: number;
 	isSidebarVisible: boolean;
 	onDismissSidebar: () => void;
 	onOpenCommandBar: () => void;
@@ -490,6 +486,7 @@ export const HomeWorkspace = forwardRef<
 		commandBarShortcutLabel,
 		isActive,
 		isCompact,
+		compactDrawerEpoch = 0,
 		isSidebarVisible,
 		onDismissSidebar,
 		onOpenCommandBar,
@@ -901,6 +898,8 @@ export const HomeWorkspace = forwardRef<
 				: { onSectionChosenInDrawer })}
 		>
 			<HomeTabsContext.Provider value={context}>
+			<CompactHomeContext.Provider value={isCompact}>
+			<CompactDrawerEpochContext.Provider value={compactDrawerEpoch}>
 				{notice === undefined ? null : (
 					<div
 						className="home-notice"
@@ -969,6 +968,8 @@ export const HomeWorkspace = forwardRef<
 						</div>
 					</div>
 				)}
+			</CompactDrawerEpochContext.Provider>
+			</CompactHomeContext.Provider>
 			</HomeTabsContext.Provider>
 		</HomeView>
 	);

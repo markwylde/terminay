@@ -11,11 +11,12 @@ import './CompactEdgeDrawer.css';
  * A compact edge drawer (ADR-0125): a navigation surface that slides in from
  * one edge of a phone-width workspace and leaves a strip of the page beside
  * it. A press on that strip, or the dismiss key, closes the topmost layer.
- * The compact switcher (leading edge) and the Home options panel (trailing
- * edge) are both drawn through this one shell; neither is an in-page window.
+ * The compact switcher (leading edge) and every compact section page's View
+ * options sheet (bottom edge) are drawn through this one shell; neither is an
+ * in-page window.
  */
 export type CompactEdgeDrawerProps = Readonly<{
-	edge: 'leading' | 'trailing';
+	edge: 'leading' | 'trailing' | 'bottom';
 	/** The drawer's accessible name. */
 	label: string;
 	children: ReactNode;

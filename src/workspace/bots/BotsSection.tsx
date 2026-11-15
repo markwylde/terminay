@@ -9,8 +9,9 @@ import { BuildBanner } from './BotBuildProgress';
 
 import { MessageSquare, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { HomeSectionOptions, useHomeOptionsCompact } from '../HomeOptionsPanel';
+import { useCompactHome } from '../compact/CompactHomeContext';
 import { BotAvatar } from './BotAvatar';
+import { BotsCompactPage } from './BotsCompactPage';
 import { subscribeNewBot } from './botFocus';
 import {
 	BOT_ACTIVITY_LABELS,
@@ -67,15 +68,11 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 	const primary = servers.values().next().value as ServerBots | undefined;
 	const engine = useBotEngine(primary);
 	const loading = [...servers.values()].some((s) => s.status === 'loading');
-	// On a compact workspace the filters and the engine summary are in the
-	// Home options panel, and the page is one column.
-	const compact = useHomeOptionsCompact();
+	// A phone draws the compact section page. The build page's open state
+	// lives here, so a build followed on one survives the breakpoint.
+	const compact = useCompactHome();
 	const [buildOpen, setBuildOpen] = useState(false);
-	const filtering = filter !== 'all' || search !== '';
-	const clearFilters = () => {
-		setFilter('all');
-		setSearch('');
-	};
+	const engineLabel = servers.size > 1 ? primary?.label : undefined;
 	const errors = [...servers.values()].filter((s) => s.status === 'error');
 
 	if (servers.size === 0)
@@ -91,141 +88,130 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 			</div>
 		);
 
-	const filterInput = (
-		<label className="bots-filter-input">
-			<Search size={14} aria-hidden="true" />
-			<span className="bots-sr">Filter bots</span>
-			<input
-				value={search}
-				placeholder="Filter bots…"
-				onChange={(event) => setSearch(event.target.value)}
-				data-terminay-bots-search="true"
-			/>
-		</label>
-	);
-	const statusChips = (
-		<fieldset className="bots-dhead__chips" aria-label="Show bots">
-			{BOT_FILTERS.map((candidate) => (
-				<button
-					key={candidate}
-					type="button"
-					className={`bots-chip bots-chip--${candidate}${filter === candidate ? ' bots-chip--on' : ''}`}
-					aria-pressed={filter === candidate}
-					onClick={() => setFilter(candidate)}
-					data-terminay-bots-filter={candidate}
-				>
-					<b>{counts[candidate]}</b> {BOT_FILTER_LABELS[candidate]}
-				</button>
-			))}
-			{filtering ? (
-				<button type="button" className="bots-link" onClick={clearFilters}>
-					Clear filter
-				</button>
-			) : null}
-		</fieldset>
-	);
-	const newBotButton = (
-		<button
-			type="button"
-			className="bots-btn bots-btn--primary"
-			onClick={() => setCreating(true)}
-			data-terminay-bots-new="true"
-		>
-			<Plus size={14} aria-hidden="true" /> New bot
-		</button>
-	);
-	const description =
-		'Long-lived teammates, each in its own container. Message them, schedule them, give them triggers.';
-	// In the options panel the heading stays: `compact` on EngineSummary is
-	// the bot tab's terse form, not this one.
-	const engineLabel = servers.size > 1 ? primary?.label : undefined;
-	// The build banner is how a build in progress is followed, so on a compact
-	// workspace it stays on the page rather than in the options panel. The
-	// progress page's open state lives here so it survives that move.
-	const engineSummary = (
-		<EngineSummary
-			engine={engine}
-			label={engineLabel}
-			visible={host.isVisible}
-			showBanner={!compact}
-			buildOpen={buildOpen}
-			onBuildOpenChange={setBuildOpen}
-		/>
-	);
-	const compactBuildBanner = compact ? (
-		<BuildBanner
-			engine={engine}
-			label={engineLabel}
-			visible={host.isVisible}
-			open={buildOpen}
-			onOpenChange={setBuildOpen}
-		/>
-	) : null;
-	const needsYouList = (
-		<NeedsYouList
-			entries={waiting}
-			now={now}
-			onOpen={(item) =>
-				host.openBot({
-					serverId: item.serverId,
-					botId: item.botId,
-					mode: 'chat',
-					sessionId: item.sessionId,
-				})
-			}
-		/>
-	);
+	if (compact)
+		return (
+			<div className="bots-ui bots-section bots-section--compact" data-terminay-bots="dashboard">
+				<BotsCompactPage
+					servers={servers}
+					entries={entries}
+					visible={visible}
+					counts={counts}
+					waiting={waiting}
+					filter={filter}
+					onFilter={setFilter}
+					search={search}
+					onSearch={setSearch}
+					engine={engine}
+					engineLabel={engineLabel}
+					isVisible={host.isVisible}
+					buildOpen={buildOpen}
+					onBuildOpenChange={setBuildOpen}
+					now={now}
+					loading={loading}
+					onCreate={() => setCreating(true)}
+					onOpenBot={host.openBot}
+					notes={
+						<div className="cpage__notes">
+							{availabilityError ? (
+								<div role="alert" className="bots-note bots-note--error">
+									{availabilityError}
+								</div>
+							) : null}
+							{[...servers.values()]
+								.filter((s) => s.warning)
+								.map((s) => (
+									<p role="status" className="bots-note bots-note--warn" key={s.serverId}>
+										{s.warning}
+									</p>
+								))}
+							{errors.map((server) => (
+								<div className="bots-note bots-note--warn" key={server.serverId}>
+									{server.label}: {server.error}{' '}
+									<button type="button" className="bots-link" onClick={server.refresh}>
+										Try again
+									</button>
+								</div>
+							))}
+						</div>
+					}
+				/>
+				{creating ? (
+					<NewBotDialog
+						servers={servers}
+						onClose={() => setCreating(false)}
+						onCreated={(serverId, botId) => {
+							setCreating(false);
+							host.openBot({ serverId, botId, mode: 'configure' });
+						}}
+					/>
+				) : null}
+			</div>
+		);
 
 	return (
-		<div
-			className={`bots-ui bots-section${compact ? ' bots-section--compact' : ''}`}
-			data-terminay-bots="dashboard"
-		>
+		<div className="bots-ui bots-section" data-terminay-bots="dashboard">
 			{availabilityError ? (
 				<div role="alert" className="bots-note bots-note--error">
 					{availabilityError}
 				</div>
 			) : null}
-			{compact ? (
-				<header className="bots-dhead">
-					<div className="bots-dhead__row">
-						<h2 className="bots-dhead__name">Bots</h2>
-						{newBotButton}
+			<header className="bots-dhead">
+				<div className="bots-dhead__row">
+					<div className="bots-dhead__title">
+						<h2>Bots</h2>
+						<p>
+							Long-lived teammates, each in its own container. Message them,
+							schedule them, give them triggers.
+						</p>
 					</div>
-					<p className="bots-dhead__desc">{description}</p>
-				</header>
-			) : (
-				<header className="bots-dhead">
-					<div className="bots-dhead__row">
-						<div className="bots-dhead__title">
-							<h2>Bots</h2>
-							<p>{description}</p>
-						</div>
-						<HomeSectionOptions title="Bots" active={filtering}>
-							{filterInput}
-						</HomeSectionOptions>
-						{newBotButton}
-					</div>
-					<HomeSectionOptions title="Bots" active={filtering}>
-						{statusChips}
-					</HomeSectionOptions>
-				</header>
-			)}
-			{compact ? (
-				<HomeSectionOptions title="Bots" active={filtering}>
-					<div
-						className="bots-ui bots-options"
-						data-terminay-bots-options="true"
+					<label className="bots-filter-input">
+						<Search size={14} aria-hidden="true" />
+						<span className="bots-sr">Filter bots</span>
+						<input
+							value={search}
+							placeholder="Filter bots…"
+							onChange={(event) => setSearch(event.target.value)}
+							data-terminay-bots-search="true"
+						/>
+					</label>
+					<button
+						type="button"
+						className="bots-btn bots-btn--primary"
+						onClick={() => setCreating(true)}
+						data-terminay-bots-new="true"
 					>
-						{filterInput}
-						{statusChips}
-						{engineSummary}
-					</div>
-				</HomeSectionOptions>
-			) : null}
+						<Plus size={14} aria-hidden="true" /> New bot
+					</button>
+				</div>
+				<fieldset className="bots-dhead__chips" aria-label="Show bots">
+					{BOT_FILTERS.map((candidate) => (
+						<button
+							key={candidate}
+							type="button"
+							className={`bots-chip bots-chip--${candidate}${filter === candidate ? ' bots-chip--on' : ''}`}
+							aria-pressed={filter === candidate}
+							onClick={() => setFilter(candidate)}
+							data-terminay-bots-filter={candidate}
+						>
+							<b>{counts[candidate]}</b> {BOT_FILTER_LABELS[candidate]}
+						</button>
+					))}
+					{filter !== 'all' || search !== '' ? (
+						<button
+							type="button"
+							className="bots-link"
+							onClick={() => {
+								setFilter('all');
+								setSearch('');
+							}}
+						>
+							Clear filter
+						</button>
+					) : null}
+				</fieldset>
+			</header>
 			<div className="bots-dbody">
 				<div className="bots-scroll bots-dmain">
-					{compactBuildBanner}
 					{[...servers.values()]
 						.filter((s) => s.warning)
 						.map((s) => (
@@ -302,31 +288,32 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 							</button>
 						</div>
 					) : (
-						<div
-							className="bots-empty"
-							data-home-no-match={loading ? undefined : 'true'}
-						>
+						<div className="bots-empty">
 							{loading ? 'Loading bots…' : 'No bots match this filter.'}
-							{compact && !loading && filtering ? (
-								<button
-									type="button"
-									className="bots-btn"
-									onClick={clearFilters}
-									data-home-clear-filters="true"
-								>
-									Clear filter
-								</button>
-							) : null}
 						</div>
 					)}
-					{compact ? needsYouList : null}
 				</div>
-				{compact ? null : (
-					<aside className="bots-rail bots-scroll" aria-label="Bots overview">
-						{engineSummary}
-						{needsYouList}
-					</aside>
-				)}
+				<aside className="bots-rail bots-scroll" aria-label="Bots overview">
+					<EngineSummary
+						engine={engine}
+						label={engineLabel}
+						visible={host.isVisible}
+						buildOpen={buildOpen}
+						onBuildOpenChange={setBuildOpen}
+					/>
+					<NeedsYouList
+						entries={waiting}
+						now={now}
+						onOpen={(item) =>
+							host.openBot({
+								serverId: item.serverId,
+								botId: item.botId,
+								mode: 'chat',
+								sessionId: item.sessionId,
+							})
+						}
+					/>
+				</aside>
 			</div>
 			{creating ? (
 				<NewBotDialog

@@ -998,14 +998,3 @@
 	display: flex;
 	justify-content: flex-end;
 }
-
-/* In the Home options panel the server selector takes a full row. */
-.home-options__controls .automations-server {
-	flex-direction: column;
-	align-items: stretch;
-	font-size: 12px;
-}
-
-.home-options__controls .automations-server__select {
-	max-width: none;
-}

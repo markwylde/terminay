@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { Film, RefreshCw, Search, Trash2 } from 'lucide-react'
 import type { TerminalRecordingListItem } from '../types/terminay'
-import { HomeSectionOptions, useHomeOptionsCompact } from '../workspace/HomeOptionsPanel'
 
 export type RecordingGroup = readonly [string, readonly TerminalRecordingListItem[]]
 
@@ -45,9 +44,6 @@ export function SharedRecordingsLibraryPane({
   /** `page` fills a Home tab, in the voice of the other Home pages; `sidebar` is a narrow list beside a replay. */
   layout?: 'sidebar' | 'page'
 }>) {
-  // On a compact workspace the page layout's search and server selector are in
-  // the Home options panel; outside a Home tab this is always false.
-  const optionsInPanel = useHomeOptionsCompact()
   if (layout === 'page') {
     const shown = groupedRecordings.reduce((total, [, items]) => total + items.length, 0)
     const count = recordings.length === 1 ? '1 recording' : `${recordings.length} recordings`
@@ -60,19 +56,17 @@ export function SharedRecordingsLibraryPane({
           </p>
         </header>
         <div className="recordings-page__toolbar">
-          <HomeSectionOptions title="Recordings" active={query.trim() !== ''}>
-            <label className="recordings-page__search">
-              <Search aria-hidden="true" size={13} />
-              <input
-                aria-label="Search recordings"
-                value={query}
-                onChange={(event) => onQueryChange(event.target.value)}
-                placeholder="Search recordings"
-                type="search"
-              />
-            </label>
-            {headerAccessory}
-          </HomeSectionOptions>
+          <label className="recordings-page__search">
+            <Search aria-hidden="true" size={13} />
+            <input
+              aria-label="Search recordings"
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Search recordings"
+              type="search"
+            />
+          </label>
+          {headerAccessory}
           <span className="recordings-page__spacer" />
           {updatedLabel === undefined ? null : (
             <span className="recordings-page__updated" aria-live="polite">{updatedLabel}</span>
@@ -104,21 +98,7 @@ export function SharedRecordingsLibraryPane({
             </div>
           ) : null}
           {!isLoading && recordings.length > 0 && groupedRecordings.length === 0 ? (
-            optionsInPanel ? (
-              <div className="recordings-page__no-match" data-home-no-match="true">
-                <p className="recordings-page__state">No recordings match “{query}”.</p>
-                <button
-                  type="button"
-                  className="recordings-page__clear"
-                  onClick={() => onQueryChange('')}
-                  data-home-clear-filters="true"
-                >
-                  Clear search
-                </button>
-              </div>
-            ) : (
-              <p className="recordings-page__state">No recordings match “{query}”.</p>
-            )
+            <p className="recordings-page__state">No recordings match “{query}”.</p>
           ) : null}
           {groupedRecordings.map(([date, items]) => (
             <section key={date} className="recordings-page__group" aria-label={formatGroupDate(date)}>

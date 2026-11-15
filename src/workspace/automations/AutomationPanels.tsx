@@ -44,7 +44,6 @@ import {
 	isReservedWorkspaceProject,
 	type ServerWorkspaceSnapshot,
 } from '../../shared/serverWorkspaceReconciliation';
-import { HomeSectionOptions } from '../HomeOptionsPanel';
 import { AutomationEditor } from './AutomationEditor';
 import { AutomationTerminalView } from './AutomationTerminalView';
 import { ExitedAutomationTerminalView } from './ExitedAutomationTerminalView';
@@ -691,26 +690,22 @@ export function AutomationsListPanel({ data: shared, host }: PanelProps) {
 	const listSubtitle =
 		'Commands, Macros, and text that run on a schedule or when something happens.';
 
-	// The server selector picks a source; it filters nothing, so it never
-	// marks the options panel as filtering.
 	const serverSelector = selection.showsSelector ? (
-		<HomeSectionOptions title="Automations">
-			<label className="automations-server">
-				<span className="automations-server__label">Server</span>
-				<select
-					className="automation-editor__input automations-server__select"
-					value={serverId ?? ''}
-					onChange={(event) => setRequestedServer(event.target.value)}
-					data-terminay-automations-server-selector="true"
-				>
-					{selection.choices.map((choice) => (
-						<option key={choice.serverId} value={choice.serverId}>
-							{choice.label}
-						</option>
-					))}
-				</select>
-			</label>
-		</HomeSectionOptions>
+		<label className="automations-server">
+			<span className="automations-server__label">Server</span>
+			<select
+				className="automation-editor__input automations-server__select"
+				value={serverId ?? ''}
+				onChange={(event) => setRequestedServer(event.target.value)}
+				data-terminay-automations-server-selector="true"
+			>
+				{selection.choices.map((choice) => (
+					<option key={choice.serverId} value={choice.serverId}>
+						{choice.label}
+					</option>
+				))}
+			</select>
+		</label>
 	) : null;
 
 	if (selection.selected === undefined || serverId === undefined)

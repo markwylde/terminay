@@ -5,8 +5,7 @@
 .forge-tab,
 .forge-git-tab,
 .forge-detail,
-.forge-list,
-.forge-options {
+.forge-list {
 	--forge-line: rgb(255 255 255 / 0.08);
 	--forge-line-strong: rgb(255 255 255 / 0.14);
 	--forge-muted: rgba(220, 226, 240, 0.6);
@@ -808,52 +807,4 @@
 .forge-settings__add {
 	display: grid;
 	gap: 8px;
-}
-
-/* The scope, state, group, and repository filter in the Home options panel
-   (compact workspace): one control per row, each tall enough to touch. */
-.forge-options {
-	display: flex;
-	flex-direction: column;
-	align-items: stretch;
-	gap: 14px;
-	font-size: 14px;
-	color: #dce2f0;
-}
-
-.forge-options .forge-scope {
-	height: 36px;
-	padding: 0 12px;
-	font-size: 13px;
-}
-
-.forge-options .forge-field {
-	display: flex;
-	flex-direction: column;
-	align-items: stretch;
-	gap: 6px;
-}
-
-.forge-options .forge-seg {
-	display: flex;
-	border-radius: 8px;
-}
-
-.forge-options .forge-seg button {
-	flex: 1 1 0;
-	height: 36px;
-	font-size: 13px;
-}
-
-.forge-options .forge-filter {
-	justify-content: space-between;
-	padding: 4px 4px 4px 12px;
-	border: 1px solid var(--forge-line-strong);
-	border-radius: 8px;
-	font-size: 13px;
-}
-
-.forge-options .forge-filter .forge-icon-btn {
-	width: 36px;
-	height: 36px;
 }

@@ -291,11 +291,6 @@ import {
 	type CompactHomeSectionItem,
 	CompactSwitcher,
 } from './workspace/CompactSwitcher';
-import {
-	HomeOptionsHostProvider,
-	HomeOptionsPanel,
-	useHomeOptionsHost,
-} from './workspace/HomeOptionsPanel';
 import { serverRows } from './workspace/ConnectionsControl';
 import type {
 	CompactSwitcherFolderGroup,
@@ -7550,40 +7545,10 @@ function App({
 	useEffect(() => {
 		if (isRemoteMenuOpen || isActivityMenuOpen) setIsCompactSwitcherOpen(false);
 	}, [isActivityMenuOpen, isRemoteMenuOpen]);
-	// The Home options panel (ADR-0125): on a compact workspace, the controls
-	// of the Home tab in front live in a drawer from the trailing edge, opened
-	// by the row's trailing toggle in place of a Home sidebar.
-	const homeOptionsHost = useHomeOptionsHost(isCompactChrome);
-	const homeOptions = isHomeSelected ? homeOptionsHost.registration : null;
-	const [isHomeOptionsOpen, setIsHomeOptionsOpen] = useState(false);
-	const homeOptionsToggleRef = useRef<HTMLButtonElement | null>(null);
-	const closeHomeOptions = useCallback(() => {
-		setIsHomeOptionsOpen(false);
-		// Back to the toggle; when the tab in front has no options the toggle
-		// is gone, and the title block is the control that says where we are.
-		window.requestAnimationFrame(() => {
-			const toggle = homeOptionsToggleRef.current;
-			if (toggle?.isConnected) toggle.focus();
-			else compactBreadcrumbRef.current?.focus();
-		});
-	}, []);
-	const toggleHomeOptions = useCallback(() => {
-		if (isHomeOptionsOpen) closeHomeOptions();
-		else if (homeOptions !== null) setIsHomeOptionsOpen(true);
-	}, [closeHomeOptions, homeOptions, isHomeOptionsOpen]);
-	// It belongs to the tab it was opened for: another tab in front, or Home
-	// left, closes it.
-	const homeOptionsTabId = homeOptions?.tabId;
-	const homeOptionsOpenRef = useRef(isHomeOptionsOpen);
-	homeOptionsOpenRef.current = isHomeOptionsOpen;
-	useEffect(() => {
-		if (homeOptionsOpenRef.current) closeHomeOptions();
-	}, [closeHomeOptions, homeOptionsTabId, isHomeSelected]);
-	// A wider window has no options panel: the controls are back on the page.
-	useEffect(() => {
-		if (!isCompactChrome) setIsHomeOptionsOpen(false);
-	}, [isCompactChrome]);
-	// Never two drawers, nor a drawer under the Command Bar or a header menu.
+	// One compact drawer at a time (ADR-0125): a Home section page's View
+	// options sheet closes whenever the switcher, the Command Bar, or a header
+	// menu opens. Each opening raises the epoch the pages watch.
+	const [compactDrawerEpoch, setCompactDrawerEpoch] = useState(0);
 	useEffect(() => {
 		if (
 			isCompactSwitcherOpen ||
@@ -7591,7 +7556,7 @@ function App({
 			isActivityMenuOpen ||
 			isRemoteMenuOpen
 		)
-			setIsHomeOptionsOpen(false);
+			setCompactDrawerEpoch((epoch) => epoch + 1);
 	}, [
 		isActivityMenuOpen,
 		isCompactSwitcherOpen,
@@ -8469,10 +8434,8 @@ function App({
 		// On Home the toggle is Home's own; the project kept as command target
 		// behind Home keeps its sidebar exactly as it was.
 		if (isHomeSelected) {
-			// On a compact workspace Home has no sidebar: the toggle opens the
-			// options panel of the Home tab in front.
-			if (isCompactChrome) toggleHomeOptions();
-			else toggleHomeSidebar();
+			// A compact Home has no sidebar, so there is nothing to toggle.
+			if (!isCompactChrome) toggleHomeSidebar();
 			return;
 		}
 		const project = projectsRef.current.find(
@@ -8487,7 +8450,6 @@ function App({
 		isCompactChrome,
 		isHomeSelected,
 		projectsRef,
-		toggleHomeOptions,
 		toggleHomeSidebar,
 		updateProject,
 	]);
@@ -8692,8 +8654,7 @@ function App({
 			// The sidebar command, like the toggle, answers for Home's sidebar
 			// while Home is shown rather than for the project behind it.
 			if (command === 'toggle-file-explorer-sidebar' && isHomeSelected) {
-				if (isCompactChrome) toggleHomeOptions();
-				else toggleHomeSidebar();
+				if (!isCompactChrome) toggleHomeSidebar();
 				return Promise.resolve();
 			}
 			// With Home in front, or no project to draw it, the Command Bar is the
@@ -8754,7 +8715,6 @@ function App({
 			isCompactChrome,
 			isHomeSelected,
 			selectHome,
-			toggleHomeOptions,
 			toggleHomeSidebar,
 			toggleStatusBar,
 		],
@@ -10600,16 +10560,8 @@ function App({
 				group: 'Workspace',
 				icon: <Sidebar size={18} strokeWidth={2.1} />,
 				id: 'toggle-home-sidebar',
-				title: isCompactChrome
-					? isHomeOptionsOpen
-						? 'Hide options'
-						: 'Show options'
-					: isHomeSidebarVisible
-						? 'Hide sidebar'
-						: 'Show sidebar',
-				description: isCompactChrome
-					? 'Show or hide the options of the Home tab in front.'
-					: 'Show or hide the Home sidebar.',
+				title: isHomeSidebarVisible ? 'Hide sidebar' : 'Show sidebar',
+				description: 'Show or hide the Home sidebar.',
 				searchText: `toggle sidebar show hide home sections ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-file-explorer-sidebar')}`,
 				shortcutLabel: getCommandShortcutLabel(
 					settings.keyboardShortcuts,
@@ -10618,8 +10570,7 @@ function App({
 				),
 				onSelect: run(() => {
 					selectHome();
-					if (isCompactChrome) toggleHomeOptions();
-					else toggleHomeSidebar();
+					if (!isCompactChrome) toggleHomeSidebar();
 				}),
 			},
 			{
@@ -10677,7 +10628,6 @@ function App({
 		auxiliaryRouteController,
 		createServerProject,
 		isCompactChrome,
-		isHomeOptionsOpen,
 		isHomeSidebarVisible,
 		isMac,
 		isStatusBarVisible,
@@ -10685,7 +10635,6 @@ function App({
 		openHomeSection,
 		selectHome,
 		settings.keyboardShortcuts,
-		toggleHomeOptions,
 		toggleHomeSidebar,
 		toggleStatusBar,
 	]);
@@ -11213,19 +11162,9 @@ function App({
 								: { upgradeVersion: serverUpgrades.activeVersion }),
 						}}
 						isExplorerOpen={
-							isHomeSelected
-								? isHomeOptionsOpen
-								: activeProject?.isFileExplorerOpen === true
+							!isHomeSelected && activeProject?.isFileExplorerOpen === true
 						}
-						{...(isHomeSelected
-							? {
-									homeOptions: {
-										isOffered: homeOptions !== null,
-										isFiltered: homeOptions?.active === true,
-									},
-								}
-							: {})}
-						sidebarToggleRef={homeOptionsToggleRef}
+						showSidebarToggle={!isHomeSelected}
 						isNotificationsOpen={isActivityMenuOpen}
 						isSwitcherOpen={isCompactSwitcherOpen}
 						notificationCount={notificationCount}
@@ -11507,14 +11446,6 @@ function App({
 					onDismissAll={dismissAllNotifications}
 				/>
 			) : null}
-			{isCompactChrome ? (
-				<HomeOptionsPanel
-					isOpen={isHomeOptionsOpen && isHomeSelected}
-					onClose={closeHomeOptions}
-					registration={homeOptions}
-					target={homeOptionsHost.target}
-				/>
-			) : null}
 			{isCompactChrome && isCompactSwitcherOpen ? (
 				<CompactSwitcher
 					{...(compactApplicationMenu === undefined
@@ -11786,7 +11717,6 @@ function App({
 				) : null}
 				<McpApprovalsContext.Provider value={serverMcpApprovals}>
 					{hasShownHome ? (
-					<HomeOptionsHostProvider value={homeOptionsHost.value}>
 					<HomeWorkspace
 						ref={attachHome}
 						automations={automationsData}
@@ -11797,6 +11727,7 @@ function App({
 						)}
 						isActive={isHomeSelected}
 						isCompact={isCompactChrome}
+						compactDrawerEpoch={compactDrawerEpoch}
 						// A compact workspace has no Home sidebar; the switcher's
 						// Home panel opens sections, and the remembered choice is
 						// left for the next wide window.
@@ -11840,7 +11771,6 @@ function App({
 						}
 						sidebarWidth={homeSidebarWidth}
 					/>
-					</HomeOptionsHostProvider>
 					) : null}
 					<ViewCommandBar
 						commands={viewCommands}

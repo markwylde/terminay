@@ -4513,23 +4513,6 @@ button.macro-launcher-close:focus-visible {
   background: rgba(255, 255, 255, 0.07);
 }
 
-/* On Home the trailing toggle opens the options panel; a dot says a filter
-   in there is hiding something on the page. */
-.compact-chrome__icon {
-  position: relative;
-}
-
-.compact-chrome__filtered-dot {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent, #4db5ff);
-  box-shadow: 0 0 0 2px var(--compact-chrome-background, #12151b);
-}
-
 .compact-chrome__icon:focus-visible,
 .compact-breadcrumb:focus-visible {
   outline: 2px solid var(--accent, #4db5ff);

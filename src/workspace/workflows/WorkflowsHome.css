@@ -3,11 +3,6 @@
 
 .workflows-home {
 	overflow: hidden;
-}
-
-/* The toolbar may be drawn in the Home options panel, outside the section. */
-.workflows-home,
-.workflows-home__toolbar--panel {
 	--workflows-home-column: 290px;
 	--workflows-home-surface: rgb(0 0 0 / 0.22);
 	--workflows-home-line: rgb(255 255 255 / 0.08);
@@ -551,24 +546,20 @@
 	font-size: 16px;
 }
 
-:is(.workflows-home--compact, .workflows-home__toolbar--panel) :is(
-	.workflows-home__search,
-	.workflows-home__select,
-	.workflows-home__picker-button,
-	.workflows-home__chip,
-	.workflows-home__segmented button,
-	.workflows-home__toggle,
-	.workflows-home__link,
-	.workflows-home__menu-item
-) {
+.workflows-home--compact .workflows-home__search,
+.workflows-home--compact .workflows-home__select,
+.workflows-home--compact .workflows-home__picker-button,
+.workflows-home--compact .workflows-home__chip,
+.workflows-home--compact .workflows-home__segmented button,
+.workflows-home--compact .workflows-home__toggle,
+.workflows-home--compact .workflows-home__link,
+.workflows-home--compact .workflows-home__menu-item {
 	min-height: 36px;
 }
 
-:is(.workflows-home--compact, .workflows-home__toolbar--panel) :is(
-	.workflows-home__search,
-	.workflows-home__select,
-	.workflows-home__picker-button
-) {
+.workflows-home--compact .workflows-home__search,
+.workflows-home--compact .workflows-home__select,
+.workflows-home--compact .workflows-home__picker-button {
 	height: 36px;
 	border-radius: 8px;
 }
@@ -587,42 +578,39 @@
 	white-space: nowrap;
 }
 
-:is(.workflows-home--compact .workflows-home__options, .workflows-home__toolbar--panel)
-	.workflows-home__field {
+.workflows-home--compact .workflows-home__options .workflows-home__field {
 	display: flex;
 	flex-direction: column;
 	align-items: stretch;
 	gap: 6px;
 }
 
-:is(.workflows-home--compact .workflows-home__options, .workflows-home__toolbar--panel)
-	.workflows-home__label {
+.workflows-home--compact .workflows-home__options .workflows-home__label {
 	float: none;
 }
 
-:is(.workflows-home--compact, .workflows-home__toolbar--panel) .workflows-home__segmented {
+.workflows-home--compact .workflows-home__segmented {
 	display: flex;
 	border-radius: 8px;
 }
 
-:is(.workflows-home--compact, .workflows-home__toolbar--panel) .workflows-home__segmented button {
+.workflows-home--compact .workflows-home__segmented button {
 	flex: 1 1 0;
 }
 
-:is(.workflows-home--compact, .workflows-home__toolbar--panel) .workflows-home__picker-button {
+.workflows-home--compact .workflows-home__picker-button {
 	width: 100%;
 	justify-content: space-between;
 }
 
-:is(.workflows-home--compact, .workflows-home__toolbar--panel) .workflows-home__menu {
+.workflows-home--compact .workflows-home__menu {
 	position: static;
 	min-width: 0;
 	margin-top: 6px;
 	box-shadow: none;
 }
 
-:is(.workflows-home--compact .workflows-home__options, .workflows-home__toolbar--panel)
-	.workflows-home__link {
+.workflows-home--compact .workflows-home__options .workflows-home__link {
 	align-self: flex-start;
 	display: inline-flex;
 	align-items: center;
@@ -685,50 +673,6 @@
 .workflows-home--compact .workflows-home__state {
 	height: auto;
 	min-height: 240px;
-}
-
-/* In the Home options panel (compact workspace) the whole toolbar stacks, one
-   option per row, every one shown directly. */
-.workflows-home__toolbar--panel {
-	flex-direction: column;
-	flex-wrap: nowrap;
-	align-items: stretch;
-	gap: 14px;
-	padding: 0;
-	border-bottom: 0;
-	font-size: 14px;
-	color: #dce2f0;
-}
-
-.workflows-home__toolbar--panel .workflows-home__search {
-	width: 100%;
-	height: 40px;
-	/* 16px stops iOS from zooming in on focus. */
-	font-size: 16px;
-}
-
-.workflows-home__toolbar--panel .workflows-home__chips {
-	flex-wrap: wrap;
-	gap: 6px;
-}
-
-.workflows-home__toolbar--panel .workflows-home__chip {
-	flex: 1 1 auto;
-	justify-content: center;
-	padding: 0 10px;
-	white-space: nowrap;
-}
-
-.workflows-home__toolbar--panel .workflows-home__picker {
-	width: 100%;
-}
-
-.workflows-home__toolbar--panel .workflows-home__select {
-	width: 100%;
-}
-
-.workflows-home__toolbar--panel .workflows-home__menu .workflows-home__link {
-	margin: 4px 8px;
 }
 
 @media (prefers-reduced-motion: reduce) {
