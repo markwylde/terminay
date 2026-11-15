@@ -385,3 +385,108 @@ test("the adapter narrows by request context and never returns a token", async (
   const claims = await operations.queries["forge.claims"](request({ projectId: "A" }, { projectId: "A" }));
   assert.equal(claims.claims[0].owner, "acme");
 });
+
+// ── Account narrowing (filter-forge-lists-by-account) ───────────────────
+
+const twoAccountPages = () => ({
+  "gitea/forge": [{ items: [summary(GITEA, "acme", "app", 1, "2026-11-10T00:00:00Z"), summary(GITEA, "acme", "app", 2, "2026-11-08T00:00:00Z")] }],
+  "github/forge": [{ items: [summary(GITHUB, "me", "lib", 3, "2026-11-09T00:00:00Z")] }],
+});
+const queried = (hosts) => hosts.calls.filter(([kind]) => kind === "query").map(([, sourceId]) => sourceId);
+const discovered = (hosts) => hosts.calls.filter(([kind]) => kind === "accounts").map(([, sourceId]) => sourceId);
+
+test("an account set asks only the named account for accounts and items", async () => {
+  const hosts = fakeHosts({ pages: twoAccountPages() });
+  const service = new ForgeService({ hosts, projects: fakeProjects() });
+  const result = await service.list(unbound, home({ accounts: [{ sourceId: "gitea/forge", origin: GITEA }] }));
+  assert.deepEqual(result.items.map((entry) => entry.item.reference.number), [1, 2]);
+  assert.deepEqual(result.sources.map((outcome) => outcome.origin), [GITEA]);
+  assert.deepEqual(queried(hosts), ["gitea/forge"]);
+  assert.deepEqual(discovered(hosts), ["gitea/forge"]);
+  assert.equal(result.noAccounts, false);
+});
+
+test("no account set asks every account; a set naming both asks both", async () => {
+  for (const accounts of [undefined, [{ sourceId: "gitea/forge", origin: GITEA }, { sourceId: "github/forge", origin: GITHUB }]]) {
+    const hosts = fakeHosts({ pages: twoAccountPages() });
+    const service = new ForgeService({ hosts, projects: fakeProjects() });
+    const result = await service.list(unbound, home(accounts === undefined ? {} : { accounts }));
+    assert.deepEqual(result.items.map((entry) => entry.item.reference.number), [1, 3, 2]);
+    assert.deepEqual(queried(hosts).sort(), ["gitea/forge", "github/forge"]);
+  }
+});
+
+test("an empty or unknown account set lists nothing and does not say no account is set up", async () => {
+  for (const accounts of [[], [{ sourceId: "gitea/forge", origin: "https://elsewhere.example" }], [{ sourceId: "other/forge", origin: GITEA }]]) {
+    const hosts = fakeHosts({ pages: twoAccountPages() });
+    const service = new ForgeService({ hosts, projects: fakeProjects() });
+    const result = await service.list(unbound, home({ accounts }));
+    assert.deepEqual(result.items, []);
+    assert.equal(result.noAccounts, false);
+    assert.deepEqual(queried(hosts), []);
+  }
+});
+
+test("a source left out of the account set is not asked, so its failure is not reported", async () => {
+  const hosts = fakeHosts({ pages: twoAccountPages() });
+  const original = hosts.forgeSourceAccounts;
+  hosts.forgeSourceAccounts = async (sourceId) => {
+    if (sourceId === "gitea/forge") throw new Error("gitea is down");
+    return original(sourceId);
+  };
+  const service = new ForgeService({ hosts, projects: fakeProjects() });
+  const result = await service.list(unbound, home({ accounts: [{ sourceId: "github/forge", origin: GITHUB }] }));
+  assert.deepEqual(result.items.map((entry) => entry.item.reference.number), [3]);
+  assert.ok(result.sources.every((outcome) => outcome.state === "ok"));
+});
+
+test("one source with two origins narrows to the named origin", async () => {
+  const OTHER = "https://code.example.org";
+  const hosts = fakeHosts({
+    accounts: {
+      "gitea/forge": [
+        { origin: GITEA, login: "me", credentialSource: "cli-config", state: "ready", owners: [] },
+        { origin: OTHER, login: "me", credentialSource: "sign-in", state: "ready", owners: [] },
+      ],
+    },
+  });
+  const service = new ForgeService({ hosts, projects: fakeProjects() });
+  await service.list(unbound, home({ accounts: [{ sourceId: "gitea/forge", origin: OTHER }] }));
+  const origins = hosts.calls.filter(([kind]) => kind === "query").map(([, , query]) => query.origin);
+  assert.deepEqual(origins, [OTHER]);
+});
+
+test("settings still restrict a named account", async () => {
+  const hosts = fakeHosts({ pages: twoAccountPages() });
+  const settings = memoryForgeSettings({ gitea: { repositories: "openProjects", owners: [], pullRequestsOnHome: true, issuesOnHome: true, projectTabs: true } });
+  const service = new ForgeService({ hosts, projects: fakeProjects(), settings });
+  const result = await service.list(unbound, home({ accounts: [{ sourceId: "gitea/forge", origin: GITEA }] }));
+  assert.deepEqual(result.items, []);
+  assert.deepEqual(queried(hosts), []);
+});
+
+test("a cursor continues only a list with the same account set", async () => {
+  const hosts = fakeHosts({ pages: twoAccountPages() });
+  const service = new ForgeService({ hosts, projects: fakeProjects() });
+  const narrowed = { accounts: [{ sourceId: "gitea/forge", origin: GITEA }] };
+  const first = await service.list(unbound, home({ pageSize: 1, ...narrowed }));
+  assert.ok(first.nextCursor);
+  await assert.rejects(service.list(unbound, home({ pageSize: 1, cursor: first.nextCursor })), /expired/);
+  const again = await service.list(unbound, home({ pageSize: 1, ...narrowed }));
+  const second = await service.list(unbound, home({ pageSize: 1, cursor: again.nextCursor, ...narrowed }));
+  assert.deepEqual(second.items.map((entry) => entry.item.reference.number), [2]);
+});
+
+test("the adapter refuses a malformed account set instead of ignoring it", async () => {
+  const hosts = fakeHosts({ pages: twoAccountPages() });
+  const adapter = new ServerForgeAdapter(new ForgeService({ hosts, projects: fakeProjects() }));
+  const query = adapter.operations().queries["forge.query"];
+  const request = (payload) => ({ envelope: { payload }, body: new Uint8Array(), context: { authScope: "read", clientId: "c" } });
+  const many = Array.from({ length: 17 }, (_, index) => ({ sourceId: "gitea/forge", origin: `https://h${index}.example` }));
+  const plainHttp = GITEA.replace("https:", "http:");
+  for (const accounts of [null, {}, "gitea/forge", [{ sourceId: "gitea/forge", origin: plainHttp }], [{ origin: GITEA }], [null], many])
+    await assert.rejects(query(request(home({ accounts }))), /invalid/, JSON.stringify(accounts));
+  assert.deepEqual(queried(hosts), []);
+  const ok = await query(request(home({ accounts: [{ sourceId: "github/forge", origin: GITHUB }] })));
+  assert.deepEqual(ok.items.map((entry) => entry.item.reference.number), [3]);
+});

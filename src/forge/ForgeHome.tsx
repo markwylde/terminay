@@ -7,8 +7,13 @@
 import type { ForgeClientListRequest, TerminayForgeClient } from '@terminay/client-core';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+	belongsToAccount,
 	DEFAULT_FORGE_GIT_PANE_LAYOUT,
 	drawnForgeDetailWidth,
+	effectiveAccount,
+	type ForgeAccountRef,
+	type ForgeAccountsAnswer,
+	homeAccountOptions,
 	FORGE_GIT_PANES_KEY,
 	type ForgeClaimView,
 	forgeDetailLayout,
@@ -89,6 +94,40 @@ export function useForgeSources(client: TerminayForgeClient | undefined): readon
 	useEffect(load, [load]);
 	useForgeChanges(client, load);
 	return sources;
+}
+
+/**
+ * The server's forge accounts, asked when shown and again on `forge.changed`.
+ * Undefined until the first answer; an answer to an older request never
+ * replaces a newer one; a failure is no accounts.
+ */
+export function useForgeAccounts(
+	client: TerminayForgeClient | undefined,
+	visible: boolean,
+): ForgeAccountsAnswer | undefined {
+	const [answer, setAnswer] = useState<ForgeAccountsAnswer>();
+	const [revision, setRevision] = useState(0);
+	const latest = useRef(0);
+	useForgeChanges(client, () => setRevision((value) => value + 1));
+	useEffect(() => {
+		if (client === undefined) {
+			setAnswer(undefined);
+			return;
+		}
+		if (!visible) return;
+		const asked = ++latest.current;
+		client
+			.accounts()
+			.then((value) => {
+				if (asked !== latest.current) return;
+				const sources = (value as unknown as { sources?: ForgeAccountsAnswer }).sources;
+				setAnswer(Array.isArray(sources) ? sources : []);
+			})
+			.catch(() => {
+				if (asked === latest.current) setAnswer([]);
+			});
+	}, [client, revision, visible]);
+	return answer;
 }
 
 /** Each open project's claimed repositories, asked when the projects change and on `forge.changed`. */
@@ -197,6 +236,17 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 			setSelection({ sourceId: focus.sourceId, reference: focus.item });
 		else setSelection(undefined);
 	}, [appliedNonce]);
+	const accountsAnswer = useForgeAccounts(client, visible);
+	// Until both the accounts and the sources are known, the remembered account applies as is.
+	const accountOptions = useMemo(
+		() =>
+			accountsAnswer === undefined || (sources.length === 0 && accountsAnswer.some((entry) => entry.accounts.length > 0))
+				? undefined
+				: homeAccountOptions(accountsAnswer, sources, kind),
+		[accountsAnswer, kind, sources],
+	);
+	const account = effectiveAccount(preferences.account, accountOptions, filter !== undefined);
+	const accountKey = account === null ? '' : `${account.sourceId}\u0000${account.origin}`;
 	const request = useMemo<ForgeClientListRequest>(
 		() => ({
 			kind,
@@ -205,9 +255,18 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 			purpose: 'home',
 			pageSize: HOME_PAGE_SIZE,
 			...(filter === undefined ? {} : { repositories: [{ origin: filter.origin, owner: filter.owner, name: filter.name }] }),
+			...(account === null ? {} : { accounts: [{ sourceId: account.sourceId, origin: account.origin }] }),
 		}),
-		[filter, kind, preferences.scope, preferences.state],
+		[accountKey, filter, kind, preferences.scope, preferences.state],
 	);
+	const chooseAccount = (next: ForgeAccountRef | null) => {
+		const updated = { ...preferences, account: next };
+		setPreferences(updated);
+		rememberPreferences(kind, updated);
+		// The newest explicit choice wins over a project tab's repository focus.
+		setFilter(undefined);
+		if (next !== null && selection !== undefined && !belongsToAccount(selection, next)) setSelection(undefined);
+	};
 	const list = useForgeList(client, request, visible);
 	// The relative times are worked out when an answer arrives or the view is shown.
 	useEffect(() => setNow(Date.now()), [list.fetchedAt, visible]);
@@ -272,6 +331,9 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 					{...(ownersReachNote === undefined ? {} : { ownersReachNote })}
 					{...(filter === undefined ? {} : { repositoryFilter: filter })}
 					onClearRepositoryFilter={() => setFilter(undefined)}
+					accountOptions={accountOptions ?? []}
+					account={account}
+					onAccountChange={chooseAccount}
 					projectTitle={projectTitle}
 					projectOrder={environment.projects.map((project) => project.projectId)}
 					displayNames={environment.displayNames}

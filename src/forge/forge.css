@@ -894,3 +894,10 @@
 	display: grid;
 	gap: 8px;
 }
+
+/* Home's Account control: as narrow as its longest label allows, never wider than the toolbar. */
+.forge-account-select {
+	max-width: min(280px, 100%);
+	min-width: 0;
+	text-overflow: ellipsis;
+}

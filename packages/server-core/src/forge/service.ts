@@ -126,6 +126,11 @@ export interface ForgeRepositoryFilter {
 	readonly name: string;
 }
 
+export interface ForgeAccountFilter {
+	readonly sourceId: string;
+	readonly origin: string;
+}
+
 export interface ForgeListRequest {
 	readonly kind: ForgeItemKind;
 	readonly scope: ForgeScope;
@@ -135,6 +140,8 @@ export interface ForgeListRequest {
 	readonly projectId?: string;
 	/** Narrow to these repositories (a project tab's or Home's filter). */
 	readonly repositories?: readonly ForgeRepositoryFilter[];
+	/** Narrow to these accounts (Home's account filter); only ever removes accounts. */
+	readonly accounts?: readonly ForgeAccountFilter[];
 	readonly text?: string;
 	readonly pageSize?: number;
 	readonly cursor?: string;
@@ -774,6 +781,16 @@ export class ForgeService {
 				if (request.kind === 'pullRequest' && !settings.pullRequestsOnHome) continue;
 				if (request.kind === 'issue' && !settings.issuesOnHome) continue;
 			} else if (!settings.projectTabs) continue;
+			const namedOrigins =
+				request.accounts === undefined
+					? undefined
+					: new Set(
+							request.accounts
+								.filter((account) => account.sourceId === sourceId)
+								.map((account) => account.origin),
+						);
+			// An account filter that does not name this source never asks it.
+			if (namedOrigins !== undefined && namedOrigins.size === 0) continue;
 			let accounts: ForgeAccount[];
 			try {
 				accounts = await this.accountsOf(sourceId);
@@ -790,6 +807,7 @@ export class ForgeService {
 			for (const account of accounts) {
 				anyAccount = true;
 				if (account.state !== 'ready') continue;
+				if (namedOrigins !== undefined && !namedOrigins.has(account.origin)) continue;
 				// Every restriction is a set of repositories or owners on this
 				// origin. Absent is unrestricted; empty sends nothing (fail closed).
 				let repositories: Set<string> | undefined;
@@ -886,7 +904,8 @@ export class ForgeService {
 				});
 			}
 		}
-		return { streams, outcomes, noAccounts: !anyAccount };
+		// A narrowed list is never "no account set up": the filter named one.
+		return { streams, outcomes, noAccounts: request.accounts === undefined && !anyAccount };
 	}
 
 	/** Badge counts: open pull requests requesting review, open issues assigned. */
@@ -1088,6 +1107,23 @@ function checkListRequest(request: ForgeListRequest): CheckedListRequest {
 			)
 				throw new ForgeServiceError('invalid', 'repository is invalid');
 	}
+	if (request.accounts !== undefined) {
+		if (
+			!Array.isArray(request.accounts) ||
+			request.accounts.length > EXTENSION_LIMITS.forgeQueryAccounts
+		)
+			throw new ForgeServiceError('invalid', 'accounts is invalid');
+		for (const account of request.accounts)
+			if (
+				typeof account !== 'object' ||
+				account === null ||
+				typeof account.sourceId !== 'string' ||
+				account.sourceId.length === 0 ||
+				account.sourceId.length > 256 ||
+				!isHttpsOrigin(account.origin)
+			)
+				throw new ForgeServiceError('invalid', 'account is invalid');
+	}
 	const text = request.text?.trim();
 	return {
 		...request,
@@ -1163,6 +1199,7 @@ function listKey(caller: ForgeCaller, request: CheckedListRequest): string {
 		request.purpose,
 		request.projectId ?? null,
 		request.repositories ?? null,
+		request.accounts?.map((account) => [account.sourceId, account.origin]) ?? null,
 		request.text ?? null,
 		request.pageSize,
 	]);

@@ -18,6 +18,10 @@ import {
 	readForgeItemTarget,
 	readGitPaneLayout,
 	readPreferences,
+	homeAccountOptions,
+	effectiveAccount,
+	belongsToAccount,
+	type ForgeAccountOption,
 	reviewPrompt,
 	startWorkAvailability,
 	startWorkPrompt,
@@ -47,9 +51,9 @@ function entry(number: number, updatedAt: string, extra: Record<string, unknown>
 }
 
 test('a first visit selects Needs my review, open, grouped by repository', () => {
-	assert.deepEqual(readPreferences('pullRequest', null), { scope: 'reviewRequested', state: 'open', group: 'repo' });
-	assert.deepEqual(readPreferences('issue', 'not json'), { scope: 'assigned', state: 'open', group: 'repo' });
-	assert.deepEqual(readPreferences('issue', '{"scope":"mentioned","state":"closed","group":"none"}'), { scope: 'mentioned', state: 'closed', group: 'none' });
+	assert.deepEqual(readPreferences('pullRequest', null), { scope: 'reviewRequested', state: 'open', group: 'repo', account: null });
+	assert.deepEqual(readPreferences('issue', 'not json'), { scope: 'assigned', state: 'open', group: 'repo', account: null });
+	assert.deepEqual(readPreferences('issue', '{"scope":"mentioned","state":"closed","group":"none"}'), { scope: 'mentioned', state: 'closed', group: 'none', account: null });
 	assert.equal(readPreferences('issue', '{"state":"merged"}').state, 'open', 'issues have no merged state');
 });
 
@@ -297,4 +301,79 @@ test('the Home preview stacks under the list when the area is too narrow for bot
 	assert.equal(forgeDetailLayout(600), 'side');
 	assert.equal(forgeDetailLayout(599), 'stacked');
 	assert.equal(forgeDetailLayout(560), 'stacked');
+});
+
+// ── Account filter ─────────────────────────────────────────────────────
+
+const GITHUB_ORIGIN = 'https://github.com';
+const giteaAccount = { sourceId: 'com.terminay.gitea/forge', origin: ORIGIN };
+const githubAccount = { sourceId: 'com.terminay.github/forge', origin: GITHUB_ORIGIN };
+const accountSources = [
+	{
+		sourceId: giteaAccount.sourceId,
+		displayName: 'Gitea',
+		kinds: ['pullRequest', 'issue'] as const,
+		settings: { pullRequestsOnHome: true, issuesOnHome: true },
+	},
+	{
+		sourceId: githubAccount.sourceId,
+		displayName: 'GitHub',
+		kinds: ['pullRequest', 'issue'] as const,
+		settings: { pullRequestsOnHome: true, issuesOnHome: false },
+	},
+];
+const accountsAnswer = [
+	{
+		sourceId: giteaAccount.sourceId,
+		accounts: [
+			{ origin: ORIGIN, login: 'alice', state: 'ready' },
+			{ origin: 'https://old.example', login: 'alice', state: 'rejected' },
+		],
+	},
+	{ sourceId: githubAccount.sourceId, accounts: [{ origin: GITHUB_ORIGIN, login: 'alice', state: 'ready' }] },
+];
+
+test('a remembered account round-trips; a malformed one reads as All accounts', () => {
+	const stored = JSON.stringify({ scope: 'all', state: 'open', group: 'repo', account: giteaAccount });
+	assert.deepEqual(readPreferences('pullRequest', stored).account, giteaAccount);
+	for (const account of [
+		null,
+		'gitea',
+		{ sourceId: '', origin: ORIGIN },
+		{ sourceId: 'x', origin: 'http://insecure.example' },
+		{ sourceId: 'x' },
+	])
+		assert.equal(readPreferences('pullRequest', JSON.stringify({ account })).account, null, JSON.stringify(account));
+});
+
+test('the account control offers ready accounts of sources that show the kind on Home', () => {
+	const pulls = homeAccountOptions(accountsAnswer, accountSources, 'pullRequest');
+	assert.deepEqual(
+		pulls.map((option) => option.label),
+		[`alice · ${new URL(ORIGIN).host} (Gitea)`, 'alice · github.com (GitHub)'],
+	);
+	const issues = homeAccountOptions(accountsAnswer, accountSources, 'issue');
+	assert.deepEqual(
+		issues.map((option) => option.account),
+		[giteaAccount],
+		'GitHub does not show issues on Home',
+	);
+	assert.deepEqual(homeAccountOptions(accountsAnswer, [], 'pullRequest'), [], 'an unknown source offers nothing');
+});
+
+test('the effective account', () => {
+	const two: ForgeAccountOption[] = homeAccountOptions(accountsAnswer, accountSources, 'pullRequest');
+	const one = two.slice(0, 1);
+	assert.equal(effectiveAccount(null, two, false), null);
+	assert.deepEqual(effectiveAccount(giteaAccount, two, false), giteaAccount);
+	assert.deepEqual(effectiveAccount(giteaAccount, undefined, false), giteaAccount, 'before the accounts answer');
+	assert.equal(effectiveAccount(giteaAccount, two, true), null, 'a repository focus shows every account');
+	assert.equal(effectiveAccount(giteaAccount, one, false), null, 'fewer than two accounts');
+	assert.equal(effectiveAccount({ sourceId: 'gone/forge', origin: ORIGIN }, two, false), null, 'a missing account');
+});
+
+test('an item belongs to the account of its source and origin', () => {
+	assert.ok(belongsToAccount({ sourceId: giteaAccount.sourceId, reference: { origin: ORIGIN } }, giteaAccount));
+	assert.ok(!belongsToAccount({ sourceId: giteaAccount.sourceId, reference: { origin: GITHUB_ORIGIN } }, giteaAccount));
+	assert.ok(!belongsToAccount({ sourceId: githubAccount.sourceId, reference: { origin: ORIGIN } }, giteaAccount));
 });
