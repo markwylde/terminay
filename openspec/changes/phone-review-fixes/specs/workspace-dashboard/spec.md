@@ -324,7 +324,7 @@ A recording row SHALL offer **Delete recording** from a trailing more control. T
 
 ### Requirement: Pull requests and issues on a compact workspace
 
-On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**, and the Issues tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count only while the Home pull request cache holds that scope's result for the current State and repository. A Review count above zero SHALL be marked.
+On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**, and the Issues tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count only once this Home tab has received that scope's result for the current State and repository. A Review count above zero SHALL be marked.
 
 #### Scenario: Review requests
 - **WHEN** a phone shows Pull Requests with three review requests
@@ -332,7 +332,7 @@ On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, *
 
 ### Requirement: Forge scope counts
 
-A forge scope tab's count SHALL be the number of items in its cached result, followed by + when the forge has more pages. A scope with no cached result for the current State and repository SHALL show no count. Showing counts SHALL NEVER fetch.
+A forge scope tab's count SHALL be the number of items in the last result this Home tab received for it, followed by + when the forge has more pages. A scope with no received result for the current State and repository SHALL show no count. Showing counts SHALL NEVER fetch.
 
 #### Scenario: Scope not yet visited
 - **WHEN** a phone shows Pull Requests and the Mine scope has not been loaded for the current State and repository

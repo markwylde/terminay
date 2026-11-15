@@ -130,7 +130,10 @@ function currentLine(row: WorkflowsHomeRow): Readonly<{
 	if (running !== undefined) return { text: running.title, attention: false };
 	if (row.tone === 'done') return { text: 'Finished', attention: false };
 	const next = steps.find((step) => step.status === 'not_started');
-	return { text: next === undefined ? 'Not started' : `Next: ${next.title}`, attention: false };
+	return {
+		text: next === undefined ? 'Not started' : `Next: ${next.title}`,
+		attention: false,
+	};
 }
 
 export function WorkflowsCompactPage(props: {
@@ -225,7 +228,8 @@ export function WorkflowsCompactPage(props: {
 
 	const openDetail = (row: WorkflowsHomeRow) => {
 		scrollTop.current =
-			rootRef.current?.querySelector<HTMLElement>('.cpage__body')?.scrollTop ?? 0;
+			rootRef.current?.querySelector<HTMLElement>('.cpage__body')?.scrollTop ??
+			0;
 		props.onDetail(row.key);
 	};
 
@@ -284,7 +288,10 @@ export function WorkflowsCompactPage(props: {
 			term !== '' ? (
 				<CompactEmpty
 					title={`No workflow matches “${term}”`}
-					action={{ label: 'Clear search', onActivate: () => onChange({ text: '' }) }}
+					action={{
+						label: 'Clear search',
+						onActivate: () => onChange({ text: '' }),
+					}}
 				/>
 			) : applied !== undefined ? (
 				<CompactEmpty
@@ -299,7 +306,8 @@ export function WorkflowsCompactPage(props: {
 	} else {
 		const groups = new Map<string, WorkflowsHomeRow[]>();
 		for (const row of shown) {
-			const key = view.group === 'project' ? row.projectKey : `workflow:${row.name}`;
+			const key =
+				view.group === 'project' ? row.projectKey : `workflow:${row.name}`;
 			const bucket = groups.get(key);
 			if (bucket === undefined) groups.set(key, [row]);
 			else bucket.push(row);
@@ -309,11 +317,20 @@ export function WorkflowsCompactPage(props: {
 				{[...groups].map(([key, members]) => {
 					const first = members[0] as WorkflowsHomeRow;
 					return (
-						<section key={key} aria-label={view.group === 'project' ? first.projectTitle : first.name}>
+						<section
+							key={key}
+							aria-label={
+								view.group === 'project' ? first.projectTitle : first.name
+							}
+						>
 							<CompactGroupHeader
-								label={view.group === 'project' ? first.projectTitle : first.name}
+								label={
+									view.group === 'project' ? first.projectTitle : first.name
+								}
 								count={members.length}
-								{...(view.group === 'project' ? { color: first.projectColor } : {})}
+								{...(view.group === 'project'
+									? { color: first.projectColor }
+									: {})}
 							/>
 							{members.map(renderRow)}
 						</section>
@@ -377,7 +394,9 @@ export function WorkflowsCompactPage(props: {
 									onToggle={(key, checked) =>
 										onChange({
 											excludedProjects: checked
-												? view.excludedProjects.filter((candidate) => candidate !== key)
+												? view.excludedProjects.filter(
+														(candidate) => candidate !== key,
+													)
 												: [...view.excludedProjects, key],
 										})
 									}
@@ -418,10 +437,10 @@ function WorkflowDetail(props: {
 	useEffect(() => {
 		backRef.current?.focus();
 	}, []);
-	const workflow = row.view.state === 'attached' ? row.view.workflow : undefined;
+	const workflow =
+		row.view.state === 'attached' ? row.view.workflow : undefined;
 	const since = workflow === undefined ? undefined : elapsed(workflow, now);
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: Escape anywhere on the page goes back, as the back control does.
 		<div
 			className="cpage cdetail"
 			data-compact-section="workflow-detail"
@@ -487,7 +506,9 @@ function WorkflowDetail(props: {
 						{workflow.openingPrompt === '' ? null : (
 							<section className="cdetail__section" aria-label="Brief">
 								<h2 className="csheet__label">Brief</h2>
-								<p className="cdetail__brief workflow-text">{workflow.openingPrompt}</p>
+								<p className="cdetail__brief workflow-text">
+									{workflow.openingPrompt}
+								</p>
 							</section>
 						)}
 						<section className="cdetail__section" aria-label="Steps">
@@ -513,7 +534,9 @@ function WorkflowDetail(props: {
 													</span>
 												</span>
 												{step.note === '' ? null : (
-													<span className="cdetail__step-note workflow-text">{step.note}</span>
+													<span className="cdetail__step-note workflow-text">
+														{step.note}
+													</span>
 												)}
 												{needsUser ? (
 													<button
@@ -521,7 +544,8 @@ function WorkflowDetail(props: {
 														className="cdetail__step-open"
 														onClick={props.onOpen}
 													>
-														<SquareTerminal size={14} aria-hidden="true" /> Open terminal
+														<SquareTerminal size={14} aria-hidden="true" /> Open
+														terminal
 													</button>
 												) : null}
 											</div>

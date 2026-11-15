@@ -13,12 +13,13 @@ export function StatusMark({
 	tone,
 	label,
 }: Readonly<{ tone: CompactTone; label?: string }>) {
-	return (
+	return label === undefined ? (
+		<span className={`crow__mark crow__mark--${tone}`} aria-hidden="true" />
+	) : (
 		<span
 			className={`crow__mark crow__mark--${tone}`}
-			role={label === undefined ? undefined : 'img'}
+			role="img"
 			aria-label={label}
-			aria-hidden={label === undefined ? true : undefined}
 		/>
 	);
 }
@@ -208,7 +209,9 @@ export function CompactLinkRow({
 					<span className="clink__detail">{detail}</span>
 				)}
 			</span>
-			{count === undefined ? null : <span className="clink__count">{count}</span>}
+			{count === undefined ? null : (
+				<span className="clink__count">{count}</span>
+			)}
 			<span className="clink__chevron" aria-hidden="true">
 				›
 			</span>

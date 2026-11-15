@@ -89,7 +89,8 @@ export function CompactSectionPage<K extends string>({
 	const [isSearchOpen, setIsSearchOpen] = useState(
 		() => (search?.value ?? '') !== '',
 	);
-	const isSearching = search !== undefined && (isSearchOpen || search.value !== '');
+	const isSearching =
+		search !== undefined && (isSearchOpen || search.value !== '');
 	const [ownSheetOpen, setOwnSheetOpen] = useState(false);
 	const isSheetOpen = sheet?.isOpen ?? ownSheetOpen;
 	const setSheetOpen = (next: boolean) => {
@@ -151,7 +152,9 @@ export function CompactSectionPage<K extends string>({
 		onSelectTab(tab.id);
 		window.requestAnimationFrame(() =>
 			tabsRef.current
-				?.querySelector<HTMLElement>(`[data-compact-tab="${CSS.escape(tab.id)}"]`)
+				?.querySelector<HTMLElement>(
+					`[data-compact-tab="${CSS.escape(tab.id)}"]`,
+				)
 				?.focus(),
 		);
 	};
@@ -277,7 +280,7 @@ export function CompactSectionPage<K extends string>({
 										data-compact-tab-count={tab.count}
 										data-marked={marked ? 'true' : 'false'}
 									>
-										{tab.count}
+										{tab.countLabel ?? tab.count}
 									</span>
 								)}
 							</button>

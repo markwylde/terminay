@@ -131,8 +131,8 @@ export function BotsCompactPage({
 				title="No bots yet"
 				action={{ label: 'New bot', onActivate: onCreate }}
 			>
-				A bot is an agent with its own container, desktop, files, memories,
-				and triggers.
+				A bot is an agent with its own container, desktop, files, memories, and
+				triggers.
 			</CompactEmpty>
 		);
 	} else if (filter === 'needs-you') {
@@ -227,7 +227,9 @@ export function BotsCompactPage({
 								if (!open)
 									window.requestAnimationFrame(() =>
 										document
-											.querySelector<HTMLElement>('[data-terminay-bots-engine-card]')
+											.querySelector<HTMLElement>(
+												'[data-terminay-bots-engine-card]',
+											)
 											?.focus(),
 									);
 							},
@@ -294,7 +296,8 @@ function BotRow({
 	const pending = entry.sessions.find(
 		(s) => s.state === 'needs-you' || s.permission !== null,
 	);
-	const label = bot.enabled === false ? 'Disabled' : BOT_ACTIVITY_LABELS[activity];
+	const label =
+		bot.enabled === false ? 'Disabled' : BOT_ACTIVITY_LABELS[activity];
 	const detail =
 		pending !== undefined
 			? pendingSummary(pending.permission?.toolCall)

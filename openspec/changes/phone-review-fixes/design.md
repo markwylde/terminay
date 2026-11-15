@@ -155,11 +155,12 @@ stored choice is not rewritten.
 uses, with every filter applied except the tab itself.
 
 Forge scopes are separate queries, and ADR-0106 forbids extra fetching. A scope
-tab therefore shows a count only while the Home pull request cache holds that
-scope's result for the current State and repository key. The count is the
-result's length, with + when the forge reports more pages. Changing State or
-repository changes the key, so other scopes' counts disappear until visited.
-Nothing is fetched to show a count.
+tab therefore shows a count only once the Home tab has received that scope's
+result for the current State and repository key; `ForgeHomeSection` records
+each settled result under that key. The count is the result's length, with +
+when the forge reports more pages. Changing State or repository changes the
+key, so other scopes' counts disappear until visited. Nothing is fetched to
+show a count.
 
 **Applied options.** Each section declares which sheet options are filters, and
 supplies a token label and a reset for each:

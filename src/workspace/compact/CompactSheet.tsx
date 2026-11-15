@@ -84,20 +84,19 @@ export function SheetSegment<V extends string>({
 }>) {
 	return (
 		<SheetSection label={label}>
-			<div className="csheet__segment" role="radiogroup" aria-label={label}>
+			<fieldset className="csheet__segment" aria-label={label}>
 				{options.map((option) => (
 					<button
 						key={option.value}
 						type="button"
-						role="radio"
-						aria-checked={option.value === value}
+						aria-pressed={option.value === value}
 						onClick={() => onChange(option.value)}
 						data-compact-sheet-option={`${label}:${option.value}`}
 					>
 						{option.label}
 					</button>
 				))}
-			</div>
+			</fieldset>
 		</SheetSection>
 	);
 }
@@ -120,6 +119,7 @@ export function SheetToggle({
 				<input
 					type="checkbox"
 					role="switch"
+					aria-checked={checked}
 					className="csheet__switch"
 					checked={checked}
 					onChange={(event) => onChange(event.target.checked)}

@@ -30,7 +30,12 @@ import {
 	nextRunAt,
 } from './automationsModel';
 
-export type AutomationsCompactTab = 'all' | 'failing' | 'schedules' | 'events' | 'off';
+export type AutomationsCompactTab =
+	| 'all'
+	| 'failing'
+	| 'schedules'
+	| 'events'
+	| 'off';
 
 type Row = Readonly<{
 	automation: AutomationDefinition;
@@ -45,7 +50,12 @@ const failed = (row: Row) =>
 
 const TABS = [
 	{ id: 'all' as AutomationsCompactTab, label: 'All' },
-	{ id: 'failing' as AutomationsCompactTab, label: 'Failing', attention: true, test: failed },
+	{
+		id: 'failing' as AutomationsCompactTab,
+		label: 'Failing',
+		attention: true,
+		test: failed,
+	},
 	{
 		id: 'schedules' as AutomationsCompactTab,
 		label: 'Schedules',
@@ -139,7 +149,6 @@ export function AutomationsCompactPage({
 							type="button"
 							className="cdetail__back"
 							onClick={() => setTerminalsOpen(false)}
-							// biome-ignore lint/a11y/noAutofocus: the sub-list replaces the page, so focus starts on its way back.
 							autoFocus
 						>
 							<ChevronLeft size={20} aria-hidden="true" />
@@ -147,7 +156,6 @@ export function AutomationsCompactPage({
 						</button>
 					</div>
 				</div>
-				{/* biome-ignore lint/a11y/noStaticElementInteractions: Escape goes back, as the back control does. */}
 				<div
 					className="cpage__body"
 					onKeyDown={(event) => {
@@ -163,7 +171,9 @@ export function AutomationsCompactPage({
 					{terminalGroups.map((group) => (
 						<section
 							key={group.run?.runId ?? 'unowned'}
-							data-terminay-automation-terminal-group={group.run?.runId ?? 'other'}
+							data-terminay-automation-terminal-group={
+								group.run?.runId ?? 'other'
+							}
 						>
 							<CompactGroupHeader
 								label={
@@ -182,7 +192,9 @@ export function AutomationsCompactPage({
 									title={terminal.title}
 									detail={terminal.status === 'running' ? 'Running' : 'Exited'}
 									onActivate={() => onOpenTerminal(terminal.panelId)}
-									rowProps={{ 'data-terminay-automation-terminal': terminal.sessionId }}
+									rowProps={{
+										'data-terminay-automation-terminal': terminal.sessionId,
+									}}
 								/>
 							))}
 						</section>
@@ -202,7 +214,9 @@ export function AutomationsCompactPage({
 		<CompactSectionPage
 			section="automations"
 			title="Automations"
-			{...(automations.length === 0 ? {} : { summary: String(automations.length) })}
+			{...(automations.length === 0
+				? {}
+				: { summary: String(automations.length) })}
 			create={{ label: 'New automation', onActivate: onNew }}
 			tabs={tabs}
 			selectedTab={tab}
@@ -245,9 +259,11 @@ export function AutomationsCompactPage({
 				<div data-terminay-automations-compact-list="true">
 					{shown.map(({ automation, last }) => {
 						const next = nextRunAt(automation, now, timeZone);
-						const outcome = last === undefined ? undefined : describeRunOutcome(last);
+						const outcome =
+							last === undefined ? undefined : describeRunOutcome(last);
 						const KindIcon = automation.trigger.kind === 'event' ? Zap : Clock;
-						const tone = outcome === undefined ? undefined : OUTCOME_CHIP[outcome.tone];
+						const tone =
+							outcome === undefined ? undefined : OUTCOME_CHIP[outcome.tone];
 						return (
 							<CompactRow
 								key={automation.id}
@@ -259,7 +275,9 @@ export function AutomationsCompactPage({
 									)
 								}
 								title={
-									<span data-terminay-automation-name="true">{automation.name}</span>
+									<span data-terminay-automation-name="true">
+										{automation.name}
+									</span>
 								}
 								{...(last === undefined
 									? {}
@@ -278,7 +296,11 @@ export function AutomationsCompactPage({
 									outcome === undefined ? (
 										<CompactChip>Never run</CompactChip>
 									) : (
-										<span data-terminay-automation-outcome={last?.outcome ?? last?.status}>
+										<span
+											data-terminay-automation-outcome={
+												last?.outcome ?? last?.status
+											}
+										>
 											<CompactChip {...(tone === undefined ? {} : { tone })}>
 												{outcome.label}
 											</CompactChip>
@@ -295,6 +317,7 @@ export function AutomationsCompactPage({
 										<input
 											type="checkbox"
 											role="switch"
+											aria-checked={automation.enabled}
 											className="csheet__switch"
 											aria-label={`${automation.name} enabled`}
 											checked={automation.enabled}

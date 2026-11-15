@@ -24,7 +24,7 @@ import {
 	readGitPaneLayout,
 	readPreferences,
 } from './forgeModel.ts';
-import { House, RefreshCw } from 'lucide-react';
+import { ChevronLeft, House, RefreshCw } from 'lucide-react';
 import {
 	SidebarPanelStack,
 	type SidebarPanelStackItem,
@@ -36,6 +36,8 @@ import {
 	ForgeSidebarRow,
 } from './ForgeViews.tsx';
 import { useForgeChanges, useForgeDetail, useForgeList } from './useForge.ts';
+import { useCompactHome } from '../workspace/compact/CompactHomeContext';
+import { ForgeCompactPage, forgeCountKey, type ForgeScopeCount } from './ForgeCompactPage.tsx';
 
 const HOME_PAGE_SIZE = 50;
 
@@ -220,6 +222,101 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 	const projectTitle = (projectId: string) =>
 		environment.projects.find((project) => project.projectId === projectId)?.title;
 	const title = kind === 'pullRequest' ? 'Pull Requests' : 'Issues';
+	// A phone's page counts each scope from results this tab has received for
+	// the current State and repository; nothing is fetched to count.
+	const compact = useCompactHome();
+	const [counts, setCounts] = useState<ReadonlyMap<string, ForgeScopeCount>>(() => new Map());
+	const countKey = forgeCountKey(preferences.scope, preferences.state, filter);
+	useEffect(() => {
+		if (!list.settled || list.loading || list.error !== undefined) return;
+		setCounts((previous) => {
+			const seen = previous.get(countKey);
+			const next = { count: list.items.length, more: list.nextCursor !== undefined };
+			if (seen?.count === next.count && seen.more === next.more) return previous;
+			return new Map(previous).set(countKey, next);
+		});
+	}, [countKey, list.error, list.items.length, list.loading, list.nextCursor, list.settled]);
+	const setPreferencesAndRemember = (next: typeof preferences) => {
+		setPreferences(next);
+		rememberPreferences(kind, next);
+	};
+	if (compact) {
+		if (entry !== undefined || (selection !== undefined && detail.error !== undefined))
+			return (
+				<div className="forge-home forge-home--compact cpage-host" data-forge-home={kind}>
+					<div className="cpage cdetail" data-compact-section="forge-detail">
+						<div className="cpage__top">
+							<div className="cpage__head cdetail__head">
+								<button
+									type="button"
+									className="cdetail__back"
+									onClick={() => setSelection(undefined)}
+									data-forge-back="true"
+								>
+									<ChevronLeft size={20} aria-hidden="true" />
+									{title}
+								</button>
+							</div>
+						</div>
+						<div className="cpage__body cforge__detail">
+							{entry === undefined ? (
+								<div className="forge-failure" role="alert">
+									{detail.error}
+								</div>
+							) : (
+								<ForgeDetailPane
+									entry={entry}
+									{...(detail.detail === undefined ? {} : { body: detail.detail.body, comments: detail.detail.comments })}
+									loading={detail.loading}
+									{...(detail.error === undefined ? {} : { error: detail.error })}
+									environment={environment}
+									now={now}
+									onReload={detail.reload}
+									onClose={() => setSelection(undefined)}
+								/>
+							)}
+						</div>
+					</div>
+				</div>
+			);
+		return (
+			<div className="forge-home forge-home--compact cpage-host" data-forge-home={kind}>
+				<ForgeCompactPage
+					kind={kind}
+					preferences={preferences}
+					onPreferencesChange={setPreferencesAndRemember}
+					items={list.items}
+					counts={counts}
+					repository={filter}
+					onRepository={setFilter}
+					loading={list.loading}
+					settled={list.settled}
+					noAccounts={list.noAccounts}
+					{...(list.error === undefined ? {} : { error: list.error })}
+					{...(list.fetchedAt === undefined ? {} : { fetchedAt: list.fetchedAt })}
+					{...(list.nextCursor === undefined ? {} : { nextCursor: list.nextCursor })}
+					loadingMore={list.loadingMore}
+					now={now}
+					notes={
+						preferences.scope === 'all' && ownersReachNote !== undefined ? (
+							<div className="cpage__notes">
+								<p className="forge-note" data-forge-owners-note="true">
+									{ownersReachNote}
+								</p>
+							</div>
+						) : null
+					}
+					onSelect={(next) => setSelection({ sourceId: next.sourceId, reference: next.item.reference })}
+					onRefresh={list.refresh}
+					onLoadMore={list.loadMore}
+					onOpenSettings={environment.actions.openSettings}
+					projectTitle={projectTitle}
+					projectOrder={environment.projects.map((project) => project.projectId)}
+					displayNames={environment.displayNames}
+				/>
+			</div>
+		);
+	}
 	return (
 		<div className="forge-home" data-forge-home={kind}>
 			<div className="forge-home__head">

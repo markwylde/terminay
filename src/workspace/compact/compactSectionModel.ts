@@ -8,6 +8,8 @@ export type CompactTab<K extends string = string> = Readonly<{
 	id: K;
 	label: string;
 	count?: number;
+	/** Shown in place of the count, e.g. "50+" when there are more pages. */
+	countLabel?: string;
 	/** The tab's rows need the user; a count above zero is marked. */
 	attention?: boolean;
 }>;
@@ -55,10 +57,12 @@ export type AppliedOption = Readonly<{
  * that resets them all. Undefined when nothing is applied, so the page draws
  * no row and View options carries no marker.
  */
-export function appliedOptions(options: readonly (AppliedOption | false | null | undefined)[]):
-	| Readonly<{ tokens: AppliedOption[]; clear: () => void }>
-	| undefined {
-	const tokens = options.filter((option): option is AppliedOption => Boolean(option));
+export function appliedOptions(
+	options: readonly (AppliedOption | false | null | undefined)[],
+): Readonly<{ tokens: AppliedOption[]; clear: () => void }> | undefined {
+	const tokens = options.filter((option): option is AppliedOption =>
+		Boolean(option),
+	);
 	if (tokens.length === 0) return undefined;
 	return {
 		tokens,
