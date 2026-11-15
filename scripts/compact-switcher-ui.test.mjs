@@ -60,43 +60,30 @@ const row = (overrides) =>
 	renderToStaticMarkup(
 		React.createElement(CompactChromeRow, {
 			connection: {
-				isExposed: false,
 				isReachable: true,
 				serverLabel: 'Marks-MacBook-Air',
-				tone: 'remote-access-button--idle',
 			},
-			homeAttention: false,
 			isExplorerOpen: false,
-			isHomeSelected: false,
 			isNotificationsOpen: false,
 			isSwitcherOpen: false,
 			notificationCount: 0,
 			onOpenCommandBar: noop,
 			onOpenSwitcher: noop,
 			onToggleExplorer: noop,
-			onToggleHome: noop,
 			onToggleNotifications: noop,
 			title: terminalTitle,
 			...overrides,
 		}),
 	);
 
-test('the compact row holds its controls in order, with Home before Notifications', () => {
-	const markup = row({
-		applicationMenu: React.createElement(
-			'button',
-			{ type: 'button', className: 'connected-web-compact-menu__button' },
-			'Menu',
-		),
-	});
+test('the compact row holds one control per destination, the sidebar toggle last', () => {
+	const markup = row({ pixelSlotRef: () => {} });
 	const order = [
-		'connected-web-compact-menu__button',
-		'Toggle file explorer',
 		'data-compact-command-bar',
 		'data-compact-breadcrumb',
-		'data-compact-home-toggle',
 		'data-compact-notifications-button',
-		'data-compact-connection',
+		'data-compact-pixel-slot',
+		'data-compact-sidebar-toggle',
 	];
 	let cursor = -1;
 	for (const marker of order) {
@@ -104,22 +91,26 @@ test('the compact row holds its controls in order, with Home before Notification
 		assert.ok(next > cursor, `${marker} is out of order`);
 		cursor = next;
 	}
+	// Home, the server, and the application menu live in the switcher.
+	assert.doesNotMatch(markup, /data-compact-home-toggle|data-compact-connection/);
+	assert.doesNotMatch(markup, /Application menu/);
+	// The toggle opens the right-hand column, and its glyph says so.
+	assert.match(
+		markup,
+		/data-compact-sidebar-toggle="true"[\s\S]*?<path d="M9 2\.25V11\.75"/,
+	);
 });
 
-test("with Pixel on, its slot takes the connection glyph's place and the title block carries the server warning", () => {
-	const markup = row({
-		pixelSlotRef: () => {},
-		connection: {
-			isExposed: true,
-			isReachable: false,
-			serverLabel: 'Local',
-			tone: '',
-		},
-	});
-	assert.match(markup, /data-compact-pixel-slot="true"/);
-	assert.doesNotMatch(markup, /data-compact-connection="true"/);
-	assert.match(markup, /data-compact-breadcrumb-alert="true"/);
-	assert.match(markup, /Local unreachable/);
+test('the title block carries the server warning whether or not Pixel is on', () => {
+	for (const pixel of [{}, { pixelSlotRef: () => {} }]) {
+		const markup = row({
+			...pixel,
+			connection: { isReachable: false, serverLabel: 'Local' },
+		});
+		assert.match(markup, /data-compact-breadcrumb-alert="true"/);
+		assert.match(markup, /Local unreachable/);
+	}
+	assert.doesNotMatch(row({}), /data-compact-breadcrumb-alert/);
 });
 
 test('the title block names the terminal over its project and folder, without the worktree prefix', () => {
@@ -171,7 +162,6 @@ test('a project with no panel in front is named by the project', () => {
 
 test('on Home the title block names the Home tab over Home', () => {
 	const markup = row({
-		isHomeSelected: true,
 		title: { kind: 'home', tabTitle: 'Workflows' },
 	});
 	assert.match(
@@ -183,33 +173,6 @@ test('on Home the title block names the Home tab over Home', () => {
 		compactTitleLabel({ kind: 'home', tabTitle: 'Workflows' }),
 		'Switch terminal — Workflows, Home',
 	);
-});
-
-test('the Home toggle shows its state and an attention marker', () => {
-	const away = row({ homeAttention: true });
-	assert.match(away, /data-compact-home-toggle="true"/);
-	assert.match(away, /aria-label="Home, a terminal needs you"/);
-	assert.match(away, /compact-home-toggle__dot/);
-	const home = row({
-		homeAttention: true,
-		isHomeSelected: true,
-		title: { kind: 'home', tabTitle: 'Home' },
-	});
-	assert.match(
-		home,
-		/aria-pressed="true"[^>]*data-compact-home-toggle|data-compact-home-toggle[^>]*aria-pressed="true"|aria-pressed="true"/,
-	);
-	assert.match(home, /aria-label="Back to project"/);
-	// Home itself is where the attention is listed, so the dot is not repeated.
-	assert.doesNotMatch(home, /compact-home-toggle__dot/);
-});
-
-test('the connection control shows a glyph and keeps its server name for AT', () => {
-	const markup = row({});
-	assert.doesNotMatch(markup, /compact-connection[^>]*>[^<]*Marks-MacBook-Air/);
-	assert.match(markup, /aria-label="Connections — Marks-MacBook-Air, Offline"/);
-	assert.match(markup, /remote-access-button--idle/);
-	assert.match(markup, /compact-connection__dot/);
 });
 
 test('a pending update stays on the compact row', () => {
@@ -932,19 +895,22 @@ test('folder actions in the drawer are the Folders tree context menu', async () 
 	assert.match(controller, /entries=\{shownMenu\.entries\}/);
 });
 
-test('the Home toggle returns to the project Home keeps as its command target', async () => {
-	const app = await readFile('src/App.tsx', 'utf8');
-	const handler = app.slice(
-		app.indexOf('const toggleCompactHome'),
-		app.indexOf('const compactRememberedLauncher'),
-	);
-	assert.match(handler, /selectHome\(\)/);
-	// A project that has gone since leaves Home selected.
-	assert.match(
-		handler,
-		/projectsRef\.current\.some\(\(project\) => project\.id === activeProjectId\)/,
-	);
-	assert.match(handler, /activateProject\(activeProjectId\)/);
+test('the host application menu runs across the top of the drawer, when there is one', () => {
+	const without = switcher({});
+	assert.doesNotMatch(without, /data-compact-switcher-app-menu/);
+	const markup = switcher({
+		applicationMenu: React.createElement(
+			'nav',
+			{ 'aria-label': 'Application menu' },
+			'Terminay Edit View Help',
+		),
+	});
+	// Above both the rail and the panel.
+	const band = markup.indexOf('data-compact-switcher-app-menu="true"');
+	assert.ok(band > -1, 'the band is drawn');
+	assert.ok(band < markup.indexOf('compact-drawer__rail'));
+	assert.ok(band < markup.indexOf('compact-drawer__panel'));
+	assert.match(markup, /aria-label="Application menu"/);
 });
 
 test('rail tiles carry a visible label and an activity summary in their name', () => {

@@ -206,19 +206,20 @@ test('the switcher overlays the workspace rather than taking height from it', as
 	assert.match(scrim, /inset: 0;/);
 });
 
-test('the compact row carries the Command Bar before the title, then the Home toggle, and Home leads the drawer rail', async () => {
+test('the compact row carries the Command Bar before the title, ends with the sidebar toggle, and Home leads the drawer rail', async () => {
 	const row = await read('src/workspace/CompactChromeRow.tsx');
 	const order = [
 		...row.matchAll(
-			/data-terminay-home-control(?==)|data-compact-command-bar(?==)|data-compact-breadcrumb(?==)|data-compact-home-toggle(?==)|data-compact-pixel-slot(?==)|data-compact-connection(?==)/g,
+			/data-terminay-home-control(?==)|data-compact-command-bar(?==)|data-compact-breadcrumb(?==)|data-compact-notifications-button(?==)|data-compact-pixel-slot(?==)|data-compact-sidebar-toggle(?==)|data-compact-home-toggle(?==)|data-compact-connection(?==)/g,
 		),
 	].map((match) => match[0]);
+	// One control per destination: Home and the server live in the switcher.
 	assert.deepEqual(order, [
 		'data-compact-command-bar',
 		'data-compact-breadcrumb',
-		'data-compact-home-toggle',
+		'data-compact-notifications-button',
 		'data-compact-pixel-slot',
-		'data-compact-connection',
+		'data-compact-sidebar-toggle',
 	]);
 	const switcher = await read('src/workspace/CompactSwitcher.tsx');
 	assert.match(switcher, /data-terminay-home-control="true"/);

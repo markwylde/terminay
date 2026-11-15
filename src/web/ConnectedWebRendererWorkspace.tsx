@@ -1087,7 +1087,7 @@ function ConnectedBrowserMenuBar({
 			top: bounds.bottom + 4,
 			left: Math.max(
 				8,
-				Math.min(bounds.left, window.innerWidth - popupWidth - 8),
+				Math.min(bounds.left, document.documentElement.clientWidth - popupWidth - 8),
 			),
 		});
 	}, [openMenu, variant]);
