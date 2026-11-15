@@ -519,40 +519,34 @@ const compactRow = (connection = {}) =>
 	renderToStaticMarkup(
 		React.createElement(CompactChromeRow, {
 			connection: {
-				isExposed: false,
 				isReachable: true,
 				serverLabel: 'VPS',
-				tone: 'remote-access-button--idle',
 				...connection,
 			},
-			homeAttention: false,
 			isExplorerOpen: false,
-			isHomeSelected: false,
 			isNotificationsOpen: false,
 			isSwitcherOpen: false,
 			notificationCount: 0,
 			onOpenCommandBar: noop,
 			onOpenSwitcher: noop,
 			onToggleExplorer: noop,
-			onToggleHome: noop,
 			onToggleNotifications: noop,
 			title: { kind: 'project', projectTitle: 'Paged' },
 		}),
 	);
 
-test('at phone width the connection glyph carries the same warning and name', () => {
+test('at phone width the title block carries the upgrade warning and names it', () => {
 	const plain = compactRow();
-	assert.doesNotMatch(plain, /data-server-upgrade-indicator/);
-	assert.match(plain, /aria-label="Connections — VPS, Offline"/);
+	assert.doesNotMatch(plain, /data-compact-breadcrumb-alert/);
+	assert.doesNotMatch(plain, /data-compact-connection/);
 	const warned = compactRow({ upgradeVersion: '5.2.0' });
 	assert.match(
 		warned,
-		/aria-label="Connections — VPS, Offline, upgrade to 5\.2\.0 available"/,
+		/aria-label="Switch terminal — Paged — Server upgrade 5\.2\.0 available"/,
 	);
-	assert.match(
-		warned,
-		/compact-connection__upgrade[^>]*data-server-upgrade-indicator="5\.2\.0"/,
-	);
+	assert.match(warned, /data-compact-breadcrumb-alert="true"/);
+	const unreachable = compactRow({ isReachable: false });
+	assert.match(unreachable, /aria-label="Switch terminal — Paged — VPS unreachable"/);
 });
 
 test('at phone width the drawer server menu lists the same server updates', async () => {

@@ -297,10 +297,7 @@ import type {
 	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
 } from './workspace/compactSwitcherModel';
-import {
-	buildCompactSwitcherGroups,
-	compactNeedsYou,
-} from './workspace/compactSwitcherModel';
+import { buildCompactSwitcherGroups } from './workspace/compactSwitcherModel';
 import type { HomeFrontTab } from './workspace/HomeWorkspace';
 import { ProjectTabList } from './workspace/ProjectTabList';
 import {
@@ -6568,10 +6565,12 @@ export type AppProps = {
 		nativeWindowControls: boolean;
 		/**
 		 * Drawn by hosts that render their own application menu in-page, so the
-		 * compact row can hold it without the shared workspace learning any
+		 * compact switcher can hold it without the shared workspace learning any
 		 * host-only command. Absent on hosts with native menus.
 		 */
-		renderCompactApplicationMenu?: () => ReactNode;
+		renderCompactApplicationMenu?: (
+			options: Readonly<{ onCommand: () => void }>,
+		) => ReactNode;
 		/** See `RendererHostAdapters`: the host's own menu, below a point. */
 		openApplicationMenu?: (point: { x: number; y: number }) => Promise<boolean>;
 	}>;
@@ -7528,28 +7527,19 @@ function App({
 	const [compactAgentsHost, setCompactAgentsHost] =
 		useState<HTMLElement | null>(null);
 	const compactBreadcrumbRef = useRef<HTMLButtonElement | null>(null);
-	const compactConnectionRef = useRef<HTMLButtonElement | null>(null);
 	const compactNotificationsRef = useRef<HTMLButtonElement | null>(null);
 	const closeCompactNotifications = useCallback(() => {
 		setIsActivityMenuOpen(false);
 		compactNotificationsRef.current?.focus();
 	}, []);
-	const compactSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null);
-	const openCompactSwitcher = useCallback(
-		(source: 'breadcrumb' | 'connection') => {
-			compactSwitcherTriggerRef.current =
-				source === 'breadcrumb'
-					? compactBreadcrumbRef.current
-					: compactConnectionRef.current;
-			setIsRemoteMenuOpen(false);
-			setIsActivityMenuOpen(false);
-			setIsCompactSwitcherOpen(true);
-		},
-		[setIsRemoteMenuOpen],
-	);
+	const openCompactSwitcher = useCallback(() => {
+		setIsRemoteMenuOpen(false);
+		setIsActivityMenuOpen(false);
+		setIsCompactSwitcherOpen(true);
+	}, [setIsRemoteMenuOpen]);
 	const closeCompactSwitcher = useCallback(() => {
 		setIsCompactSwitcherOpen(false);
-		compactSwitcherTriggerRef.current?.focus();
+		compactBreadcrumbRef.current?.focus();
 	}, []);
 	// Two overlays must never stack: opening either header menu closes this one.
 	useEffect(() => {
@@ -9032,8 +9022,8 @@ function App({
 	const terminalLaunchersFor = useServerTerminalLaunchers(automationEntries);
 	const terminalLaunchers = terminalLaunchersFor(activeServerId);
 	const [pixelSlot, setPixelSlot] = useState<HTMLDivElement | null>(null);
-	// At phone width Pixel docks in the compact row instead, in the slot the
-	// connection glyph gives up for it.
+	// At phone width Pixel docks in the compact row instead, just before the
+	// sidebar toggle.
 	const [compactPixelSlot, setCompactPixelSlot] =
 		useState<HTMLSpanElement | null>(null);
 	const isPixelShown =
@@ -9634,10 +9624,6 @@ function App({
 			}),
 		[compactSwitcherFolders, dashboardSources],
 	);
-	const compactNeedsYouCount = useMemo(
-		() => compactNeedsYou(compactSwitcherGroups).length,
-		[compactSwitcherGroups],
-	);
 	const activeCompactPanel = useMemo(() => {
 		if (isHomeSelected || activeProjectId === undefined) return undefined;
 		const entries = inventoryByProject[activeProjectId] ?? [];
@@ -9952,28 +9938,6 @@ function App({
 			terminalClientContext?.workspaceSnapshotStore,
 		],
 	);
-	/**
-	 * The compact Home control: Home, or back to the project that was in front
-	 * before it, which Home keeps as its command target. A project that has
-	 * gone since leaves Home selected.
-	 */
-	const toggleCompactHome = useCallback(() => {
-		if (!isHomeSelected) {
-			selectHome();
-			return;
-		}
-		if (
-			activeProjectId !== undefined &&
-			projectsRef.current.some((project) => project.id === activeProjectId)
-		)
-			activateProject(activeProjectId);
-	}, [
-		activateProject,
-		activeProjectId,
-		isHomeSelected,
-		projectsRef,
-		selectHome,
-	]);
 	const compactRememberedLauncher = useMemo(() => {
 		// Read again whenever this device remembers a new choice.
 		void compactLauncherVersion;
@@ -11091,6 +11055,17 @@ function App({
 			setIsInstallingAppUpdate(false);
 		}
 	};
+	// The application menu sits across the top of the compact switcher, where
+	// choosing a command closes the switcher before the command runs.
+	const compactApplicationMenu: ReactNode | undefined =
+		hostPresentation?.renderCompactApplicationMenu?.({
+			onCommand: closeCompactSwitcher,
+		}) ??
+		(hostPresentation?.openApplicationMenu === undefined ? undefined : (
+			<ApplicationMenuButton
+				openApplicationMenu={hostPresentation.openApplicationMenu}
+			/>
+		));
 	const appUpdateAction = hasAppUpdate ? (
 		<div className="app-update-status">
 			<button
@@ -11156,25 +11131,14 @@ function App({
 			>
 				{isCompactChrome ? (
 					<CompactChromeRow
-						applicationMenu={
-							hostPresentation?.renderCompactApplicationMenu?.() ??
-							(hostPresentation?.openApplicationMenu === undefined ? undefined : (
-								<ApplicationMenuButton
-									openApplicationMenu={hostPresentation.openApplicationMenu}
-								/>
-							))
-						}
 						breadcrumbButtonRef={compactBreadcrumbRef}
 						connection={{
-							isExposed: Boolean(remoteStatus?.isRunning),
 							isReachable: currentServerReachable,
 							serverLabel: currentServerLabel,
-							tone: remoteButtonTone,
 							...(serverUpgrades.activeVersion === undefined
 								? {}
 								: { upgradeVersion: serverUpgrades.activeVersion }),
 						}}
-						connectionButtonRef={compactConnectionRef}
 						isExplorerOpen={
 							isHomeSelected
 								? isHomeSidebarVisible
@@ -11194,9 +11158,6 @@ function App({
 						{...(isPixelShown ? { pixelSlotRef: setCompactPixelSlot } : {})}
 						title={compactTitle}
 						updateAction={appUpdateAction}
-						isHomeSelected={isHomeSelected}
-						homeAttention={compactNeedsYouCount > 0}
-						onToggleHome={toggleCompactHome}
 					/>
 				) : (
 					<>
@@ -11466,6 +11427,9 @@ function App({
 			) : null}
 			{isCompactChrome && isCompactSwitcherOpen ? (
 				<CompactSwitcher
+					{...(compactApplicationMenu === undefined
+						? {}
+						: { applicationMenu: compactApplicationMenu })}
 					groups={orderedCompactSwitcherGroups}
 					isHomeSelected={isHomeSelected}
 					currentServer={{

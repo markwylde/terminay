@@ -199,8 +199,7 @@ html.is-framed .responsive-workspace-shell {
 }
 
 /* Shares its surface with the workspace's context menus. */
-.connected-web-menu__popup,
-.connected-web-compact-menu__popup {
+.connected-web-menu__popup {
 	z-index: 4000;
 	min-width: 220px;
 	padding: 4px;
@@ -229,8 +228,7 @@ html.is-framed .responsive-workspace-shell {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.connected-web-menu__popup,
-	.connected-web-compact-menu__popup {
+	.connected-web-menu__popup {
 		animation: none;
 	}
 }
@@ -516,48 +514,66 @@ html.is-framed .responsive-workspace-shell {
 /* The workspace, not this file, decides what "compact" means: it observes the
    bar it already measures and stamps the shell. The band reacts to that
    decision rather than measuring the viewport a second time and disagreeing.
-   Below that width the same menus live in the chrome row's single control. */
+   Below that width the same menus live across the top of the switcher. */
 .connected-web-renderer-workspace:has(
 	.app-shell[data-terminay-compact-chrome="true"]
 ) .connected-web-menubar {
 	display: none;
 }
 
-.connected-web-compact-menu {
-	position: relative;
+/* The menu bar inside the compact switcher: the same menus, in a row that
+   scrolls sideways rather than wrapping or widening the drawer. */
+.connected-web-sheet-menubar {
 	display: flex;
-	align-items: center;
-	flex: 0 0 auto;
+	flex: 1 1 auto;
+	min-width: 0;
+	color: rgba(220, 226, 240, 0.72);
+	font-family:
+		"Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	font-size: 14px;
+	line-height: 1;
+	user-select: none;
 }
 
-.connected-web-compact-menu__popup {
-	position: absolute;
-	top: calc(100% + 4px);
-	left: 0;
-	z-index: 3000;
+.connected-web-sheet-menubar__menus {
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+	min-width: 0;
+	padding: 6px 8px;
+	overflow-x: auto;
+	overscroll-behavior-x: contain;
+	scrollbar-width: none;
+}
+
+.connected-web-sheet-menubar__menus::-webkit-scrollbar {
+	display: none;
+}
+
+.connected-web-sheet-menubar .connected-web-menu__button {
+	flex: none;
+	min-height: 36px;
+	padding: 0 12px;
+	white-space: nowrap;
+	touch-action: manipulation;
+}
+
+/* Drawn on the body, under its button, above the switcher's scrim. */
+.connected-web-menu__popup.connected-web-sheet-menubar__popup {
+	position: fixed;
+	z-index: 4100;
+	/* Its own width, not what is left right of its button, so it can be
+	   measured and moved in; never wider than the screen, wrapping instead. */
+	width: max-content;
+	max-width: calc(100vw - 16px);
 	max-height: 70vh;
 	overflow-y: auto;
+	font-size: 14px;
 }
 
-/* The four menus keep their names here: one control, still File, Edit, View
-   and Help rather than one undifferentiated list. */
-.connected-web-compact-menu__group + .connected-web-compact-menu__group {
-	margin-top: 4px;
-	padding-top: 4px;
-	border-top: 1px solid rgba(255, 255, 255, 0.07);
-}
-
-.connected-web-compact-menu__label {
-	padding: 8px 10px 4px;
-	color: #8d96a6;
-	font-size: 11px;
-	font-weight: 700;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-}
-
-.connected-web-compact-menu__popup .connected-web-menu__item {
-	width: 100%;
+.connected-web-sheet-menubar__popup .connected-web-menu__item {
+	min-height: 40px;
+	white-space: normal;
 }
 
 /* A server upgrade's ticklist: centred and modal over the whole window, in

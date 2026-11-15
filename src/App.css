@@ -4550,20 +4550,6 @@ body.project-tabbar-reordering .project-tabbar {
   color: rgba(220, 226, 240, 0.72);
 }
 
-.compact-home-toggle {
-  position: relative;
-}
-
-.compact-home-toggle__dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #ee6258;
-}
-
 .compact-breadcrumb:hover {
   background: color-mix(
     in srgb,
@@ -4596,35 +4582,17 @@ body.project-tabbar-reordering .project-tabbar {
   color: rgba(220, 226, 240, 0.32);
 }
 
-.compact-connection {
-  position: relative;
-}
-
 .compact-chrome__pixel-slot {
   flex: none;
   display: inline-flex;
 }
 
-/* Without the connection glyph its warnings ride on the breadcrumb. */
+/* The row has no server glyph, so the server's warnings ride on the
+   breadcrumb. */
 .compact-breadcrumb__alert {
   flex: none;
   margin-left: 4px;
   color: #ffb454;
-}
-
-.compact-connection__dot {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #4fd08a;
-  box-shadow: 0 0 0 2px var(--tabbar-bg);
-}
-
-.compact-connection__dot--unreachable {
-  background: #ff8f8f;
 }
 
 /* The bell carries the same count pill as the wide header's. */
@@ -4855,17 +4823,10 @@ body.project-tabbar-reordering .project-tabbar {
 /* A server's own upgrade. The warning tone is the header badge's, so the
  * icon beside the server label and the row it leads to read as one thing. */
 .remote-access-button__upgrade,
-.compact-connection__upgrade,
 .server-upgrade-row__icon,
 .server-upgrade-dialog__title-icon {
 	flex: none;
 	color: #ffe7a6;
-}
-
-.compact-connection__upgrade {
-	position: absolute;
-	top: 2px;
-	right: 2px;
 }
 
 .server-upgrade-row__icon--quiet {

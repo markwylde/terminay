@@ -17,10 +17,14 @@ export type RendererHostAdapters = Readonly<{
 		nativeWindowControls: boolean;
 		/**
 		 * Supplied only by hosts that draw an application menu in-page, so the
-		 * compact chrome row can hold one without the shared workspace ever
-		 * learning a host-only command. Hosts with native menus omit it.
+		 * compact switcher can hold one without the shared workspace ever
+		 * learning a host-only command. `onCommand` runs once a command is
+		 * chosen, so the switcher can step aside for it. Hosts with native
+		 * menus omit it.
 		 */
-		renderCompactApplicationMenu?: () => ReactNode;
+		renderCompactApplicationMenu?: (
+			options: Readonly<{ onCommand: () => void }>,
+		) => ReactNode;
 		/**
 		 * Supplied by a host whose window has no menu row of its own (Desktop on
 		 * Windows): opens the host's application menu below a point, in CSS

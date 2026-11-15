@@ -19,18 +19,6 @@ async function resize(
 const switcherOf = (page: Page) =>
 	page.getByRole('dialog', { name: 'Switch terminal' });
 
-const homeToggleOf = (page: Page) =>
-	page.locator('[data-compact-home-toggle="true"]');
-
-/** Home is one press away on the compact row. */
-async function goHome(page: Page) {
-	await homeToggleOf(page).click();
-	await expect(page.locator('.app-shell')).toHaveAttribute(
-		'data-terminay-selected-view',
-		'home',
-	);
-}
-
 async function openDrawer(page: Page) {
 	await page.locator('[data-compact-breadcrumb="true"]').click();
 	const drawer = switcherOf(page);
@@ -40,6 +28,18 @@ async function openDrawer(page: Page) {
 		Promise.all(element.getAnimations().map((animation) => animation.finished)),
 	);
 	return drawer;
+}
+
+/** Home is the first item of the switcher's rail. */
+async function goHome(page: Page) {
+	const drawer = await openDrawer(page);
+	await drawer.locator('[data-compact-switcher-home="true"]').click();
+	await drawer.locator('[data-compact-home-section]').first().click();
+	await expect(drawer).toHaveCount(0);
+	await expect(page.locator('.app-shell')).toHaveAttribute(
+		'data-terminay-selected-view',
+		'home',
+	);
 }
 
 const activeProjectId = (page: Page) =>
@@ -145,14 +145,11 @@ test.describe('compact chrome', () => {
 		);
 		expect(overflow).toBeLessThanOrEqual(1);
 		// Every control is still on the row.
-		await expect(mainWindow.getByLabel('Toggle file explorer')).toBeVisible();
-		await expect(mainWindow.getByLabel('Open command bar')).toBeVisible();
+		await expect(row.getByLabel('Toggle file explorer')).toBeVisible();
+		await expect(row.getByLabel('Open command bar')).toBeVisible();
+		await expect(row.locator('[data-compact-breadcrumb="true"]')).toBeVisible();
 		await expect(
-			mainWindow.locator('[data-compact-breadcrumb="true"]'),
-		).toBeVisible();
-		await expect(homeToggleOf(mainWindow)).toBeVisible();
-		await expect(
-			mainWindow.locator('[data-compact-connection="true"]'),
+			row.locator('[data-compact-notifications-button="true"]'),
 		).toBeVisible();
 	});
 
@@ -176,33 +173,70 @@ test.describe('compact chrome', () => {
 		);
 	});
 
-	test('the Home toggle goes Home and back to the same project', async ({
+	test('the row holds one control per destination, sidebar toggle last', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const row = mainWindow.locator('[data-compact-chrome="true"]');
+		await expect(row).toBeVisible();
+		const controls = row.locator(':scope > button');
+		await expect(controls.first()).toHaveAttribute(
+			'data-compact-command-bar',
+			'true',
+		);
+		await expect(controls.last()).toHaveAttribute(
+			'data-compact-sidebar-toggle',
+			'true',
+		);
+		// Home, the server, and the application menu live in the switcher.
+		await expect(row.locator('[data-compact-home-toggle]')).toHaveCount(0);
+		await expect(row.locator('[data-compact-connection]')).toHaveCount(0);
+		await expect(
+			row.getByRole('button', { name: 'Application menu' }),
+		).toHaveCount(0);
+
+		// The trailing toggle shows and hides the project's sidebar.
+		const toggle = row.locator('[data-compact-sidebar-toggle="true"]');
+		const wasOpen = (await toggle.getAttribute('aria-pressed')) === 'true';
+		await toggle.click();
+		await expect(toggle).toHaveAttribute('aria-pressed', String(!wasOpen));
+		await toggle.click();
+		await expect(toggle).toHaveAttribute('aria-pressed', String(wasOpen));
+	});
+
+	test('Home from the rail, and back to the same project', async ({
 		electronApp,
 		mainWindow,
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
 		const project = await activeProjectId(mainWindow);
-		const toggle = homeToggleOf(mainWindow);
-		await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-
-		await toggle.click();
-		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
-			'data-terminay-selected-view',
-			'home',
-		);
-		await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-		await expect(toggle).toHaveAccessibleName('Back to project');
+		await goHome(mainWindow);
 		// The title block names the Home tab over Home.
 		await expect(mainWindow.locator('.compact-title__where')).toHaveText(
 			'Home',
 		);
 
-		await toggle.click();
+		const drawer = await openDrawer(mainWindow);
+		await railProject(mainWindow, project).click();
+		await drawer.locator('[data-compact-switcher-terminal]').first().click();
+		await expect(drawer).toHaveCount(0);
 		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
 			'data-terminay-selected-view',
 			'project',
 		);
 		await expect.poll(() => activeProjectId(mainWindow)).toBe(project);
+	});
+
+	test('the switcher draws no menu band on a host with native menus', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await resize(mainWindow, electronApp, PHONE);
+		const drawer = await openDrawer(mainWindow);
+		await expect(
+			drawer.locator('[data-compact-switcher-app-menu="true"]'),
+		).toHaveCount(0);
 	});
 
 	test('Home leads the drawer rail and lists its sections', async ({
@@ -386,7 +420,6 @@ test.describe('compact chrome', () => {
 	}) => {
 		await resize(mainWindow, electronApp, PHONE);
 		const breadcrumb = mainWindow.locator('[data-compact-breadcrumb="true"]');
-		const connection = mainWindow.locator('[data-compact-connection="true"]');
 		const drawer = switcherOf(mainWindow);
 
 		await breadcrumb.click();
@@ -395,8 +428,7 @@ test.describe('compact chrome', () => {
 		await expect(drawer).toHaveCount(0);
 		await expect(breadcrumb).toBeFocused();
 
-		// The connection glyph opens the same surface, and focus returns there.
-		await connection.click();
+		await breadcrumb.click();
 		await expect(drawer).toBeVisible();
 		const scrim = mainWindow.locator('.compact-drawer-scrim');
 		const box = await scrim.boundingBox();
@@ -407,7 +439,7 @@ test.describe('compact chrome', () => {
 			box.y + box.height / 2,
 		);
 		await expect(drawer).toHaveCount(0);
-		await expect(connection).toBeFocused();
+		await expect(breadcrumb).toBeFocused();
 	});
 
 	test('activates a terminal that belongs to a background project', async ({

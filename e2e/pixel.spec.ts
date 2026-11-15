@@ -237,7 +237,7 @@ test('a terminal Pixel opens in the automation space is listed in Tabs and opens
 	await expect(mainWindow.locator('[data-terminay-automation-terminal-page]')).toBeVisible();
 });
 
-test('on a phone Pixel docks in the header in place of the connection glyph', async ({
+test('on a phone Pixel docks in the header just before the sidebar toggle', async ({
 	appHarness,
 	electronApp,
 	mainWindow,
@@ -251,16 +251,23 @@ test('on a phone Pixel docks in the header in place of the connection glyph', as
 	const headerDock = row.locator('.pixel-dock--header');
 	await expect(headerDock).toBeVisible();
 	await expect(dock(mainWindow)).toHaveCount(1);
-	await expect(row.locator('[data-compact-connection="true"]')).toHaveCount(0);
+	await expect(
+		row.locator(
+			'[data-compact-pixel-slot="true"] + [data-compact-sidebar-toggle="true"]',
+		),
+	).toHaveCount(1);
 	await expect(mainWindow.locator('.pixel-dock--corner')).toHaveCount(0);
 
 	await headerDock.click();
 	await expect(balloon(mainWindow)).toBeVisible();
 
-	// Off again, the glyph comes back to the trailing edge.
+	// Off again, the sidebar toggle still ends the row.
 	await setPixel(appHarness, mainWindow, false);
 	await expect(dock(mainWindow)).toHaveCount(0);
-	await expect(row.locator('[data-compact-connection="true"]')).toBeVisible();
+	await expect(row.locator('[data-compact-pixel-slot]')).toHaveCount(0);
+	await expect(
+		row.locator('[data-compact-sidebar-toggle="true"]'),
+	).toBeVisible();
 });
 
 test('when its chosen agent is not installed, Pixel says so and links the official install guide', async ({

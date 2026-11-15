@@ -1,4 +1,3 @@
-import { Menu as MenuIcon } from 'lucide-react';
 import {
 	RecordingsClient,
 	SettingsClient,
@@ -13,7 +12,15 @@ import {
 } from '@terminay/protocol';
 import type { AppCommand } from '../types/terminay';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
+import { createPortal } from 'react-dom';
 import 'dockview/dist/styles/dockview.css';
 import '@xterm/xterm/css/xterm.css';
 import '../index.css';
@@ -653,11 +660,14 @@ export function ConnectedWebRendererWorkspace({
 								...(hasNativeMenus
 									? {}
 									: {
-											renderCompactApplicationMenu: () => (
+											renderCompactApplicationMenu: ({
+												onCommand,
+											}: Readonly<{ onCommand: () => void }>) => (
 												<ConnectedBrowserMenuBar
 													onBack={onBack}
+													onCommand={onCommand}
 													onOpenAuxiliaryRoute={requestBrowserAuxiliaryRoute}
-													variant="compact"
+													variant="sheet"
 												/>
 											),
 										}),
@@ -728,15 +738,26 @@ export function ConnectedWebRendererWorkspace({
 
 function ConnectedBrowserMenuBar({
 	onBack,
+	onCommand,
 	onOpenAuxiliaryRoute,
 	variant = 'bar',
 }: Readonly<{
 	onBack: () => void;
+	/** Runs once a command is chosen, before the command itself. */
+	onCommand?: () => void;
 	onOpenAuxiliaryRoute: (route: BrowserAuxiliaryRoute) => void;
-	/** `compact` folds the four menus into one control for the chrome row. */
-	variant?: 'bar' | 'compact';
+	/**
+	 * `sheet` is the same menu bar inside the compact switcher: its row
+	 * scrolls sideways, so each menu's list is drawn on the document body,
+	 * where the row cannot clip it.
+	 */
+	variant?: 'bar' | 'sheet';
 }>) {
 	const [openMenu, setOpenMenu] = useState<BrowserMenuId | null>(null);
+	const [sheetAnchor, setSheetAnchor] = useState<
+		Readonly<{ top: number; left: number }> | null
+	>(null);
+	const sheetPopupRef = useRef<HTMLDivElement | null>(null);
 	const menuButtonRefs = useRef(new Map<BrowserMenuId, HTMLButtonElement>());
 	const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
@@ -945,10 +966,11 @@ function ConnectedBrowserMenuBar({
 	const activateItem = useCallback(
 		(menuId: BrowserMenuId, item: BrowserMenuItem) => {
 			setOpenMenu(null);
-			menuButtonRefs.current.get(menuId)?.focus();
+			if (onCommand === undefined) menuButtonRefs.current.get(menuId)?.focus();
+			else onCommand();
 			item.onSelect();
 		},
-		[],
+		[onCommand],
 	);
 
 	const onMenuButtonKeyDown = useCallback(
@@ -1045,7 +1067,9 @@ function ConnectedBrowserMenuBar({
 			const target = event.target;
 			if (
 				target instanceof Element &&
-				target.closest('.connected-web-menubar, .connected-web-compact-menu')
+				target.closest(
+					'.connected-web-menubar, .connected-web-sheet-menubar, .connected-web-sheet-menubar__popup',
+				)
 			)
 				return;
 			setOpenMenu(null);
@@ -1054,69 +1078,118 @@ function ConnectedBrowserMenuBar({
 		return () => window.removeEventListener('pointerdown', onPointerDown);
 	}, [openMenu]);
 
-	if (variant === 'compact') {
+	const placeSheetMenu = useCallback(() => {
+		if (variant !== 'sheet' || openMenu === null) return;
+		const button = menuButtonRefs.current.get(openMenu);
+		if (button === undefined) return;
+		const bounds = button.getBoundingClientRect();
+		// The list's own width once it is drawn; its minimum before then.
+		const popupWidth = sheetPopupRef.current?.offsetWidth ?? 220;
+		// The visual viewport: on a phone, a list that overflows would widen the
+		// layout viewport and so move the very edge it is clamped to.
+		const viewportWidth =
+			window.visualViewport?.width ?? document.documentElement.clientWidth;
+		const left = Math.max(
+			8,
+			Math.min(bounds.left, viewportWidth - popupWidth - 8),
+		);
+		const top = bounds.bottom + 4;
+		setSheetAnchor((current) =>
+			current?.left === left && current.top === top ? current : { top, left },
+		);
+	}, [openMenu, variant]);
+	useLayoutEffect(() => {
+		if (openMenu === null) setSheetAnchor(null);
+		else placeSheetMenu();
+	}, [openMenu, placeSheetMenu]);
+	// Placed once more after the list is drawn, so a list wider than its
+	// minimum still ends inside the screen.
+	const hasSheetAnchor = sheetAnchor !== null;
+	useLayoutEffect(() => {
+		if (hasSheetAnchor) placeSheetMenu();
+	}, [hasSheetAnchor, placeSheetMenu]);
+
+	const renderMenuItems = (menuId: BrowserMenuId) =>
+		menuItems[menuId].map((item, index) => (
+			<button
+				ref={(node) => {
+					const key = `${menuId}:${item.id}`;
+					if (node) itemRefs.current.set(key, node);
+					else itemRefs.current.delete(key);
+				}}
+				key={item.id}
+				type="button"
+				className={`connected-web-menu__item${item.startsGroup === true ? ' connected-web-menu__item--group' : ''}${item.checked === undefined ? '' : ' connected-web-menu__item--checkable'}`}
+				role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+				{...(item.checked === undefined ? {} : { 'aria-checked': item.checked })}
+				{...(item.shortcut === undefined
+					? {}
+					: { 'aria-keyshortcuts': ariaKeyShortcut(item.shortcut, isMac) })}
+				onClick={() => activateItem(menuId, item)}
+				onKeyDown={(event) => onMenuItemKeyDown(event, menuId, index)}
+			>
+				<BrowserMenuItemContent item={item} isMac={isMac} />
+			</button>
+		));
+
+	const renderMenuButton = (menuId: BrowserMenuId) => (
+		<button
+			ref={(node) => {
+				if (node) menuButtonRefs.current.set(menuId, node);
+				else menuButtonRefs.current.delete(menuId);
+			}}
+			type="button"
+			className="connected-web-menu__button"
+			role="menuitem"
+			aria-haspopup="menu"
+			aria-expanded={openMenu === menuId}
+			onClick={() =>
+				setOpenMenu((current) => (current === menuId ? null : menuId))
+			}
+			onPointerEnter={(event) => {
+				// Once a menu is open, sliding a mouse across the bar opens its
+				// neighbours, as a desktop menu bar does. A tap also enters, and
+				// must leave the click to open the menu it landed on.
+				if (event.pointerType !== 'mouse') return;
+				setOpenMenu((current) =>
+					current === null || current === menuId ? current : menuId,
+				);
+			}}
+			onKeyDown={(event) => onMenuButtonKeyDown(event, menuId)}
+		>
+			{menuLabels[menuId]}
+		</button>
+	);
+
+	if (variant === 'sheet') {
 		return (
-			<div className="connected-web-compact-menu">
-				<button
-					type="button"
-					className="compact-chrome__icon connected-web-compact-menu__button"
-					aria-haspopup="menu"
-					aria-expanded={openMenu !== null}
-					aria-label="Application menu"
-					title="Application menu"
-					onClick={() =>
-						setOpenMenu((current) => (current === null ? 'terminay' : null))
-					}
+			<nav className="connected-web-sheet-menubar" aria-label="Application menu">
+				<div
+					className="connected-web-sheet-menubar__menus"
+					role="menubar"
+					onScroll={placeSheetMenu}
 				>
-					<MenuIcon size={17} aria-hidden="true" />
-				</button>
-				{openMenu === null ? null : (
-					<div
-						className="connected-web-compact-menu__popup"
-						role="menu"
-						aria-label="Application menu"
-					>
-						{menuOrder.map((menuId) => (
-							<div className="connected-web-compact-menu__group" key={menuId}>
-								{/* The four menus keep their names, so one control still
-								    reads as File, Edit, View, and Help. */}
-								<div className="connected-web-compact-menu__label">
-									{menuLabels[menuId]}
-								</div>
-								{menuItems[menuId].map((item) => (
-									<button
-										key={item.id}
-										type="button"
-										className={`connected-web-menu__item${item.checked === undefined ? '' : ' connected-web-menu__item--checkable'}`}
-										role={
-											item.checked === undefined
-												? 'menuitem'
-												: 'menuitemcheckbox'
-										}
-										{...(item.checked === undefined
-											? {}
-											: { 'aria-checked': item.checked })}
-										{...(item.shortcut === undefined
-											? {}
-											: {
-													'aria-keyshortcuts': ariaKeyShortcut(
-														item.shortcut,
-														isMac,
-													),
-												})}
-										onClick={() => {
-											setOpenMenu(null);
-											item.onSelect();
-										}}
-									>
-										<BrowserMenuItemContent item={item} isMac={isMac} />
-									</button>
-								))}
-							</div>
-						))}
-					</div>
-				)}
-			</div>
+					{menuOrder.map((menuId) => (
+						<div className="connected-web-menu" key={menuId}>
+							{renderMenuButton(menuId)}
+						</div>
+					))}
+				</div>
+				{openMenu === null || sheetAnchor === null
+					? null
+					: createPortal(
+							<div
+								ref={sheetPopupRef}
+								className="connected-web-menu__popup connected-web-sheet-menubar__popup"
+								role="menu"
+								aria-label={menuLabels[openMenu]}
+								style={{ top: sheetAnchor.top, left: sheetAnchor.left }}
+							>
+								{renderMenuItems(openMenu)}
+							</div>,
+							document.body,
+						)}
+			</nav>
 		);
 	}
 
@@ -1125,70 +1198,14 @@ function ConnectedBrowserMenuBar({
 			<div className="connected-web-menubar__menus" role="menubar">
 				{menuOrder.map((menuId) => (
 					<div className="connected-web-menu" key={menuId}>
-						<button
-							ref={(node) => {
-								if (node) menuButtonRefs.current.set(menuId, node);
-								else menuButtonRefs.current.delete(menuId);
-							}}
-							type="button"
-							className="connected-web-menu__button"
-							role="menuitem"
-							aria-haspopup="menu"
-							aria-expanded={openMenu === menuId}
-							onClick={() =>
-								setOpenMenu((current) => (current === menuId ? null : menuId))
-							}
-							onPointerEnter={() =>
-								// Once a menu is open, sliding across the bar opens its
-								// neighbours, as a desktop menu bar does.
-								setOpenMenu((current) =>
-									current === null || current === menuId ? current : menuId,
-								)
-							}
-							onKeyDown={(event) => onMenuButtonKeyDown(event, menuId)}
-						>
-							{menuLabels[menuId]}
-						</button>
+						{renderMenuButton(menuId)}
 						{openMenu === menuId ? (
 							<div
 								className="connected-web-menu__popup"
 								role="menu"
 								aria-label={menuLabels[menuId]}
 							>
-								{menuItems[menuId].map((item, index) => (
-									<button
-										ref={(node) => {
-											const key = `${menuId}:${item.id}`;
-											if (node) itemRefs.current.set(key, node);
-											else itemRefs.current.delete(key);
-										}}
-										key={item.id}
-										type="button"
-										className={`connected-web-menu__item${item.startsGroup === true ? ' connected-web-menu__item--group' : ''}${item.checked === undefined ? '' : ' connected-web-menu__item--checkable'}`}
-										role={
-											item.checked === undefined
-												? 'menuitem'
-												: 'menuitemcheckbox'
-										}
-										{...(item.checked === undefined
-											? {}
-											: { 'aria-checked': item.checked })}
-										{...(item.shortcut === undefined
-											? {}
-											: {
-													'aria-keyshortcuts': ariaKeyShortcut(
-														item.shortcut,
-														isMac,
-													),
-												})}
-										onClick={() => activateItem(menuId, item)}
-										onKeyDown={(event) =>
-											onMenuItemKeyDown(event, menuId, index)
-										}
-									>
-										<BrowserMenuItemContent item={item} isMac={isMac} />
-									</button>
-								))}
+								{renderMenuItems(menuId)}
 							</div>
 						) : null}
 					</div>

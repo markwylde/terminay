@@ -76,21 +76,22 @@ test('the compact application menu crosses the host boundary as a capability', a
 	// is handed, so no browser-only command reaches the tree every host renders.
 	assert.match(
 		sharedWorkspace,
-		/renderCompactApplicationMenu\?: \(\) => ReactNode;/u,
+		/renderCompactApplicationMenu\?: \(\s*options: Readonly<\{ onCommand: \(\) => void \}>,\s*\) => ReactNode;/u,
 	);
 	assert.match(
 		webWorkspace,
-		/renderCompactApplicationMenu: \(\) => \([\s\S]*?variant="compact"/u,
+		/renderCompactApplicationMenu: \(\{[\s\S]*?onCommand[\s\S]*?variant="sheet"/u,
 	);
 	// A host with native menus supplies nothing at all.
 	assert.match(webWorkspace, /\.\.\.\(hasNativeMenus\s*\?\s*\{\}/u);
 
-	// The compact row draws the in-page menu a browser host hands it, or else
-	// the button a Windows host offers to open its own native menu.
+	// The compact switcher draws the in-page menu a browser host hands it, or
+	// else the button a Windows host offers to open its own native menu.
 	assert.match(
 		sharedApp,
-		/applicationMenu=\{\s*hostPresentation\?\.renderCompactApplicationMenu\?\.\(\) \?\?\s*\(hostPresentation\?\.openApplicationMenu === undefined/u,
+		/const compactApplicationMenu[\s\S]*?hostPresentation\?\.renderCompactApplicationMenu\?\.\(\{\s*onCommand: closeCompactSwitcher,\s*\}\) \?\?\s*\(hostPresentation\?\.openApplicationMenu === undefined/u,
 	);
+	assert.match(sharedApp, /applicationMenu: compactApplicationMenu/u);
 	// The browser's own menu vocabulary stays in the browser composition.
 	for (const command of ['Disconnect', 'New Terminal Tab', 'New Project']) {
 		assert.ok(
@@ -105,12 +106,16 @@ test('the compact application menu crosses the host boundary as a capability', a
 });
 
 test('the compact menu keeps every wide-menu command and its capability gating', () => {
-	// One control, still four named menus built from one definition — there is
-	// no second item list that could drift from the menu bar's.
+	// The same four named menus built from one definition, with the same item
+	// renderer — there is no second item list that could drift from the bar's.
 	assert.equal(webWorkspace.match(/const menuItems = useMemo</gu).length, 1);
 	assert.match(
 		webWorkspace,
-		/variant === 'compact'[\s\S]*?menuOrder\.map\(\(menuId\) => \([\s\S]*?menuLabels\[menuId\][\s\S]*?menuItems\[menuId\]\.map/u,
+		/const renderMenuItems = \(menuId: BrowserMenuId\) =>\s*menuItems\[menuId\]\.map/u,
+	);
+	assert.match(
+		webWorkspace,
+		/variant === 'sheet'[\s\S]*?menuOrder\.map\(\(menuId\) => \([\s\S]*?renderMenuButton\(menuId\)[\s\S]*?renderMenuItems\(openMenu\)/u,
 	);
 });
 
