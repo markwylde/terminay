@@ -99,9 +99,10 @@ surfaces exempt from the shared window frame.
     - `workflows/WorkflowsHome.tsx`
     - `recordings/RecordingsPanels.tsx` and `src/shared/SharedRecordingsLibraryPane.tsx`
     - `src/forge/ForgeHome.tsx` and `ForgeViews.tsx`
-- Archive order: archive this change after `simplify-phone-header` and
-  `workflows-home-on-phones`, because it modifies requirements those changes
-  add.
+- Archive order: archive this change after `simplify-phone-header`,
+  `workflows-home-on-phones`, and `forge-pull-requests-and-issues`, because it
+  modifies requirements those changes add or change. Its Home sidebar sections
+  requirement carries the forge change's eight sections.
 - E2E:
   - `compact-rail-drawer`
   - `compact-rail-drawer-visual`

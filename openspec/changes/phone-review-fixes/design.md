@@ -139,8 +139,8 @@ presentations read the same state:
 | Section | Tabs map to | Search | Sheet options |
 |---|---|---|---|
 | Tabs | new `statusTab` state (All, Needs you, Working, Done, Idle, and Untracked when shown) | the dashboard filter text | Layout (List or Projects), Untracked tabs |
-| Workflows | the existing status filter: All clears it; each other tab selects only that status | the text filter | Sort, Group, project checklist, Show finished |
-| Bots | the existing filter chip state | the bot filter text | Sort, plus engine details |
+| Workflows | new `compactTab` state; the stored multi-choice status filter applies as one applied option | the text filter | Sort, Group, project checklist, Show finished |
+| Bots | the existing single-choice filter chip state (All, Needs you, Working, Stopped) | the bot filter text | engine details only, through the engine card |
 | Automations | new `automationTab` state | none (no search on a wide window either; Search is not offered) | the server selector |
 | Recordings | new `recordingTab` state | the search text | the server selector, Updated, and Refresh |
 | Pull Requests / Issues | the existing scope state | none (no search on a wide window; Search is not offered) | State, Group, repository filter, Updated, and Refresh |
@@ -155,13 +155,17 @@ stored choice is not rewritten.
 uses, with every filter applied except the tab itself.
 
 Forge scopes are separate queries, and ADR-0106 forbids extra fetching. A scope
-tab therefore shows a count only once that scope has loaded in this session; the
-selected scope always has one.
+tab therefore shows a count only while the Home pull request cache holds that
+scope's result for the current State and repository key. The count is the
+result's length, with + when the forge reports more pages. Changing State or
+repository changes the key, so other scopes' counts disappear until visited.
+Nothing is fetched to show a count.
 
 **Applied options.** Each section declares which sheet options are filters, and
 supplies a token label and a reset for each:
 
-- Workflows: excluded projects, Show finished off.
+- Workflows: the project filter (one token naming the included projects), Show
+  finished off, and a stored wide status filter (one token naming its tones).
 - Forge: a state other than Open, a chosen repository.
 - Tabs: Untracked tabs is not a filter; it adds rows.
 - Bots, Automations, Recordings: nothing.
@@ -188,12 +192,25 @@ activated.
 **Bots Needs you cards.** Each `needsYou` entry is drawn as a card. When the
 entry's session carries a permission request, the card reuses the existing
 `PermissionPrompt` and decides through `server.client.decide`, as
-`BotSessionsPanel` does. Every card offers Open chat.
+`BotSessionsPanel` does. The client is the one for the server that owns the bot
+(each bot row already carries its connection), and the decision names the
+request's current ids. The card disables its choices while the call is pending,
+keeps itself and shows an error on rejection, and disappears when the request
+leaves `needsYou` because another client decided it. Every card offers Open
+chat. Tab counts count bots, as the wide chips do.
 
 The All tab ends with an engine card built from `useBotEngine`. Activating it
 opens the sheet, where `EngineSummary` renders in its compact form. The build
 banner renders above the rows, with its open state lifted into `BotsSection` as
 it is now.
+
+**One drawer at a time.** `App.tsx` already closes the switcher when the
+Command Bar opens. It now also raises a `compactDrawerEpoch` counter whenever
+the switcher or the Command Bar opens, and provides it beside
+`CompactHomeContext`. `CompactSectionPage` closes its sheet when the epoch
+changes, and when compact turns false, which also unmounts the sheet with the
+compact page; focus then moves to the wide page's body. The sheet has one layer,
+so a press outside it closes only the sheet.
 
 **Removed.** `HomeOptionsPanel`, its `HomeSectionOptions` slot, and every
 section's slot wrapping are deleted. So are the chrome row's `homeOptions` prop

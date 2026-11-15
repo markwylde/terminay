@@ -22,7 +22,7 @@ A compact section page SHALL NOT show the section's wide toolbar: no on-page sea
 
 ### Requirement: Compact section header row
 
-The header row SHALL show the section's title and a short summary, and SHALL offer a **View options** control. Tabs, Bots, Workflows, and Recordings SHALL also offer a **Search** control. Bots SHALL offer **New bot**, and Automations **New automation**, as a create control that starts the same flow as on a wide window.
+The header row SHALL show the section's title and a short summary, and SHALL offer a **View options** control while the section has secondary options, as the View options sheet requirement states. Tabs, Bots, Workflows, and Recordings SHALL also offer a **Search** control. Bots SHALL offer **New bot**, and Automations **New automation**, as a create control that starts the same flow as on a wide window.
 
 #### Scenario: Create from the header
 - **WHEN** a phone shows Bots and the user activates the header's create control
@@ -34,11 +34,19 @@ The header row SHALL show the section's title and a short summary, and SHALL off
 
 ### Requirement: Status tabs on a compact section page
 
-The status tabs SHALL be one control with exactly one selected tab, exposed to assistive technology as a tab list. Selecting a tab SHALL show only its rows. The tabs SHALL scroll sideways when they do not fit, and the selected tab SHALL be scrolled into view. Where the wide toolbar has a filter the tabs stand for, the two SHALL be the same state.
+The status tabs SHALL be one control with exactly one selected tab, exposed to assistive technology as a tab list. Selecting a tab SHALL show only its rows. The tabs SHALL scroll sideways when they do not fit, and the selected tab SHALL be scrolled into view.
 
 #### Scenario: Selecting a tab
 - **WHEN** a user on a phone selects Running in Workflows
 - **THEN** only running workflows are shown and Running is the selected tab
+
+### Requirement: Status tabs and the wide filters
+
+Where the wide toolbar has a single-choice filter the status tabs stand for, the two SHALL be the same state. Where the wide filter allows several choices, the tab SHALL be the compact page's own state, and the wide selection SHALL apply as an applied option, as the Workflows status tabs requirement states.
+
+#### Scenario: Bots filter shared
+- **WHEN** a user selects Stopped on Bots on a phone and the window is widened
+- **THEN** the wide Bots filter shows Stopped selected
 
 ### Requirement: Status tab counts
 
@@ -86,7 +94,7 @@ When the search, the selected tab, and the View options together match nothing, 
 
 #### Scenario: No match
 - **WHEN** a user searches Workflows for a word nothing matches
-- **THEN** the list says no workflow matches that word and offers Clear search, which clears it and shows every workflow again
+- **THEN** the list says no workflow matches that word and offers Clear search, which clears it and shows the selected tab's rows under the current View options again
 
 ### Requirement: View options sheet
 
@@ -122,7 +130,7 @@ While the sheet is open, focus SHALL stay inside it, starting on its first contr
 
 ### Requirement: Applied view options
 
-A View option that hides rows SHALL count as applied while it differs from its default: a project left out, a repository chosen, a state other than the default, or finished items hidden. Sort, grouping, layout, and showing extra rows SHALL NOT count. While any option is applied, View options SHALL carry a marker, and its accessible name SHALL say that filters are applied.
+A View option that hides rows SHALL count as applied while it differs from its default: the project filter while it leaves any project out, whose one token names the included projects, a repository chosen, a state other than the default, or finished items hidden. Sort, grouping, layout, and showing extra rows SHALL NOT count. While any option is applied, View options SHALL carry a marker, and its accessible name SHALL say that filters are applied.
 
 #### Scenario: Sorting is not a filter
 - **WHEN** a user changes only the sort
@@ -230,7 +238,7 @@ The back control and Escape SHALL return to the Workflows list with its tab, sea
 
 ### Requirement: Bots on a compact workspace
 
-On a compact workspace the Bots section's status tabs SHALL be **All**, **Needs you**, **Working**, **Idle**, and **Stopped**. A row SHALL show:
+On a compact workspace the Bots section's status tabs SHALL be the wide filter chips: **All**, **Needs you**, **Working**, and **Stopped**. Each count SHALL count bots, as the chips do. A row SHALL show:
 
 - the bot's avatar with its status;
 - its name and activity chip;
@@ -245,15 +253,31 @@ The build banner SHALL stay on the page above the rows while a build is shown.
 
 ### Requirement: Bots Needs you cards
 
-The Bots Needs you tab SHALL show each pending request as a card naming the bot, what it wants, and its age, with **Open chat**. When the request is a permission request, the card SHALL also offer the request's own choices. Choosing one SHALL decide the request as the bot's chat does.
+The Bots Needs you tab SHALL show each pending request as a card naming the bot, what it wants, and its age, with **Open chat**. When the request is a permission request, the card SHALL also offer the request's own choices. Choosing one SHALL decide the request as the bot's chat does, on the connection of the server that owns the bot.
 
 #### Scenario: Deciding from the list
 - **WHEN** a phone shows Bots, selects Needs you, and a bot asks permission to run a command
 - **THEN** a card names the bot and the command and offers the request's choices and Open chat, and choosing one decides the request
 
+### Requirement: Deciding from a Bots Needs you card
+
+While a decision from a card is pending, the card's choices SHALL be disabled. A decision that fails SHALL leave the card in place with its choices enabled and say that it failed. A request decided elsewhere SHALL leave the list.
+
+#### Scenario: A decision fails
+- **WHEN** a user chooses a permission choice on a card and the server rejects the decision
+- **THEN** the card stays, says the decision failed, and offers its choices again
+
+#### Scenario: Decided on another device
+- **WHEN** a request shown as a card is decided from another device
+- **THEN** its card leaves the Needs you tab
+
+#### Scenario: Double activation
+- **WHEN** a user activates a choice twice quickly
+- **THEN** one decision is sent, and the choices are disabled until it settles
+
 ### Requirement: Bots container engine on a compact workspace
 
-On a compact workspace the Bots All tab SHALL end with a container engine card naming the engine, the image state, and how many bot containers are running. Activating it SHALL open the View options sheet, which SHALL show the engine details and **Sort**.
+On a compact workspace the Bots All tab SHALL end with a container engine card naming the engine, the image state, and how many bot containers are running. Activating it SHALL open the View options sheet, which SHALL show the engine details. Bots SHALL offer View options only through the engine card, since it has no other secondary options.
 
 #### Scenario: Engine at the end of the list
 - **WHEN** a phone shows Bots with All selected
@@ -300,11 +324,23 @@ A recording row SHALL offer **Delete recording** from a trailing more control. T
 
 ### Requirement: Pull requests and issues on a compact workspace
 
-On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**, and the Issues tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count once that scope has loaded. A Review count above zero SHALL be marked.
+On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**, and the Issues tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count only while the Home pull request cache holds that scope's result for the current State and repository. A Review count above zero SHALL be marked.
 
 #### Scenario: Review requests
 - **WHEN** a phone shows Pull Requests with three review requests
 - **THEN** the Review tab is selected and its count of 3 is marked
+
+### Requirement: Forge scope counts
+
+A forge scope tab's count SHALL be the number of items in its cached result, followed by + when the forge has more pages. A scope with no cached result for the current State and repository SHALL show no count. Showing counts SHALL NEVER fetch.
+
+#### Scenario: Scope not yet visited
+- **WHEN** a phone shows Pull Requests and the Mine scope has not been loaded for the current State and repository
+- **THEN** the Mine tab shows no count, and no request is made for it
+
+#### Scenario: More pages
+- **WHEN** the Involved result holds 50 items and the forge has more pages
+- **THEN** the Involved tab reads 50+
 
 ### Requirement: Forge rows on a compact workspace
 
@@ -342,6 +378,46 @@ On a compact workspace the Home sidebar SHALL NOT be shown at all. While Home is
 - **WHEN** a device that last showed the Home sidebar on a wide window is used at phone width and then widened again
 - **THEN** the Home sidebar is shown
 
+### Requirement: Workflows status tabs on a compact workspace
+
+The Workflows status tabs SHALL be the compact page's own state, and SHALL NOT change the stored status filter. While the stored status filter selects any tone, it SHALL apply on a compact page as one applied option whose token names the selected tones. Removing the token SHALL clear the stored status filter. A wide window SHALL show the stored status filter as it was.
+
+#### Scenario: Two tones chosen on a wide window
+- **WHEN** a device chose Needs you and Running on a wide window and then shows Workflows on a phone
+- **THEN** All is selected, a token reads Needs you, Running, the rows and counts cover those tones, and widening the window shows both filters still selected
+
+### Requirement: Unrestorable workflow on a compact workspace
+
+On a compact workspace a workflow that could not be restored SHALL be a row titled "Workflow could not be restored" that names its terminal and project and has the Needs you tone. Its detail page SHALL say the same and offer only Open terminal.
+
+#### Scenario: Unrestorable on a phone
+- **WHEN** a phone shows Workflows and a terminal's workflow could not be restored
+- **THEN** a Needs you row reads Workflow could not be restored and names the terminal
+
+### Requirement: Workflow detail page follows its workflow
+
+When the workflow shown on its detail page is removed or replaced, the detail page SHALL return to the Workflows list as the back control does.
+
+#### Scenario: Workflow removed while open
+- **WHEN** the workflow on the detail page is removed
+- **THEN** the Workflows list is shown with its tab and options as they were
+
+### Requirement: One compact drawer at a time
+
+At most one compact drawer or sheet SHALL be open, as ADR-0125 records. Opening the compact switcher or the Command Bar SHALL close an open View options sheet. Widening the window past the compact breakpoint SHALL close it and move focus to the section's page. A press outside the sheet SHALL close only the sheet.
+
+#### Scenario: Switcher over a sheet
+- **WHEN** a View options sheet is open and the user opens the compact switcher
+- **THEN** the sheet closes and the switcher opens
+
+#### Scenario: Command Bar over a sheet
+- **WHEN** a View options sheet is open and the user opens the Command Bar
+- **THEN** the sheet closes and the Command Bar has focus
+
+#### Scenario: Widening with a sheet open
+- **WHEN** the window widens past the compact breakpoint while a sheet is open
+- **THEN** the sheet is gone and the wide page is shown
+
 ## MODIFIED Requirements
 
 ### Requirement: Home sidebar visibility
@@ -370,11 +446,11 @@ The project bar's sidebar toggle, its keyboard shortcut, and its command SHALL r
 
 ### Requirement: Home sidebar sections
 
-While Home is selected on a workspace wider than the compact breakpoint, the workspace SHALL offer a Home sidebar that lists exactly six sections, in this order: **Home**, **Tabs**, **Bots**, **Automations**, **Workflows**, and **Recordings**.
+While Home is selected on a workspace wider than the compact breakpoint, the workspace SHALL offer a Home sidebar that lists these sections, in this order: **Home**, **Tabs**, **Bots**, **Automations**, **Workflows**, **Recordings**, **Pull Requests**, and **Issues**. **Pull Requests** SHALL be listed only while at least one enabled forge source serves pull requests with its Pull requests on Home setting on, and **Issues** only while one serves issues with its Issues on Home setting on. Both SHALL be hidden from a client whose authorization is bound to a project. **Pull Requests** SHALL carry a count of open pull requests that request the user's review, and **Issues** a count of open issues assigned to the user, each drawn in the neutral badge tone and omitted when zero or unknown.
 
 Activating a section SHALL open it as a Home tab, or bring its tab to the front where one is already open, so that no section is ever open twice. The sidebar SHALL show as current the section that owns the Home tab in front, and SHALL show none as current when no Home tab is open. A tab opened from within a section SHALL count as belonging to that section; for example, a bot's tab belongs to Bots, an automation's tab to Automations, and a recording's replay to Recordings.
 
-The Home sidebar SHALL NOT show any project's Explorer, Documentation, Agents, or Git panes, and a project's sidebar SHALL NOT show the Home sections. On a compact workspace the compact switcher's Home panel SHALL offer the same sections, with the same rules for opening a section and for marking the current one. The sidebar items SHALL be reachable by keyboard, and SHALL expose the current section to assistive technology.
+The Home sidebar SHALL NOT show any project's Explorer, Documentation, Agents, or Git panes, and a project's sidebar SHALL NOT show the Home sections. On a compact workspace the compact switcher's Home panel SHALL offer the same sections under the same rules for listing, hiding, counting, opening, and marking the current one. The sidebar items SHALL be reachable by keyboard, and SHALL expose the current section to assistive technology.
 
 #### Scenario: Choosing a section
 
@@ -476,3 +552,128 @@ While narrow, every control in the Workflows toolbar and View options, every pro
 
 - **WHEN** a phone shows the Workflows section with the View options sheet open
 - **THEN** no header control, status tab, row, or sheet control is less than 40 pixels tall
+
+### Requirement: Rows are single unwrapped lines
+
+On a workspace wider than the compact breakpoint, in the List view every row SHALL occupy exactly one line. Row text SHALL NEVER wrap, and content that does not fit the available width SHALL be truncated with a visible truncation indicator while the status affordance, project colour, and emoji stay visible. Narrowing the window SHALL truncate row text rather than reflow, re-order, or hide rows. The card views SHALL likewise truncate rather than wrap any single field, and SHALL NEVER hide a card because the window is narrow. On a compact workspace rows follow the compact section page's row requirements instead.
+
+#### Scenario: Long title
+
+- **WHEN** a panel title is wider than the available row width in the List view
+- **THEN** the title is truncated with a visible truncation indicator and the row stays one line
+
+#### Scenario: Narrow window
+
+- **WHEN** the window is narrowed while the List view is shown
+- **THEN** rows truncate their text and no row wraps, reorders, or disappears
+
+#### Scenario: Narrow window in a card view
+
+- **WHEN** the window is narrowed while a card view is shown
+- **THEN** cards reflow into fewer columns, every field truncates rather than wrapping, and no card is hidden
+
+### Requirement: Tabs section is the workspace dashboard
+
+The Tabs section SHALL present the workspace dashboard — its rows, view modes, and activation behaviour — exactly as the dashboard requirements define them. On a compact workspace it SHALL present the same projects, panels, agents, untracked terminals, and terminals outside the window's projects as a compact section page, as the compact Tabs requirements state. A project with no panels SHALL show under All as its group header with a note that it has no tabs. Activating a project or panel from the Tabs section SHALL leave Home as those requirements define.
+
+#### Scenario: Tabs shows the dashboard
+
+- **WHEN** a user selects the Tabs section
+- **THEN** every project and panel is shown in the dashboard's remembered view mode
+
+#### Scenario: Activating a row from Tabs
+
+- **WHEN** a user activates a panel row in the Tabs section
+- **THEN** that panel's project is selected, Home is left, and the panel is focused
+
+#### Scenario: Empty project on a phone
+
+- **WHEN** a phone shows Tabs with All selected and a project has no panels
+- **THEN** the project's header is shown with a note that it has no tabs
+
+### Requirement: Dashboard view modes
+
+The dashboard SHALL offer exactly three view modes over one model — List, Board, and Projects — selectable from a control in the dashboard header that names the current mode and is reachable by keyboard. On a compact workspace it SHALL offer only List and Projects, from the View options sheet, and SHALL show a remembered Board as List without changing what is remembered. Every mode SHALL present the same facts, differing only in arrangement: a status, count, or name SHALL NEVER read one way in one mode and another way in another.
+
+- **List** SHALL present every project as a header row followed by its panels, one unwrapped line each.
+- **Board** SHALL present one column per canonical status group, in the reading order Idle, Working, Needs you, Done, followed by the Untracked column. Each column holds one card per agent, or per panel where no agent owns it, named with the project it belongs to. Board is a triage view and MAY omit a project that has nothing in a column.
+- **Projects** SHALL present one card per project holding that project's panels and agents.
+
+The selected mode SHALL be per-device presentation state, SHALL NEVER be written to server-owned workspace state, and SHALL be remembered across reconnects. That memory SHALL be a hint: when it cannot be read, or when device storage is unavailable, the dashboard SHALL show the List view and SHALL report no error.
+
+#### Scenario: Switching mode
+
+- **WHEN** a user selects a different view mode
+- **THEN** the dashboard re-arranges into that mode over the same projects, panels, and agents
+
+#### Scenario: Board column order
+
+- **WHEN** the Board view is shown
+- **THEN** its columns read, from the start of the reading direction, Idle, Working, Needs you, Done, Untracked
+
+#### Scenario: Mode is remembered
+
+- **WHEN** a device that last used the Board view reopens the dashboard
+- **THEN** the Board view is shown
+
+#### Scenario: Storage unavailable
+
+- **WHEN** device storage is unavailable, full, or disabled
+- **THEN** the dashboard shows the List view and reports no error
+
+#### Scenario: Two devices, different modes
+
+- **WHEN** one device selects the Board view while another shows the List view of the same workspace
+- **THEN** each device keeps its own mode and neither changes the other
+
+#### Scenario: Board column with nothing in it
+
+- **WHEN** no agent or panel in the workspace is in a status group
+- **THEN** that Board column is shown as empty rather than removed, and no project is claimed to be missing
+
+### Requirement: Workflow column content
+
+Each column, and on a compact workspace each workflow's detail page, SHALL show the workflow's name, its project and terminal title, steps done out of total, the time since its first step started or that it is finished, the brief holding the opening prompt, and each step's marker, time, and note as the expanded workflow panel shows them. Every `running`, `failed`, or `needs_input` step SHALL be highlighted. All workflow text SHALL be rendered as plain text.
+
+#### Scenario: Running step
+
+- **WHEN** a workflow has three of seven steps done with notes, and its fourth step has been running for 14 minutes
+- **THEN** its column shows "3 of 7 done", the three notes, and the fourth step highlighted with "14m"
+
+#### Scenario: Earlier failure and a running step
+
+- **WHEN** step 2 failed and step 4 is running
+- **THEN** both steps are highlighted
+
+#### Scenario: Note containing markup
+
+- **WHEN** a step's note is `<img src=x onerror=alert(1)>`
+- **THEN** the column shows those characters and nothing else happens
+
+### Requirement: Stacked workflows on a narrow width
+
+While narrow on a window wider than the compact breakpoint, columns SHALL be stacked one above another, each at the full width of the section, and groups SHALL be stacked one above another with each group's columns stacked inside it, whatever the stored layout. The section SHALL have exactly one scroll area, which scrolls vertically and holds the header, toolbar, and every column; it SHALL NEVER scroll sideways, and no column or step list SHALL scroll on its own. On a compact workspace the section SHALL show rows and detail pages instead, as the compact Workflows requirements state.
+
+#### Scenario: Narrow tab on a desktop
+
+- **WHEN** a 560-pixel Workflows tab on a wide desktop window shows two workflows
+- **THEN** the two columns are stacked, each as wide as the section, and the section scrolls vertically with no sideways scrolling
+
+#### Scenario: Long workflow in a narrow tab
+
+- **WHEN** a narrow Workflows tab on a wide window shows a workflow with more steps than fit
+- **THEN** scrolling the section reaches its last step, and its step list does not scroll by itself
+
+#### Scenario: Grouped in a narrow tab
+
+- **WHEN** a device that remembers grouping by Project shows a narrow Workflows tab on a wide window
+- **THEN** each project's group is stacked above the next with its columns stacked inside it
+
+### Requirement: Workflows density
+
+The section SHALL offer to show step notes **Full**, cut to **2 lines**, or for **Current only**, which shows the notes of every `running`, `failed`, or `needs_input` step and no other; and a **Narrow columns** toggle. Neither SHALL change which workflows are shown. On a compact workspace neither SHALL be offered, and the detail page SHALL show every step's note in full.
+
+#### Scenario: Current only
+
+- **WHEN** a user chooses Current only and step 2 failed while step 4 runs
+- **THEN** the notes of steps 2 and 4 are shown and no other step's note
