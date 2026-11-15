@@ -1,5 +1,6 @@
 import {
 	composeWorkflowGoal,
+	flattenTypedText,
 	WORKFLOW_LAUNCH_INSTRUCTION,
 	WORKFLOW_RESUME_INSTRUCTION,
 } from '@terminay/protocol';
@@ -9,7 +10,7 @@ import { WORKFLOW_LIMITS } from './types.js';
 /**
  * The only text a workflow ever causes Terminay to type (ADR-0097), built
  * here, server-side, from fixed words; a client names a template or a
- * terminal, never the text.
+ * terminal, never the text. It is typed as one line (`typedWorkflowGoal`).
  */
 
 function compose(openingPrompt: string, instruction: string): string {
@@ -21,7 +22,8 @@ function compose(openingPrompt: string, instruction: string): string {
 			`the text to type is ${bytes} bytes; the limit is ${WORKFLOW_LIMITS.maxLaunchTextBytes}`,
 			{ field: 'launchText', size: bytes, limit: WORKFLOW_LIMITS.maxLaunchTextBytes },
 		);
-	return text;
+	// Bounded as composed, so a text that fits only once flattened is refused.
+	return flattenTypedText(text);
 }
 
 export { WORKFLOW_LAUNCH_INSTRUCTION, WORKFLOW_RESUME_INSTRUCTION };

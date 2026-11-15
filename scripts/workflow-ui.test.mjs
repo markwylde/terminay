@@ -746,6 +746,10 @@ test('the editor shows the size against 56 KiB and the exact launch text', () =>
 	assert.match(markup, new RegExp(`${library.formatKiB(library.serializedSize(template)).replace('.', '\\.')} of 56 KiB`));
 	const preview = library.launchPreview(template.openingPrompt);
 	assert.ok(preview.startsWith('/goal Ship <b>it</b>.'));
+	// The preview is the one line the server types (workflow-service.test.mjs
+	// checks the server's launch text is this same typedWorkflowGoal).
+	assert.ok(!/[\r\n\t]/.test(preview));
+	assert.equal(preview, library.launchPreview(`${template.openingPrompt}\n\n`));
 	assert.ok(markup.includes(preview.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#x27;')));
 	assert.ok(!/collapse|expanded/i.test(markup), 'no template field chooses how the panel opens');
 	assert.match(markup, /<fieldset class="workflow-editor-fieldset">/);
