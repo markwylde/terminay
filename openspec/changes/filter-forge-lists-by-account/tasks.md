@@ -26,9 +26,9 @@
 
 ## 6. End to end
 
-- [ ] 6.1 Add `e2e/forge-account-filter.spec.ts`: a fake forge extension with two accounts on two origins and items on each; assert the Account control lists both; choosing one hides the other's items and closes the other account's open preview; the choice is per section and survives reopening Home; the filtered empty state's Show all accounts restores both. Capture screenshots of the control, the filtered list, and the filtered empty state. Verified by `timeout 2400 npm run test:e2e -- e2e/forge-account-filter.spec.ts e2e/forge-pull-requests-and-issues.spec.ts` (Docker-isolated) passing.
+- [x] 6.1 Add `e2e/forge-account-filter.spec.ts`: a fake forge extension with two accounts on two origins and items on each; assert the Account control lists both; choosing one hides the other's items and closes the other account's open preview; the choice is per section and survives reopening Home; the filtered empty state's Show all accounts restores both. Capture screenshots of the control, the filtered list, and the filtered empty state. Verified by `timeout 2400 npm run test:e2e -- e2e/forge-account-filter.spec.ts e2e/forge-pull-requests-and-issues.spec.ts` (Docker-isolated) passing.
 
 ## 7. Spec hygiene
 
-- [ ] 7.1 Run `openspec validate filter-forge-lists-by-account --strict` and `openspec validate --all`. Verified by this change passing and `--all` reporting no failure that this change introduced (failures in other changes predate it).
+- [x] 7.1 Run `openspec validate filter-forge-lists-by-account --strict` and `openspec validate --all`. Verified by this change passing and `--all` reporting no failure that this change introduced (failures in other changes predate it).
 - [ ] 7.2 Archive this change only after `forge-pull-requests-and-issues` is archived, so its ADDED requirements land on the forge capability's. Verified at archive time by `openspec validate --all --archived`.
