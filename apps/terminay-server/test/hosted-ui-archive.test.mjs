@@ -51,7 +51,7 @@ test("hosted UI archive requires the declared workspace entry", async () => {
 test("standalone CLI attaches the application protocol and optional UI archive", async () => {
 	const cli = await readFile(new URL("../src/cli.ts", import.meta.url), "utf8");
 	assert.match(cli, /acceptApplication:\s*\(transport, authenticatedClient\) =>/u);
-	assert.match(cli, /composition\.core\.accept\(transport, \{ authenticatedClient \}\)/u);
+	assert.match(cli, /composition\.core\.accept\(transport, \{\s*authenticatedClient,/u);
 	assert.match(cli, /TERMINAY_UI_RENDERER_DIRECTORY/u);
 	assert.match(cli, /loadHostedUiArchive\(rendererDirectory\)/u);
 });
