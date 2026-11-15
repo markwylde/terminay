@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { RecordingsCompactPage, type RecordingsCompactTab } from './RecordingsCompactPage'
 import { Film, RefreshCw, Search, Trash2 } from 'lucide-react'
 import type { TerminalRecordingListItem } from '../types/terminay'
 
@@ -24,6 +25,7 @@ export function SharedRecordingsLibraryPane({
   titleFor,
   durationFor,
   layout = 'sidebar',
+  compact = false,
 }: Readonly<{
   groupedRecordings: readonly RecordingGroup[]
   /** Drawn in the header before the refresh control. */
@@ -43,7 +45,36 @@ export function SharedRecordingsLibraryPane({
   durationFor: (durationMs: number | null) => string
   /** `page` fills a Home tab, in the voice of the other Home pages; `sidebar` is a narrow list beside a replay. */
   layout?: 'sidebar' | 'page'
+  /** The `page` layout on a phone: the compact section page. */
+  compact?: boolean
 }>) {
+  // The phone page's tab lives here, so crossing the breakpoint keeps it.
+  const [compactTab, setCompactTab] = useState<RecordingsCompactTab>('all')
+  if (layout === 'page' && compact) {
+    return (
+      <section className="recordings-page cpage-host" data-shared-route-body="recordings-library">
+        <RecordingsCompactPage
+          groupedRecordings={groupedRecordings}
+          recordings={recordings}
+          isLoading={isLoading}
+          query={query}
+          onQueryChange={onQueryChange}
+          onRefresh={onRefresh}
+          {...(onDelete === undefined ? {} : { onDelete })}
+          onSelect={onSelect}
+          {...(updatedLabel === undefined ? {} : { updatedLabel })}
+          serverAccessory={headerAccessory}
+          titleFor={titleFor}
+          durationFor={durationFor}
+          detailFor={recordingDetail}
+          timeFor={formatStartTime}
+          groupLabel={formatGroupDate}
+          tab={compactTab}
+          onTab={setCompactTab}
+        />
+      </section>
+    )
+  }
   if (layout === 'page') {
     const shown = groupedRecordings.reduce((total, [, items]) => total + items.length, 0)
     const count = recordings.length === 1 ? '1 recording' : `${recordings.length} recordings`

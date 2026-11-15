@@ -31,6 +31,7 @@ import {
   type ReplayCursor,
   type ReplayIndex,
 } from '../recordingReplay'
+import { useCompactHome } from '../workspace/compact/CompactHomeContext'
 import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
 import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
 import type { RecordingListItem, RecordingsClient } from '@terminay/client-core'
@@ -679,6 +680,7 @@ export function RecordingsTimeline({
     }, 30_000)
     return () => window.clearInterval(timer)
   }, [isVisible, loadRecordings])
+  const compact = useCompactHome()
   const updatedLabel = library.loadedAt === undefined ? undefined : updatedAgo(library.loadedAt, Math.max(now, library.loadedAt))
 
   return (
@@ -701,6 +703,7 @@ export function RecordingsTimeline({
         titleFor={getRecordingDisplayTitle}
         durationFor={formatDuration}
         layout="page"
+        compact={compact}
       />
       {library.listErrorText ? <div className="recordings-error" role="alert">{library.listErrorText}</div> : null}
     </div>

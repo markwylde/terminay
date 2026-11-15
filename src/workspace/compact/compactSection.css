@@ -1023,3 +1023,50 @@
 	display: inline-flex;
 	gap: 4px;
 }
+
+.cdetail__title--padded {
+	margin: 12px 16px 4px;
+}
+
+.cautomations-empty {
+	padding: 16px;
+}
+
+.cautomation__switch {
+	min-height: 44px;
+}
+
+/* Recordings */
+.crecording__swatch {
+	width: 10px;
+	height: 10px;
+	margin-top: 4px;
+	background: var(--c-muted);
+}
+
+.crecording__menu {
+	display: flex;
+	justify-content: flex-end;
+	padding: 0 16px 10px;
+	border-bottom: 1px solid var(--c-line);
+}
+
+.cpage .crecording__delete {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 40px;
+	border-color: rgba(255, 107, 107, 0.45);
+	color: var(--c-danger);
+}
+
+.csheet__accessory {
+	padding: 6px 0;
+}
+
+.csheet .csheet__button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 40px;
+}
