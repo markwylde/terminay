@@ -13,6 +13,7 @@ import {
 	type ForgeGitPaneId,
 	type ForgeGitPaneLayout,
 	type ForgeHomeFocus,
+	type ForgeItemTarget,
 	type ForgeKind,
 	type ForgeListItemView,
 	type ForgeReference,
@@ -172,11 +173,13 @@ export type ForgeHomeSectionProps = Readonly<{
 	/** A request from a project tab to show a repository and maybe an item. */
 	focus?: ForgeHomeFocus;
 	visible: boolean;
+	/** Open an item as a Home tab of its own: a row's double click, or the detail's Open in tab. */
+	onOpenItem?: (target: ForgeItemTarget) => void;
 }>;
 
 type Selection = Readonly<{ sourceId: string; reference: ForgeReference }>;
 
-export function ForgeHomeSection({ client, kind, environment, sources, focus, visible }: ForgeHomeSectionProps) {
+export function ForgeHomeSection({ client, kind, environment, sources, focus, visible, onOpenItem }: ForgeHomeSectionProps) {
 	const [preferences, setPreferences] = useState(() => recallPreferences(kind));
 	const [filter, setFilter] = useState<ForgeRepositoryFocus>();
 	const [selection, setSelection] = useState<Selection>();
@@ -250,6 +253,9 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 					now={now}
 					{...(selectedKey === undefined ? {} : { selectedKey })}
 					onSelect={(next) => setSelection({ sourceId: next.sourceId, reference: next.item.reference })}
+					{...(onOpenItem === undefined
+						? {}
+						: { onOpen: (next) => onOpenItem({ sourceId: next.sourceId, reference: next.item.reference }) })}
 					onRefresh={list.refresh}
 					onLoadMore={list.loadMore}
 					onOpenSettings={environment.actions.openSettings}
@@ -278,6 +284,9 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 						now={now}
 						onReload={detail.reload}
 						onClose={() => setSelection(undefined)}
+						{...(onOpenItem === undefined
+							? {}
+							: { onOpenInTab: () => onOpenItem({ sourceId: entry.sourceId, reference: entry.item.reference }) })}
 					/>
 				)}
 			</div>
@@ -300,6 +309,8 @@ export type ProjectForgeTabsOptions = Readonly<{
 	bound: boolean;
 	environment: ForgeEnvironment;
 	openInHome: (focus: Omit<ForgeHomeFocus, 'nonce'>) => void;
+	/** Open an item as a tab in the selected folder: a row's double click. */
+	openInTab?: (target: ForgeItemTarget) => void;
 }>;
 
 /**
@@ -413,6 +424,11 @@ export function useProjectGitPanes(options: ProjectForgeTabsOptions): ProjectGit
 			setDetail({ sourceId: activation.sourceId, reference: activation.reference });
 		else options.openInHome(activation.focus);
 	};
+	const { openInTab } = options;
+	const open =
+		openInTab === undefined
+			? undefined
+			: (entry: ForgeListItemView) => openInTab({ sourceId: entry.sourceId, reference: entry.item.reference });
 	const detailFor = (kind: ForgeKind) =>
 		detail === undefined || detail.reference.kind !== kind ? null : (
 			<div className="forge-tab">
@@ -422,6 +438,7 @@ export function useProjectGitPanes(options: ProjectForgeTabsOptions): ProjectGit
 					reference={detail.reference}
 					environment={options.environment}
 					onClose={() => setDetail(undefined)}
+					{...(openInTab === undefined ? {} : { onOpenInTab: () => openInTab(detail) })}
 				/>
 			</div>
 		);
@@ -434,6 +451,7 @@ export function useProjectGitPanes(options: ProjectForgeTabsOptions): ProjectGit
 					showRepository={shown.length > 1}
 					selected={detail !== undefined && itemKey(detail.reference) === itemKey(entry.item.reference)}
 					onSelect={activate}
+					{...(open === undefined ? {} : { onOpen: open })}
 					projectTitle={projectTitle}
 					projectOrder={projectOrder}
 				/>
@@ -573,12 +591,14 @@ function ProjectForgeDetail({
 	reference,
 	environment,
 	onClose,
+	onOpenInTab,
 }: Readonly<{
 	client: TerminayForgeClient | undefined;
 	sourceId: string;
 	reference: ForgeReference;
 	environment: ForgeEnvironment;
 	onClose: () => void;
+	onOpenInTab?: () => void;
 }>) {
 	const detail = useForgeDetail(client, sourceId, reference, 0);
 	if (detail.detail === undefined)
@@ -606,6 +626,7 @@ function ProjectForgeDetail({
 			now={Date.now()}
 			onReload={detail.reload}
 			onClose={onClose}
+			{...(onOpenInTab === undefined ? {} : { onOpenInTab })}
 		/>
 	);
 }

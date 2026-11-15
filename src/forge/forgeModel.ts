@@ -466,3 +466,85 @@ export function readGitPaneLayout(raw: string | null | undefined): ForgeGitPaneL
 		heights: { issues: height('issues'), pullRequests: height('pullRequests') },
 	};
 }
+
+// ── An item open as a tab ──────────────────────────────────────────────
+
+/** A pull request or issue a tab shows: the source that serves it, and which item. */
+export type ForgeItemTarget = Readonly<{ sourceId: string; reference: ForgeReference }>;
+
+/** A tab's title before its item has loaded: the repository and number. */
+export function forgeItemPlaceholderTitle(reference: ForgeReference): string {
+	return `${reference.name}#${reference.number}`;
+}
+
+/** A tab's title once its item has loaded: the number and title. */
+export function forgeItemTabTitle(reference: ForgeReference, title: string): string {
+	const trimmed = title.trim();
+	return trimmed.length === 0 ? forgeItemPlaceholderTitle(reference) : `#${reference.number} ${trimmed}`;
+}
+
+/** A tab's target as its parameters carry it, or undefined for anything malformed. */
+export function readForgeItemTarget(value: unknown): ForgeItemTarget | undefined {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const { sourceId, reference } = value as Record<string, unknown>;
+	if (typeof sourceId !== 'string' || sourceId.length === 0) return undefined;
+	if (typeof reference !== 'object' || reference === null) return undefined;
+	const { kind, origin, owner, name, number } = reference as Record<string, unknown>;
+	if (kind !== 'pullRequest' && kind !== 'issue') return undefined;
+	if (typeof origin !== 'string' || typeof owner !== 'string' || typeof name !== 'string') return undefined;
+	if (origin.length === 0 || owner.length === 0 || name.length === 0) return undefined;
+	if (typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0) return undefined;
+	return { sourceId, reference: { kind, origin, owner, name, number } };
+}
+
+/** How long a row waits after a click before treating it as a single click. */
+export const FORGE_DOUBLE_CLICK_MS = 250;
+
+export type ForgeClickTimers = Readonly<{
+	set: (run: () => void, delayMs: number) => unknown;
+	clear: (handle: unknown) => void;
+}>;
+
+/**
+ * Tells a row's single click from its double click, for a row whose single
+ * click leaves the list: the single click waits briefly and is dropped when a
+ * second click follows. A click with no count, as from the keyboard, acts at
+ * once.
+ */
+export function createForgeClickIntent(
+	onSingle: () => void,
+	onDouble: () => void,
+	timers: ForgeClickTimers = {
+		set: (run, delayMs) => globalThis.setTimeout(run, delayMs),
+		clear: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+	},
+): Readonly<{ click: (detail: number) => void; cancel: () => void }> {
+	let pending: unknown;
+	let waiting = false;
+	const cancel = () => {
+		if (!waiting) return;
+		timers.clear(pending);
+		waiting = false;
+	};
+	return {
+		click: (detail) => {
+			if (detail <= 0) {
+				cancel();
+				onSingle();
+				return;
+			}
+			if (detail >= 2) {
+				cancel();
+				if (detail === 2) onDouble();
+				return;
+			}
+			cancel();
+			waiting = true;
+			pending = timers.set(() => {
+				waiting = false;
+				onSingle();
+			}, FORGE_DOUBLE_CLICK_MS);
+		},
+		cancel,
+	};
+}

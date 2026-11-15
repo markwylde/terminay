@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	createForgeClickIntent,
 	defaultIssueBranch,
+	FORGE_DOUBLE_CLICK_MS,
+	forgeItemPlaceholderTitle,
+	forgeItemTabTitle,
 	emptyReason,
 	groupByRepository,
 	linkify,
 	orderedChecks,
 	projectPullRequestGroups,
 	pullRequestActions,
+	readForgeItemTarget,
 	readGitPaneLayout,
 	readPreferences,
 	reviewPrompt,
@@ -157,4 +162,111 @@ test('the Git tab layout defaults to Issues then Pull Requests, and keeps what i
 	assert.deepEqual(stored.collapsed, { issues: false, pullRequests: true });
 	assert.equal(stored.heights.issues, 90);
 	assert.equal(stored.heights.pullRequests, fresh.heights.pullRequests);
+});
+
+function fakeTimers() {
+	const pending = new Map<number, () => void>();
+	let next = 0;
+	const delays: number[] = [];
+	return {
+		delays,
+		pending,
+		timers: {
+			set: (run: () => void, delayMs: number) => {
+				next += 1;
+				pending.set(next, run);
+				delays.push(delayMs);
+				return next;
+			},
+			clear: (handle: unknown) => {
+				pending.delete(handle as number);
+			},
+		},
+		flush: () => {
+			const runs = [...pending.values()];
+			pending.clear();
+			for (const run of runs) run();
+		},
+	};
+}
+
+test('a row that leaves the list waits out a single click and drops it for a double click', () => {
+	const calls: string[] = [];
+	const clock = fakeTimers();
+	const intent = createForgeClickIntent(
+		() => calls.push('single'),
+		() => calls.push('double'),
+		clock.timers,
+	);
+	intent.click(1);
+	assert.deepEqual(calls, []);
+	assert.deepEqual(clock.delays, [FORGE_DOUBLE_CLICK_MS]);
+	clock.flush();
+	assert.deepEqual(calls, ['single']);
+
+	calls.length = 0;
+	intent.click(1);
+	intent.click(2);
+	clock.flush();
+	assert.deepEqual(calls, ['double']);
+
+	calls.length = 0;
+	intent.click(1);
+	intent.click(2);
+	intent.click(3);
+	clock.flush();
+	assert.deepEqual(calls, ['double'], 'a third click opens nothing more');
+});
+
+test('a keyboard activation of a row acts at once', () => {
+	const calls: string[] = [];
+	const clock = fakeTimers();
+	const intent = createForgeClickIntent(
+		() => calls.push('single'),
+		() => calls.push('double'),
+		clock.timers,
+	);
+	intent.click(0);
+	assert.deepEqual(calls, ['single']);
+	assert.equal(clock.pending.size, 0);
+});
+
+test('a row that goes away drops its waiting single click', () => {
+	const calls: string[] = [];
+	const clock = fakeTimers();
+	const intent = createForgeClickIntent(
+		() => calls.push('single'),
+		() => calls.push('double'),
+		clock.timers,
+	);
+	intent.click(1);
+	intent.cancel();
+	clock.flush();
+	assert.deepEqual(calls, []);
+});
+
+test('an item tab is titled by repository and number until it loads, then by number and title', () => {
+	const reference = { kind: 'issue' as const, origin: ORIGIN, owner: 'acme', name: 'app', number: 540 };
+	assert.equal(forgeItemPlaceholderTitle(reference), 'app#540');
+	assert.equal(forgeItemTabTitle(reference, ' Open issues in a new tab '), '#540 Open issues in a new tab');
+	assert.equal(forgeItemTabTitle(reference, '   '), 'app#540');
+});
+
+test('an item tab reads only a well-formed target from its parameters', () => {
+	const target = {
+		sourceId: 'com.terminay.gitea/forge',
+		reference: { kind: 'pullRequest', origin: ORIGIN, owner: 'acme', name: 'app', number: 7 },
+	};
+	assert.deepEqual(readForgeItemTarget(target), target);
+	assert.equal(readForgeItemTarget(undefined), undefined);
+	assert.equal(readForgeItemTarget({ ...target, sourceId: '' }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, kind: 'commit' } }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, number: 0 } }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, number: 1.5 } }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, owner: '' } }), undefined);
+	assert.deepEqual(
+		readForgeItemTarget({ ...target, extra: true, reference: { ...target.reference, extra: true } }),
+		target,
+		'only the fields a tab needs are kept',
+	);
 });

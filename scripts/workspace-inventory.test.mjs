@@ -46,6 +46,24 @@ test('every panel is inventoried with its kind, including idle ones', () => {
 	assert.deepEqual(selectNotableEntries(entries), []);
 });
 
+test('a pull request or issue tab is inventoried as one, never as a terminal', () => {
+	const [entry] = build([
+		{
+			id: 'forge-item-1',
+			params: {
+				forgeItem: {
+					sourceId: 'com.terminay.gitea/forge',
+					reference: { kind: 'issue', origin: 'https://git.example.net', owner: 'acme', name: 'app', number: 540 },
+				},
+			},
+		},
+	]);
+	assert.equal(entry.kind, 'forge-item');
+	assert.equal(entry.title, 'Pull request or issue');
+	assert.equal(entry.sessionId, undefined);
+	assert.equal(entry.status, 'idle');
+});
+
 test('the panel in front is marked whatever its kind, and only it', () => {
 	const panels = [
 		// A terminal keeps its own focus flag while a file is in front.

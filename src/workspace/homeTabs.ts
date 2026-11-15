@@ -2,7 +2,8 @@
  * The tabs Home holds.
  *
  * A Home tab is this device's view of something — a section, a bot, an
- * automation, an editor, a run, an automation terminal, a recording's replay. It is never a workspace panel: the
+ * automation, an editor, a run, an automation terminal, a recording's replay,
+ * a pull request or issue. It is never a workspace panel: the
  * server does not know it exists, and closing one closes a view, not the thing
  * it shows (ADR-0040).
  *
@@ -39,7 +40,36 @@ export type HomeTabDescriptor =
 			panelId: string;
 	  }>
 	| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>
-	| Readonly<{ kind: 'bot'; serverId: string; botId: string }>;
+	| Readonly<{ kind: 'bot'; serverId: string; botId: string }>
+	| Readonly<{
+			kind: 'forge-item';
+			serverId: string;
+			sourceId: string;
+			itemKind: ForgeItemKind;
+			origin: string;
+			owner: string;
+			name: string;
+			number: number;
+	  }>;
+
+/** A pull request or issue Home shows as a tab of its own. */
+export type HomeForgeItemTarget = Extract<
+	HomeTabDescriptor,
+	Readonly<{ kind: 'forge-item' }>
+>;
+
+/** A pull request or issue, as a forge source names it. */
+export type ForgeItemKind = 'pullRequest' | 'issue';
+
+const isForgeItemKind = (value: unknown): value is ForgeItemKind =>
+	value === 'pullRequest' || value === 'issue';
+
+/** An item number as an id carries it: a positive whole number in decimal. */
+function parseItemNumber(value: string | undefined): number | undefined {
+	if (value === undefined || !/^[1-9][0-9]*$/.test(value)) return undefined;
+	const number = Number(value);
+	return Number.isSafeInteger(number) ? number : undefined;
+}
 
 export type HomeTabKind = HomeTabDescriptor['kind'];
 
@@ -68,6 +98,19 @@ export function homeTabId(descriptor: HomeTabDescriptor): string {
 			return `recording:${encode(descriptor.serverId)}:${encode(descriptor.recordingId)}`;
 		case 'bot':
 			return `bot:${encode(descriptor.serverId)}:${encode(descriptor.botId)}`;
+		case 'forge-item':
+			return [
+				'forge-item',
+				descriptor.serverId,
+				descriptor.sourceId,
+				descriptor.itemKind,
+				descriptor.origin,
+				descriptor.owner,
+				descriptor.name,
+				String(descriptor.number),
+			]
+				.map((part, index) => (index === 0 ? part : encode(part)))
+				.join(':');
 	}
 }
 
@@ -127,6 +170,15 @@ export function parseHomeTabId(id: unknown): HomeTabDescriptor | undefined {
 			return parts.length === 2 && first !== undefined && second !== undefined
 				? { kind: 'bot', serverId: first, botId: second }
 				: undefined;
+		case 'forge-item': {
+			if (parts.length !== 7) return undefined;
+			const [serverId, sourceId, itemKind, origin, owner, name, numberPart] =
+				parts as [string, string, string, string, string, string, string];
+			const number = parseItemNumber(numberPart);
+			return isForgeItemKind(itemKind) && number !== undefined
+				? { kind: 'forge-item', serverId, sourceId, itemKind, origin, owner, name, number }
+				: undefined;
+		}
 		default:
 			return undefined;
 	}
@@ -141,6 +193,8 @@ export function homeTabSection(descriptor: HomeTabDescriptor): HomeSection {
 			return 'recordings';
 		case 'bot':
 			return 'bots';
+		case 'forge-item':
+			return descriptor.itemKind === 'pullRequest' ? 'pullRequests' : 'issues';
 		default:
 			return 'automations';
 	}
@@ -165,6 +219,8 @@ export function defaultHomeTabTitle(descriptor: HomeTabDescriptor): string {
 			return 'Recording';
 		case 'bot':
 			return 'Bot';
+		case 'forge-item':
+			return `${descriptor.name}#${descriptor.number}`;
 	}
 }
 

@@ -18,13 +18,15 @@ import {
 	GitPullRequestDraft,
 	Loader,
 	MessageSquare,
+	PanelTop,
 	RefreshCw,
 	Sparkles,
 	X,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useId, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
 	claimedProjects,
+	createForgeClickIntent,
 	defaultIssueBranch,
 	emptyReason,
 	type ForgeChecksView,
@@ -267,6 +269,8 @@ export type ForgeListPaneProps = Readonly<{
 	now: number;
 	selectedKey?: string;
 	onSelect: (entry: ForgeListItemView) => void;
+	/** Double-clicking a row: open its item as a tab. */
+	onOpen?: (entry: ForgeListItemView) => void;
 	onRefresh: () => void;
 	onLoadMore: () => void;
 	onOpenSettings: () => void;
@@ -422,6 +426,7 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 										selected={props.selectedKey === itemKey(entry.item.reference)}
 										now={now}
 										onSelect={props.onSelect}
+										{...(props.onOpen === undefined ? {} : { onOpen: props.onOpen })}
 										projectTitle={props.projectTitle}
 										projectOrder={props.projectOrder}
 									/>
@@ -448,6 +453,7 @@ export function ForgeRow({
 	selected,
 	now,
 	onSelect,
+	onOpen,
 	projectTitle,
 	projectOrder,
 }: Readonly<{
@@ -456,6 +462,7 @@ export function ForgeRow({
 	selected: boolean;
 	now: number;
 	onSelect: (entry: ForgeListItemView) => void;
+	onOpen?: (entry: ForgeListItemView) => void;
 	projectTitle: (projectId: string) => string | undefined;
 	projectOrder: readonly string[];
 }>) {
@@ -469,6 +476,8 @@ export function ForgeRow({
 				aria-current={selected ? 'true' : undefined}
 				data-forge-row={item.reference.number}
 				onClick={() => onSelect(entry)}
+				// The first click has already selected the row; the second opens it.
+				onDoubleClick={onOpen === undefined ? undefined : () => onOpen(entry)}
 			>
 				<StateMark kind={item.reference.kind} state={item.state} />
 				<span className="forge-row__main">
@@ -532,6 +541,7 @@ export function ForgeSidebarRow({
 	showRepository,
 	selected,
 	onSelect,
+	onOpen,
 	projectTitle,
 	projectOrder,
 }: Readonly<{
@@ -539,11 +549,25 @@ export function ForgeSidebarRow({
 	showRepository: boolean;
 	selected: boolean;
 	onSelect: (entry: ForgeListItemView) => void;
+	/** Double-clicking the row: open its item as a tab. A single click then
+	 * waits to be sure it is not the first of two, since it leaves the list. */
+	onOpen?: (entry: ForgeListItemView) => void;
 	projectTitle: (projectId: string) => string | undefined;
 	projectOrder: readonly string[];
 }>) {
 	const { item } = entry;
 	const chip = worktreeChipLabel(entry.worktrees, projectTitle, projectOrder);
+	const latest = useRef({ entry, onSelect, onOpen });
+	latest.current = { entry, onSelect, onOpen };
+	const intent = useMemo(
+		() =>
+			createForgeClickIntent(
+				() => latest.current.onSelect(latest.current.entry),
+				() => latest.current.onOpen?.(latest.current.entry),
+			),
+		[],
+	);
+	useEffect(() => intent.cancel, [intent]);
 	const tooltip = [
 		`#${item.reference.number} ${item.title}`,
 		showRepository ? `${item.reference.owner}/${item.reference.name}` : undefined,
@@ -561,7 +585,7 @@ export function ForgeSidebarRow({
 				aria-current={selected ? 'true' : undefined}
 				title={tooltip}
 				data-forge-row={item.reference.number}
-				onClick={() => onSelect(entry)}
+				onClick={(event) => (onOpen === undefined ? onSelect(entry) : intent.click(event.detail))}
 			>
 				<StateMark kind={item.reference.kind} state={item.state} />
 				<span className="forge-side-row__title">{item.title}</span>
@@ -589,9 +613,11 @@ export type ForgeDetailPaneProps = Readonly<{
 	now: number;
 	onReload?: () => void;
 	onClose?: () => void;
+	/** Open this item as a tab of its own. */
+	onOpenInTab?: () => void;
 }>;
 
-export function ForgeDetailPane({ entry, body, comments, loading, error, environment, now, onReload, onClose }: ForgeDetailPaneProps) {
+export function ForgeDetailPane({ entry, body, comments, loading, error, environment, now, onReload, onClose, onOpenInTab }: ForgeDetailPaneProps) {
 	const { item } = entry;
 	const kind = item.reference.kind;
 	const forge = forgeName(entry.sourceId, environment.displayNames);
@@ -795,6 +821,18 @@ export function ForgeDetailPane({ entry, body, comments, loading, error, environ
 					{onReload === undefined ? null : (
 						<button type="button" className="forge-icon-btn" aria-label="Reload" title="Reload" onClick={onReload}>
 							<RefreshCw size={13} aria-hidden="true" className={loading ? 'forge-spin' : undefined} />
+						</button>
+					)}
+					{onOpenInTab === undefined ? null : (
+						<button
+							type="button"
+							className="forge-icon-btn"
+							aria-label="Open in tab"
+							title="Open in tab"
+							data-forge-open-in-tab="true"
+							onClick={onOpenInTab}
+						>
+							<PanelTop size={13} aria-hidden="true" />
 						</button>
 					)}
 					{onClose === undefined ? null : (

@@ -105,7 +105,11 @@ export function isAgentIndicatorStateVisible(
 	);
 }
 
-export type WorkspaceInventoryPanelKind = 'terminal' | 'file' | 'folder';
+export type WorkspaceInventoryPanelKind =
+	| 'terminal'
+	| 'file'
+	| 'folder'
+	| 'forge-item';
 
 export type WorkspaceInventoryStatus = 'idle' | TerminalActivityOverviewState;
 
@@ -208,6 +212,8 @@ export type WorkspaceInventoryEntry = {
 export type InventoryPanelParams = PanelTabAppearance & {
 	filePath?: string;
 	folderPath?: string;
+	/** A pull request or issue open as a tab (src/forge/ForgeItemTab.tsx). */
+	forgeItem?: unknown;
 	sessionId?: string;
 	/** When `terminalActivityState` last changed, in epoch milliseconds. */
 	terminalActivitySince?: number;
@@ -233,12 +239,14 @@ function panelKind(
 	if (params?.sessionId) return 'terminal';
 	if (params?.folderPath !== undefined) return 'folder';
 	if (params?.filePath !== undefined) return 'file';
+	if (params?.forgeItem !== undefined) return 'forge-item';
 	return 'terminal';
 }
 
 function defaultPanelTitle(kind: WorkspaceInventoryPanelKind): string {
 	if (kind === 'folder') return 'Folder';
 	if (kind === 'file') return 'File';
+	if (kind === 'forge-item') return 'Pull request or issue';
 	return 'Terminal';
 }
 

@@ -83,3 +83,47 @@ test('a remembered bot tab is restored', () => {
 		'Bird',
 	);
 });
+
+test('a pull request or issue tab belongs to its section and round-trips through its id', () => {
+	const descriptor = {
+		kind: 'forge-item',
+		serverId: 'srv:1',
+		sourceId: 'com.terminay.gitea/forge',
+		itemKind: 'issue',
+		origin: 'https://git.example.net:4222',
+		owner: 'acme',
+		name: 'app',
+		number: 540,
+	} as const;
+	const id = homeTabId(descriptor);
+	assert.equal(
+		id,
+		'forge-item:srv%3A1:com.terminay.gitea%2Fforge:issue:https%3A%2F%2Fgit.example.net%3A4222:acme:app:540',
+	);
+	assert.deepEqual(parseHomeTabId(id), descriptor);
+	assert.equal(homeTabSection(descriptor), 'issues');
+	assert.equal(
+		homeTabSection({ ...descriptor, itemKind: 'pullRequest' }),
+		'pullRequests',
+	);
+	assert.equal(homeTabServerId(descriptor), 'srv:1');
+	assert.equal(defaultHomeTabTitle(descriptor), 'app#540');
+});
+
+test('a malformed pull request or issue tab id names nothing', () => {
+	const id = homeTabId({
+		kind: 'forge-item',
+		serverId: 's',
+		sourceId: 'src',
+		itemKind: 'pullRequest',
+		origin: 'https://git.example.net',
+		owner: 'acme',
+		name: 'app',
+		number: 7,
+	});
+	assert.equal(parseHomeTabId(id.replace(':pullRequest:', ':commit:')), undefined);
+	assert.equal(parseHomeTabId(id.replace(/:7$/, ':0')), undefined);
+	assert.equal(parseHomeTabId(id.replace(/:7$/, ':07')), undefined);
+	assert.equal(parseHomeTabId(id.replace(/:7$/, ':7.5')), undefined);
+	assert.equal(parseHomeTabId(id.replace(/:7$/, '')), undefined);
+});
