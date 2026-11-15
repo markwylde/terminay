@@ -4640,6 +4640,20 @@ function createWindow(options?: {
 			const unbindEndpoint = bindRemoteServerUiDocumentEndpoint({
 				diagnostic: endpointDiagnostic,
 				launch,
+				onLaneReplaced: (reason) => {
+					void desktopDiagnostics
+						.record(
+							{
+								component: 'renderer',
+								event: 'remote.document-lane.replaced',
+								fields: { reason, webContentsId: windowWebContentsId },
+								severity: reason === 'document-reload' ? 'info' : 'warning',
+								source: 'server-ui-document-endpoint',
+							},
+							{ channel: 'lifecycle' },
+						)
+						.catch(() => undefined);
+				},
 				reconnect: () =>
 					reconnectCanonicalDesktopRemoteTransport(
 						launch.context.profileId,

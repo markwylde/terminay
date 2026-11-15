@@ -38,6 +38,8 @@ export interface ForgeClientListRequest {
   readonly purpose: "home" | "project";
   readonly projectId?: string;
   readonly repositories?: ReadonlyArray<{ readonly origin: string; readonly owner: string; readonly name: string }>;
+  /** Narrow to these accounts: a forge source and an origin each. */
+  readonly accounts?: ReadonlyArray<{ readonly sourceId: string; readonly origin: string }>;
   readonly text?: string;
   readonly pageSize?: number;
   readonly cursor?: string;

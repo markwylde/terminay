@@ -71,8 +71,9 @@ and a VPS sit side by side in one tab strip.
 - **Home** is the one place in a window that is not a project. Its sidebar
   lists Home, Tabs, Bots, Automations, Workflows, Recordings, and, when a forge
   extension serves them, **Pull Requests** and **Issues**: the pull requests and
-  issues of every forge account the server's extensions found, grouped by
-  repository, with each item's checks, the worktree its branch is checked out
+  issues of every forge account the server's extensions found, or of one
+  account chosen in the section's Account control, grouped by repository,
+  with each item's checks, the worktree its branch is checked out
   in, and actions to open that worktree, check a pull request out in a new
   one, review it with an agent, or start work on an issue. A project whose
   remote a forge claims gets a Git tab in its left column, with collapsible,

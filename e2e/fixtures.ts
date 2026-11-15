@@ -510,8 +510,10 @@ export async function launchDesktopApp(options: {
 					: {}),
 				// A paired server's credential has to be readable by the next
 				// launch, so every launch on one data directory shares a key.
-				...(path.basename(testInfo.file) ===
-				'desktop-loopback-standalone-pairing.spec.ts'
+				...([
+					'desktop-loopback-standalone-pairing.spec.ts',
+					'desktop-remote-large-app-windows.spec.ts',
+				].includes(path.basename(testInfo.file))
 					? {
 							TERMINAY_TEST_CREDENTIAL_KEY: createHash('sha256')
 								.update(userDataDir)

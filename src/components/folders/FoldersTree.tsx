@@ -10,6 +10,7 @@ import {
 	File,
 	Folder,
 	GitBranch,
+	GitPullRequest,
 	LoaderCircle,
 	MinusCircle,
 	Plus,
@@ -1161,7 +1162,13 @@ function PanelRow({
 				// The kind's icon stands where a terminal's status does, so the
 				// titles of a mixed folder line up.
 				<span className="folders-tree__kind" aria-hidden="true">
-					{panel.kind === 'file' ? <File size={12} /> : <Folder size={12} />}
+					{panel.kind === 'file' ? (
+						<File size={12} />
+					) : panel.kind === 'forge-item' ? (
+						<GitPullRequest size={12} />
+					) : (
+						<Folder size={12} />
+					)}
 				</span>
 			)}
 			{isRenaming ? (

@@ -15,7 +15,7 @@ import {
 	workflowSerializedSize,
 } from '@terminay/client-core';
 import {
-	composeWorkflowGoal,
+	typedWorkflowGoal,
 	WORKFLOW_LAUNCH_INSTRUCTION,
 } from '@terminay/protocol';
 
@@ -168,7 +168,7 @@ export function formatKiB(size: number): string {
 
 /** What launching this template types into the terminal. */
 export function launchPreview(openingPrompt: string): string {
-	return composeWorkflowGoal(openingPrompt, WORKFLOW_LAUNCH_INSTRUCTION);
+	return typedWorkflowGoal(openingPrompt, WORKFLOW_LAUNCH_INSTRUCTION);
 }
 
 /** Move one entry by one place; the same list when it cannot move. */

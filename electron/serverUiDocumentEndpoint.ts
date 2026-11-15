@@ -99,6 +99,14 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 	};
 }
 
+/** Why a remote window's lane was replaced: its document reloaded, its byte
+ * stream ended or failed, or an earlier replacement is being tried again. */
+export type RemoteLaneReplacement =
+	| 'document-reload'
+	| 'transport-ended'
+	| 'transport-failed'
+	| 'reconnect-retry';
+
 /** A remote protocol lane belongs to one renderer document. A reload creates a
  * fresh application client, so reusing the old lane would make its new
  * `client_hello` race an already-open server connection. The protected
@@ -113,6 +121,8 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	 * transport. */
 	readonly reconnect?: () => Promise<ByteTransport>;
 	readonly diagnostic?: Diagnostic;
+	/** Told each time the window's lane is replaced, and why. */
+	readonly onLaneReplaced?: (reason: RemoteLaneReplacement) => void;
 }): () => void {
 	const sender = options.sender;
 	const senderId = sender.id;
@@ -173,7 +183,9 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					data,
 					options.launch.context.serverId,
 				);
-				void transport.send(packet.frame).catch(recoverConnection);
+				void transport
+					.send(packet.frame)
+					.catch(() => recoverConnection(true, 'transport-failed'));
 			} catch {
 				closeConnection();
 			}
@@ -215,10 +227,14 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 		// did-start-loading is the document boundary that precedes the next
 		// preload. Releasing on did-start-navigation can arrive too late for a
 		// file URL query navigation and close the fresh document's port instead.
+		// It also fires when any frame inside the document starts loading, such
+		// as an app window's view. That is not a new document: no ready signal
+		// follows, so releasing here would leave the window without a lane.
+		if (!sender.isLoadingMainFrame()) return;
 		documentReady = false;
 		attachedForDocument = false;
 		lifecycle.releaseDocument();
-		if (hasAttachedDocument) recoverConnection(false);
+		if (hasAttachedDocument) recoverConnection(false, 'document-reload');
 	};
 	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
 	ipcMain.on(DOCUMENT_READY, onDocumentReady);
@@ -249,7 +265,8 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 						),
 					);
 				}
-				if (transport === activeTransport) recoverConnection();
+				if (transport === activeTransport)
+					recoverConnection(true, 'transport-ended');
 			})
 			.catch((error) => {
 				reportDiagnostic(
@@ -257,15 +274,24 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					'remote-transport',
 					boundedMessage(error),
 				);
-				if (transport === activeTransport) recoverConnection();
+				if (transport === activeTransport)
+					recoverConnection(true, 'transport-failed');
 			});
 	};
-	function recoverConnection(notifyDocument = true): void {
+	function recoverConnection(
+		notifyDocument: boolean,
+		reason: RemoteLaneReplacement,
+	): void {
 		if (connectionClosed || options.reconnect === undefined) {
 			closeConnection();
 			return;
 		}
 		if (reconnecting !== undefined) return;
+		try {
+			options.onLaneReplaced?.(reason);
+		} catch {
+			// A diagnostic sink cannot affect the lane it describes.
+		}
 		clearTimeout(reconnectRetry);
 		reconnectRetry = undefined;
 		reconnecting = (async () => {
@@ -309,7 +335,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					failedReconnects += 1;
 					reconnectRetry = setTimeout(() => {
 						reconnectRetry = undefined;
-						recoverConnection(false);
+						recoverConnection(false, 'reconnect-retry');
 					}, delay);
 					reconnectRetry.unref?.();
 				}

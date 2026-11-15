@@ -113,7 +113,31 @@ async function rejectsWith(promise, code, check = () => undefined) {
   await assert.rejects(promise, (error) => { assert.equal(error.code, code); check(error); return true; });
 }
 
-const launchText = `/goal ${template.openingPrompt}\n\n${WORKFLOW_LAUNCH_INSTRUCTION}`;
+const launchText = `/goal ${template.openingPrompt} ${WORKFLOW_LAUNCH_INSTRUCTION}`;
+const resumeText = `/goal ${template.openingPrompt} ${WORKFLOW_RESUME_INSTRUCTION}`;
+
+/**
+ * The texts the writes submit, one per Enter, after checking every write was
+ * typed: no paste marker, no chunk over 128 characters or holding a line
+ * break, and each Enter a write of its own.
+ */
+function typedSubmissions(writes) {
+  const submitted = [];
+  let text = "";
+  for (const data of writes) {
+    if (data === "\r") {
+      submitted.push(text);
+      text = "";
+      continue;
+    }
+    assert.ok(!data.includes("\u001b[200~") && !data.includes("\u001b[201~"), "never a bracketed paste");
+    assert.ok(data.length <= 128, `a chunk of ${data.length} characters`);
+    assert.ok(!/[\r\n\t]/.test(data), "no line break, carriage return or tab inside the text");
+    text += data;
+  }
+  assert.equal(text, "", "every text is submitted");
+  return submitted;
+}
 
 test("the server advertises workflows only when they are composed", async () => {
   const server = await composed();
@@ -125,7 +149,7 @@ test("the server advertises workflows only when they are composed", async () => 
   }
 });
 
-test("a launch attaches the template's steps, not started, and types one paste submitted once", async () => {
+test("a launch attaches the template's steps, not started, and types the text in chunks, never pasted, submitted once", async () => {
   const server = await composed();
   const admitted = [];
   const write = server.composition.terminalInputSources.write.bind(server.composition.terminalInputSources);
@@ -137,8 +161,11 @@ test("a launch attaches the template's steps, not started, and types one paste s
     assert.equal(view.state, "attached");
     assert.deepEqual(view.workflow.steps.map((step) => [step.title, step.status, step.icon]), [["Propose", "not_started", ""], ["Apply", "not_started", "wrench"]]);
     assert.equal(view.workflow.templateId, template.id);
-    assert.deepEqual(server.process().writes, [`\u001b[200~${launchText}\u001b[201~`, "\r"]);
-    assert.deepEqual(admitted.map((request) => request.source), ["workflow", "workflow"]);
+    // The program enabled bracketed paste, and still nothing is pasted.
+    assert.deepEqual(typedSubmissions(server.process().writes), [launchText]);
+    assert.ok(server.process().writes.length > 2, "a long text is typed in several chunks");
+    assert.equal(admitted.length, server.process().writes.length);
+    assert.ok(admitted.every((request) => request.source === "workflow"));
   } finally {
     await server.close();
   }
@@ -149,11 +176,8 @@ test("without bracketed paste the launch text is still submitted once", async ()
   try {
     const { client } = await server.connect("desktop");
     await client.command(WORKFLOW_OPERATIONS.launch, { templateId: template.id, target });
-    // One line of text, then Enter on its own.
-    assert.equal(server.process().writes.length, 2);
-    assert.ok(!server.process().writes[0].includes("\r"));
-    assert.ok(!server.process().writes[0].includes("\n"));
-    assert.equal(server.process().writes[1], "\r");
+    // The same one line, typed, then Enter on its own.
+    assert.deepEqual(typedSubmissions(server.process().writes), [launchText]);
   } finally {
     await server.close();
   }
@@ -173,8 +197,8 @@ test("replacing an unfinished workflow needs its id, and a stale id is refused w
       "conflict",
       (error) => assert.equal(error.details.workflowId, first.workflow.id),
     );
-    // Neither refusal typed anything: the launch wrote its text and its Enter.
-    assert.equal(server.process().writes.length, 2);
+    // Neither refusal typed anything: the launch typed its text and its Enter.
+    assert.deepEqual(typedSubmissions(server.process().writes), [launchText]);
     const second = await client.command(WORKFLOW_OPERATIONS.launch, { templateId: template.id, target, replaceWorkflowId: first.workflow.id });
     assert.notEqual(second.workflow.id, first.workflow.id);
   } finally {
@@ -193,10 +217,8 @@ test("resume types the resume text and changes no step", async () => {
     const resumed = await client.command(WORKFLOW_OPERATIONS.resume, { target });
     assert.deepEqual(resumed.workflow.steps, before.workflow.steps);
     assert.equal(resumed.resumeStepId, stepId);
-    // Launch and resume each write their text, then Enter on its own.
-    assert.equal(server.process().writes.length, 4);
-    assert.ok(server.process().writes[2].includes(WORKFLOW_RESUME_INSTRUCTION));
-    assert.equal(server.process().writes[3], "\r");
+    // Launch and resume each type their text, then Enter on its own.
+    assert.deepEqual(typedSubmissions(server.process().writes), [launchText, resumeText]);
   } finally {
     await server.close();
   }
@@ -338,8 +360,8 @@ test("a client skips and restores a step through update-step, and a stale expect
     const restored = await client.command(WORKFLOW_OPERATIONS.updateStep, { target, stepId: second, status: "not_started", expectedStatus: "skipped" });
     assert.deepEqual([restored.workflow.steps[1].status, restored.workflow.steps[1].note], ["not_started", ""]);
     assert.equal(restored.workflow.steps[0].status, "running");
-    // Nothing is typed by a step update.
-    assert.equal(server.process().writes.length, 2);
+    // Nothing is typed by a step update: only the launch's text and Enter.
+    assert.deepEqual(typedSubmissions(server.process().writes), [launchText]);
   } finally {
     await server.close();
   }

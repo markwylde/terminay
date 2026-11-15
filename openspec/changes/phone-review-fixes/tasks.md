@@ -25,7 +25,7 @@
 - [x] 4.4 Bots: New bot, tabs All/Needs you/Working/Stopped mapped to the filter chips, avatar rows, Needs you cards with the permission prompt on the owning connection (pending disables, failure keeps the card with an error, decided elsewhere removes it), engine card opening the sheet, build banner kept — verified by E2E and the `bots` suite
 - [x] 4.5 Automations: New automation, tabs All/Failing/Schedules/Events/Off, rows with the switch working in place, Terminals row, sheet only with several servers — verified by E2E and `automations-ui`
 - [x] 4.6 Recordings: tabs All/Today/This week/Problems, day groups, rows with a more control offering Delete recording, sheet with server and Refresh — verified by E2E
-- [x] 4.7 Pull Requests and Issues: scope tabs with counts keyed by scope, State, and repository (+ for more pages, none before a result, never fetching), rows, sheet State/Group/repository/Refresh, applied tokens, Show all empty state — verified by E2E
+- [x] 4.7 Pull Requests and Issues: scope tabs with counts keyed by scope, State, repository, and account (+ for more pages, none before a result, never fetching), rows, sheet State/Group/repository/account/Refresh, applied tokens, Show all empty state — verified by E2E
 
 ## 5. Verification
 

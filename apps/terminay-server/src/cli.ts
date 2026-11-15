@@ -146,10 +146,6 @@ import { createCompositionTerminalOpener } from './mcp/openTerminal.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 import { releaseUpgraderFromEnvironment } from './releaseUpgrader.js';
-import {
-	requestUnitRepairIfNeeded,
-	type UnitRepairState,
-} from './unitRepair.js';
 import { assertAdvertisedPortIsBindable } from './remote/advertisedIcePort.js';
 import {
 	approvalSocketPath,
@@ -163,7 +159,10 @@ import {
 	type DirectSignalingRelay,
 } from './remote/directSignalingRelay.js';
 import { loadOrCreateDirectTlsCertificate } from './remote/directTlsCertificate.js';
-import { createHostedDiagnosticLogger } from './remote/hostedDiagnosticLog.js';
+import {
+	createHostedDiagnosticLogger,
+	createServerConnectionLogger,
+} from './remote/hostedDiagnosticLog.js';
 import {
 	loadOrCreateHostedHostKey,
 	rotateHostedHostKey,
@@ -175,23 +174,27 @@ import {
 import { HostedDevicePresence } from './remote/hostedPeerLifecycle.js';
 import { loadHostedUiArchive } from './remote/hostedUiArchive.js';
 import { createPairingOperationQueue } from './remote/pairingOperationQueue.js';
+import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
 import {
 	createRemoteAccessOperations,
 	publishRemoteAccessChanges,
 } from './remote/remoteAccessOperations.js';
+import { selectStandaloneSessionOrigin } from './remote/sessionOrigin.js';
 import {
-	StandaloneRemoteAccess,
 	type PairingHandoffByMode,
+	StandaloneRemoteAccess,
 	type StandaloneRemoteAccessOptions,
 } from './remote/standaloneRemoteAccess.js';
-import { pairingUrlForEndpoint } from './remote/publicPairingUrl.js';
-import { selectStandaloneSessionOrigin } from './remote/sessionOrigin.js';
 import { probeShell } from './remote/terminalProbe.js';
 import { stableInstallPath } from './stableInstallPath.js';
 import {
 	describeUnreadableState,
 	unreadableStateStore,
 } from './stateUnreadable.js';
+import {
+	requestUnitRepairIfNeeded,
+	type UnitRepairState,
+} from './unitRepair.js';
 
 declare const process: {
 	readonly argv: readonly string[];
@@ -578,7 +581,14 @@ else if (options.command === 'mcp') {
 					// registry, and one approval queue: they are two ways for a client
 					// to reach the same room on the same server, not two servers.
 					const devicePresence = new HostedDevicePresence();
-					startPairingHostForMode = (mode, { handoff: modeHandoff, rotateHandoff, hooks }) =>
+					const hostedConnectionLog = createServerConnectionLogger(
+						options.logSink,
+						'hosted',
+					);
+					startPairingHostForMode = (
+						mode,
+						{ handoff: modeHandoff, rotateHandoff, hooks },
+					) =>
 						startHostedPairingHost({
 							// The direct host reaches its own relay over the loopback
 							// interface and does not verify the certificate it just minted:
@@ -593,7 +603,10 @@ else if (options.command === 'mcp') {
 							serializePairingRefresh: (operation) =>
 								pairingRoomOperations.run(operation),
 							acceptApplication: (transport, authenticatedClient) =>
-								composition.core.accept(transport, { authenticatedClient }),
+								composition.core.accept(transport, {
+									authenticatedClient,
+									onDeliveryDiagnostic: hostedConnectionLog,
+								}),
 							// Remote device connected trigger (automations).
 							// It fires for a device's first window, through either host.
 							devicePresence,
@@ -678,10 +691,7 @@ else if (options.command === 'mcp') {
 								options.publicOrigin ?? uiServer?.address?.origin,
 							),
 							exposure: options.exposeModes,
-							handoffs: exposureHandoffs(
-								options,
-								remoteAccess!.handoffs(),
-							),
+							handoffs: exposureHandoffs(options, remoteAccess!.handoffs()),
 						})}\n`,
 					);
 				} catch (error) {
@@ -2071,6 +2081,10 @@ function createProtocolServer(
 			: { rootDirectory: options.uiBundle }),
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
+		onConnectionDiagnostic: createServerConnectionLogger(
+			options.logSink,
+			'local',
+		),
 		authToken,
 		authTokenExpiresAt: handoffExpiresAt,
 		acceptCredential: credentials.accept,

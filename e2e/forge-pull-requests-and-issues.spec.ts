@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib';
 import type { Page, TestInfo } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { folderGroup, folderRow, folderTerminals, git, initRepository } from './support/folders';
-import { activeHome, expectHomeSection } from './support/home-tabs';
+import { activeHome, expectHomeSection, frontHomeTab, homeTabChip } from './support/home-tabs';
 import { setProjectRoot } from './support/ui';
 
 /**
@@ -254,6 +254,76 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		await shot(mainWindow, testInfo, '01-home-pull-requests');
 	});
 
+	await test.step('Home › Pull Requests: the preview resizes by drag and keyboard, and stacks when narrow', async () => {
+		const section = activeHome(mainWindow).locator('[data-forge-home="pullRequest"]');
+		const separator = section.locator('[data-forge-detail-separator]');
+		const previewWidth = async () => Math.round((await detail(88).boundingBox())?.width ?? 0);
+		const remembered = () =>
+			mainWindow.evaluate(
+				() => JSON.parse(localStorage.getItem('terminay.view.column-widths.v1') ?? '{}').forgeDetail as number | undefined,
+			);
+		await expect(separator).toBeVisible();
+		await expect(separator).toHaveAttribute('aria-valuenow', '380');
+		expect(await previewWidth()).toBe(380);
+		const box = await separator.boundingBox();
+		if (box === null) throw new Error('the separator has no box');
+		const x = box.x + box.width / 2;
+		const y = box.y + box.height / 2;
+
+		// A drag previews live and commits once on release.
+		await mainWindow.mouse.move(x, y);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(x - 50, y, { steps: 5 });
+		await expect.poll(previewWidth).toBe(430);
+		expect(await remembered()).toBeUndefined();
+		await mainWindow.mouse.move(x - 100, y, { steps: 5 });
+		await mainWindow.mouse.up();
+		await expect.poll(previewWidth).toBe(480);
+		expect(await remembered()).toBe(480);
+		await shot(mainWindow, testInfo, '01a-preview-widened');
+
+		// A press without a move changes nothing.
+		const edge = x - 100;
+		await mainWindow.mouse.move(edge, y);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.up();
+		expect(await previewWidth()).toBe(480);
+		expect(await remembered()).toBe(480);
+
+		// A cancelled drag returns to the width from before it.
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(edge - 60, y, { steps: 5 });
+		await expect.poll(previewWidth).toBe(540);
+		await mainWindow.evaluate(() => window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 })));
+		await mainWindow.mouse.up();
+		await expect.poll(previewWidth).toBe(480);
+		expect(await remembered()).toBe(480);
+
+		// The keyboard moves the edge 16 pixels a press.
+		await separator.focus();
+		await mainWindow.keyboard.press('ArrowLeft');
+		await mainWindow.keyboard.press('ArrowLeft');
+		await mainWindow.keyboard.press('ArrowRight');
+		await expect.poll(previewWidth).toBe(496);
+		expect(await remembered()).toBe(496);
+
+		// A Home area too narrow for both stacks the preview with no separator.
+		await section.evaluate((element) => {
+			(element as HTMLElement).style.width = '560px';
+		});
+		await expect(section.locator('.forge-home__grid--stacked')).toBeVisible();
+		await expect(separator).toHaveCount(0);
+		// Only the narrowed section: the rest of the window is not part of it.
+		const stackedPath = testInfo.outputPath('screenshots', '01b-preview-stacked.png');
+		await section.screenshot({ path: stackedPath });
+		await testInfo.attach('01b-preview-stacked', { path: stackedPath, contentType: 'image/png' });
+		await section.evaluate((element) => {
+			(element as HTMLElement).style.width = '';
+		});
+		await expect(separator).toBeVisible();
+		await expect.poll(previewWidth).toBe(496);
+	});
+
 	await test.step('On a phone, Pull Requests is a compact section page with a full-page detail', async () => {
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
 		const wide = await nativeWindow.evaluate((window) => window.getBounds());
@@ -263,7 +333,7 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		const detailPage = activeHome(mainWindow).locator('[data-compact-section="forge-detail"]');
 		await expect(detailPage).toBeVisible({ timeout: 30_000 });
 		await expect(detail(88)).toBeVisible();
-		await shot(mainWindow, testInfo, '01b-phone-detail');
+		await shot(mainWindow, testInfo, '01c-phone-detail');
 		await detailPage.locator('[data-forge-back]').click();
 		await expect(page).toBeVisible();
 		// Review is the selected tab, counted from the result it has.
@@ -273,11 +343,11 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		await expect(page.locator('[data-forge-row]')).toHaveCount(2);
 		// Mine has not been fetched yet, so it shows no count.
 		await expect(page.locator('[data-compact-tab="authored"] [data-compact-tab-count]')).toHaveCount(0);
-		await shot(mainWindow, testInfo, '01c-phone-list');
+		await shot(mainWindow, testInfo, '01d-phone-list');
 		await page.locator('[data-compact-view-options]').click();
 		const sheet = mainWindow.locator('[data-compact-sheet="true"]');
 		await expect(sheet.locator('[data-forge-refresh]')).toBeVisible();
-		await shot(mainWindow, testInfo, '01d-phone-sheet');
+		await shot(mainWindow, testInfo, '01e-phone-sheet');
 		await mainWindow.keyboard.press('Escape');
 		await expect(sheet).toHaveCount(0);
 		await nativeWindow.evaluate((window, next) => window.setBounds(next), wide);
@@ -346,8 +416,14 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		await expect(issuesList().locator('[data-forge-scope="assigned"]')).toHaveAttribute('aria-pressed', 'true');
 		await expect(issuesList().locator('[data-forge-row]')).toHaveCount(2, { timeout: 30_000 });
 
+		// No preview, no separator.
+		await expect(activeHome(mainWindow).locator('[data-forge-home="issue"] [data-forge-detail-separator]')).toHaveCount(0);
 		await issuesList().locator('[data-forge-row="541"]').click();
 		await expect(detail(541)).toContainText(ISSUE_541);
+		// Issues draws the preview width chosen in Pull Requests.
+		await expect
+			.poll(async () => Math.round((await detail(541).boundingBox())?.width ?? 0))
+			.toBe(496);
 		await detail(541).locator('[data-forge-action="Start work"]').click();
 		const panel = detail(541).locator('[data-forge-panel="startWork"]');
 		await expect(panel.locator('[data-forge-branch]')).toHaveValue(ISSUE_541_BRANCH);
@@ -375,6 +451,68 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 			.poll(() => fakeClaudeCommandLines().some((line) => line.includes('Work on issue #542')), { timeout: 30_000 })
 			.toBe(true);
 		await expect(folderGroup(mainWindow, ISSUE_542_BRANCH)).toBeVisible();
+	});
+
+	await test.step('items open as tabs: a Home row double click, Open in tab, and a Git tab row double click', async () => {
+		const itemChips = () => homeTabChip(mainWindow, 'forge-item:');
+		const itemTab = (key: string) => frontHomeTab(mainWindow).locator(`[data-forge-item-tab="${key}"]`);
+
+		// A Home row's double click opens the item as a Home tab of its own, titled once loaded.
+		await home.click();
+		await sectionTab('issues').click();
+		await expectHomeSection(mainWindow, 'issues');
+		await issuesList().locator('[data-forge-row="541"]').dblclick();
+		await expect(itemTab('issue:541')).toBeVisible({ timeout: 30_000 });
+		await expect(itemTab('issue:541')).toContainText(ISSUE_541);
+		await expect(itemChips()).toHaveCount(1);
+		await expect(itemChips().first()).toContainText(`#541 ${ISSUE_541}`);
+		await shot(mainWindow, testInfo, '07-home-item-tab');
+
+		// Opening it again brings the same tab forward.
+		await sectionTab('issues').click();
+		await expectHomeSection(mainWindow, 'issues');
+		await issuesList().locator('[data-forge-row="541"]').dblclick();
+		await expect(itemTab('issue:541')).toBeVisible();
+		await expect(itemChips()).toHaveCount(1);
+
+		// Open in tab does the same without a double click.
+		await sectionTab('issues').click();
+		await issuesList().locator('[data-forge-row="542"]').click();
+		const openInTab = detail(542).locator('[data-forge-open-in-tab]');
+		await expect(openInTab).toBeVisible();
+		await openInTab.hover();
+		await shot(mainWindow, testInfo, '08-open-in-tab-action');
+		await openInTab.click();
+		await expect(itemTab('issue:542')).toBeVisible({ timeout: 30_000 });
+		await expect(itemChips()).toHaveCount(2);
+
+		// A Git tab row's double click opens the item among the selected folder's tabs, not Home.
+		const project = mainWindow.locator('.project-workspace--active');
+		await mainWindow.locator('.project-tab').first().click();
+		await expect(project).toBeVisible();
+		await folderRow(mainWindow, 'change/13-events').click();
+		await expect(folderRow(mainWindow, 'change/13-events')).toHaveClass(/folders-tree__row--selected/);
+		await project.getByRole('tab', { name: 'Git', exact: true }).click();
+		const row = project.locator('[data-forge-project-tab="pullRequest"] [data-forge-row="88"]');
+		await expect(row).toBeVisible({ timeout: 30_000 });
+		await row.dblclick();
+		const folderItem = project.locator('[data-forge-item-tab="pullRequest:88"]');
+		await expect(folderItem).toBeVisible({ timeout: 30_000 });
+		await expect(folderItem.locator('[data-forge-detail="88"]')).toBeVisible({ timeout: 30_000 });
+		await expect(activeHome(mainWindow)).toHaveCount(0);
+		await expect(project.locator('.dv-tab').filter({ hasText: '#88' })).toHaveCount(1);
+		await shot(mainWindow, testInfo, '09-folder-item-tab');
+
+		// Again: the tab is brought forward, not doubled.
+		await row.dblclick();
+		await expect(folderItem).toBeVisible();
+		await expect(project.locator('[data-forge-item-tab="pullRequest:88"]')).toHaveCount(1);
+		await expect(activeHome(mainWindow)).toHaveCount(0);
+
+		// The Folders tree lists it as a pull request or issue, not a terminal.
+		await project.getByRole('tab', { name: 'Tabs', exact: true }).click();
+		await expect(folderGroup(mainWindow, 'change/13-events').locator('.folders-tree__row--forge-item')).toHaveCount(1);
+		await expect(folderTerminals(mainWindow, 'change/13-events')).toHaveCount(1);
 	});
 
 	await test.step('Settings shows the account and switches; Issues on Home off stops listing its issues', async () => {

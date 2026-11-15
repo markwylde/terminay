@@ -1,9 +1,10 @@
 /**
  * Home › Pull Requests and Issues on a compact workspace: the compact section
  * page. The scopes are the tabs (the same state as the wide scope chips);
- * State, grouping, the repository, and Refresh are in the sheet. A scope's
- * count is shown once this tab has received that scope's result for the
- * current State and repository; nothing is fetched to show a count.
+ * State, grouping, the repository, the account, and Refresh are in the sheet.
+ * A scope's count is shown once this tab has received that scope's result for
+ * the current State, repository, and account; nothing is fetched to show a
+ * count.
  */
 
 import { GitBranch, RefreshCw } from 'lucide-react';
@@ -26,6 +27,8 @@ import {
 } from '../workspace/compact/compactSectionModel';
 import {
 	defaultPreferences,
+	type ForgeAccountOption,
+	type ForgeAccountRef,
 	type ForgeKind,
 	type ForgeListItemView,
 	type ForgeRepositoryFocus,
@@ -36,6 +39,7 @@ import {
 	itemKey,
 	PULL_REQUEST_STATES,
 	relativeTime,
+	sameAccount,
 	sortByUpdated,
 	updatedAgo,
 	worktreeChipLabel,
@@ -64,6 +68,7 @@ export function forgeCountKey(
 	scope: string,
 	state: string,
 	repository: ForgeRepositoryFocus | undefined,
+	account = '',
 ): string {
 	return [
 		scope,
@@ -71,7 +76,8 @@ export function forgeCountKey(
 		repository === undefined
 			? ''
 			: `${repository.origin}/${repository.owner}/${repository.name}`,
-	].join('\u0000');
+		account,
+	].join('\u0001');
 }
 
 export type ForgeScopeCount = Readonly<{ count: number; more: boolean }>;
@@ -85,6 +91,11 @@ export function ForgeCompactPage(
 		counts: ReadonlyMap<string, ForgeScopeCount>;
 		repository: ForgeRepositoryFocus | undefined;
 		onRepository: (repository: ForgeRepositoryFocus | undefined) => void;
+		/** Accounts that serve this list; the control shows from two. */
+		accountOptions: readonly ForgeAccountOption[];
+		/** The account the list is narrowed to; null is All accounts. */
+		account: ForgeAccountRef | null;
+		onAccountChange: (account: ForgeAccountRef | null) => void;
 		loading: boolean;
 		settled: boolean;
 		noAccounts: boolean;
@@ -110,9 +121,19 @@ export function ForgeCompactPage(
 	const stateLabel =
 		states.find((state) => state.id === preferences.state)?.label ??
 		preferences.state;
+	const accountKey =
+		props.account === null
+			? ''
+			: `${props.account.sourceId}\u0000${props.account.origin}`;
+	const chosenAccount =
+		props.account === null
+			? undefined
+			: props.accountOptions.find((option) =>
+					sameAccount(option.account, props.account),
+				);
 	const tabs: CompactTab[] = SHORT_SCOPES[kind].map((scope) => {
 		const seen = props.counts.get(
-			forgeCountKey(scope.id, preferences.state, props.repository),
+			forgeCountKey(scope.id, preferences.state, props.repository, accountKey),
 		);
 		return {
 			id: scope.id,
@@ -124,7 +145,7 @@ export function ForgeCompactPage(
 	const countLabels = new Map(
 		SHORT_SCOPES[kind].map((scope) => {
 			const seen = props.counts.get(
-				forgeCountKey(scope.id, preferences.state, props.repository),
+				forgeCountKey(scope.id, preferences.state, props.repository, accountKey),
 			);
 			return [scope.id, seen?.more === true ? `${seen.count}+` : undefined];
 		}),
@@ -140,6 +161,11 @@ export function ForgeCompactPage(
 			id: 'repository',
 			label: `${props.repository.owner}/${props.repository.name}`,
 			reset: () => props.onRepository(undefined),
+		},
+		props.account !== null && {
+			id: 'account',
+			label: chosenAccount?.label ?? props.account.origin,
+			reset: () => props.onAccountChange(null),
 		},
 	]);
 	// The repositories on offer: those in the list, and the one chosen.
@@ -246,6 +272,16 @@ export function ForgeCompactPage(
 		);
 	} else if (!props.settled && props.loading && items.length === 0) {
 		body = <CompactEmpty title={`Loading ${noun}…`} />;
+	} else if (items.length === 0 && chosenAccount !== undefined) {
+		body = (
+			<CompactEmpty
+				title={`No ${noun} for ${chosenAccount.login} on ${chosenAccount.host}`}
+				action={{
+					label: 'Show all accounts',
+					onActivate: () => props.onAccountChange(null),
+				}}
+			/>
+		);
 	} else if (items.length === 0) {
 		const isDefault =
 			preferences.scope === defaults.scope &&
@@ -336,6 +372,7 @@ export function ForgeCompactPage(
 						group: defaults.group,
 					});
 					props.onRepository(undefined);
+					if (props.account !== null) props.onAccountChange(null);
 				},
 				content: (
 					<>
@@ -377,6 +414,30 @@ export function ForgeCompactPage(
 								)
 							}
 						/>
+						{props.accountOptions.length < 2 ? null : (
+							<SheetSelect
+								label="Account"
+								value={
+									chosenAccount === undefined
+										? ''
+										: String(props.accountOptions.indexOf(chosenAccount))
+								}
+								options={[
+									{ value: '', label: 'All accounts' },
+									...props.accountOptions.map((option, position) => ({
+										value: String(position),
+										label: option.label,
+									})),
+								]}
+								onChange={(value) =>
+									props.onAccountChange(
+										value === ''
+											? null
+											: (props.accountOptions[Number(value)]?.account ?? null),
+									)
+								}
+							/>
+						)}
 						<SheetRow label={updated ?? 'Not loaded yet'}>
 							<button
 								type="button"

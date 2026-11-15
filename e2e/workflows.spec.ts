@@ -44,6 +44,40 @@ socket.on('data', (chunk) => {
 socket.on('error', (error) => { console.error(error.message); process.exit(2); });
 `;
 
+/**
+ * Stands in for an agent such as Claude Code: it reads its own keyboard in raw
+ * mode and turns bracketed paste on, so a paste would arrive wrapped in
+ * markers. Every byte it reads goes to a file; it exits on Enter.
+ */
+const TYPED_READER_SCRIPT = `
+import { appendFileSync, writeFileSync } from 'node:fs';
+const [file] = process.argv.slice(2);
+writeFileSync(file, '');
+process.stdin.setRawMode(true);
+process.stdout.write('\\u001b[?2004h' + 'TYPED-READER-' + 'READY\\n');
+process.stdin.on('data', (chunk) => {
+	appendFileSync(file, chunk);
+	if (chunk.includes(13)) {
+		process.stdout.write('\\u001b[?2004l');
+		process.exit(0);
+	}
+});
+`;
+
+/** The one line a launch or resume of the e2e template types, then Enter. */
+const TYPED_LAUNCH = /^\/goal Ship the e2e workflow\. Typed, not pasted\. Work through [ -~]*get_workflow[ -~]*\r$/u;
+const TYPED_RESUME = /^\/goal Ship the e2e workflow\. Typed, not pasted\. Resume [ -~]*get_workflow[ -~]*\r$/u;
+
+/** Start the reader in a terminal and wait until bracketed paste is on. */
+async function readTypedInput(page: Page, panel: Locator, userDataDir: string, name: string): Promise<string> {
+	const script = path.join(userDataDir, 'typed-reader.mjs');
+	const file = path.join(userDataDir, name);
+	await writeFile(script, TYPED_READER_SCRIPT);
+	await submitTerminalCommand(page, `clear; '${process.execPath}' '${script}' '${file}'`, panel);
+	await expect(panel.locator('.xterm-rows')).toContainText('TYPED-READER-READY', { timeout: READY_TIMEOUT_MS });
+	return file;
+}
+
 const panelFor = (page: Page, sessionId: string): Locator =>
 	page.locator(`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`);
 const workflowPanel = (page: Page, sessionId: string): Locator =>
@@ -120,7 +154,7 @@ async function chooseFromCommandBar(page: Page, query: string, title: string): P
 async function createTemplate(settings: Page): Promise<void> {
 	await settings.getByRole('button', { name: 'New workflow', exact: true }).click();
 	await settings.getByLabel('Workflow name').fill('E2E flow');
-	await settings.getByLabel('Opening prompt').fill('Ship the e2e workflow.');
+	await settings.getByLabel('Opening prompt').fill('Ship the e2e workflow.\n\nTyped, not pasted.');
 	await settings.getByLabel('Step 1 title').fill('Explore');
 	await settings.getByLabel('Step 1 icon').selectOption('eye');
 	await settings.getByRole('button', { name: 'Add step', exact: true }).click();
@@ -136,7 +170,8 @@ async function createTemplate(settings: Page): Promise<void> {
 	await expect(settings.getByRole('button', { name: 'Move step 2', exact: true })).toBeFocused();
 	await settings.keyboard.press('Alt+ArrowDown');
 	await expect(settings.getByLabel('Step 3 title')).toHaveValue('Verify');
-	await expect(settings.locator('.workflow-launch-preview')).toContainText('/goal Ship the e2e workflow.');
+	// The preview is the one line that is typed.
+	await expect(settings.locator('.workflow-launch-preview')).toContainText('/goal Ship the e2e workflow. Typed, not pasted. Work through');
 	await settings.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(settings.locator('.macro-save-state')).toHaveText('Saved');
 }
@@ -197,9 +232,9 @@ test('a workflow made in Settings is launched, driven by MCP, survives a relaunc
 
 		const sessionId = await settledTerminalSessionId(mainWindow.locator('.terminal-panel:visible'));
 		const panel = panelFor(mainWindow, sessionId);
-		// What the launch types lands in a file: one paste, submitted once.
-		const typed = path.join(userDataDir, 'workflow-typed.txt');
-		await submitTerminalCommand(mainWindow, `cat > '${typed}'`, panel);
+		// What the launch types lands in a file: typed as one line, never
+		// pasted although the program asked for bracketed paste, then Enter.
+		const typed = await readTypedInput(mainWindow, panel, userDataDir, 'workflow-typed.txt');
 
 		await chooseFromCommandBar(mainWindow, 'E2E flow', 'E2E flow');
 		await expect(markers(mainWindow, sessionId)).toHaveCount(3, { timeout: READY_TIMEOUT_MS });
@@ -210,9 +245,7 @@ test('a workflow made in Settings is launched, driven by MCP, survives a relaunc
 			.toEqual(['not_started', 'not_started', 'not_started']);
 		await expect
 			.poll(() => (existsSync(typed) ? readFileSync(typed, 'utf8') : ''))
-			.toMatch(/^\/goal Ship the e2e workflow\.[^\n]*get_workflow[^\n]*\n$/u);
-		await panel.locator('.xterm-helper-textarea').focus();
-		await mainWindow.keyboard.press('Control+D');
+			.toMatch(TYPED_LAUNCH);
 
 		// The terminal's agent works through the steps.
 		const read = await callWithIds(mainWindow, sessionId, userDataDir, 'get_workflow', {});
@@ -254,19 +287,16 @@ test('a workflow made in Settings is launched, driven by MCP, survives a relaunc
 		// Resume types the resume text and changes no step.
 		await panelFor(window, sessionId).locator('.xterm-helper-textarea').focus();
 		await window.keyboard.press('Control+C');
-		const resumed = path.join(userDataDir, 'workflow-resumed.txt');
-		await submitTerminalCommand(window, `cat > '${resumed}'`, panelFor(window, sessionId));
+		const resumed = await readTypedInput(window, panelFor(window, sessionId), userDataDir, 'workflow-resumed.txt');
 		await chooseFromCommandBar(window, 'resume', 'Resume workflow');
 		await expect
 			.poll(() => (existsSync(resumed) ? readFileSync(resumed, 'utf8') : ''))
-			.toMatch(/^\/goal Ship the e2e workflow\.[^\n]*get_workflow[^\n]*\n$/u);
+			.toMatch(TYPED_RESUME);
 		await expect
 			.poll(async () =>
 				markers(window, sessionId).evaluateAll((elements) => elements.map((element) => element.getAttribute('data-status'))),
 			)
 			.toEqual(['done', 'running', 'not_started']);
-		await panelFor(window, sessionId).locator('.xterm-helper-textarea').focus();
-		await window.keyboard.press('Control+D');
 	} finally {
 		await relaunched?.close().catch(() => undefined);
 		killHolders(userDataDir);

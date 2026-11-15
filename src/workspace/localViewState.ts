@@ -412,17 +412,18 @@ export function recallHomeSidebarVisible(): boolean {
  *
  * A width is the device's, not a project's: the Folders tree has one width and
  * the project sidebar another, shared by every project, so switching projects
- * never makes a column jump. Home's sidebar keeps its own. Nothing here travels
- * to a server. A device with no answer, or an answer it cannot read, uses the
+ * never makes a column jump. Home's sidebar keeps its own, and so does the
+ * detail preview beside Home's Pull Requests and Issues lists, which both
+ * sections share. Nothing here travels to a server. A device with no answer, or an answer it cannot read, uses the
  * column's default.
  */
-export type ResizableColumn = 'folders' | 'sidebar' | 'home';
+export type ResizableColumn = 'folders' | 'sidebar' | 'home' | 'forgeDetail';
 
 export const COLUMN_WIDTHS_STORAGE_KEY = 'terminay.view.column-widths.v1';
 
 /** Home's sidebar is a short menu, so it starts narrower than a project's. */
 export const DEFAULT_COLUMN_WIDTHS: Readonly<Record<ResizableColumn, number>> =
-	{ folders: 232, sidebar: 280, home: 220 };
+	{ folders: 232, sidebar: 280, home: 220, forgeDetail: 380 };
 
 const MINIMUM_COLUMN_WIDTH = 30;
 const MAXIMUM_COLUMN_WIDTH = 2_000;

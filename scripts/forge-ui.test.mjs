@@ -35,6 +35,7 @@ async function bundle(entryPoint, outputName) {
 const views = await bundle('src/forge/ForgeViews.tsx', 'views.cjs');
 const settingsModule = await bundle('src/forge/ForgeSettings.tsx', 'settings.cjs');
 const homeModule = await bundle('src/forge/ForgeHome.tsx', 'forge-home.cjs');
+const separatorModule = await bundle('src/forge/ForgeDetailSeparator.tsx', 'forge-detail-separator.cjs');
 const { HomeView } = await bundle('src/workspace/HomeView.tsx', 'home-view.cjs');
 const { FoldersColumn } = await bundle('src/components/folders/FoldersColumn.tsx', 'folders-column.cjs');
 
@@ -254,12 +255,49 @@ test('the detail shows the body as text and failed checks first', () => {
 	assert.match(markup, /Open on Gitea/u);
 });
 
+test('the Home preview separator is a focusable vertical separator carrying its width and bounds', () => {
+	const markup = html(
+		h(separatorModule.ForgeDetailSeparator, { width: 380, min: 280, max: 580, onPreview() {}, onCommit() {} }),
+	);
+	assert.match(markup, /^<hr /u);
+	assert.match(markup, /data-forge-detail-separator="true"/u);
+	assert.match(markup, /aria-label="Resize preview"/u);
+	assert.match(markup, /aria-orientation="vertical"/u);
+	assert.match(markup, /aria-valuemin="280"/u);
+	assert.match(markup, /aria-valuemax="580"/u);
+	assert.match(markup, /aria-valuenow="380"/u);
+	assert.match(markup, /tabindex="0"/iu);
+});
+
 test('actions from a fork are disabled and say why', () => {
 	const fork = entry(9, { pullRequest: { headBranch: 'main', baseBranch: 'main', headOwner: 'forker', headName: 'app' } });
 	const markup = html(h(views.ForgeDetailPane, { entry: fork, loading: false, environment: environment(), now: NOW }));
 	assert.match(markup, /disabled=""[^>]*data-forge-action="Check out in new worktree"/u);
 	assert.match(markup, /data-forge-reason="Check out in new worktree">Pull requests from forks cannot be checked out\./u);
 	assert.match(markup, /data-forge-reason="Review with agent">Pull requests from forks cannot be checked out\./u);
+});
+
+test('the detail offers Open in tab only where its item can open as a tab', () => {
+	const without = html(h(views.ForgeDetailPane, { entry: entry(1), loading: false, environment: environment(), now: NOW }));
+	assert.doesNotMatch(without, /data-forge-open-in-tab/u);
+	const withTab = html(
+		h(views.ForgeDetailPane, { entry: issue(5), loading: false, environment: environment(), now: NOW, onOpenInTab() {} }),
+	);
+	assert.match(withTab, /aria-label="Open in tab"[^>]*data-forge-open-in-tab="true"/u);
+});
+
+test('an item tab with no forge on its server says so, and names its item', async () => {
+	const tabModule = await bundle('src/forge/ForgeItemTab.tsx', 'forge-item-tab.cjs');
+	const markup = html(
+		h(tabModule.ForgeItemView, {
+			client: undefined,
+			environment: environment(),
+			target: { sourceId: 'com.terminay.gitea/forge', reference: issue(540).item.reference },
+			setTitle() {},
+		}),
+	);
+	assert.match(markup, /data-forge-item-tab="issue:540"/u);
+	assert.match(markup, /This server does not offer pull requests and issues\./u);
 });
 
 test('a repository not open as a project disables checkout and Start work', () => {
@@ -489,4 +527,44 @@ test('loadForgeSettings reads one extension\'s sources, accounts, and owners', a
 	assert.deepEqual(data.owners, ['acme', 'octo']);
 	assert.deepEqual(calls, ['accounts true']);
 	assert.equal(await settingsModule.loadForgeSettings(client, 'missing'), undefined);
+});
+
+// ── Account filter (filter-forge-lists-by-account) ──────────────────────
+
+const giteaAccount = { sourceId: 'com.terminay.gitea/forge', origin: ORIGIN };
+const githubAccount = { sourceId: 'com.terminay.github/forge', origin: 'https://github.com' };
+const accountOption = (account, login, host, forge) => ({ account, login, host, forge, label: `${login} · ${host} (${forge})` });
+const twoAccounts = [
+	accountOption(giteaAccount, 'alice', new URL(ORIGIN).host, 'Gitea'),
+	accountOption(githubAccount, 'alice', 'github.com', 'GitHub'),
+];
+
+test('the Account control shows with two or more accounts and selects the effective one', () => {
+	const all = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: null, onAccountChange() {} })));
+	assert.match(all, /<span class="forge-field__label">Account<\/span>/u);
+	assert.match(all, /<option value="all" selected="">All accounts<\/option>/u);
+	assert.match(all, /alice · github\.com \(GitHub\)<\/option>/u);
+	const chosen = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: githubAccount, onAccountChange() {} })));
+	assert.match(chosen, /<option value="1" selected="">alice · github\.com \(GitHub\)<\/option>/u);
+	const one = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts.slice(0, 1), account: null, onAccountChange() {} })));
+	assert.doesNotMatch(one, /data-forge-account-select/u);
+});
+
+test('an empty list for the chosen account names it and offers Show all accounts; a failure comes first', () => {
+	const empty = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: githubAccount, onAccountChange() {} })));
+	assert.match(empty, /data-forge-empty="noMatchesForAccount"/u);
+	assert.match(empty, /No pull requests for <b>alice<\/b> on <b>github\.com<\/b>\./u);
+	assert.match(empty, />Show all accounts</u);
+	const failed = html(
+		h(views.ForgeListPane, listProps({
+			accountOptions: twoAccounts,
+			account: githubAccount,
+			onAccountChange() {},
+			sources: [{ sourceId: githubAccount.sourceId, origin: githubAccount.origin, state: 'failed', error: 'timeout' }],
+		})),
+	);
+	assert.match(failed, /data-forge-empty="failed"/u);
+	assert.doesNotMatch(failed, /noMatchesForAccount/u);
+	const unfiltered = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: null, onAccountChange() {} })));
+	assert.match(unfiltered, /data-forge-empty="noMatches"/u);
 });

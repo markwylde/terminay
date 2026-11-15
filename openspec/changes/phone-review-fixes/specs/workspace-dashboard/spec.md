@@ -324,7 +324,7 @@ A recording row SHALL offer **Delete recording** from a trailing more control. T
 
 ### Requirement: Pull requests and issues on a compact workspace
 
-On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**, and the Issues tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count only once this Home tab has received that scope's result for the current State and repository. A Review count above zero SHALL be marked.
+On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**, and the Issues tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count only once this Home tab has received that scope's result for the current State, repository, and account. A Review count above zero SHALL be marked.
 
 #### Scenario: Review requests
 - **WHEN** a phone shows Pull Requests with three review requests
@@ -332,10 +332,10 @@ On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, *
 
 ### Requirement: Forge scope counts
 
-A forge scope tab's count SHALL be the number of items in the last result this Home tab received for it, followed by + when the forge has more pages. A scope with no received result for the current State and repository SHALL show no count. Showing counts SHALL NEVER fetch.
+A forge scope tab's count SHALL be the number of items in the last result this Home tab received for it, followed by + when the forge has more pages. A scope with no received result for the current State, repository, and account SHALL show no count. Showing counts SHALL NEVER fetch.
 
 #### Scenario: Scope not yet visited
-- **WHEN** a phone shows Pull Requests and the Mine scope has not been loaded for the current State and repository
+- **WHEN** a phone shows Pull Requests and the Mine scope has not been loaded for the current State, repository, and account
 - **THEN** the Mine tab shows no count, and no request is made for it
 
 #### Scenario: More pages
@@ -360,7 +360,7 @@ Rows SHALL be grouped by repository unless the sheet says otherwise.
 
 ### Requirement: Forge view options on a compact workspace
 
-The forge View options sheet SHALL offer **State**, **Group** (Repository or None), the repository filter, and the last update time with **Refresh**. A state other than Open, and a chosen repository, SHALL count as applied. A scope that matches nothing SHALL say so and offer **Show all**.
+The forge View options sheet SHALL offer **State**, **Group** (Repository or None), the repository filter, the **Account** filter when two or more accounts serve the list, and the last update time with **Refresh**. A state other than Open, a chosen repository, and a chosen account SHALL count as applied. A list narrowed to an account that has nothing SHALL say so and offer **Show all accounts**; otherwise a scope that matches nothing SHALL say so and offer **Show all**.
 
 #### Scenario: Merged pull requests
 - **WHEN** a user sets State to Merged in the sheet

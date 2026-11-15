@@ -27,14 +27,14 @@ export type FolderTreePanelFacts = {
 };
 
 /**
- * A file or folder tab this device has open. The workspace projection lists a
- * project's terminals; the tabs beside them are known from the workspace that
- * draws them, so the tree is told of them here.
+ * A file, folder, or pull request or issue tab this device has open. The
+ * workspace projection lists a project's terminals; the tabs beside them are
+ * known from the workspace that draws them, so the tree is told of them here.
  */
 export type FolderTreeOpenViewer = {
 	panelId: string;
 	folderId: string;
-	kind: 'file' | 'folder';
+	kind: FolderTreeViewerKind;
 	title: string;
 	/** The tab before this one in its folder, when there is one. */
 	afterPanelId?: string;
@@ -124,9 +124,13 @@ export type FolderTreeTerminalRow = {
 	createdWorktree?: string;
 };
 
-/** A panel that is not a terminal: an open file or a folder tab. */
+/** What a tab that is not a terminal shows. */
+export type FolderTreeViewerKind = 'file' | 'folder' | 'forge-item';
+
+/** A panel that is not a terminal: an open file, a folder tab, or a pull
+ * request or issue tab. */
 export type FolderTreeViewerRow = {
-	kind: 'file' | 'folder';
+	kind: FolderTreeViewerKind;
 	panelId: string;
 	title: string;
 	isActive: boolean;

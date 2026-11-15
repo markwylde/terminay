@@ -6,6 +6,10 @@ import {
 	SUBMIT_INPUT,
 	TERMINAL_KEYS,
 	terminalInputKey,
+	TYPE_CHUNK_CHARS,
+	TYPE_DELAY_MS,
+	SUBMIT_DELAY_MS,
+	typedChunks,
 	writeSeparatedInput,
 	TerminalPresentationCheckpointAuthority,
 	TerminalService,
@@ -202,4 +206,152 @@ test('a failed write stops the submission and releases the terminal', async () =
 		{ terminal: key, sleep },
 	);
 	assert.deepEqual(writes, ['text', 'next']);
+});
+
+test('typed text is written in chunks, a short pause apart, then Enter after the submit pause', async () => {
+	assert.equal(TYPE_CHUNK_CHARS, 128);
+	assert.equal(TYPE_DELAY_MS, 10);
+	const writes = [];
+	const pauses = [];
+	const body = 'x'.repeat(300);
+	const bytes = await writeSeparatedInput(
+		{ body, keys: [SUBMIT_INPUT] },
+		async (data) => {
+			writes.push(data);
+		},
+		{
+			typeChunkChars: TYPE_CHUNK_CHARS,
+			sleep: async (ms) => {
+				pauses.push([ms, writes.length]);
+			},
+		},
+	);
+	assert.deepEqual(
+		writes.map((data) => data.length),
+		[128, 128, 44, 1],
+	);
+	assert.equal(writes.slice(0, -1).join(''), body);
+	assert.equal(writes.at(-1), '\r');
+	assert.equal(bytes, 301);
+	// 10 ms between chunks, then the 50 ms submit pause before Enter.
+	assert.deepEqual(pauses, [
+		[TYPE_DELAY_MS, 1],
+		[TYPE_DELAY_MS, 2],
+		[SUBMIT_DELAY_MS, 3],
+	]);
+});
+
+test('typed chunks never split a surrogate pair', () => {
+	const text = `${'a'.repeat(127)}😀b${'é'.repeat(3)}`;
+	const chunks = typedChunks(text, 128);
+	assert.equal(chunks.join(''), text);
+	assert.ok(chunks.every((chunk) => chunk.length <= 128));
+	assert.equal(chunks[0], 'a'.repeat(127));
+	assert.ok(chunks[1].startsWith('😀'));
+	assert.deepEqual(typedChunks('', 128), []);
+	assert.throws(() => typedChunks('abc', 0), RangeError);
+});
+
+test('without typing, the body is one write as before', async () => {
+	const writes = [];
+	const pauses = [];
+	await writeSeparatedInput(
+		{ body: 'y'.repeat(300), keys: [SUBMIT_INPUT] },
+		async (data) => {
+			writes.push(data);
+		},
+		{
+			sleep: async (ms) => {
+				pauses.push(ms);
+			},
+		},
+	);
+	assert.deepEqual(
+		writes.map((data) => data.length),
+		[300, 1],
+	);
+	assert.deepEqual(pauses, [SUBMIT_DELAY_MS]);
+});
+
+test('typing cancelled mid-text writes no more chunks and no Enter, and releases the terminal', async () => {
+	const key = terminalInputKey('server-a', 'session-3');
+	const writes = [];
+	const controller = new AbortController();
+	await assert.rejects(
+		writeSeparatedInput(
+			{ body: 'z'.repeat(300), keys: [SUBMIT_INPUT] },
+			async (data) => {
+				writes.push(data);
+			},
+			{
+				terminal: key,
+				typeChunkChars: 128,
+				signal: controller.signal,
+				sleep: async () => {
+					if (writes.length === 1) controller.abort();
+				},
+			},
+		),
+		{ name: 'AbortError' },
+	);
+	assert.deepEqual(writes, ['z'.repeat(128)]);
+	await writeSeparatedInput(
+		{ body: 'next', keys: [SUBMIT_INPUT] },
+		async (data) => {
+			writes.push(data);
+		},
+		{ terminal: key, typeChunkChars: 128, sleep: async () => {} },
+	);
+	assert.deepEqual(writes.slice(1), ['next', '\r']);
+});
+
+test('typing cancelled while queued behind another submission writes nothing', async () => {
+	const key = terminalInputKey('server-a', 'session-4');
+	const writes = [];
+	const controller = new AbortController();
+	const write = async (data) => {
+		writes.push(data);
+	};
+	const first = writeSeparatedInput({ body: 'first', keys: [SUBMIT_INPUT] }, write, {
+		terminal: key,
+		sleep: async () => {
+			controller.abort();
+		},
+	});
+	const second = writeSeparatedInput({ body: 'w'.repeat(200), keys: [SUBMIT_INPUT] }, write, {
+		terminal: key,
+		typeChunkChars: 128,
+		signal: controller.signal,
+		sleep: async () => {},
+	});
+	await first;
+	await assert.rejects(second, { name: 'AbortError' });
+	assert.deepEqual(writes, ['first', '\r']);
+});
+
+test('a failed typed chunk stops the rest and the Enter, and releases the terminal', async () => {
+	const key = terminalInputKey('server-a', 'session-5');
+	const writes = [];
+	let calls = 0;
+	await assert.rejects(
+		writeSeparatedInput(
+			{ body: 'q'.repeat(300), keys: [SUBMIT_INPUT] },
+			async (data) => {
+				calls += 1;
+				if (calls === 2) throw new Error('terminal exited');
+				writes.push(data);
+			},
+			{ terminal: key, typeChunkChars: 128, sleep: async () => {} },
+		),
+		/terminal exited/,
+	);
+	assert.deepEqual(writes, ['q'.repeat(128)]);
+	await writeSeparatedInput(
+		{ body: 'next', keys: [] },
+		async (data) => {
+			writes.push(data);
+		},
+		{ terminal: key, typeChunkChars: 128, sleep: async () => {} },
+	);
+	assert.deepEqual(writes, ['q'.repeat(128), 'next']);
 });
