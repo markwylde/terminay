@@ -88,7 +88,24 @@ import {
 } from './forge/ForgeHome';
 import { openInWorktree as openForgeWorktree } from './forge/forgeActions';
 import type { ForgeEnvironment, ForgeWorktreePlan } from './forge/ForgeViews';
-import type { ForgeClaimView, ForgeHomeFocus } from './forge/forgeModel';
+import {
+	FORGE_ITEM_PANEL_COMPONENT,
+	FORGE_ITEM_TAB_COMPONENT,
+	ForgeItemPanel,
+	type ForgeItemPanelParams,
+	ForgeItemTab,
+	ForgeItemView,
+	ForgeTabContext,
+	type ForgeTabContextValue,
+} from './forge/ForgeItemTab';
+import {
+	type ForgeClaimView,
+	type ForgeHomeFocus,
+	type ForgeItemTarget,
+	forgeItemPlaceholderTitle,
+	itemKey as forgeItemKey,
+	readForgeItemTarget,
+} from './forge/forgeModel';
 import { useForgeClient } from './forge/useForge';
 import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
 import {
@@ -1748,6 +1765,10 @@ const ProjectWorkspace = memo(forwardRef<
 			resolveFeatureProjectRoot(featureAvailability, project.rootFolder)
 				.state === 'no-root';
 		const rootScopedAuthority = rootScopedFeatureAuthority(featureAvailability);
+		// Assigned once the Dockview it adds tabs to is in scope below.
+		const openForgeItemRef = useRef<(target: ForgeItemTarget) => void>(
+			() => undefined,
+		);
 		const forgeGitTab = useProjectGitTab({
 			client: forge?.client,
 			projectId: project.id,
@@ -1759,7 +1780,15 @@ const ProjectWorkspace = memo(forwardRef<
 			bound: forge?.bound ?? false,
 			environment: forge?.environment ?? NO_FORGE_ENVIRONMENT,
 			openInHome: forge?.openInHome ?? (() => undefined),
+			openInTab: (target) => openForgeItemRef.current(target),
 		});
+		const forgeTabContext = useMemo<ForgeTabContextValue>(
+			() => ({
+				client: forge?.client,
+				environment: forge?.environment ?? NO_FORGE_ENVIRONMENT,
+			}),
+			[forge?.client, forge?.environment],
+		);
 		const [isRootFolderBrowserOpen, setIsRootFolderBrowserOpen] =
 			useState(false);
 		const explorerProjectRoot =
@@ -2006,6 +2035,7 @@ const ProjectWorkspace = memo(forwardRef<
 		const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
 		const terminalCounterRef = useRef(0);
 		const filePanelCounterRef = useRef(0);
+		const forgePanelCounterRef = useRef(0);
 		const folderPanelCounterRef = useRef(0);
 		const draggingTransferRef = useRef<{
 			panelId?: string;
@@ -2139,6 +2169,7 @@ const ProjectWorkspace = memo(forwardRef<
 				file: FilePanel,
 				folder: FolderPanel,
 				terminal: TerminalPanel,
+				[FORGE_ITEM_PANEL_COMPONENT]: ForgeItemPanel,
 			}),
 			[],
 		);
@@ -2147,6 +2178,7 @@ const ProjectWorkspace = memo(forwardRef<
 				fileTab: FileTab,
 				folderTab: FolderTab,
 				terminalTab: TerminalTab,
+				[FORGE_ITEM_TAB_COMPONENT]: ForgeItemTab,
 			}),
 			[],
 		);
@@ -2933,6 +2965,51 @@ const ProjectWorkspace = memo(forwardRef<
 			},
 			[folderRootPath, project.color, syncPanelFocusState],
 		);
+
+		/** Open a pull request or issue as a tab in this folder, or bring its
+		 * tab forward when it is already open here. */
+		const openForgeItem = useCallback(
+			(target: ForgeItemTarget) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return;
+				}
+				const key = forgeItemKey(target.reference);
+				const existing = api.panels.find((panel) => {
+					const open = readForgeItemTarget(
+						(panel.params as { forgeItem?: unknown } | undefined)?.forgeItem,
+					);
+					return open !== undefined && forgeItemKey(open.reference) === key;
+				});
+				if (existing) {
+					existing.api.setActive();
+					syncPanelFocusState();
+					return;
+				}
+				forgePanelCounterRef.current += 1;
+				const panel = api.addPanel<ForgeItemPanelParams>({
+					component: FORGE_ITEM_PANEL_COMPONENT,
+					id: `forge-item-${forgePanelCounterRef.current}`,
+					params: {
+						color: project.color,
+						forgeItem: target,
+						isFocused: false,
+					},
+					position: api.activePanel
+						? {
+								direction: 'within',
+								referenceGroup: api.activePanel.group.id,
+							}
+						: undefined,
+					tabComponent: FORGE_ITEM_TAB_COMPONENT,
+					title: forgeItemPlaceholderTitle(target.reference),
+				});
+				panel.api.setActive();
+				syncPanelFocusState();
+			},
+			[project.color, syncPanelFocusState],
+		);
+		openForgeItemRef.current = openForgeItem;
 		useEffect(() => {
 			// A link is followed where it was clicked. Every folder of the project
 			// hears this, and only the one on screen can have been clicked in.
@@ -6111,6 +6188,7 @@ const ProjectWorkspace = memo(forwardRef<
 								<TerminalWorkspaceVisibleContext.Provider value={isActive}>
 								<FilePanelSaveRegistryProvider registry={filePanelSaveRegistry}>
 									<EmptyFolderContext.Provider value={emptyFolderDescription}>
+									<ForgeTabContext.Provider value={forgeTabContext}>
 									<DockviewReact
 										components={dockviewComponents}
 										tabComponents={dockviewTabComponents}
@@ -6128,6 +6206,7 @@ const ProjectWorkspace = memo(forwardRef<
 										}}
 										floatingGroupBounds="boundedWithinViewport"
 									/>
+									</ForgeTabContext.Provider>
 									</EmptyFolderContext.Provider>
 								</FilePanelSaveRegistryProvider>
 								</TerminalWorkspaceVisibleContext.Provider>
@@ -9351,6 +9430,22 @@ function App({
 		},
 		[openHomeSection],
 	);
+	// A Home row's double click or the detail's Open in tab: the item as a
+	// Home tab of its own, on this window's server.
+	const openForgeItemInHome = useCallback(
+		({ sourceId, reference }: ForgeItemTarget) =>
+			openInHome({
+				kind: 'forge-item',
+				serverId: currentServerId,
+				sourceId,
+				itemKind: reference.kind,
+				origin: reference.origin,
+				owner: reference.owner,
+				name: reference.name,
+				number: reference.number,
+			}),
+		[currentServerId, openInHome],
+	);
 	const forgeGitClient = useMemo(
 		() =>
 			terminalClientContext?.applicationClient === undefined
@@ -10407,6 +10502,7 @@ function App({
 						sources={forgeSources}
 						{...(forgeFocus === undefined ? {} : { focus: forgeFocus })}
 						visible={isVisible}
+						onOpenItem={openForgeItemInHome}
 					/>
 				)
 			) : section === 'workflows' ? (
@@ -10448,6 +10544,7 @@ function App({
 			homeOverviewActions,
 			homeRecordings,
 			openAutomationsFromOverview,
+			openForgeItemInHome,
 			openHomeSection,
 			workflowRows,
 			workflowsLoading,
@@ -11737,6 +11834,27 @@ function App({
 								}}
 							/>
 						)}
+						renderForgeItem={(target, host) =>
+							target.serverId === currentServerId ? (
+								<ForgeItemView
+									client={forgeClient}
+									environment={forgeEnvironment}
+									target={{
+										sourceId: target.sourceId,
+										reference: {
+											kind: target.itemKind,
+											origin: target.origin,
+											owner: target.owner,
+											name: target.name,
+											number: target.number,
+										},
+									}}
+									setTitle={host.setTitle}
+								/>
+							) : (
+								<FeatureUnavailableState reason="This pull request or issue is on another server. Switch to that server to see it." />
+							)
+						}
 						renderBotIcon={(target) =>
 							serverBots.get(target.serverId)?.bots.some(
 								(bot) => bot.id === target.botId,

@@ -457,6 +457,25 @@
 	background: transparent;
 }
 
+/* An item open as a tab of its own: the detail fills the tab and scrolls. */
+.forge-item-tab {
+	height: 100%;
+	overflow: auto;
+	box-sizing: border-box;
+}
+
+.forge-item-tab .forge-detail {
+	max-width: 860px;
+	margin: 0 auto;
+	padding: 20px 24px;
+	overflow: visible;
+}
+
+.forge-item-tab > .forge-failure,
+.forge-item-tab > .git-panel__message {
+	margin: 20px 24px;
+}
+
 .forge-detail__head {
 	display: flex;
 	align-items: center;

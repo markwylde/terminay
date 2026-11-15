@@ -7,6 +7,7 @@ import {
 	Columns3,
 	FileText,
 	Folder,
+	GitPullRequest,
 	LayoutGrid,
 	List,
 	Search,
@@ -85,12 +86,14 @@ import './workspaceDashboard.css';
 const KIND_ICON = {
 	file: FileText,
 	folder: Folder,
+	'forge-item': GitPullRequest,
 	terminal: TerminalSquare,
 } as const;
 
 const KIND_LABEL = {
 	file: 'File',
 	folder: 'Folder',
+	'forge-item': 'Pull request or issue',
 	terminal: 'Terminal',
 } as const;
 

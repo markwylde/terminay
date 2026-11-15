@@ -277,6 +277,29 @@ test('actions from a fork are disabled and say why', () => {
 	assert.match(markup, /data-forge-reason="Review with agent">Pull requests from forks cannot be checked out\./u);
 });
 
+test('the detail offers Open in tab only where its item can open as a tab', () => {
+	const without = html(h(views.ForgeDetailPane, { entry: entry(1), loading: false, environment: environment(), now: NOW }));
+	assert.doesNotMatch(without, /data-forge-open-in-tab/u);
+	const withTab = html(
+		h(views.ForgeDetailPane, { entry: issue(5), loading: false, environment: environment(), now: NOW, onOpenInTab() {} }),
+	);
+	assert.match(withTab, /aria-label="Open in tab"[^>]*data-forge-open-in-tab="true"/u);
+});
+
+test('an item tab with no forge on its server says so, and names its item', async () => {
+	const tabModule = await bundle('src/forge/ForgeItemTab.tsx', 'forge-item-tab.cjs');
+	const markup = html(
+		h(tabModule.ForgeItemView, {
+			client: undefined,
+			environment: environment(),
+			target: { sourceId: 'com.terminay.gitea/forge', reference: issue(540).item.reference },
+			setTitle() {},
+		}),
+	);
+	assert.match(markup, /data-forge-item-tab="issue:540"/u);
+	assert.match(markup, /This server does not offer pull requests and issues\./u);
+});
+
 test('a repository not open as a project disables checkout and Start work', () => {
 	const env = environment({ claims: new Map() });
 	const pull = html(h(views.ForgeDetailPane, { entry: entry(1), loading: false, environment: env, now: NOW }));
