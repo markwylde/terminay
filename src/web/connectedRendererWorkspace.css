@@ -562,6 +562,10 @@ html.is-framed .responsive-workspace-shell {
 .connected-web-menu__popup.connected-web-sheet-menubar__popup {
 	position: fixed;
 	z-index: 4100;
+	/* Its own width, not what is left right of its button, so it can be
+	   measured and moved in; never wider than the screen, wrapping instead. */
+	width: max-content;
+	max-width: calc(100vw - 16px);
 	max-height: 70vh;
 	overflow-y: auto;
 	font-size: 14px;
@@ -569,6 +573,7 @@ html.is-framed .responsive-workspace-shell {
 
 .connected-web-sheet-menubar__popup .connected-web-menu__item {
 	min-height: 40px;
+	white-space: normal;
 }
 
 /* A server upgrade's ticklist: centred and modal over the whole window, in

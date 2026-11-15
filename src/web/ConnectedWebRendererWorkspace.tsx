@@ -757,6 +757,7 @@ function ConnectedBrowserMenuBar({
 	const [sheetAnchor, setSheetAnchor] = useState<
 		Readonly<{ top: number; left: number }> | null
 	>(null);
+	const sheetPopupRef = useRef<HTMLDivElement | null>(null);
 	const menuButtonRefs = useRef(new Map<BrowserMenuId, HTMLButtonElement>());
 	const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
@@ -1082,19 +1083,31 @@ function ConnectedBrowserMenuBar({
 		const button = menuButtonRefs.current.get(openMenu);
 		if (button === undefined) return;
 		const bounds = button.getBoundingClientRect();
-		const popupWidth = 220;
-		setSheetAnchor({
-			top: bounds.bottom + 4,
-			left: Math.max(
-				8,
-				Math.min(bounds.left, document.documentElement.clientWidth - popupWidth - 8),
-			),
-		});
+		// The list's own width once it is drawn; its minimum before then.
+		const popupWidth = sheetPopupRef.current?.offsetWidth ?? 220;
+		// The visual viewport: on a phone, a list that overflows would widen the
+		// layout viewport and so move the very edge it is clamped to.
+		const viewportWidth =
+			window.visualViewport?.width ?? document.documentElement.clientWidth;
+		const left = Math.max(
+			8,
+			Math.min(bounds.left, viewportWidth - popupWidth - 8),
+		);
+		const top = bounds.bottom + 4;
+		setSheetAnchor((current) =>
+			current?.left === left && current.top === top ? current : { top, left },
+		);
 	}, [openMenu, variant]);
 	useLayoutEffect(() => {
 		if (openMenu === null) setSheetAnchor(null);
 		else placeSheetMenu();
 	}, [openMenu, placeSheetMenu]);
+	// Placed once more after the list is drawn, so a list wider than its
+	// minimum still ends inside the screen.
+	const hasSheetAnchor = sheetAnchor !== null;
+	useLayoutEffect(() => {
+		if (hasSheetAnchor) placeSheetMenu();
+	}, [hasSheetAnchor, placeSheetMenu]);
 
 	const renderMenuItems = (menuId: BrowserMenuId) =>
 		menuItems[menuId].map((item, index) => (
@@ -1166,6 +1179,7 @@ function ConnectedBrowserMenuBar({
 					? null
 					: createPortal(
 							<div
+								ref={sheetPopupRef}
 								className="connected-web-menu__popup connected-web-sheet-menubar__popup"
 								role="menu"
 								aria-label={menuLabels[openMenu]}
