@@ -253,6 +253,73 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		await shot(mainWindow, testInfo, '01-home-pull-requests');
 	});
 
+	await test.step('Home › Pull Requests: the preview resizes by drag and keyboard, and stacks when narrow', async () => {
+		const section = activeHome(mainWindow).locator('[data-forge-home="pullRequest"]');
+		const separator = section.locator('[data-forge-detail-separator]');
+		const previewWidth = async () => Math.round((await detail(88).boundingBox())?.width ?? 0);
+		const remembered = () =>
+			mainWindow.evaluate(
+				() => JSON.parse(localStorage.getItem('terminay.view.column-widths.v1') ?? '{}').forgeDetail as number | undefined,
+			);
+		await expect(separator).toBeVisible();
+		await expect(separator).toHaveAttribute('aria-valuenow', '380');
+		expect(await previewWidth()).toBe(380);
+		const box = await separator.boundingBox();
+		if (box === null) throw new Error('the separator has no box');
+		const x = box.x + box.width / 2;
+		const y = box.y + box.height / 2;
+
+		// A drag previews live and commits once on release.
+		await mainWindow.mouse.move(x, y);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(x - 50, y, { steps: 5 });
+		await expect.poll(previewWidth).toBe(430);
+		expect(await remembered()).toBeUndefined();
+		await mainWindow.mouse.move(x - 100, y, { steps: 5 });
+		await mainWindow.mouse.up();
+		await expect.poll(previewWidth).toBe(480);
+		expect(await remembered()).toBe(480);
+		await shot(mainWindow, testInfo, '01a-preview-widened');
+
+		// A press without a move changes nothing.
+		const edge = x - 100;
+		await mainWindow.mouse.move(edge, y);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.up();
+		expect(await previewWidth()).toBe(480);
+		expect(await remembered()).toBe(480);
+
+		// A cancelled drag returns to the width from before it.
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(edge - 60, y, { steps: 5 });
+		await expect.poll(previewWidth).toBe(540);
+		await mainWindow.evaluate(() => window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 })));
+		await mainWindow.mouse.up();
+		await expect.poll(previewWidth).toBe(480);
+		expect(await remembered()).toBe(480);
+
+		// The keyboard moves the edge 16 pixels a press.
+		await separator.focus();
+		await mainWindow.keyboard.press('ArrowLeft');
+		await mainWindow.keyboard.press('ArrowLeft');
+		await mainWindow.keyboard.press('ArrowRight');
+		await expect.poll(previewWidth).toBe(496);
+		expect(await remembered()).toBe(496);
+
+		// A Home area too narrow for both stacks the preview with no separator.
+		await section.evaluate((element) => {
+			(element as HTMLElement).style.width = '560px';
+		});
+		await expect(section.locator('.forge-home__grid--stacked')).toBeVisible();
+		await expect(separator).toHaveCount(0);
+		await shot(mainWindow, testInfo, '01b-preview-stacked');
+		await section.evaluate((element) => {
+			(element as HTMLElement).style.width = '';
+		});
+		await expect(separator).toBeVisible();
+		await expect.poll(previewWidth).toBe(496);
+	});
+
 	await test.step('Check out in new worktree creates and selects the linked folder', async () => {
 		await detail(88).locator('[data-forge-action="Check out in new worktree"]').click();
 		await expect(folderRow(mainWindow, 'change/13-events')).toBeVisible({ timeout: 30_000 });
@@ -313,8 +380,14 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		await expect(issuesList().locator('[data-forge-scope="assigned"]')).toHaveAttribute('aria-pressed', 'true');
 		await expect(issuesList().locator('[data-forge-row]')).toHaveCount(2, { timeout: 30_000 });
 
+		// No preview, no separator.
+		await expect(activeHome(mainWindow).locator('[data-forge-home="issue"] [data-forge-detail-separator]')).toHaveCount(0);
 		await issuesList().locator('[data-forge-row="541"]').click();
 		await expect(detail(541)).toContainText(ISSUE_541);
+		// Issues draws the preview width chosen in Pull Requests.
+		await expect
+			.poll(async () => Math.round((await detail(541).boundingBox())?.width ?? 0))
+			.toBe(496);
 		await detail(541).locator('[data-forge-action="Start work"]').click();
 		const panel = detail(541).locator('[data-forge-panel="startWork"]');
 		await expect(panel.locator('[data-forge-branch]')).toHaveValue(ISSUE_541_BRANCH);

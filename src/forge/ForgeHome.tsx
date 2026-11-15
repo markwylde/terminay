@@ -5,11 +5,13 @@
  */
 
 import type { ForgeClientListRequest, TerminayForgeClient } from '@terminay/client-core';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	DEFAULT_FORGE_GIT_PANE_LAYOUT,
+	drawnForgeDetailWidth,
 	FORGE_GIT_PANES_KEY,
 	type ForgeClaimView,
+	forgeDetailLayout,
 	type ForgeGitPaneId,
 	type ForgeGitPaneLayout,
 	type ForgeHomeFocus,
@@ -18,6 +20,7 @@ import {
 	type ForgeReference,
 	type ForgeRepositoryFocus,
 	type ForgeViewPreferences,
+	forgeDetailWidthBounds,
 	itemKey,
 	preferencesKey,
 	projectPullRequestGroups,
@@ -36,6 +39,8 @@ import {
 	ForgeSidebarRow,
 } from './ForgeViews.tsx';
 import { useForgeChanges, useForgeDetail, useForgeList } from './useForge.ts';
+import { ForgeDetailSeparator } from './ForgeDetailSeparator.tsx';
+import { useRememberedColumnWidth } from '../workspace/useRememberedColumnWidth.ts';
 
 const HOME_PAGE_SIZE = 50;
 
@@ -220,6 +225,7 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 	const projectTitle = (projectId: string) =>
 		environment.projects.find((project) => project.projectId === projectId)?.title;
 	const title = kind === 'pullRequest' ? 'Pull Requests' : 'Issues';
+	const detailWidth = useForgeDetailWidth();
 	return (
 		<div className="forge-home" data-forge-home={kind}>
 			<div className="forge-home__head">
@@ -230,7 +236,11 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 						: ' '}
 				</p>
 			</div>
-			<div className={`forge-home__grid${entry === undefined ? '' : ' forge-home__grid--detail'}`}>
+			<div
+				ref={detailWidth.gridRef}
+				className={`forge-home__grid${entry === undefined ? '' : ' forge-home__grid--detail'}${detailWidth.stacked ? ' forge-home__grid--stacked' : ''}`}
+				style={{ '--forge-detail-width': `${detailWidth.drawn}px` } as CSSProperties}
+			>
 				<ForgeListPane
 					kind={kind}
 					preferences={preferences}
@@ -280,9 +290,47 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 						onClose={() => setSelection(undefined)}
 					/>
 				)}
+				{entry === undefined || detailWidth.stacked ? null : (
+					<ForgeDetailSeparator
+						width={detailWidth.drawn}
+						min={detailWidth.bounds.min}
+						max={detailWidth.bounds.max}
+						onPreview={detailWidth.setPreview}
+						onCommit={detailWidth.commit}
+					/>
+				)}
 			</div>
 		</div>
 	);
+}
+
+/**
+ * The detail preview's width: the one this device chose for both sections,
+ * a live drag over it, and the grid's width that bounds how it is drawn.
+ */
+function useForgeDetailWidth() {
+	const [chosen, commit] = useRememberedColumnWidth('forgeDetail');
+	const [preview, setPreview] = useState<number | null>(null);
+	const [gridWidth, setGridWidth] = useState<number>();
+	const observer = useRef<ResizeObserver | null>(null);
+	const gridRef = useCallback((grid: HTMLDivElement | null) => {
+		observer.current?.disconnect();
+		observer.current = null;
+		if (grid === null) return;
+		setGridWidth(grid.clientWidth || undefined);
+		const View = grid.ownerDocument.defaultView?.ResizeObserver;
+		if (View === undefined) return;
+		observer.current = new View(() => setGridWidth(grid.clientWidth || undefined));
+		observer.current.observe(grid);
+	}, []);
+	return {
+		gridRef,
+		drawn: drawnForgeDetailWidth(preview ?? chosen, gridWidth),
+		bounds: forgeDetailWidthBounds(gridWidth),
+		stacked: forgeDetailLayout(gridWidth) === 'stacked',
+		setPreview,
+		commit,
+	};
 }
 
 // ── A project's Git tab ────────────────────────────────────────────────

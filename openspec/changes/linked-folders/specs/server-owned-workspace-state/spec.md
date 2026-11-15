@@ -103,7 +103,8 @@ of them, and the order of the project tabs drawn from them; which project tab,
 which folder, and which terminal or panel is active in each connected
 presentation; the Home tabs open on the device and their arrangement; sidebar
 visibility and Folders tree visibility for each server and project pair; the
-Folders tree, sidebar, and Home sidebar widths; transient dialogs, menus, selection, drag previews, and optimistic UI
+Folders tree, sidebar, and Home sidebar widths, and the width of Home's
+Pull Requests and Issues detail preview; transient dialogs, menus, selection, drag previews, and optimistic UI
 state; hardware and host capabilities such as microphone permission; and
 explicitly device-specific accessibility or input overrides. The composition and
 the Home tab arrangement MUST NOT be sent to any server. Client-local state
@@ -133,6 +134,12 @@ identity, or a live terminal after reconnect.
 
 - **WHEN** a device opens, arranges, and closes Home tabs
 - **THEN** no server records the change and no other device's Home tabs change
+
+#### Scenario: Detail preview width is device-local
+
+- **WHEN** a user resizes the Home Pull Requests detail preview on one device
+- **THEN** no server records the width and another device's preview keeps its
+  own width
 
 ### Requirement: Folder changes are named workspace commands
 
