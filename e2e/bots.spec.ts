@@ -425,6 +425,39 @@ test.describe('Home: Bots', () => {
 		).toBe(true);
 	});
 
+	test('on a phone, Bots is a compact section page with status tabs, avatar rows, and the engine card', async ({
+		electronApp,
+		mainWindow,
+	}, testInfo) => {
+		await engineReady(mainWindow);
+		await createBot(mainWindow, 'Phone Bot');
+		await openBots(mainWindow);
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		const wide = await nativeWindow.evaluate((window) => window.getBounds());
+		await nativeWindow.evaluate(
+			(window, next) => window.setBounds(next),
+			{ ...wide, width: 390, height: 780 },
+		);
+		const page = frontHomeTab(mainWindow).locator('[data-compact-section="bots"]');
+		await expect(page).toBeVisible({ timeout: 20_000 });
+		for (const id of ['all', 'working', 'needs-you', 'stopped'])
+			await expect(page.locator(`[data-compact-tab="${id}"]`)).toBeVisible();
+		await expect(page.locator('[data-compact-tab="all"] [data-compact-tab-count]')).toHaveText('1');
+		await expect(page).toContainText('Phone Bot');
+		// The engine is one card; it opens the sheet and focus comes back to it.
+		const card = page.locator('[data-terminay-bots-engine-card]');
+		await card.click();
+		const sheet = mainWindow.locator('[data-compact-sheet="true"]');
+		await expect(sheet).toBeVisible();
+		await mainWindow.screenshot({ path: testInfo.outputPath('bots-phone-engine.png') });
+		await mainWindow.keyboard.press('Escape');
+		await expect(sheet).toHaveCount(0);
+		await expect(card).toBeFocused();
+		await mainWindow.screenshot({ path: testInfo.outputPath('bots-phone.png') });
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), wide);
+		await expect(page).toHaveCount(0, { timeout: 20_000 });
+	});
+
 	test('two bots stay responsive and Overview helper lifecycle events do not refetch or spawn more helpers', async ({
 		mainWindow,
 		tempDir,

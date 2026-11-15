@@ -205,6 +205,12 @@ test('compact section pages: seeded Tabs, Workflows, Automations, and Recordings
 	await shot(mainWindow, testInfo, '02-tabs-sheet');
 	await sheet.locator('[data-compact-sheet-done]').click();
 	await shot(mainWindow, testInfo, '03-tabs-projects');
+	// Widening with the sheet open closes it.
+	await tabs.locator('[data-compact-view-options]').click();
+	await expect(sheet).toBeVisible();
+	await setSize(mainWindow, electronApp, { width: 1280, height: 820 });
+	await expect(sheet).toHaveCount(0, { timeout: READY });
+	await expect(tabs).toHaveCount(0);
 	// The wide window shows the Home sidebar as it was.
 	await setSize(mainWindow, electronApp, { width: 1280, height: 820 });
 	await expect(mainWindow.locator('[data-terminay-home-sidebar]')).toBeVisible({ timeout: READY });
