@@ -851,15 +851,6 @@ test.describe('project tabs', () => {
 		await expect(
 			switcher.getByRole('button', { name: 'New project' }).first(),
 		).toBeVisible();
-
-		// The connection glyph opens the same surface rather than a menu of its
-		// own, and never shows the server's name.
-		await mainWindow.keyboard.press('Escape');
-		await expect(switcher).toHaveCount(0);
-		const connection = mainWindow.locator('[data-compact-connection="true"]');
-		await expect(connection).not.toContainText(/\S/u);
-		await connection.click();
-		await expect(switcher).toBeVisible();
 	});
 
 	test('project tab activity badges keep the overflow strip measured and reach the switcher rows', async ({

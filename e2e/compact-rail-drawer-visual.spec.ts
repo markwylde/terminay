@@ -100,7 +100,7 @@ for (const scheme of ['dark', 'light'] as const) {
 
 		// The title block over a terminal.
 		await expect(
-			mainWindow.locator('[data-compact-home-toggle="true"]'),
+			mainWindow.locator('[data-compact-breadcrumb="true"]'),
 		).toBeVisible();
 		await shot(mainWindow, testInfo, `${scheme}-01-title-block`);
 

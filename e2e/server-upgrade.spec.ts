@@ -630,15 +630,16 @@ test.describe('server upgrade at phone width', () => {
 				mainWindow.locator('[data-compact-chrome="true"]'),
 			).toBeVisible();
 
-			const glyph = mainWindow.locator('[data-compact-connection="true"]');
-			await expect(glyph).toHaveAccessibleName(
-				/, upgrade to 5\.2\.0 available$/,
+			// With no server glyph on the row, the title block carries it.
+			const breadcrumb = mainWindow.locator('[data-compact-breadcrumb="true"]');
+			await expect(breadcrumb).toHaveAccessibleName(
+				/ — Server upgrade 5\.2\.0 available$/,
 			);
 			await expect(
-				glyph.locator('[data-server-upgrade-indicator="5.2.0"]'),
+				breadcrumb.locator('[data-compact-breadcrumb-alert="true"]'),
 			).toBeVisible();
 
-			await glyph.click();
+			await breadcrumb.click();
 			// The drawer lists server updates in its server menu, on the rail.
 			await mainWindow
 				.getByRole('dialog', { name: 'Switch terminal' })

@@ -93,6 +93,8 @@ export type CompactSwitcherProps = Readonly<{
 	activePanelKey?: string;
 	/** The agents of the project in front, shown under its Agents tab. */
 	agents?: ReactNode;
+	/** The host's application menu, drawn as a band across the drawer's top. */
+	applicationMenu?: ReactNode;
 	/** The folders of a project this device draws collapsed. */
 	collapsedFolderIdsFor: (
 		project: CompactSwitcherProjectGroup,
@@ -1655,114 +1657,124 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 				aria-label="Switch terminal"
 				data-compact-drawer="true"
 			>
-				<nav className="compact-drawer__rail" aria-label="Places">
-					<button
-						type="button"
-						className="compact-drawer__server"
-						onClick={() => openLayer({ kind: 'server' })}
-						aria-label={`Server ${currentServer.label}${currentServer.isReachable ? '' : ', unreachable'}`}
-						aria-haspopup="menu"
-						title={currentServer.label}
-						data-compact-switcher-server="true"
-					>
-						<Server size={17} aria-hidden="true" />
-						<span
-							className={`compact-drawer__server-dot${currentServer.isReachable ? '' : ' compact-drawer__server-dot--unreachable'}`}
-							aria-hidden="true"
-						/>
-					</button>
-					<button
-						type="button"
-						className={`compact-drawer__rail-home${selected === HOME ? ' compact-drawer__rail-item--selected' : ''}`}
-						onClick={() => selectRailItem(HOME)}
-						aria-label={
-							homeBadge === 0
-								? 'Home'
-								: `Home, ${homeBadge} ${homeBadge === 1 ? 'needs' : 'need'} you`
-						}
-						aria-pressed={selected === HOME}
-						data-terminay-home-control="true"
-						data-compact-switcher-home="true"
-					>
-						<span className="compact-drawer__rail-tile" aria-hidden="true">
-							<House size={18} />
-							{homeBadge === 0 ? null : (
-								<Badge count={homeBadge} tone="attention" />
-							)}
-						</span>
-						<span className="compact-drawer__rail-label" aria-hidden="true">
-							Home
-						</span>
-					</button>
-					<span className="compact-drawer__rail-divider" aria-hidden="true" />
-					<div className="compact-drawer__rail-scroll">
-						{railGroups.map((connection) => (
-							<RailGroup
-								key={connection.serverId}
-								connection={connection}
-								isEditing={isEditing}
-								isMovable={connection.serverId === currentServer.id}
-								onAnnounce={announce}
-								onCloseProject={props.onCloseProject}
-								onEditProject={props.onEditProject}
-								onReorder={props.onReorderProjects}
-								onSelect={selectRailItem}
-								selected={selected}
-								showHeading={multipleConnections}
-							/>
-						))}
-					</div>
-					<button
-						type="button"
-						className="compact-drawer__rail-add"
-						onClick={props.onNewProject}
-						aria-label="New project"
-						title="New project"
-					>
-						<span className="compact-drawer__rail-tile" aria-hidden="true">
-							<Plus size={18} />
-						</span>
-					</button>
-				</nav>
-				<div className="compact-drawer__panel">
-					{header}
-					{showsTabs ? (
-						<SidebarGroupTabs
-							className="compact-drawer__tabs"
-							activeTab={shownTab}
-							tabs={FOLDERS_COLUMN_TABS.filter(
-								(candidate) =>
-									candidate.id === 'tabs' || candidate.id === 'agents',
-							)}
-							idPrefix="compact-switcher"
-							label="Switcher"
-							showLabels
-							onSelect={(tabId) => {
-								// The filter and edit mode belong to Tabs.
-								if (tabId !== 'tabs') {
-									if (isSearchOpen) closeSearch();
-									setIsEditing(false);
-								}
-								setTab(tabId);
-							}}
-						/>
-					) : null}
+				{props.applicationMenu === undefined ? null : (
 					<div
-						ref={bodyRef}
-						className={`compact-drawer__body${shownTab === 'agents' ? ' compact-drawer__agents' : ''}`}
-						{...(showsTabs
-							? {
-									id: 'compact-switcher-panel',
-									role: 'tabpanel',
-									'aria-labelledby': `compact-switcher-tab-${shownTab}`,
-								}
-							: {})}
-						data-compact-editing={isEditing ? 'true' : undefined}
+						className="compact-drawer__app-menu"
+						data-compact-switcher-app-menu="true"
 					>
-						{body}
+						{props.applicationMenu}
 					</div>
-					{createBar}
-					{layerElement}
+				)}
+				<div className="compact-drawer__main">
+					<nav className="compact-drawer__rail" aria-label="Places">
+						<button
+							type="button"
+							className="compact-drawer__server"
+							onClick={() => openLayer({ kind: 'server' })}
+							aria-label={`Server ${currentServer.label}${currentServer.isReachable ? '' : ', unreachable'}`}
+							aria-haspopup="menu"
+							title={currentServer.label}
+							data-compact-switcher-server="true"
+						>
+							<Server size={17} aria-hidden="true" />
+							<span
+								className={`compact-drawer__server-dot${currentServer.isReachable ? '' : ' compact-drawer__server-dot--unreachable'}`}
+								aria-hidden="true"
+							/>
+						</button>
+						<button
+							type="button"
+							className={`compact-drawer__rail-home${selected === HOME ? ' compact-drawer__rail-item--selected' : ''}`}
+							onClick={() => selectRailItem(HOME)}
+							aria-label={
+								homeBadge === 0
+									? 'Home'
+									: `Home, ${homeBadge} ${homeBadge === 1 ? 'needs' : 'need'} you`
+							}
+							aria-pressed={selected === HOME}
+							data-terminay-home-control="true"
+							data-compact-switcher-home="true"
+						>
+							<span className="compact-drawer__rail-tile" aria-hidden="true">
+								<House size={18} />
+								{homeBadge === 0 ? null : (
+									<Badge count={homeBadge} tone="attention" />
+								)}
+							</span>
+							<span className="compact-drawer__rail-label" aria-hidden="true">
+								Home
+							</span>
+						</button>
+						<span className="compact-drawer__rail-divider" aria-hidden="true" />
+						<div className="compact-drawer__rail-scroll">
+							{railGroups.map((connection) => (
+								<RailGroup
+									key={connection.serverId}
+									connection={connection}
+									isEditing={isEditing}
+									isMovable={connection.serverId === currentServer.id}
+									onAnnounce={announce}
+									onCloseProject={props.onCloseProject}
+									onEditProject={props.onEditProject}
+									onReorder={props.onReorderProjects}
+									onSelect={selectRailItem}
+									selected={selected}
+									showHeading={multipleConnections}
+								/>
+							))}
+						</div>
+						<button
+							type="button"
+							className="compact-drawer__rail-add"
+							onClick={props.onNewProject}
+							aria-label="New project"
+							title="New project"
+						>
+							<span className="compact-drawer__rail-tile" aria-hidden="true">
+								<Plus size={18} />
+							</span>
+						</button>
+					</nav>
+					<div className="compact-drawer__panel">
+						{header}
+						{showsTabs ? (
+							<SidebarGroupTabs
+								className="compact-drawer__tabs"
+								activeTab={shownTab}
+								tabs={FOLDERS_COLUMN_TABS.filter(
+									(candidate) =>
+										candidate.id === 'tabs' || candidate.id === 'agents',
+								)}
+								idPrefix="compact-switcher"
+								label="Switcher"
+								showLabels
+								onSelect={(tabId) => {
+									// The filter and edit mode belong to Tabs.
+									if (tabId !== 'tabs') {
+										if (isSearchOpen) closeSearch();
+										setIsEditing(false);
+									}
+									setTab(tabId);
+								}}
+							/>
+						) : null}
+						<div
+							ref={bodyRef}
+							className={`compact-drawer__body${shownTab === 'agents' ? ' compact-drawer__agents' : ''}`}
+							{...(showsTabs
+								? {
+										id: 'compact-switcher-panel',
+										role: 'tabpanel',
+										'aria-labelledby': `compact-switcher-tab-${shownTab}`,
+									}
+								: {})}
+							data-compact-editing={isEditing ? 'true' : undefined}
+						>
+							{body}
+						</div>
+						{createBar}
+						{layerElement}
+					</div>
 				</div>
 				<span className="compact-drawer__live" aria-live="polite">
 					{announcement}
