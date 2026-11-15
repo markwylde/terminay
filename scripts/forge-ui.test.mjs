@@ -35,6 +35,7 @@ async function bundle(entryPoint, outputName) {
 const views = await bundle('src/forge/ForgeViews.tsx', 'views.cjs');
 const settingsModule = await bundle('src/forge/ForgeSettings.tsx', 'settings.cjs');
 const homeModule = await bundle('src/forge/ForgeHome.tsx', 'forge-home.cjs');
+const separatorModule = await bundle('src/forge/ForgeDetailSeparator.tsx', 'forge-detail-separator.cjs');
 const { HomeView } = await bundle('src/workspace/HomeView.tsx', 'home-view.cjs');
 const { FoldersColumn } = await bundle('src/components/folders/FoldersColumn.tsx', 'folders-column.cjs');
 
@@ -252,6 +253,20 @@ test('the detail shows the body as text and failed checks first', () => {
 	assert.match(markup, /change\/13-events → main/u);
 	assert.match(markup, /data-forge-action="Check out in new worktree"/u);
 	assert.match(markup, /Open on Gitea/u);
+});
+
+test('the Home preview separator is a focusable vertical separator carrying its width and bounds', () => {
+	const markup = html(
+		h(separatorModule.ForgeDetailSeparator, { width: 380, min: 280, max: 580, onPreview() {}, onCommit() {} }),
+	);
+	assert.match(markup, /^<hr /u);
+	assert.match(markup, /data-forge-detail-separator="true"/u);
+	assert.match(markup, /aria-label="Resize preview"/u);
+	assert.match(markup, /aria-orientation="vertical"/u);
+	assert.match(markup, /aria-valuemin="280"/u);
+	assert.match(markup, /aria-valuemax="580"/u);
+	assert.match(markup, /aria-valuenow="380"/u);
+	assert.match(markup, /tabindex="0"/iu);
 });
 
 test('actions from a fork are disabled and say why', () => {
