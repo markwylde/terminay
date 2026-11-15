@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	TerminalCommandDefaultRegistry,
+	commandDefaultEnvironment,
 	decodeCommandDefaults,
 	encodeCommandDefaults,
 	launcherCommandLine,
@@ -53,7 +54,7 @@ test('applies a default once its extension answers with flags', async () => {
 	registry.attach(source);
 	await registry.refresh();
 	assert.deepEqual(registry.current(), [
-		{ command: 'codex', args: ['--no-daemon'] },
+		{ command: 'codex', args: ['--no-daemon'], environment: {} },
 	]);
 	assert.deepEqual(registry.argsForExecutable('/Users/me/.local/bin/codex'), [
 		'--no-daemon',
@@ -78,7 +79,7 @@ test('a launch never waits: an unanswered default is simply absent', async () =>
 	release();
 	await registry.refresh();
 	assert.deepEqual(registry.current(), [
-		{ command: 'codex', args: ['--no-daemon'] },
+		{ command: 'codex', args: ['--no-daemon'], environment: {} },
 	]);
 });
 
@@ -94,7 +95,7 @@ test('a default whose harness is off is neither applied nor asked', async () => 
 	registry.setHarnessSwitches({ [`${SOURCE}/codex`]: true });
 	await registry.refresh();
 	assert.deepEqual(registry.current(), [
-		{ command: 'codex', args: ['--no-daemon'] },
+		{ command: 'codex', args: ['--no-daemon'], environment: {} },
 	]);
 	registry.setHarnessSwitches({ [`${SOURCE}/codex`]: false });
 	assert.deepEqual(registry.current(), []);
@@ -154,7 +155,7 @@ test('two extensions claiming one command cancel out and are reported', async ()
 	source.entries.splice(1, 1);
 	await source.changed();
 	assert.deepEqual(registry.current(), [
-		{ command: 'codex', args: ['--no-daemon'] },
+		{ command: 'codex', args: ['--no-daemon'], environment: {} },
 	]);
 	assert.deepEqual(registry.conflicts(), []);
 	assert.deepEqual(reports.at(-1), []);
@@ -174,7 +175,7 @@ test('a stale answer is asked again in the background, and a removed default goe
 	answer = { applies: false, reason: 'unsupported' };
 	now = 2_000;
 	assert.deepEqual(registry.current(), [
-		{ command: 'codex', args: ['--no-daemon'] },
+		{ command: 'codex', args: ['--no-daemon'], environment: {} },
 	]);
 	await registry.refresh();
 	assert.deepEqual(registry.current(), []);
@@ -198,7 +199,9 @@ test('the environment encoding round-trips hostile flags as data and drops inval
 		encoded,
 		'codex\u001f--no-daemon\u001f--x=$(touch /tmp/p) \'q\' "d";z\u001f--ü=✓',
 	);
-	assert.deepEqual(decodeCommandDefaults(encoded), [defaults[0]]);
+	assert.deepEqual(decodeCommandDefaults(encoded), [
+		{ ...defaults[0], environment: {} },
+	]);
 	assert.equal(encodeCommandDefaults([]), '');
 	assert.deepEqual(decodeCommandDefaults(''), []);
 });
@@ -235,4 +238,63 @@ test("a launcher line carries a matching default's flags, quoted for the shell",
 		"'/opt/codex'\r",
 	);
 	assert.equal(launcherCommandLine('/opt/codex', '/bin/zsh'), "'/opt/codex'\r");
+});
+
+test('a default may set environment instead of flags (ADR-0124)', async () => {
+	const claude = entry(BUILT_IN, 'claude-no-agent-view', 'claude', {
+		harness: { source: SOURCE, harness: 'claude-code' },
+	});
+	const source = fakeSource([claude], {
+		[claude.contribution.id]: {
+			applies: true,
+			environment: { CLAUDE_CODE_DISABLE_AGENT_VIEW: '1' },
+		},
+	});
+	const registry = new TerminalCommandDefaultRegistry();
+	registry.attach(source);
+	await registry.refresh();
+	assert.deepEqual(registry.current(), [
+		{
+			command: 'claude',
+			args: [],
+			environment: { CLAUDE_CODE_DISABLE_AGENT_VIEW: '1' },
+		},
+	]);
+	// An environment-only default defines no shell function and adds no flags.
+	assert.equal(encodeCommandDefaults(registry.current()), '');
+	assert.deepEqual(registry.argsForExecutable('/usr/local/bin/claude'), []);
+	assert.deepEqual(commandDefaultEnvironment(registry.current()), {
+		CLAUDE_CODE_DISABLE_AGENT_VIEW: '1',
+	});
+	registry.setHarnessSwitches({ [`${SOURCE}/claude-code`]: false });
+	assert.deepEqual(registry.current(), []);
+});
+
+test('an environment that breaks the rules never applies', async () => {
+	for (const environment of [
+		{},
+		{ lower: '1' },
+		{ TERMINAY_COMMAND_DEFAULTS: 'x' },
+		{ PATH_X: 'a\nb' },
+		{ A: '1', B: '1', C: '1', D: '1', E: '1' },
+		{ A: 1 },
+	]) {
+		const source = fakeSource([codex], {
+			[codex.contribution.id]: { applies: true, environment },
+		});
+		const registry = new TerminalCommandDefaultRegistry();
+		registry.attach(source);
+		await registry.refresh();
+		assert.deepEqual(registry.current(), [], JSON.stringify(environment));
+	}
+});
+
+test('a variable two defaults both set is set by neither', () => {
+	assert.deepEqual(
+		commandDefaultEnvironment([
+			{ command: 'claude', args: [], environment: { SHARED: '1', A: 'a' } },
+			{ command: 'codex', args: ['--x'], environment: { SHARED: '2' } },
+		]),
+		{ A: 'a' },
+	);
 });

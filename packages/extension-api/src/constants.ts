@@ -95,6 +95,8 @@ export const EXTENSION_LIMITS = Object.freeze({
 	commandNameLength: 64,
 	commandDefaultArgs: 8,
 	commandDefaultArgLength: 256,
+	commandDefaultEnvironment: 4,
+	commandDefaultEnvironmentNameLength: 128,
 	commandDefaultDetailLength: 1_024,
 	/** Forge sources and the pull requests and issues they may answer with. */
 	forgeSources: 8,

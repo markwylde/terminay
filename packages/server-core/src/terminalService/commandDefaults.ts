@@ -4,6 +4,7 @@ import type {
 } from '@terminay/extension-api';
 import {
 	isTerminalCommandDefaultArgs,
+	isTerminalCommandDefaultEnvironment,
 	isTerminalCommandName,
 } from '@terminay/extension-api';
 
@@ -17,10 +18,15 @@ import {
  * waits for an extension.
  */
 
-/** One command and the flags placed before the user's arguments. */
+/**
+ * One command, the flags placed before the user's arguments, and the
+ * environment set on the integrated shell (ADR-0124). Either may be empty, but
+ * not both.
+ */
 export interface TerminalCommandDefault {
 	readonly command: string;
 	readonly args: readonly string[];
+	readonly environment: Readonly<Record<string, string>>;
 }
 
 /** Two or more contributions claimed one command, so none of them applies. */
@@ -60,7 +66,13 @@ export interface TerminalCommandDefaultRegistryOptions {
 }
 
 interface Resolved {
-	readonly args: readonly string[] | undefined;
+	/** `undefined` when the default does not apply. */
+	readonly applied:
+		| {
+				readonly args: readonly string[];
+				readonly environment: Readonly<Record<string, string>>;
+		  }
+		| undefined;
 	readonly at: number;
 }
 
@@ -144,10 +156,16 @@ export class TerminalCommandDefaultRegistry {
 				);
 				continue;
 			}
-			const args = this.resolutions.get(claims[0]?.contribution.id ?? '')?.args;
-			if (args !== undefined)
+			const resolved = this.resolutions.get(
+				claims[0]?.contribution.id ?? '',
+			)?.applied;
+			if (resolved !== undefined)
 				applied.push(
-					Object.freeze({ command, args: Object.freeze([...args]) }),
+					Object.freeze({
+						command,
+						args: Object.freeze([...resolved.args]),
+						environment: Object.freeze({ ...resolved.environment }),
+					}),
 				);
 		}
 		this.noteConflicts(conflicts);
@@ -231,14 +249,11 @@ export class TerminalCommandDefaultRegistry {
 			.resolveTerminalCommandDefault(commandDefaultId)
 			.then(
 				(result): Resolved => ({
-					args:
-						result.applies && isTerminalCommandDefaultArgs(result.args)
-							? Object.freeze([...result.args])
-							: undefined,
+					applied: result.applies ? appliedParts(result) : undefined,
 					at: this.now(),
 				}),
 				// A default that fails or times out does not apply until it answers.
-				(): Resolved => ({ args: undefined, at: this.now() }),
+				(): Resolved => ({ applied: undefined, at: this.now() }),
 			)
 			.then((value) => {
 				// An answer for a default that left meanwhile is not kept.
@@ -263,6 +278,52 @@ export class TerminalCommandDefaultRegistry {
 			/* a diagnostic sink cannot stop terminals being created */
 		}
 	}
+}
+
+/**
+ * The flags and environment of an applying answer, or `undefined` when either
+ * part breaks the rules or both are missing.
+ */
+function appliedParts(
+	result: Readonly<{ args?: unknown; environment?: unknown }>,
+): Resolved['applied'] {
+	const { args, environment } = result;
+	if (args !== undefined && !isTerminalCommandDefaultArgs(args))
+		return undefined;
+	if (
+		environment !== undefined &&
+		!isTerminalCommandDefaultEnvironment(environment)
+	)
+		return undefined;
+	if (args === undefined && environment === undefined) return undefined;
+	return Object.freeze({
+		args: Object.freeze([...(args ?? [])]),
+		environment: Object.freeze({ ...(environment ?? {}) }),
+	});
+}
+
+/**
+ * The environment every applying default sets on an integrated shell, in
+ * command order. A name two defaults both set is left out: neither decides it.
+ */
+export function commandDefaultEnvironment(
+	defaults: readonly TerminalCommandDefault[],
+): Readonly<Record<string, string>> {
+	const values = new Map<string, string>();
+	const contested = new Set<string>();
+	for (const entry of defaults) {
+		if (
+			!isTerminalCommandName(entry.command) ||
+			!isTerminalCommandDefaultEnvironment(entry.environment)
+		)
+			continue;
+		for (const [name, value] of Object.entries(entry.environment)) {
+			if (values.has(name)) contested.add(name);
+			else values.set(name, value);
+		}
+	}
+	for (const name of contested) values.delete(name);
+	return Object.freeze(Object.fromEntries(values));
 }
 
 function harnessKey(
@@ -290,6 +351,7 @@ export function encodeCommandDefaults(
 	defaults: readonly TerminalCommandDefault[],
 ): string {
 	return defaults
+		// A default that only sets environment defines no shell function.
 		.filter(
 			(entry) =>
 				isTerminalCommandName(entry.command) &&
@@ -314,6 +376,10 @@ export function decodeCommandDefaults(
 				isTerminalCommandName(command) && isTerminalCommandDefaultArgs(args),
 		)
 		.map(([command, ...args]) =>
-			Object.freeze({ command: command as string, args: Object.freeze(args) }),
+			Object.freeze({
+				command: command as string,
+				args: Object.freeze(args),
+				environment: Object.freeze({}),
+			}),
 		);
 }

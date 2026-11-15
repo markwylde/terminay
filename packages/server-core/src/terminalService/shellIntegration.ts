@@ -2,6 +2,7 @@ import { lstatSync } from 'node:fs';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+	commandDefaultEnvironment,
 	encodeCommandDefaults,
 	type TerminalCommandDefault,
 } from './commandDefaults.js';
@@ -153,7 +154,15 @@ export class ShellIntegration {
 		const env: Record<string, string | undefined> = {
 			TERMINAY_SHELL_INTEGRATION: '1',
 		};
-		const defaults = encodeCommandDefaults(this.options.commandDefaults());
+		const current = this.options.commandDefaults();
+		// A default's environment goes on the integrated shell, so the command
+		// sees it however it is started (ADR-0124). A value the shell already
+		// inherits is the user's choice and stays.
+		for (const [name, value] of Object.entries(
+			commandDefaultEnvironment(current),
+		))
+			if (launch.env[name] === undefined) env[name] = value;
+		const defaults = encodeCommandDefaults(current);
 		if (defaults.length > 0) env.TERMINAY_COMMAND_DEFAULTS = defaults;
 		switch (plan.shell) {
 			case 'zsh': {

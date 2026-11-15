@@ -63,6 +63,27 @@ test('a command default registers and reports its flags, and nothing more', asyn
 	});
 });
 
+test('a command default may report environment, bounded and upper-case (ADR-0124)', async (t) => {
+	const value = host(t);
+	await value.start(
+		await fixture(
+			`return { applies: true, environment: { CLAUDE_CODE_DISABLE_AGENT_VIEW: "1" } };`,
+		),
+	);
+	assert.deepEqual(await value.resolveTerminalCommandDefault(DEFAULT_ID), {
+		applies: true,
+		environment: { CLAUDE_CODE_DISABLE_AGENT_VIEW: '1' },
+	});
+	const lower = host(t);
+	await lower.start(
+		await fixture(`return { applies: true, environment: { path: "/x" } };`),
+	);
+	await assert.rejects(lower.resolveTerminalCommandDefault(DEFAULT_ID));
+	const empty = host(t);
+	await empty.start(await fixture(`return { applies: true };`));
+	await assert.rejects(empty.resolveTerminalCommandDefault(DEFAULT_ID));
+});
+
 test('an argument that is not a flag is refused', async (t) => {
 	const value = host(t);
 	await value.start(await fixture(`return { applies: true, args: ["exec"] };`));
