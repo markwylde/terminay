@@ -548,3 +548,38 @@ export function createForgeClickIntent(
 		cancel,
 	};
 }
+
+// ── Home detail preview width ──────────────────────────────────────────
+
+export const FORGE_DETAIL_MIN_WIDTH = 280;
+export const FORGE_DETAIL_MAX_WIDTH = 720;
+/** The narrowest the list beside the preview is ever drawn. */
+export const FORGE_LIST_MIN_WIDTH = 320;
+export const FORGE_DETAIL_RESIZE_STEP = 16;
+
+/**
+ * The widths the preview can be drawn at in a grid this wide. The list keeps
+ * its minimum first; the preview never goes below its own. An unmeasured grid
+ * (`undefined`) bounds the preview by its own limits only.
+ */
+export function forgeDetailWidthBounds(gridWidth: number | undefined): { min: number; max: number } {
+	const room = gridWidth === undefined ? FORGE_DETAIL_MAX_WIDTH : gridWidth - FORGE_LIST_MIN_WIDTH;
+	return {
+		min: FORGE_DETAIL_MIN_WIDTH,
+		max: Math.max(FORGE_DETAIL_MIN_WIDTH, Math.min(FORGE_DETAIL_MAX_WIDTH, Math.floor(room))),
+	};
+}
+
+/** The chosen width as drawn in a grid this wide, in whole pixels. */
+export function drawnForgeDetailWidth(chosen: number, gridWidth: number | undefined): number {
+	const { min, max } = forgeDetailWidthBounds(gridWidth);
+	return Math.min(max, Math.max(min, Math.round(chosen)));
+}
+
+/**
+ * Whether the preview sits beside the list or under it. A grid too narrow for
+ * both minimums stacks; an unmeasured one does not.
+ */
+export function forgeDetailLayout(gridWidth: number | undefined): 'side' | 'stacked' {
+	return gridWidth !== undefined && gridWidth < FORGE_LIST_MIN_WIDTH + FORGE_DETAIL_MIN_WIDTH ? 'stacked' : 'side';
+}

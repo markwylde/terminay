@@ -6,7 +6,10 @@ import {
 	FORGE_DOUBLE_CLICK_MS,
 	forgeItemPlaceholderTitle,
 	forgeItemTabTitle,
+	drawnForgeDetailWidth,
 	emptyReason,
+	forgeDetailLayout,
+	forgeDetailWidthBounds,
 	groupByRepository,
 	linkify,
 	orderedChecks,
@@ -269,4 +272,29 @@ test('an item tab reads only a well-formed target from its parameters', () => {
 		target,
 		'only the fields a tab needs are kept',
 	);
+});
+
+test('the Home preview is drawn within its bounds and leaves the list its room', () => {
+	assert.equal(drawnForgeDetailWidth(380, undefined), 380);
+	assert.equal(drawnForgeDetailWidth(380, 1_400), 380);
+	assert.equal(drawnForgeDetailWidth(900, 2_000), 720);
+	assert.equal(drawnForgeDetailWidth(100, 2_000), 280);
+	assert.equal(drawnForgeDetailWidth(720, 900), 580);
+	assert.equal(drawnForgeDetailWidth(480.6, undefined), 481);
+	// Too narrow for both: the preview keeps its minimum.
+	assert.equal(drawnForgeDetailWidth(500, 400), 280);
+	assert.deepEqual(forgeDetailWidthBounds(900), { min: 280, max: 580 });
+	assert.deepEqual(forgeDetailWidthBounds(undefined), { min: 280, max: 720 });
+	// Shrink and regrow: drawing never changes the chosen width, so it returns.
+	assert.deepEqual([1_400, 900, 1_400].map((grid) => drawnForgeDetailWidth(720, grid)), [720, 580, 720]);
+	// A stored width outside the preview's bounds is drawn within them.
+	assert.equal(drawnForgeDetailWidth(30, 1_400), 280);
+	assert.equal(drawnForgeDetailWidth(2_000, 1_400), 720);
+});
+
+test('the Home preview stacks under the list when the area is too narrow for both', () => {
+	assert.equal(forgeDetailLayout(undefined), 'side');
+	assert.equal(forgeDetailLayout(600), 'side');
+	assert.equal(forgeDetailLayout(599), 'stacked');
+	assert.equal(forgeDetailLayout(560), 'stacked');
 });

@@ -49,20 +49,87 @@
 }
 
 .forge-home__grid {
+	position: relative;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
 	flex: 1;
 	min-height: 0;
 }
 
+/* The preview's width is drawn by ForgeHome within its bounds. */
 .forge-home__grid--detail {
-	grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+	grid-template-columns: minmax(0, 1fr) var(--forge-detail-width, 380px);
+}
+
+/* The preview's left edge, drawn like the workspace separators. */
+.forge-home__separator {
+	box-sizing: border-box;
+	position: absolute;
+	z-index: 4;
+	top: 0;
+	bottom: 0;
+	right: var(--forge-detail-width, 380px);
+	width: 6px;
+	height: auto;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	transform: translateX(3px);
+	cursor: col-resize;
+	outline: none;
+	background: transparent;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.forge-home__separator::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+	background: transparent;
+	transition:
+		background 120ms ease,
+		width 120ms ease;
+}
+
+.forge-home__separator:hover::before {
+	width: 4px;
+	background: var(--workspace-split-layout-separator-active-line, #ffffff);
+	transition-delay: 100ms;
+}
+
+.forge-home__separator:active::before,
+.forge-home__separator:focus-visible::before {
+	width: 4px;
+	background: var(--workspace-split-layout-separator-active-line, #ffffff);
+	transition-delay: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.forge-home__separator::before {
+		transition: none;
+	}
+}
+
+/* Too narrow for both side by side, say a Home tab beside another. */
+.forge-home__grid--detail.forge-home__grid--stacked {
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 @media (max-width: 900px) {
 	.forge-home__grid--detail {
 		grid-template-columns: minmax(0, 1fr);
 		grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+	}
+
+	.forge-home__separator {
+		display: none;
 	}
 }
 
