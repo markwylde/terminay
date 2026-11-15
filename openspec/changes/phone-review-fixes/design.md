@@ -177,7 +177,7 @@ set on a compact page, the section shows `CompactWorkflowDetail`, built from
 the same workflow model the wide card uses. It shows:
 
 - a back control;
-- an eyebrow with project, folder, and terminal;
+- an eyebrow with project and terminal;
 - the name;
 - a progress bar with `n of m` and elapsed time;
 - **Open terminal**, which uses the wide card's open action;

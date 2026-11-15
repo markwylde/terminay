@@ -207,7 +207,7 @@ The Workflows View options sheet SHALL offer **Sort**, **Group** (None, Project,
 
 The workflow detail page SHALL fill the section, with a back control naming Workflows. It SHALL show:
 
-- the project, folder, and terminal;
+- the project and terminal;
 - the name;
 - progress as a bar, with done and total counts and elapsed time;
 - an **Open terminal** control;

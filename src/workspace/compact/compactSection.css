@@ -811,3 +811,215 @@
 	height: 100%;
 	padding: 0;
 }
+
+/* A section's wrapper on a phone: the page fills it. */
+.cpage-host,
+.home-section.cpage-section {
+	height: 100%;
+	min-height: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.cpage-host > .cpage {
+	flex: 1;
+}
+
+/* A detail page (a workflow's) */
+
+.cdetail__head {
+	padding-left: 4px;
+}
+
+.cpage .cdetail__back {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	height: 44px;
+	padding: 0 10px 0 4px;
+	border: 0;
+	background: transparent;
+	color: var(--c-accent);
+	font-size: 16px;
+}
+
+.cdetail__body {
+	padding: 4px 16px calc(32px + env(safe-area-inset-bottom, 0px));
+}
+
+.cdetail__eyebrow {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 8px 0 4px;
+	color: var(--c-muted);
+	font-size: 13px;
+}
+
+.cdetail__title {
+	margin: 0 0 12px;
+	font-size: 21px;
+	font-weight: 700;
+	line-height: 1.25;
+}
+
+.cdetail__note {
+	margin: 0 0 12px;
+	color: var(--c-attention);
+}
+
+.cdetail__progress {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 14px;
+}
+
+.cdetail__progress .crow__progress {
+	height: 6px;
+	margin: 0;
+}
+
+.cdetail__progress-text {
+	color: var(--c-muted);
+	font-size: 13px;
+}
+
+.cpage .cdetail__open {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	width: 100%;
+	height: 46px;
+	border: 0;
+	border-radius: 12px;
+	background: var(--c-accent);
+	color: #04121f;
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.cdetail__section {
+	margin-top: 20px;
+}
+
+.cdetail__brief {
+	margin: 0;
+	padding: 12px;
+	border-radius: 12px;
+	background: var(--c-raise);
+	font-size: 14px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.cdetail__steps {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.cdetail__step {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 10px 8px;
+	border-radius: 10px;
+}
+
+.cdetail__step--active {
+	background: var(--c-raise);
+}
+
+.cdetail__step--attention {
+	background: rgba(242, 180, 76, 0.1);
+	box-shadow: inset 3px 0 0 var(--c-attention);
+}
+
+.cdetail__step--skipped {
+	opacity: 0.55;
+}
+
+.cdetail__step-body {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.cdetail__step-title {
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.cdetail__step-note {
+	color: var(--c-muted);
+	font-size: 13px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.cdetail__step--attention .cdetail__step-note {
+	color: var(--c-attention);
+}
+
+.cdetail__step-time {
+	flex: none;
+	color: var(--c-muted);
+	font-size: 12px;
+}
+
+.cpage .cdetail__step-open {
+	align-self: flex-start;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 36px;
+	margin-top: 6px;
+	padding: 0 12px;
+	border-color: rgba(242, 180, 76, 0.5);
+	color: var(--c-attention);
+}
+
+.home-section.cpage-section {
+	overflow: hidden;
+}
+
+/* Tabs on a phone: Projects lays each project out as a card. */
+.workspace-dashboard--compact {
+	padding: 0;
+	gap: 0;
+}
+
+.ctabs--projects .ctabs__group {
+	margin: 12px 12px 0;
+	border: 1px solid var(--c-line);
+	border-radius: 14px;
+	background: var(--c-raise);
+	overflow: hidden;
+}
+
+.ctabs--projects .crow-group {
+	position: static;
+	background: transparent;
+}
+
+.ctabs--projects .crow:last-child {
+	border-bottom: 0;
+}
+
+.ctabs__none {
+	margin: 0;
+	padding: 6px 16px 12px;
+	color: var(--c-muted);
+	font-size: 13px;
+}
+
+.crow__chips .workspace-dashboard__worktree {
+	display: inline-flex;
+	gap: 4px;
+}
