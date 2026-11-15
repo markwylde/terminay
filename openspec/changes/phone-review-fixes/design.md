@@ -21,6 +21,8 @@ shared toolbar component:
 and bot tab hosts, through `HomeWorkspace`'s private context. While Home is
 selected, the trailing panel button calls `toggleHomeSidebar`, which shows the
 Home sidebar. Below 720px, that sidebar is a full-screen navigation drawer.
+Every section's list starts below several rows of search fields, chips, and
+view switchers that a phone has no room for.
 
 ## Goals / Non-Goals
 
@@ -30,9 +32,10 @@ Home sidebar. Below 720px, that sidebar is a full-screen navigation drawer.
 - Make the server control a rail tab with a panel.
 - Make the launcher's folder picker scale to many folders.
 - Remove the duplicate Home section list.
-- Move every Home section's filters and view options off the page and into one
-  right-hand panel.
-- Tidy Bots.
+- Give every Home list section a phone-native page: a title row, status tabs
+  with counts, dense rows, and a bottom sheet for secondary options.
+- Let a workflow be opened into a full detail page on a phone.
+- Tidy Bots, and let its Needs you requests be decided from the list.
 
 **Non-Goals:**
 
@@ -93,116 +96,118 @@ remembered Home sidebar visibility is not read or written at compact width, so
 returning to a wide window restores the user's wide choice. The switcher's Home
 panel already opens sections, so nothing becomes unreachable.
 
-### 5. Home options panel
+### 5. Compact section pages
 
-A new `HomeOptionsPanel` host lives in `HomeWorkspace`. A context exported from
-it gives sections a `<HomeSectionOptions active={boolean}>` slot.
+The first attempt moved each section's toolbar, unchanged, into a right-hand
+options panel. Review rejected it: the page lost its controls but gained
+nothing, and the panel was the same header stacked in a drawer. The phone pages
+are redesigned instead. The mockups the user approved are the reference.
 
-**Ownership.** Home keeps several tabs mounted at once, so every slot registers
-under its own Home tab's id. `HomeWorkspace` already knows each tab's id and
-which tab is in front. It provides the tab id to each section through the
-existing tab-host context. The host reads only the registration of the tab in
-front: its title, whether it has options, and its `active` flag.
+**One page shape.** A new kit in `src/workspace/compact/` draws every compact
+section page:
 
-- A background tab's registration is kept but ignored.
-- A tab that unmounts removes its registration.
-- A tab with no slot, such as the overview or a bot's own tab, has no
-  registration, so the toggle is not offered.
+- `CompactSectionPage`:
+  - **Header row:** title, summary, Search, View options with its applied
+    marker, and an optional create control.
+  - **Search mode:** replaces the header row with a 16px field and Cancel.
+  - **Status tabs:** a `tablist` that scrolls sideways.
+  - **Applied row:** one token per applied option, plus Clear.
+  - **Body:** the list, scrolling as one region under a sticky header and tabs.
+- `CompactRow`, `CompactGroupHeader`, `CompactChip`, `CompactEmpty`: the row
+  anatomy the spec describes (leading mark, title, trailing age, detail line,
+  chips), so seven sections do not draw seven row styles.
+- `CompactSheet`: the View options sheet. It is a `CompactEdgeDrawer` with
+  `edge="bottom"` (ADR-0125). It has a grab handle, a title, Reset (only when
+  something differs from its default), Done, and a scrolling body. It also
+  offers small `SheetSegment`, `SheetToggle`, `SheetSelect`, and
+  `SheetChecklist` building blocks. Options apply as they change; Done only
+  closes.
 
-**Placement.**
+`CompactEdgeDrawer` gains the bottom edge: full width, `max-height: 80%`,
+rounded top corners, and a slide up that reduced motion turns off. Scrim, focus
+containment, focus return, and Escape stay as they are.
 
-- **Wide:** the slot renders its children inline, so nothing changes.
-- **Compact:** the panel element exists, closed and `inert`, whenever the
-  workspace is compact. The front tab's slot always portals its children into
-  it, so the controls stay mounted while the panel is closed.
-- **Why it matters:** child-local state, such as an expanded picker or a typed
-  but uncommitted field, survives closing and reopening the panel.
-- **What does not survive:** switching to another tab, or crossing the
-  breakpoint, remounts the children. Their filter values survive because they
-  are section state. Disclosure state and the panel's scroll position reset,
-  which the spec allows.
+**Which presentation.** `HomeWorkspace` provides `CompactHomeContext` (a
+boolean) from `App.tsx`'s single `isCompactChrome` measurement. A section reads
+it with `useCompactHome()`. When it is true, the section returns its compact
+page; otherwise it returns its wide page unchanged.
 
-**Shell.** Per ADR-0125, the panel is a compact edge drawer. It reuses the
-switcher's drawer shell, extracted into a shared `CompactEdgeDrawer` component
-and mirrored for the right edge:
+**State lives above the branch.** Each section's filter, search, and option
+state already lives in the section component or its stored view, so both
+presentations read the same state:
 
-- `width: min(360px, 100% - 52px)`, a scrim, and the same slide-in that
-  reduced motion turns off;
-- a header with the section title and a close button;
-- a body that scrolls;
-- it closes on the scrim, on Escape, and on the close button;
-- focus is contained while it is open, starting on its first control.
+| Section | Tabs map to | Search | Sheet options |
+|---|---|---|---|
+| Tabs | new `statusTab` state (All, Needs you, Working, Done, Idle, and Untracked when shown) | the dashboard filter text | Layout (List or Projects), Untracked tabs |
+| Workflows | the existing status filter: All clears it; each other tab selects only that status | the text filter | Sort, Group, project checklist, Show finished |
+| Bots | the existing filter chip state | the bot filter text | Sort, plus engine details |
+| Automations | new `automationTab` state | none (no search on a wide window either; Search is not offered) | the server selector |
+| Recordings | new `recordingTab` state | the search text | the server selector, Updated, and Refresh |
+| Pull Requests / Issues | the existing scope state | none (no search on a wide window; Search is not offered) | State, Group, repository filter, Updated, and Refresh |
 
-**Closing and focus.** It closes on its own when:
+Tab, search, and sheet state stays set when the section tab goes behind another
+Home tab, and when the window crosses the breakpoint. Home tabs stay mounted,
+and the state lives above the presentation branch. The Board layout is not
+offered on a compact page; a stored Board view shows as List there, and the
+stored choice is not rewritten.
 
-- the front Home tab changes;
-- Home is left;
-- the workspace stops being compact;
-- the switcher or the Command Bar opens.
+**Counts.** Each tab's count is computed from the same filtered set the list
+uses, with every filter applied except the tab itself.
 
-`App.tsx` holds the open flag, so all four triggers are plain state changes.
-When the panel closes, focus returns to the toggle if it is still drawn, or to
-the compact title block, or, once the workspace is no longer compact, to the
-page body.
+Forge scopes are separate queries, and ADR-0106 forbids extra fetching. A scope
+tab therefore shows a count only once that scope has loaded in this session; the
+selected scope always has one.
 
-In `App.tsx`, the trailing panel button branches on Home:
+**Applied options.** Each section declares which sheet options are filters, and
+supplies a token label and a reset for each:
 
-- **Home selected:** it toggles the panel. It is drawn only when the front
-  section has registered options. Its accessible name is "Show options" or
-  "Hide options", with ", filters applied" appended when `active`. A dot marks
-  `active`.
-- **Project in front:** it keeps toggling the project sidebar as now.
+- Workflows: excluded projects, Show finished off.
+- Forge: a state other than Open, a chosen repository.
+- Tabs: Untracked tabs is not a filter; it adds rows.
+- Bots, Automations, Recordings: nothing.
 
-The keyboard shortcut and the "Hide/Show sidebar" command toggle the same panel
-on a compact Home, so they never reveal the removed sidebar.
+Sort, grouping, layout, and notes are never filters.
 
-What each section moves into the slot, and what stays on the page:
+**Workflow detail page.** `WorkflowsHome` holds `detailWorkflowId`. While it is
+set on a compact page, the section shows `CompactWorkflowDetail`, built from
+the same workflow model the wide card uses. It shows:
 
-| Section | In the panel | On the page |
-|---|---|---|
-| Tabs | filter field, Group by project, view-mode switcher, summary chips | title and the rows |
-| Bots | filter field, status chips, Container engine card | title row with **New bot**, the list, and Needs you below the list |
-| Automations | server selector | title row with **New automation** |
-| Workflows | the whole toolbar, every option shown directly (no View options disclosure, layout, or Narrow columns) | header and columns |
-| Recordings | search and server selector | header and list |
-| Pull Requests / Issues | scope chips, state and group segmented controls, and the repository filter | title, count, refresh, and list |
-| Home overview | — (no panel button; its Edit layout control stays on the page) | everything |
+- a back control;
+- an eyebrow with project, folder, and terminal;
+- the name;
+- a progress bar with `n of m` and elapsed time;
+- **Open terminal**, which uses the wide card's open action;
+- the brief;
+- a step timeline with each step's status mark, title, note, and time.
 
-`active` means "the section shows fewer items than it would with its filters
-at their defaults". Each section computes it:
+A step that needs the user is highlighted and offers Open terminal. Terminay
+never answers or runs a step (ADR-0097). Back, or Escape, clears the id. The
+list's scroll position is restored from a ref captured when the row was
+activated.
 
-| Section | Counts as a filter |
-|---|---|
-| Tabs | the filter text, a summary-chip filter |
-| Bots | the filter text, a status chip other than All bots |
-| Workflows | the text filter, the status filter, an excluded project, Show finished off |
-| Recordings | the search text |
-| Pull Requests / Issues | the scope, state, or repository differing from the default |
-| Automations | nothing (the server selector picks a source; it does not filter) |
+**Bots Needs you cards.** Each `needsYou` entry is drawn as a card. When the
+entry's session carries a permission request, the card reuses the existing
+`PermissionPrompt` and decides through `server.client.decide`, as
+`BotSessionsPanel` does. Every card offers Open chat.
 
-Grouping, sorting, notes, and view mode never count.
+The All tab ends with an engine card built from `useBotEngine`. Activating it
+opens the sheet, where `EngineSummary` renders in its compact form. The build
+banner renders above the rows, with its open state lifted into `BotsSection` as
+it is now.
 
-**Empty filter results.** Every section needs an on-page "nothing matches"
-state with a clear control while compact. Some sections need work to get one:
-
-- **Workflows and Tabs** already have one.
-- **Recordings** shows a message only; it gains a clear-search button.
-- **Bots** keeps its "Clear filter" action in the toolbar, so the toolbar moves
-  into the panel, and Bots gains an on-page clear in its empty list.
-- **Forge** gains a "Show all" reset in its empty state that restores the
-  default scope, state, and repository.
+**Removed.** `HomeOptionsPanel`, its `HomeSectionOptions` slot, and every
+section's slot wrapping are deleted. So are the chrome row's `homeOptions` prop
+and filtered dot, and `App.tsx`'s options-panel state and routing. On a compact
+Home, the trailing sidebar toggle is not drawn. The shortcut and the sidebar
+command do nothing there. The sections' on-page compact empty states with clear
+controls stay, restyled as `CompactEmpty`.
 
 ### 6. Bots on a compact workspace
 
-`BotsSection` already receives `host.compact`. When it is set:
-
-- the header becomes one row of the title and **New bot**;
-- the description stays under it;
-- the right rail is not drawn in the page. `EngineSummary` goes into the panel
-  slot and `NeedsYouList` moves below the bot list.
-
-Gutters follow the compact gutter used by the other Home sections: 16px sides
-and 12px between blocks.
+Bots follows the compact section page. The create control is New bot. Rows use
+the avatar variant of `CompactRow`, and the engine card closes the All list.
+The wide grid, its right rail, and the "New bot" tile are not drawn on a compact
+workspace.
 
 ### 7. Servers panel scope
 
@@ -220,10 +225,10 @@ the only place for that (ADR-0075, ADR-0115).
 ### Boundaries
 
 All of this is renderer presentation. The one architectural decision is
-ADR-0125: compact edge drawers are not in-page windows. No decision crosses the
-server, protocol, preload, or security boundaries. The panel and the switcher only
-re-arrange controls that already exist, and every action they take goes through
-the same calls as before.
+ADR-0125: compact drawers and sheets are not in-page windows. No decision
+crosses the server, protocol, preload, or security boundaries. The compact pages
+re-present data and actions that already exist, and every action they take goes
+through the same calls as on a wide window.
 
 ## Risks / Trade-offs
 
@@ -231,10 +236,11 @@ the same calls as before.
   add requirements that this change modifies (`Compact chrome row`, `Workflows
   toolbar on a narrow width`). They must be archived first. Proposal Impact
   records this.
-- **Hidden filters.** A filter applied in the panel is not visible on the page.
-  The dot and accessible-name suffix on the panel button mitigate this. Each
-  section also keeps its existing "no matches" or "Clear filter" empty state on
-  the page.
-- **Portal focus.** Moving inputs into a portal must not steal focus from the
-  page while the panel is closed. The slot renders nothing at compact width
-  while the panel is closed.
+- **Hidden options.** An option set in the sheet is not visible while the
+  sheet is closed. Every option that hides rows shows as a token under the tabs,
+  and View options carries a marker, so nothing is filtered silently.
+- **Two presentations per section.** Each section now has a wide page and a
+  compact page. Shared state above the branch, and the shared kit, keep them
+  from drifting apart. E2E covers both.
+- **Forge counts.** Scope tabs can show a count only for scopes already loaded.
+  This is a deliberate trade against extra fetching (ADR-0106).

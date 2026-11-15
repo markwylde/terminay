@@ -33,18 +33,26 @@ phone layout gets in the way:
   target and closes the list.
 - **BREAKING** (presentation only): on a compact workspace, Home has no Home
   sidebar. The switcher's Home panel is the only way to open a Home section.
-- On a compact workspace, the header's trailing panel button opens a **Home
-  options panel** on the right while Home is selected. The panel holds the
-  front section's search, filters, view controls, and section-specific extras.
-  The section page keeps only its title row, primary action, and list. The
-  button is offered only when the front section has options, and shows when a
-  filter is applied.
-- On Bots on a compact workspace, the Container engine card sits in the Home
-  options panel. The title row holds the title and **New bot** on one line, and
-  the page uses the same gutters as the other sections.
-- On a compact workspace, the Workflows toolbar (text filter, status filter, and
-  every view option) is shown in full in the Home options panel instead of
-  partly in the page behind **View options**.
+- On a compact workspace, every Home list section is a **compact section page**,
+  designed for a phone rather than squeezed from the wide page. The sections are
+  Tabs, Bots, Automations, Workflows, Recordings, Pull Requests, and Issues.
+  Each page has:
+  - a title row with Search, **View options**, and the section's create
+    control;
+  - **status tabs with counts** as the main filter (for example, All · Needs
+    you · Running · Done);
+  - dense two-line rows;
+  - a **View options sheet** from the bottom edge for sort, grouping, project,
+    repository, and server.
+
+  Options that hide rows show as removable tokens under the tabs. The wide
+  pages are unchanged. On a compact Home the trailing sidebar toggle is not
+  drawn.
+- On a phone, activating a workflow opens a **workflow detail page**: its
+  brief, every step with status, note, and time, and Open terminal.
+- On Bots on a phone, the **Needs you** tab shows each pending request as a
+  card. A permission request can be decided there. The container engine is a
+  card at the end of the list that opens the sheet.
 
 Out of scope: the Settings category pages. The review said they could be better
 on a phone, but did not say what to change.
@@ -61,15 +69,14 @@ None.
   control.
 - `workspace-and-project-tabs`: the Servers rail item and panel replace the rail's
   server menu. The launcher dropup picks its folder with a filterable list. The
-  compact chrome row's panel button opens the Home options panel while Home is
-  selected.
-- `workspace-dashboard`: there is no Home sidebar on a compact workspace. The
-  Home options panel holds each section's toolbar. Bots has a compact
-  presentation. On a compact workspace, the Workflows toolbar lives in the
-  panel, and the View options control is only for a narrow Workflows tab on a
-  wide window. Every section has an on-page clear control when a filter
-  matches nothing.
-- `in-page-windows`: compact edge drawers are not in-page windows (ADR-0125).
+  compact chrome row has no sidebar toggle while Home is selected.
+- `workspace-dashboard`: there is no Home sidebar on a compact workspace. Every
+  Home list section has a compact section page with status tabs, search, rows,
+  and a View options sheet. Workflows gains a compact detail page. Bots gains
+  decidable Needs you cards. The narrow Workflows View options control is
+  kept only for a narrow tab on a wide window.
+- `in-page-windows`: compact drawers and sheets are not in-page windows
+  (ADR-0125).
 
 The change also adds ADR-0125. It supersedes in part ADR-0053's list of
 surfaces exempt from the shared window frame.
@@ -83,8 +90,9 @@ surfaces exempt from the shared window frame.
   - `src/workspace/CompactChromeRow.tsx`
   - `src/App.tsx`
   - `src/workspace/HomeWorkspace.tsx` and `HomeView.tsx`
-  - a new `src/workspace/HomeOptionsPanel.tsx`
-  - every section's toolbar:
+  - a new compact page kit in `src/workspace/compact/`, and
+    `CompactEdgeDrawer` gaining a bottom edge
+  - every section's page:
     - `WorkspaceDashboard.tsx`
     - `bots/BotsSection.tsx`
     - `automations/AutomationPanels.tsx`
@@ -100,4 +108,6 @@ surfaces exempt from the shared window frame.
   - `compact-chrome-switcher`
   - `server-upgrade`
   - `home-workflows`
-  - a new `compact-home-options` suite
+  - `home-sidebar`, `home-tabs`, `automations-ui`, `bots`
+  - a new `compact-section-pages` suite, with a seeded screenshot run of every
+    section populated with rows

@@ -2,29 +2,47 @@
 
 ### Requirement: Compact section page
 
-On a compact workspace, the Tabs, Bots, Automations, Workflows, Recordings, Pull Requests, and Issues sections SHALL each be presented as a compact section page, top to bottom:
-
-- a header row with the section's title and a short summary, a **Search** control, a **View options** control, and, where the section creates things, its create control;
-- a row of status tabs;
-- the list.
-
-The page SHALL NOT show the section's wide toolbar: no on-page search field, filter chips, view switcher, grouping, sort, or server selector, and no summary chips beyond the tabs. Every option the wide toolbar offers that the compact page keeps SHALL be in the header, the tabs, or the View options sheet. The page SHALL scroll as one region, with the header and tabs staying at the top. Above the compact breakpoint each section SHALL keep its wide presentation unchanged.
+On a compact workspace, the Tabs, Bots, Automations, Workflows, Recordings, Pull Requests, and Issues sections SHALL each be presented as a compact section page. Top to bottom, it SHALL hold a header row, a row of status tabs, and the list. The page SHALL scroll as one region, with the header row and tabs staying at the top. Above the compact breakpoint each section SHALL keep its wide presentation unchanged.
 
 #### Scenario: A phone opens Workflows
 - **WHEN** a phone shows the Workflows section
-- **THEN** the page shows the Workflows title row with Search and View options, then the status tabs, then the workflow rows, and no on-page filter field or chips
+- **THEN** the page shows the Workflows header row, then the status tabs, then the workflow rows
 
 #### Scenario: A wide window is unchanged
 - **WHEN** the same Workflows tab is shown on a window wider than the compact breakpoint
 - **THEN** its wide toolbar is shown as before, and no status tabs or View options sheet are offered
 
+### Requirement: No wide toolbar on a compact section page
+
+A compact section page SHALL NOT show the section's wide toolbar: no on-page search field, filter chips, view switcher, grouping, sort, or server selector, and no summary chips. Every wide option the compact page keeps SHALL be in the header row, the status tabs, or the View options sheet.
+
+#### Scenario: No filter chips on a phone
+- **WHEN** a phone shows Bots
+- **THEN** no filter field or filter chips are drawn above the rows
+
+### Requirement: Compact section header row
+
+The header row SHALL show the section's title and a short summary, and SHALL offer a **View options** control. Tabs, Bots, Workflows, and Recordings SHALL also offer a **Search** control. Bots SHALL offer **New bot**, and Automations **New automation**, as a create control that starts the same flow as on a wide window.
+
 #### Scenario: Create from the header
 - **WHEN** a phone shows Bots and the user activates the header's create control
 - **THEN** the New bot flow opens, as New bot does on a wide window
 
+#### Scenario: No search where a section has none
+- **WHEN** a phone shows Pull Requests
+- **THEN** the header row offers View options and no Search control
+
 ### Requirement: Status tabs on a compact section page
 
-The status tabs SHALL be one control with exactly one selected tab, exposed to assistive technology as a tab list. Each tab SHALL show its count of the rows it would show with the current search and View options applied. A tab whose rows need the user, such as Needs you, SHALL mark its count when the count is above zero. The tabs SHALL scroll sideways when they do not fit, and the selected tab SHALL be scrolled into view. Selecting a tab SHALL show only its rows. The selected tab SHALL be section state: it SHALL survive the section's tab going behind another Home tab and coming back, and crossing the compact breakpoint in either direction. Where the wide toolbar has a filter the tabs stand for, the two SHALL be the same state.
+The status tabs SHALL be one control with exactly one selected tab, exposed to assistive technology as a tab list. Selecting a tab SHALL show only its rows. The tabs SHALL scroll sideways when they do not fit, and the selected tab SHALL be scrolled into view. Where the wide toolbar has a filter the tabs stand for, the two SHALL be the same state.
+
+#### Scenario: Selecting a tab
+- **WHEN** a user on a phone selects Running in Workflows
+- **THEN** only running workflows are shown and Running is the selected tab
+
+### Requirement: Status tab counts
+
+Each status tab SHALL show the count of rows it would show with the current search and View options applied. A tab whose rows need the user, such as Needs you, SHALL mark its count when the count is above zero.
 
 #### Scenario: Counts follow search
 - **WHEN** a phone shows Workflows with nine workflows, two needing the user, and the user searches for a word that matches one of the two
@@ -34,69 +52,105 @@ The status tabs SHALL be one control with exactly one selected tab, exposed to a
 - **WHEN** a phone shows Tabs while two agents wait for the user
 - **THEN** the Needs you tab's count of 2 is marked
 
+### Requirement: Compact section state survives
+
+A compact section page's selected tab, search, and View options SHALL be section state. They SHALL survive the section's Home tab going behind another Home tab and coming back, and the window crossing the compact breakpoint in either direction.
+
 #### Scenario: Tab kept across a visit
 - **WHEN** a user selects Running in Workflows, opens Bots, and returns to Workflows
 - **THEN** Running is still selected
 
+#### Scenario: Search kept across the breakpoint
+- **WHEN** a user searches Workflows on a phone and the window is widened
+- **THEN** the wide Workflows filter field holds the same text
+
 ### Requirement: Searching a compact section page
 
-Activating Search SHALL replace the header row with a search field and a **Cancel** control, and SHALL move focus into the field. The field's text SHALL be at least 16 CSS pixels so a phone does not zoom. Typing SHALL narrow the rows and the tab counts as the wide section's filter does, using the same matching. **Cancel** SHALL clear the search, restore the header row, and return focus to Search. Escape in the field SHALL do the same. A search SHALL survive the section's tab going behind another Home tab and coming back. When a search and tab together match nothing, the list SHALL say so, naming the search, and SHALL offer **Clear search**.
+Activating Search SHALL replace the header row with a search field and a **Cancel** control, and SHALL move focus into the field. The field's text SHALL be at least 16 CSS pixels so a phone does not zoom. Typing SHALL narrow the rows and the tab counts as the wide section's filter does, using the same matching.
 
 #### Scenario: Search opens in place
 - **WHEN** a user on a phone activates Search in Workflows
 - **THEN** the header row becomes a focused search field with Cancel, and the tabs and list stay below it
 
-#### Scenario: No match
-- **WHEN** a user searches Workflows for a word nothing matches
-- **THEN** the list says no workflow matches that word and offers Clear search, which clears it and shows every workflow again
+### Requirement: Ending a search
+
+**Cancel** SHALL clear the search, restore the header row, and return focus to Search. Escape in the field SHALL do the same.
 
 #### Scenario: Cancel restores the header
 - **WHEN** a user cancels a search
 - **THEN** the search is cleared, the header row is back, and focus is on Search
 
+### Requirement: Nothing matches on a compact section page
+
+When the search, the selected tab, and the View options together match nothing, the list SHALL say so. It SHALL name the search when there is one and offer **Clear search**; otherwise it SHALL offer the section's reset.
+
+#### Scenario: No match
+- **WHEN** a user searches Workflows for a word nothing matches
+- **THEN** the list says no workflow matches that word and offers Clear search, which clears it and shows every workflow again
+
 ### Requirement: View options sheet
 
-Activating View options SHALL open a sheet from the bottom edge, over a scrim, holding the section's secondary options. The sheet SHALL be a modal navigation surface, not an in-page window, as ADR-0125 records: it SHALL NOT offer move, resize, or maximise. It SHALL have a title naming the section, a **Reset** control when any option differs from its default, and a **Done** control. Changes SHALL apply as they are made. Done, Escape, and pressing the scrim SHALL close it. While it is open, focus SHALL stay inside it, and on close focus SHALL return to View options. With reduced motion requested it SHALL appear without sliding. A section that has no secondary options in the current setup SHALL NOT offer View options.
-
-#### Scenario: Opening and closing the sheet
-- **WHEN** a user opens View options in Workflows and presses Done
-- **THEN** the sheet closes and focus is back on View options
-
-#### Scenario: Escape closes the sheet
-- **WHEN** the sheet is open and the user presses Escape
-- **THEN** the sheet closes and nothing else closes with it
+Activating View options SHALL open a sheet from the bottom edge, over a scrim, holding the section's secondary options. The sheet SHALL be a modal navigation surface, not an in-page window, as ADR-0125 records, and SHALL NOT offer move, resize, or maximise. A section that has no secondary options in the current setup SHALL NOT offer View options.
 
 #### Scenario: Nothing to offer
 - **WHEN** a phone shows Automations and only one server is attached
 - **THEN** no View options control is offered
 
+### Requirement: View options sheet controls
+
+The sheet SHALL have a title naming the section, a **Reset** control when any option differs from its default, and a **Done** control. Changes SHALL apply as they are made. Done, Escape, and pressing the scrim SHALL close it.
+
+#### Scenario: Opening and closing the sheet
+- **WHEN** a user opens View options in Workflows and presses Done
+- **THEN** the sheet closes
+
+#### Scenario: Escape closes only the sheet
+- **WHEN** the sheet is open and the user presses Escape
+- **THEN** the sheet closes and nothing else closes with it
+
+### Requirement: Focus and motion in the View options sheet
+
+While the sheet is open, focus SHALL stay inside it, starting on its first control. On close, focus SHALL return to View options. With reduced motion requested, the sheet SHALL appear without sliding.
+
+#### Scenario: Focus returns
+- **WHEN** a user closes the sheet
+- **THEN** focus is on View options
+
+#### Scenario: Reduced motion
+- **WHEN** reduced motion is requested and the user opens the sheet
+- **THEN** the sheet appears without an entrance animation
+
 ### Requirement: Applied view options
 
-A View option that hides rows SHALL count as applied while it differs from its default: a project left out, a repository chosen, a state other than the default, or finished items hidden. Sort, grouping, layout, and showing extra rows SHALL NOT count. While any option is applied, View options SHALL carry a marker and its accessible name SHALL say that filters are applied, and a row under the tabs SHALL show one removable token per applied option and a **Clear** control. Removing a token SHALL reset that option. Clear SHALL reset every applied option and SHALL leave the search and the selected tab alone.
+A View option that hides rows SHALL count as applied while it differs from its default: a project left out, a repository chosen, a state other than the default, or finished items hidden. Sort, grouping, layout, and showing extra rows SHALL NOT count. While any option is applied, View options SHALL carry a marker, and its accessible name SHALL say that filters are applied.
+
+#### Scenario: Sorting is not a filter
+- **WHEN** a user changes only the sort
+- **THEN** View options shows no marker
+
+### Requirement: Applied options row
+
+While any View option is applied, a row under the tabs SHALL show one removable token per applied option and a **Clear** control. Removing a token SHALL reset that option. Clear SHALL reset every applied option, and SHALL leave the search and the selected tab alone.
 
 #### Scenario: A project left out
 - **WHEN** a user leaves every project but api out of Workflows in the sheet and closes it
-- **THEN** View options shows its marker and a token reads api, and the rows and counts cover api only
+- **THEN** View options shows its marker, a token reads api, and the rows and counts cover api only
 
 #### Scenario: Removing a token
 - **WHEN** the user removes the api token
 - **THEN** every project is included again, and the marker and the token row are gone
 
-#### Scenario: Sorting is not a filter
-- **WHEN** a user changes only the sort
-- **THEN** View options shows no marker and no token row is shown
-
 ### Requirement: Rows on a compact section page
 
-A compact section page SHALL show each item as a row at least 44 CSS pixels tall and the full width of the page. The row SHALL show:
+A compact section page SHALL show each item as a full-width row at least 44 CSS pixels tall. The row SHALL show a leading status mark, avatar, or kind icon, a one-line title, a trailing short age or count, and one detail line. Where the item has them, it SHALL also show small chips for state, checks, or labels. Rows SHALL be grouped under sticky group headers where the section groups them.
 
-- a leading status mark, avatar, or kind icon;
-- a title on one line;
-- a trailing short age or count;
-- one detail line;
-- where the item has them, small chips for its state, checks, or labels.
+#### Scenario: Grouped rows
+- **WHEN** a phone shows Tabs
+- **THEN** rows sit under a sticky header per project
 
-A row that needs the user SHALL say what it needs in its detail line, in the attention colour. Activating a row SHALL open the item as it does on a wide window, except where a section states otherwise. Rows SHALL be grouped under sticky group headers where the section groups them.
+### Requirement: Rows that need the user
+
+A row that needs the user SHALL say what it needs in its detail line, in the attention colour. Activating any row SHALL open the item as it does on a wide window, except where a section states otherwise.
 
 #### Scenario: A waiting agent
 - **WHEN** an agent tab is waiting for approval of a command
@@ -104,45 +158,71 @@ A row that needs the user SHALL say what it needs in its detail line, in the att
 
 ### Requirement: Tabs on a compact workspace
 
-On a compact workspace the Tabs section's status tabs SHALL be **All**, **Needs you**, **Working**, **Done**, and **Idle**. Needs you SHALL cover waiting and blocked tabs. Rows SHALL be grouped by project under each project's colour and name. A row SHALL show the tab's status, agent or tab title, what it is doing or waiting for, the time in that state, and its pull request and checks chips. The View options sheet SHALL offer **Layout** (List or Projects) and **Untracked tabs**; while Untracked tabs is on, an **Untracked** tab SHALL be added. The Board layout and Group by project SHALL NOT be offered on a compact workspace.
+On a compact workspace the Tabs section's status tabs SHALL be **All**, **Needs you**, **Working**, **Done**, and **Idle**. Needs you SHALL cover waiting and blocked tabs. Rows SHALL be grouped by project, under each project's colour and name. A row SHALL show the tab's status, its agent or tab title, what it is doing or waiting for, the time in that state, and its pull request and checks chips.
 
 #### Scenario: Needs you
 - **WHEN** a phone shows Tabs, selects Needs you, and two of thirteen tabs are waiting or blocked
 - **THEN** only those two rows are shown, under their projects
 
+### Requirement: Tabs view options on a compact workspace
+
+The Tabs View options sheet SHALL offer **Layout** (List or Projects) and **Untracked tabs**. While Untracked tabs is on, an **Untracked** status tab SHALL be added. The Board layout and Group by project SHALL NOT be offered on a compact workspace. A stored Board layout SHALL show as List there, and the stored choice SHALL be left as it is.
+
+#### Scenario: Board on a phone
+- **WHEN** a device that chose Board on a wide window shows Tabs on a phone
+- **THEN** the rows show as List, and the wide window still shows Board
+
 ### Requirement: Workflows on a compact workspace
 
 On a compact workspace the Workflows section's status tabs SHALL be **All**, **Needs you**, **Running**, and **Done**. A row SHALL show:
 
-- the workflow's tone;
-- its name;
-- its done and total step counts, as `n/m`;
-- a progress bar;
+- the workflow's tone and name;
+- its done and total steps as `n/m`, with a progress bar;
 - the current step, or what the workflow needs;
-- the project, terminal, and age.
+- the project, the terminal, and the age.
 
-Activating a row SHALL open the workflow's detail page. The View options sheet SHALL offer **Sort**, **Group** (None, Project, Workflow), the project checklist, and **Finished workflows**. Notes, Layout, and Narrow columns SHALL NOT be offered.
+Activating a row SHALL open the workflow's detail page.
 
 #### Scenario: A row shows progress
 - **WHEN** a workflow has six of nine steps done and its seventh step needs the user
 - **THEN** its row reads 6/9, shows a progress bar two-thirds full, and says what the seventh step needs
 
+### Requirement: Workflows view options on a compact workspace
+
+The Workflows View options sheet SHALL offer **Sort**, **Group** (None, Project, or Workflow), the project checklist, and **Finished workflows**. Notes, Layout, and Narrow columns SHALL NOT be offered on a compact workspace.
+
+#### Scenario: The Workflows sheet
+- **WHEN** a user opens View options in Workflows on a phone
+- **THEN** the sheet offers Sort, Group, the projects, and Finished workflows, and no Notes, Layout, or Narrow columns
+
 ### Requirement: Workflow detail page on a compact workspace
 
-The workflow detail page SHALL fill the section and SHALL have a back control naming Workflows. It SHALL show:
+The workflow detail page SHALL fill the section, with a back control naming Workflows. It SHALL show:
 
 - the project, folder, and terminal;
-- the workflow's name;
-- its progress as a bar and as done and total counts, with the elapsed time;
+- the name;
+- progress as a bar, with done and total counts and elapsed time;
 - an **Open terminal** control;
 - the brief;
-- every step in order, each with its status mark, title, note, and time.
+- every step in order, with its status mark, title, note, and time.
 
-A step that needs the user SHALL be highlighted and SHALL offer Open terminal. The back control and Escape SHALL return to the list, with the list's tab, search, options, and scroll position as they were. The detail page SHALL update live as steps change.
+It SHALL update live as steps change.
 
 #### Scenario: Opening a workflow
 - **WHEN** a user on a phone activates the Ship token refresh fix row
-- **THEN** its detail page shows its brief and all nine steps, with step seven highlighted as needing the user
+- **THEN** its detail page shows its brief and all nine steps
+
+### Requirement: A step that needs the user
+
+On the workflow detail page, a step that needs the user SHALL be highlighted and SHALL offer Open terminal. The page SHALL never answer or run a step itself.
+
+#### Scenario: Step seven needs the user
+- **WHEN** the detail page shows a workflow whose seventh step needs the user
+- **THEN** step seven is highlighted and offers Open terminal
+
+### Requirement: Leaving the workflow detail page
+
+The back control and Escape SHALL return to the Workflows list with its tab, search, options, and scroll position as they were.
 
 #### Scenario: Back to the list
 - **WHEN** the user activates the back control
@@ -150,18 +230,30 @@ A step that needs the user SHALL be highlighted and SHALL offer Open terminal. T
 
 ### Requirement: Bots on a compact workspace
 
-On a compact workspace the Bots section's create control SHALL be **New bot**, and its status tabs SHALL be **All**, **Needs you**, **Working**, **Idle**, and **Stopped**. A row SHALL show:
+On a compact workspace the Bots section's status tabs SHALL be **All**, **Needs you**, **Working**, **Idle**, and **Stopped**. A row SHALL show:
 
-- the bot's avatar, with its status;
+- the bot's avatar with its status;
 - its name and activity chip;
 - its pending request, live session, or latest session;
 - its next trigger, or its agent and model.
 
-The Needs you tab SHALL show each pending request as a card naming the bot, what it wants, and its age, with **Open chat**. When the request is a permission request, the card SHALL also offer the request's own choices, which SHALL decide it as the bot's chat does. The All tab SHALL end with a container engine card naming the engine, the image state, and how many bot containers are running; activating it SHALL open the View options sheet, which SHALL show the engine details and **Sort**. The build banner SHALL stay on the page above the rows while a build is shown.
+The build banner SHALL stay on the page above the rows while a build is shown.
+
+#### Scenario: A working bot
+- **WHEN** a phone shows Bots and a bot is reviewing a pull request
+- **THEN** its row shows Working and what it is reviewing
+
+### Requirement: Bots Needs you cards
+
+The Bots Needs you tab SHALL show each pending request as a card naming the bot, what it wants, and its age, with **Open chat**. When the request is a permission request, the card SHALL also offer the request's own choices. Choosing one SHALL decide the request as the bot's chat does.
 
 #### Scenario: Deciding from the list
 - **WHEN** a phone shows Bots, selects Needs you, and a bot asks permission to run a command
 - **THEN** a card names the bot and the command and offers the request's choices and Open chat, and choosing one decides the request
+
+### Requirement: Bots container engine on a compact workspace
+
+On a compact workspace the Bots All tab SHALL end with a container engine card naming the engine, the image state, and how many bot containers are running. Activating it SHALL open the View options sheet, which SHALL show the engine details and **Sort**.
 
 #### Scenario: Engine at the end of the list
 - **WHEN** a phone shows Bots with All selected
@@ -169,57 +261,92 @@ The Needs you tab SHALL show each pending request as a card naming the bot, what
 
 ### Requirement: Automations on a compact workspace
 
-On a compact workspace the Automations section's create control SHALL be **New automation**, and its status tabs SHALL be **All**, **Failing**, **Schedules**, **Events**, and **Off**:
+On a compact workspace the Automations section's status tabs SHALL be:
 
-- **Failing** covers enabled automations whose last run failed or timed out.
-- **Schedules** and **Events** cover automations by trigger kind.
-- **Off** covers disabled automations.
+- **All**;
+- **Failing**: enabled automations whose last run failed or timed out;
+- **Schedules** and **Events**: automations by trigger kind;
+- **Off**: disabled automations.
 
-A row SHALL show the trigger kind's icon, the name, the trigger and next run, the last outcome and its age, and the enable switch, which SHALL work in place. The All tab SHALL end with a **Terminals opened by automations** row, with its count, that opens that list. The View options sheet SHALL offer the server selector, and View options SHALL be offered only while more than one server is attached. The empty state SHALL keep New automation and the starter templates.
+A row SHALL show the trigger kind's icon, the name, the trigger and next run, the last outcome and its age, and the enable switch, which SHALL work in place.
 
 #### Scenario: Failing
 - **WHEN** a phone shows Automations, selects Failing, and one enabled automation's last run failed
 - **THEN** only that automation's row is shown, with its failed outcome
 
+### Requirement: Automations extras on a compact workspace
+
+The Automations All tab SHALL end with a **Terminals opened by automations** row that shows their count and opens that list. The View options sheet SHALL offer the server selector, and SHALL be offered only while more than one server is attached. The empty state SHALL keep New automation and the starter templates.
+
+#### Scenario: Automation terminals
+- **WHEN** a phone shows Automations with two terminals opened by automations
+- **THEN** the All list ends with a row reading Terminals opened by automations and 2
+
 ### Requirement: Recordings on a compact workspace
 
-On a compact workspace the Recordings section's status tabs SHALL be **All**, **Today**, **This week**, and **Problems**. Problems SHALL cover recordings that were interrupted or failed. Rows SHALL be grouped under day headers. A row SHALL show:
-
-- the project's colour;
-- the title;
-- the start time;
-- the project, folder, shell, and size;
-- the duration;
-- a state chip when the recording is not complete.
-
-A row SHALL offer **Delete recording** from a trailing more control. The View options sheet SHALL offer the server selector, when more than one server is attached, and the last update time with **Refresh**.
+On a compact workspace the Recordings section's status tabs SHALL be **All**, **Today**, **This week**, and **Problems**. Problems SHALL cover interrupted and failed recordings. Rows SHALL be grouped under day headers. A row SHALL show the project's colour, the title, and the start time. It SHALL also show the project, folder, shell, size, and duration, and a state chip while the recording is not complete.
 
 #### Scenario: Problems
 - **WHEN** a phone shows Recordings and selects Problems
 - **THEN** only interrupted and failed recordings are shown
 
+### Requirement: Recordings actions on a compact workspace
+
+A recording row SHALL offer **Delete recording** from a trailing more control. The Recordings View options sheet SHALL offer the server selector when more than one server is attached, and the last update time with **Refresh**.
+
+#### Scenario: Deleting from a row
+- **WHEN** a user opens a recording row's more control
+- **THEN** Delete recording is offered
+
 ### Requirement: Pull requests and issues on a compact workspace
 
-On a compact workspace the Pull Requests section's tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**. The Issues section's tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count once that scope has loaded. The Review tab's count SHALL be marked when it is above zero. A row SHALL show:
+On a compact workspace the Pull Requests tabs SHALL be its scopes, **Review**, **Mine**, **Involved**, and **All**, and the Issues tabs SHALL be **Assigned**, **Created**, **Mentioned**, and **All**. The selected scope SHALL be the same state as the wide scope chips. A scope's tab SHALL show a count once that scope has loaded. A Review count above zero SHALL be marked.
+
+#### Scenario: Review requests
+- **WHEN** a phone shows Pull Requests with three review requests
+- **THEN** the Review tab is selected and its count of 3 is marked
+
+### Requirement: Forge rows on a compact workspace
+
+A pull request or issue row SHALL show:
 
 - the state icon;
 - the title, on up to two lines;
-- the number and author;
-- the repository, only when not grouped;
-- the worktree chip, labels, and checks chip;
+- the number and author, and the repository only when rows are not grouped;
+- its worktree chip, labels, and checks chip;
 - the age.
 
-The View options sheet SHALL offer **State**, **Group** (Repository or None), the repository filter, and the last update time with **Refresh**. A state other than Open, and a chosen repository, SHALL count as applied. A scope that matches nothing SHALL say so and offer **Show all**.
+Rows SHALL be grouped by repository unless the sheet says otherwise.
 
-#### Scenario: Review requests
-- **WHEN** a phone shows Pull Requests with three review requests across two repositories
-- **THEN** the Review tab is selected, its count of 3 is marked, and the rows are grouped under the two repositories
+#### Scenario: Grouped by repository
+- **WHEN** a phone shows three review requests across two repositories
+- **THEN** the rows sit under the two repositories' headers and do not repeat the repository
+
+### Requirement: Forge view options on a compact workspace
+
+The forge View options sheet SHALL offer **State**, **Group** (Repository or None), the repository filter, and the last update time with **Refresh**. A state other than Open, and a chosen repository, SHALL count as applied. A scope that matches nothing SHALL say so and offer **Show all**.
+
+#### Scenario: Merged pull requests
+- **WHEN** a user sets State to Merged in the sheet
+- **THEN** a Merged token is shown under the tabs and View options carries its marker
+
+### Requirement: No Home sidebar on a compact workspace
+
+On a compact workspace the Home sidebar SHALL NOT be shown at all. While Home is selected there, the sidebar toggle SHALL be absent, and its keyboard shortcut and command SHALL do nothing. The remembered Home sidebar visibility SHALL be neither read nor changed, so a wider window shows the Home sidebar as the user last chose there. The compact switcher's Home panel is how a compact workspace opens a section.
+
+#### Scenario: No sidebar toggle on a phone
+- **WHEN** a phone shows Home
+- **THEN** no list of Home sections is shown and the header has no sidebar toggle
+
+#### Scenario: The wide choice survives
+- **WHEN** a device that last showed the Home sidebar on a wide window is used at phone width and then widened again
+- **THEN** the Home sidebar is shown
 
 ## MODIFIED Requirements
 
 ### Requirement: Home sidebar visibility
 
-The project bar's sidebar toggle, its keyboard shortcut, and its command SHALL remain available while Home is selected on a workspace wider than the compact breakpoint, and SHALL show and hide the Home sidebar. Home sidebar visibility SHALL be device presentation state, kept apart from every project's sidebar visibility: toggling one SHALL NEVER change the other. A device that has no stored Home sidebar visibility SHALL show the Home sidebar open. After that, the device SHALL remember the visibility the user last chose. Below the narrow layout breakpoint, the Home sidebar SHALL follow the same navigation-drawer presentation and dismissal routes as a project sidebar. On a compact workspace the Home sidebar SHALL NOT be shown at all. While Home is selected there, the sidebar toggle SHALL be absent, and its keyboard shortcut and command SHALL do nothing. The remembered Home sidebar visibility SHALL be neither read nor changed. A wider window then shows the Home sidebar as the user last chose there. The compact switcher's Home panel is how a compact workspace opens a section.
+The project bar's sidebar toggle, its keyboard shortcut, and its command SHALL remain available while Home is selected on a workspace wider than the compact breakpoint, and SHALL show and hide the Home sidebar. Home sidebar visibility SHALL be device presentation state, kept apart from every project's sidebar visibility: toggling one SHALL NEVER change the other. A device that has no stored Home sidebar visibility SHALL show the Home sidebar open. After that, the device SHALL remember the visibility the user last chose. Below the narrow layout breakpoint, the Home sidebar SHALL follow the same navigation-drawer presentation and dismissal routes as a project sidebar. On a compact workspace the Home sidebar SHALL NOT be shown, as the next requirement states.
 
 #### Scenario: First visit to Home on a device
 
@@ -240,16 +367,6 @@ The project bar's sidebar toggle, its keyboard shortcut, and its command SHALL r
 
 - **WHEN** the Home sidebar is visible below the narrow layout breakpoint
 - **THEN** it is presented as a navigation drawer over the content and closes on the navigation control, Escape, or activating the region behind it
-
-#### Scenario: No Home sidebar on a phone
-
-- **WHEN** a phone shows Home
-- **THEN** no list of Home sections is shown and the header has no sidebar toggle
-
-#### Scenario: Wide choice survives a phone visit
-
-- **WHEN** a device that last showed the Home sidebar on a wide window is used at phone width and then widened again
-- **THEN** the Home sidebar is shown
 
 ### Requirement: Home sidebar sections
 
