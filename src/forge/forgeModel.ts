@@ -88,10 +88,15 @@ export const ISSUE_STATES: readonly ForgeScopeOption[] = [
 
 export type ForgeGrouping = 'repo' | 'none';
 
+/** One account: a forge source's login on one origin. */
+export type ForgeAccountRef = Readonly<{ sourceId: string; origin: string }>;
+
 export type ForgeViewPreferences = Readonly<{
 	scope: string;
 	state: string;
 	group: ForgeGrouping;
+	/** The account the list is narrowed to; null is All accounts. */
+	account: ForgeAccountRef | null;
 }>;
 
 export function defaultPreferences(kind: ForgeKind): ForgeViewPreferences {
@@ -99,7 +104,117 @@ export function defaultPreferences(kind: ForgeKind): ForgeViewPreferences {
 		scope: kind === 'pullRequest' ? 'reviewRequested' : 'assigned',
 		state: 'open',
 		group: 'repo',
+		account: null,
 	};
+}
+
+/** A stored account, or null for anything malformed. */
+export function readAccountRef(value: unknown): ForgeAccountRef | null {
+	if (typeof value !== 'object' || value === null) return null;
+	const { sourceId, origin } = value as Record<string, unknown>;
+	if (typeof sourceId !== 'string' || sourceId.length === 0) return null;
+	if (typeof origin !== 'string' || !/^https:\/\/[^/\s]+$/u.test(origin)) return null;
+	return { sourceId, origin };
+}
+
+export function sameAccount(left: ForgeAccountRef | null | undefined, right: ForgeAccountRef | null | undefined): boolean {
+	if (left === null || left === undefined || right === null || right === undefined)
+		return (left ?? null) === (right ?? null);
+	return left.sourceId === right.sourceId && left.origin === right.origin;
+}
+
+/** An account the Account control offers, with its label. */
+export type ForgeAccountOption = Readonly<{
+	account: ForgeAccountRef;
+	login: string;
+	host: string;
+	forge: string;
+	label: string;
+}>;
+
+/** What `forge.accounts` answers, as far as the account control reads it. */
+export type ForgeAccountsAnswer = ReadonlyArray<
+	Readonly<{
+		sourceId: string;
+		accounts: ReadonlyArray<Readonly<{ origin: string; login: string; state: string }>>;
+	}>
+>;
+
+/** What a section knows of a source: whether it serves the kind on Home. */
+export type ForgeAccountSourceFacts = Readonly<{
+	sourceId: string;
+	displayName: string;
+	kinds: readonly ForgeKind[];
+	settings?: Readonly<{ pullRequestsOnHome: boolean; issuesOnHome: boolean }>;
+}>;
+
+function hostOf(origin: string): string {
+	try {
+		return new URL(origin).host;
+	} catch {
+		return origin;
+	}
+}
+
+/**
+ * The accounts a Home section can be narrowed to: every signed-in (ready)
+ * account of a source that serves the kind and shows it on Home, ordered by
+ * forge, then host, then login.
+ */
+export function homeAccountOptions(
+	answer: ForgeAccountsAnswer,
+	sources: readonly ForgeAccountSourceFacts[],
+	kind: ForgeKind,
+): ForgeAccountOption[] {
+	const options: ForgeAccountOption[] = [];
+	for (const entry of answer) {
+		const source = sources.find((candidate) => candidate.sourceId === entry.sourceId);
+		if (source === undefined || !source.kinds.includes(kind)) continue;
+		const onHome = kind === 'pullRequest' ? source.settings?.pullRequestsOnHome : source.settings?.issuesOnHome;
+		if (onHome === false) continue;
+		for (const account of entry.accounts) {
+			if (account.state !== 'ready') continue;
+			const host = hostOf(account.origin);
+			options.push({
+				account: { sourceId: entry.sourceId, origin: account.origin },
+				login: account.login,
+				host,
+				forge: source.displayName,
+				label: `${account.login} · ${host} (${source.displayName})`,
+			});
+		}
+	}
+	return options.sort(
+		(left, right) =>
+			left.forge.localeCompare(right.forge) ||
+			left.host.localeCompare(right.host) ||
+			left.login.localeCompare(right.login),
+	);
+}
+
+/**
+ * The account a list is narrowed to now. A repository focus shows every
+ * account; so do fewer than two offered accounts, or a remembered account not
+ * among them. Before the offered accounts are known (`undefined`) the
+ * remembered one applies, so a restored filter does not flash every account.
+ */
+export function effectiveAccount(
+	remembered: ForgeAccountRef | null,
+	options: readonly ForgeAccountOption[] | undefined,
+	focused: boolean,
+): ForgeAccountRef | null {
+	if (remembered === null || focused) return null;
+	if (options === undefined) return remembered;
+	if (options.length < 2) return null;
+	return options.some((option) => sameAccount(option.account, remembered)) ? remembered : null;
+}
+
+/** Whether an item came from an account: its source and its origin. */
+export function belongsToAccount(
+	entry: Readonly<{ sourceId: string; reference: Pick<ForgeReference, 'origin'> }>,
+	account: ForgeAccountRef,
+): boolean {
+	return entry.sourceId === account.sourceId && entry.reference.origin === account.origin;
 }
 
 /** Read a device's remembered view; anything unreadable is the default. */
@@ -114,6 +229,7 @@ export function readPreferences(kind: ForgeKind, raw: string | null | undefined)
 			scope: scopes.some((option) => option.id === value.scope) ? (value.scope as string) : fallback.scope,
 			state: states.some((option) => option.id === value.state) ? (value.state as string) : fallback.state,
 			group: value.group === 'none' ? 'none' : 'repo',
+			account: readAccountRef(value.account),
 		};
 	} catch {
 		return fallback;

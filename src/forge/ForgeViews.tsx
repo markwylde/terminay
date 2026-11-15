@@ -29,6 +29,8 @@ import {
 	createForgeClickIntent,
 	defaultIssueBranch,
 	emptyReason,
+	type ForgeAccountOption,
+	type ForgeAccountRef,
 	type ForgeChecksView,
 	type ForgeClaimView,
 	type ForgeGroup,
@@ -55,6 +57,7 @@ import {
 	pullRequestActions,
 	relativeTime,
 	reviewPrompt,
+	sameAccount,
 	sortByUpdated,
 	startWorkAvailability,
 	startWorkPrompt,
@@ -251,6 +254,40 @@ function Segmented({
 	);
 }
 
+/** The Account control: All accounts, then each account that serves this list. */
+function AccountSelect({
+	options,
+	value,
+	onChange,
+}: Readonly<{
+	options: readonly ForgeAccountOption[];
+	value: ForgeAccountRef | null;
+	onChange: (account: ForgeAccountRef | null) => void;
+}>) {
+	const index = value === null ? -1 : options.findIndex((option) => sameAccount(option.account, value));
+	return (
+		<label className="forge-field">
+			<span className="forge-field__label">Account</span>
+			<select
+				className="forge-select forge-account-select"
+				data-forge-account-select="true"
+				value={index === -1 ? 'all' : String(index)}
+				onChange={(event) => {
+					const chosen = event.currentTarget.value === 'all' ? undefined : options[Number(event.currentTarget.value)];
+					onChange(chosen === undefined ? null : chosen.account);
+				}}
+			>
+				<option value="all">All accounts</option>
+				{options.map((option, position) => (
+					<option key={`${option.account.sourceId}\u0000${option.account.origin}`} value={String(position)}>
+						{option.label}
+					</option>
+				))}
+			</select>
+		</label>
+	);
+}
+
 // ── The list ───────────────────────────────────────────────────────────
 
 export type ForgeListPaneProps = Readonly<{
@@ -278,6 +315,11 @@ export type ForgeListPaneProps = Readonly<{
 	ownersReachNote?: string;
 	repositoryFilter?: ForgeRepositoryFocus;
 	onClearRepositoryFilter?: () => void;
+	/** The accounts the list can be narrowed to; the control shows with two or more. */
+	accountOptions?: readonly ForgeAccountOption[];
+	/** The account the list is narrowed to now; null is All accounts. */
+	account?: ForgeAccountRef | null;
+	onAccountChange?: (account: ForgeAccountRef | null) => void;
 	projectTitle: (projectId: string) => string | undefined;
 	projectOrder: readonly string[];
 	displayNames: ReadonlyMap<string, string>;
@@ -294,6 +336,11 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 			? groupByRepository(items)
 			: [{ key: 'all', sourceId: '', origin: '', owner: '', name: '', items: sortByUpdated(items) }];
 	const updated = updatedAgo(props.fetchedAt, now);
+	const accountOptions = props.accountOptions ?? [];
+	const chosenAccount =
+		props.account === null || props.account === undefined
+			? undefined
+			: accountOptions.find((option) => sameAccount(option.account, props.account));
 	const failedNote =
 		reason?.kind === 'failed' ? (
 			<div className="forge-failure" role="alert" data-forge-failure="true">
@@ -340,6 +387,13 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 					value={preferences.group}
 					onChange={(group) => onPreferencesChange({ ...preferences, group: group === 'none' ? 'none' : 'repo' })}
 				/>
+				{accountOptions.length < 2 || props.onAccountChange === undefined ? null : (
+					<AccountSelect
+						options={accountOptions}
+						value={props.account ?? null}
+						onChange={props.onAccountChange}
+					/>
+				)}
 				<span className="forge-toolbar__end">
 					{updated === undefined ? null : <span className="forge-faint" data-forge-updated="true">{updated}</span>}
 					<button
@@ -397,6 +451,15 @@ export function ForgeListPane(props: ForgeListPaneProps) {
 				) : reason?.kind === 'failed' && items.length === 0 ? (
 					<div className="forge-empty" data-forge-empty="failed">
 						{failedNote}
+					</div>
+				) : reason?.kind === 'noMatches' && chosenAccount !== undefined ? (
+					<div className="forge-empty" data-forge-empty="noMatchesForAccount">
+						<p>
+							No {noun} for <b>{chosenAccount.login}</b> on <b>{chosenAccount.host}</b>.
+						</p>
+						<button type="button" className="forge-btn" onClick={() => props.onAccountChange?.(null)}>
+							Show all accounts
+						</button>
 					</div>
 				) : reason?.kind === 'noMatches' ? (
 					<div className="forge-empty" data-forge-empty="noMatches">

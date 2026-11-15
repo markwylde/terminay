@@ -528,3 +528,43 @@ test('loadForgeSettings reads one extension\'s sources, accounts, and owners', a
 	assert.deepEqual(calls, ['accounts true']);
 	assert.equal(await settingsModule.loadForgeSettings(client, 'missing'), undefined);
 });
+
+// ── Account filter (filter-forge-lists-by-account) ──────────────────────
+
+const giteaAccount = { sourceId: 'com.terminay.gitea/forge', origin: ORIGIN };
+const githubAccount = { sourceId: 'com.terminay.github/forge', origin: 'https://github.com' };
+const accountOption = (account, login, host, forge) => ({ account, login, host, forge, label: `${login} · ${host} (${forge})` });
+const twoAccounts = [
+	accountOption(giteaAccount, 'alice', new URL(ORIGIN).host, 'Gitea'),
+	accountOption(githubAccount, 'alice', 'github.com', 'GitHub'),
+];
+
+test('the Account control shows with two or more accounts and selects the effective one', () => {
+	const all = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: null, onAccountChange() {} })));
+	assert.match(all, /<span class="forge-field__label">Account<\/span>/u);
+	assert.match(all, /<option value="all" selected="">All accounts<\/option>/u);
+	assert.match(all, /alice · github\.com \(GitHub\)<\/option>/u);
+	const chosen = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: githubAccount, onAccountChange() {} })));
+	assert.match(chosen, /<option value="1" selected="">alice · github\.com \(GitHub\)<\/option>/u);
+	const one = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts.slice(0, 1), account: null, onAccountChange() {} })));
+	assert.doesNotMatch(one, /data-forge-account-select/u);
+});
+
+test('an empty list for the chosen account names it and offers Show all accounts; a failure comes first', () => {
+	const empty = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: githubAccount, onAccountChange() {} })));
+	assert.match(empty, /data-forge-empty="noMatchesForAccount"/u);
+	assert.match(empty, /No pull requests for <b>alice<\/b> on <b>github\.com<\/b>\./u);
+	assert.match(empty, />Show all accounts</u);
+	const failed = html(
+		h(views.ForgeListPane, listProps({
+			accountOptions: twoAccounts,
+			account: githubAccount,
+			onAccountChange() {},
+			sources: [{ sourceId: githubAccount.sourceId, origin: githubAccount.origin, state: 'failed', error: 'timeout' }],
+		})),
+	);
+	assert.match(failed, /data-forge-empty="failed"/u);
+	assert.doesNotMatch(failed, /noMatchesForAccount/u);
+	const unfiltered = html(h(views.ForgeListPane, listProps({ accountOptions: twoAccounts, account: null, onAccountChange() {} })));
+	assert.match(unfiltered, /data-forge-empty="noMatches"/u);
+});

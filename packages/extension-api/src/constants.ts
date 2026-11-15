@@ -115,6 +115,7 @@ export const EXTENSION_LIMITS = Object.freeze({
 	forgePageSize: 50,
 	forgeQueryRepositories: 50,
 	forgeQueryOwners: 50,
+	forgeQueryAccounts: 16,
 	forgeTextLength: 256,
 	forgeCursorLength: 1_024,
 	forgeRemoteUrlLength: 2_048,
