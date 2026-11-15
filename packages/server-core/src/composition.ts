@@ -124,6 +124,7 @@ import {
 import {
 	commandPasteInput,
 	SUBMIT_INPUT,
+	TYPE_CHUNK_CHARS,
 	terminalInputKey,
 	writeSeparatedInput,
 } from './terminalService/commandSubmission.js';
@@ -1313,28 +1314,14 @@ export function createServerCoreComposition(
 					store: workflowStore,
 					eventJournal,
 					sessionProject: runningProject,
-					// The launch or resume text: one paste, submitted once, as a
-					// window message is (ADR-0097).
+					// The launch or resume text, already one line: typed, never
+					// pasted, so an agent such as Claude Code runs its `/goal`
+					// rather than treating it as a pasted message. Enter goes
+					// on its own after the submit pause (ADR-0097).
 					typeText: async (request, target, text) => {
 						const authorization = { ...target, scope: 'write' } as const;
-						const bracketed = await terminal.bracketedPasteMode(
-							target.sessionId,
-							authorization,
-						);
 						await writeSeparatedInput(
-							{
-								body: commandPasteInput(
-									bracketed
-										? text
-										: text
-												.replace(/\s*\r?\n\s*/g, ' ')
-												.replace(/\t/g, ' ')
-												.trim(),
-									bracketed,
-								),
-								// Enter on its own, so an agent reads it as a key press.
-								keys: [SUBMIT_INPUT],
-							},
+							{ body: text, keys: [SUBMIT_INPUT] },
 							async (data) => {
 								await terminalInputSources.write({
 									identity: {
@@ -1350,6 +1337,8 @@ export function createServerCoreComposition(
 							},
 							{
 								terminal: terminalInputKey(target.serverId, target.sessionId),
+								typeChunkChars: TYPE_CHUNK_CHARS,
+								signal: request.context.signal,
 							},
 						);
 					},

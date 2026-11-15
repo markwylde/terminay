@@ -61,8 +61,9 @@ export interface WorkflowOperationRegistryOptions {
 	/** The project a running session is in now; undefined when not running. */
 	readonly sessionProject: (sessionId: string) => string | undefined;
 	/**
-	 * Type text into the target terminal once: one paste, bracketed when the
-	 * terminal enables it, submitted once (the window-message write path).
+	 * Type one line of text into the target terminal, in short chunks and
+	 * never as a paste, then press Enter once on its own; stop when the
+	 * request is cancelled.
 	 */
 	readonly typeText: (
 		request: CommandRequest,

@@ -14,6 +14,18 @@ export const SUBMIT_INPUT = '\r';
 export const SUBMIT_DELAY_MS = 50;
 
 /**
+ * Typing, rather than pasting, a body of text: at most this many characters
+ * per write, and this many milliseconds between writes. Claude Code treats a
+ * large block arriving in one read, or reads in quick succession, as a paste,
+ * and runs a slash command only when it is typed. Measured in
+ * `openspec/adr/evidence/workflow-goal-typing/`: 512-character chunks 10 ms
+ * apart and 256-character chunks 5 ms apart are typing; 256 characters 2 ms
+ * apart is a paste.
+ */
+export const TYPE_CHUNK_CHARS = 128;
+export const TYPE_DELAY_MS = 10;
+
+/**
  * Named keys an agent can press. Models cannot reliably put raw control
  * characters into tool arguments, so these are the only way to send them.
  */
@@ -82,7 +94,16 @@ export interface SeparatedInputOptions {
 	readonly terminal?: string;
 	/** Checked before every write; once aborted, nothing more is written. */
 	readonly signal?: AbortSignal;
+	/** The pause before each key press. */
 	readonly delayMs?: number;
+	/**
+	 * Type the body instead of writing it at once: split it into chunks of at
+	 * most this many characters (never splitting a surrogate pair), written
+	 * {@link typeDelayMs} apart.
+	 */
+	readonly typeChunkChars?: number;
+	/** The pause between typed chunks; {@link TYPE_DELAY_MS} by default. */
+	readonly typeDelayMs?: number;
 	readonly sleep?: (ms: number) => Promise<void>;
 }
 
@@ -127,17 +148,44 @@ async function writeInOrder(
 	const sleep =
 		options.sleep ??
 		((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+	const typeDelayMs = options.typeDelayMs ?? TYPE_DELAY_MS;
 	const encoder = new TextEncoder();
+	const chunks =
+		options.typeChunkChars === undefined
+			? input.body.length > 0
+				? [input.body]
+				: []
+			: typedChunks(input.body, options.typeChunkChars);
 	const writes = [
-		...(input.body.length > 0 ? [input.body] : []),
-		...input.keys,
+		...chunks.map((data) => ({ data, pause: typeDelayMs })),
+		...input.keys.map((data) => ({ data, pause: delayMs })),
 	];
 	let bytes = 0;
-	for (const [index, data] of writes.entries()) {
-		if (index > 0 && delayMs > 0) await sleep(delayMs);
+	for (const [index, { data, pause }] of writes.entries()) {
+		if (index > 0 && pause > 0) await sleep(pause);
 		options.signal?.throwIfAborted();
 		await write(data);
 		bytes += encoder.encode(data).byteLength;
 	}
 	return bytes;
+}
+
+/** `text` in chunks of at most `size` characters, split between code points. */
+export function typedChunks(text: string, size: number): string[] {
+	if (!Number.isInteger(size) || size < 1)
+		throw new RangeError('typeChunkChars must be a positive integer');
+	const chunks: string[] = [];
+	let chunk = '';
+	let length = 0;
+	for (const character of text) {
+		if (length + character.length > size && chunk !== '') {
+			chunks.push(chunk);
+			chunk = '';
+			length = 0;
+		}
+		chunk += character;
+		length += character.length;
+	}
+	if (chunk !== '') chunks.push(chunk);
+	return chunks;
 }
