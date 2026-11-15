@@ -19,3 +19,4 @@
 - [x] 4.1 `npx biome lint` on the changed files, `tsc`, `npm run test:forge-ui`, and the Home tabs, inventory, dashboard, and switcher model suites pass.
 - [ ] 4.2 Pull request CI on Gitea reports every status `success` or `skipped`.
 - [ ] 4.3 In the running app, with a Gitea account: double-click an issue on Home and in a worktree's Git tab, confirm the tab opens in the right place, a second double click brings it forward, a single click in the Git tab still selects Home, and Open in tab works on a phone-width window.
+- [x] 4.4 Extend `e2e/forge-pull-requests-and-issues.spec.ts`: a Home row double click opens one Home tab per item, Open in tab opens one, and a Git tab row double click opens one tab in the selected folder without selecting Home and lists it in the Folders tree. Verify: `npm run test:e2e -- e2e/forge-pull-requests-and-issues.spec.ts` passes.

@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib';
 import type { Page, TestInfo } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { folderGroup, folderRow, folderTerminals, git, initRepository } from './support/folders';
-import { activeHome, expectHomeSection } from './support/home-tabs';
+import { activeHome, expectHomeSection, frontHomeTab, homeTabChip } from './support/home-tabs';
 import { setProjectRoot } from './support/ui';
 
 /**
@@ -418,6 +418,68 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 			.poll(() => fakeClaudeCommandLines().some((line) => line.includes('Work on issue #542')), { timeout: 30_000 })
 			.toBe(true);
 		await expect(folderGroup(mainWindow, ISSUE_542_BRANCH)).toBeVisible();
+	});
+
+	await test.step('items open as tabs: a Home row double click, Open in tab, and a Git tab row double click', async () => {
+		const itemChips = () => homeTabChip(mainWindow, 'forge-item:');
+		const itemTab = (key: string) => frontHomeTab(mainWindow).locator(`[data-forge-item-tab="${key}"]`);
+
+		// A Home row's double click opens the item as a Home tab of its own, titled once loaded.
+		await home.click();
+		await sectionTab('issues').click();
+		await expectHomeSection(mainWindow, 'issues');
+		await issuesList().locator('[data-forge-row="541"]').dblclick();
+		await expect(itemTab('issue:541')).toBeVisible({ timeout: 30_000 });
+		await expect(itemTab('issue:541')).toContainText(ISSUE_541);
+		await expect(itemChips()).toHaveCount(1);
+		await expect(itemChips().first()).toContainText(`#541 ${ISSUE_541}`);
+		await shot(mainWindow, testInfo, '07-home-item-tab');
+
+		// Opening it again brings the same tab forward.
+		await sectionTab('issues').click();
+		await expectHomeSection(mainWindow, 'issues');
+		await issuesList().locator('[data-forge-row="541"]').dblclick();
+		await expect(itemTab('issue:541')).toBeVisible();
+		await expect(itemChips()).toHaveCount(1);
+
+		// Open in tab does the same without a double click.
+		await sectionTab('issues').click();
+		await issuesList().locator('[data-forge-row="542"]').click();
+		const openInTab = detail(542).locator('[data-forge-open-in-tab]');
+		await expect(openInTab).toBeVisible();
+		await openInTab.hover();
+		await shot(mainWindow, testInfo, '08-open-in-tab-action');
+		await openInTab.click();
+		await expect(itemTab('issue:542')).toBeVisible({ timeout: 30_000 });
+		await expect(itemChips()).toHaveCount(2);
+
+		// A Git tab row's double click opens the item among the selected folder's tabs, not Home.
+		const project = mainWindow.locator('.project-workspace--active');
+		await mainWindow.locator('.project-tab').first().click();
+		await expect(project).toBeVisible();
+		await folderRow(mainWindow, 'change/13-events').click();
+		await expect(folderRow(mainWindow, 'change/13-events')).toHaveClass(/folders-tree__row--selected/);
+		await project.getByRole('tab', { name: 'Git', exact: true }).click();
+		const row = project.locator('[data-forge-project-tab="pullRequest"] [data-forge-row="88"]');
+		await expect(row).toBeVisible({ timeout: 30_000 });
+		await row.dblclick();
+		const folderItem = project.locator('[data-forge-item-tab="pullRequest:88"]');
+		await expect(folderItem).toBeVisible({ timeout: 30_000 });
+		await expect(folderItem.locator('[data-forge-detail="88"]')).toBeVisible({ timeout: 30_000 });
+		await expect(activeHome(mainWindow)).toHaveCount(0);
+		await expect(project.locator('.dv-tab').filter({ hasText: '#88' })).toHaveCount(1);
+		await shot(mainWindow, testInfo, '09-folder-item-tab');
+
+		// Again: the tab is brought forward, not doubled.
+		await row.dblclick();
+		await expect(folderItem).toBeVisible();
+		await expect(project.locator('[data-forge-item-tab="pullRequest:88"]')).toHaveCount(1);
+		await expect(activeHome(mainWindow)).toHaveCount(0);
+
+		// The Folders tree lists it as a pull request or issue, not a terminal.
+		await project.getByRole('tab', { name: 'Tabs', exact: true }).click();
+		await expect(folderGroup(mainWindow, 'change/13-events').locator('.folders-tree__row--forge-item')).toHaveCount(1);
+		await expect(folderTerminals(mainWindow, 'change/13-events')).toHaveCount(1);
 	});
 
 	await test.step('Settings shows the account and switches; Issues on Home off stops listing its issues', async () => {
