@@ -49,6 +49,7 @@ function workflowOf(steps) {
       title: id,
       prompt: "",
       icon: "",
+      after: [],
       status,
       note: "",
       startedAt: null,
@@ -195,16 +196,18 @@ test("a repeated command id returns the first outcome", async () => {
 
 // 2.5 and 2.6 step rules, times, resume point
 
-test("at most one step is active, and step_active names it", () => {
-  const workflow = workflowOf([["a", "running"], ["b", "not_started"]]);
-  assert.throws(
-    () => applyStepUpdate(workflow, "b", "running", undefined, 1),
-    (error) => error.code === "step_active" && error.details.stepId === "a",
-  );
-  assert.throws(
-    () => applyStepUpdate(workflow, "b", "needs_input", undefined, 1),
-    (error) => error.code === "step_active" && error.details.stepId === "a",
-  );
+test("several steps may be active, and a step may not start before its dependencies are settled", () => {
+  const workflow = workflowOf([["a", "running"], ["b", "not_started"], ["c", "not_started", { after: ["a"] }]]);
+  const both = applyStepUpdate(workflow, "b", "running", undefined, 1);
+  assert.deepEqual(both.steps.map((item) => item.status), ["running", "running", "not_started"]);
+  for (const status of ["running", "needs_input", "done"])
+    assert.throws(
+      () => applyStepUpdate(workflow, "c", status, undefined, 1),
+      (error) => error.code === "step_blocked" && JSON.stringify(error.details.stepIds) === JSON.stringify(["a"]),
+    );
+  // Skipping, failing, or resetting a waiting step is never blocked.
+  for (const status of ["skipped", "failed", "not_started"])
+    assert.equal(applyStepUpdate(workflow, "c", status, undefined, 1).steps[2].status, status);
   assert.throws(() => applyStepUpdate(workflow, "zzz", "done", undefined, 1), (error) => error.code === "step_not_found");
   // Any status may move to any status.
   const done = applyStepUpdate(workflow, "a", "done", undefined, 2);
@@ -271,6 +274,7 @@ const fresh = (name = "Flow") => ({
   steps: content.steps.map((item, index) => ({
     ...item,
     id: `step-${index}`,
+    after: index === 0 ? [] : [`step-${index - 1}`],
     status: "not_started",
     note: "",
     startedAt: null,
@@ -539,6 +543,6 @@ test("a stored skipped step survives a reload", () => {
 test("launch and resume instructions name skipped and every unsettled step", () => {
   assert.match(WORKFLOW_LAUNCH_INSTRUCTION, /set it to skipped with a one-line reason/u);
   assert.match(WORKFLOW_LAUNCH_INSTRUCTION, /Continue until every step is done or skipped\./u);
-  assert.match(WORKFLOW_RESUME_INSTRUCTION, /then every other step that is not done or skipped, in step order/u);
+  assert.match(WORKFLOW_RESUME_INSTRUCTION, /then every other step that is not done or skipped as its after list allows/u);
   assert.match(WORKFLOW_RESUME_INSTRUCTION, /set it to skipped with a one-line reason/u);
 });

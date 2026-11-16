@@ -1,7 +1,7 @@
 ## 1. Server model: dependencies and status rules
 
-- [ ] 1.1 Add `after: readonly string[]` to `WorkflowTemplateStep`, `WorkflowStep`, and `WorkflowStepInput`, and bump both schema versions to 2 (`packages/server-core/src/workflowService/types.ts`). Verified by `npx turbo run build --filter=@terminay/server-core` compiling.
-- [ ] 1.2 Validate `after` in `normalize.ts`. Request-local ids map to server ids, and a step without `after` defaults to the step above it while `[]` means none. Every dependency must name an earlier step, with repeated dependencies and repeated request ids rejected (never de-duplicated) and at most 200 in total. Request ids are at most 64 characters, and the serialized size is the larger of the request encoding and the stored encoding with server ids. Stored v1 steps without `after` are read as a chain without re-checking bounds. `instantiateWorkflow` copies `after` onto the new ids. Verified by new cases in `packages/server-core/test/workflow-service.test.mjs`:
+- [x] 1.1 Add `after: readonly string[]` to `WorkflowTemplateStep`, `WorkflowStep`, and `WorkflowStepInput`, and bump both schema versions to 2 (`packages/server-core/src/workflowService/types.ts`). Verified by `npx turbo run build --filter=@terminay/server-core` compiling.
+- [x] 1.2 Validate `after` in `normalize.ts`. Request-local ids map to server ids, and a step without `after` defaults to the step above it while `[]` means none. Every dependency must name an earlier step, with repeated dependencies and repeated request ids rejected (never de-duplicated) and at most 200 in total. Request ids are at most 64 characters, and the serialized size is the larger of the request encoding and the stored encoding with server ids. Stored v1 steps without `after` are read as a chain without re-checking bounds. `instantiateWorkflow` copies `after` onto the new ids. Verified by new cases in `packages/server-core/test/workflow-service.test.mjs`:
   - default chain and empty list;
   - a later, unknown, self or repeated reference refused, naming the step;
   - 201 links refused;
@@ -10,7 +10,7 @@
   - a v1 record loads as a chain;
   - a v2 record stripped of `after` loads as a chain;
   - a launched copy keeps its shape.
-- [ ] 1.3 In `steps.ts`, remove the single-active rule. Add `step_blocked` (with `stepIds`) when a step *starts* (to running or needs_input from a non-active status, or to done from not_started) while any dependency is unsettled, and add `readyStepIds` and the new `resumeStepId`. Replace `step_active` with `step_blocked` in `errors.ts` and `protocol.ts`. Verified by unit tests for:
+- [x] 1.3 In `steps.ts`, remove the single-active rule. Add `step_blocked` (with `stepIds`) when a step *starts* (to running or needs_input from a non-active status, or to done from not_started) while any dependency is unsettled, and add `readyStepIds` and the new `resumeStepId`. Replace `step_active` with `step_blocked` in `errors.ts` and `protocol.ts`. Verified by unit tests for:
   - two steps running together;
   - a blocked start and done-from-not-started;
   - skip and fail never blocked;
@@ -18,8 +18,8 @@
   - repeated done with a new note;
   - a v1 out-of-order workflow whose running step finishes;
   - the resume point scenarios in the spec delta, and ready ids.
-- [ ] 1.4 Expose `readyStepIds` on `SessionWorkflowView` and carry `after` through template commands and the store (`protocol.ts`, `store.ts`, `templateRepository.ts`). Verified by `workflow-composition.test.mjs` round-tripping a DAG template through save, reload and launch.
-- [ ] 1.5 Update the launch and resume instructions in `packages/protocol/src/workflows.ts` to name `after`, readiness and working ready steps together. Verified by `packages/protocol/test/workflows.test.mjs` asserting the words, and the launch text staying under 16 KiB for the largest opening prompt.
+- [x] 1.4 Expose `readyStepIds` on `SessionWorkflowView` and carry `after` through template commands and the store (`protocol.ts`, `store.ts`, `templateRepository.ts`). Verified by `workflow-composition.test.mjs` round-tripping a DAG template through save, reload and launch.
+- [x] 1.5 Update the launch and resume instructions in `packages/protocol/src/workflows.ts` to name `after`, readiness and working ready steps together. Verified by `packages/protocol/test/workflows.test.mjs` asserting the words, and the launch text staying under 16 KiB for the largest opening prompt.
 
 ## 2. MCP surface
 

@@ -6,8 +6,8 @@ import type { ProtocolId } from '@terminay/protocol';
  * agent reports on. Terminay never runs a step.
  */
 
-export const WORKFLOW_TEMPLATE_SCHEMA_VERSION = 1;
-export const WORKFLOW_RECORD_SCHEMA_VERSION = 1;
+export const WORKFLOW_TEMPLATE_SCHEMA_VERSION = 2;
+export const WORKFLOW_RECORD_SCHEMA_VERSION = 2;
 
 /** The bounds shared by templates and workflows. */
 export const WORKFLOW_LIMITS = Object.freeze({
@@ -25,6 +25,10 @@ export const WORKFLOW_LIMITS = Object.freeze({
 	 */
 	maxSerializedBytes: 56 * 1024,
 	maxNoteChars: 200,
+	/** Dependencies across every step of one template or workflow (ADR-0127). */
+	maxDependencies: 200,
+	/** Characters of a step id given in a request, used to name it in `after`. */
+	maxRequestIdChars: 64,
 	/** UTF-8 bytes of the text typed on launch or resume. */
 	maxLaunchTextBytes: 16 * 1024,
 	maxTemplates: 512,
@@ -67,6 +71,8 @@ export interface WorkflowTemplateStep {
 	readonly prompt: string;
 	/** Empty for none. */
 	readonly icon: WorkflowIconName | '';
+	/** Ids of earlier steps this step waits on, in step order (ADR-0127). */
+	readonly after: readonly string[];
 }
 
 export interface WorkflowTemplate {
@@ -92,6 +98,8 @@ export interface WorkflowStep {
 	readonly title: string;
 	readonly prompt: string;
 	readonly icon: WorkflowIconName | '';
+	/** Ids of earlier steps this step waits on, in step order (ADR-0127). */
+	readonly after: readonly string[];
 	readonly status: WorkflowStepStatus;
 	/** Empty for none. */
 	readonly note: string;
@@ -130,6 +138,8 @@ export type SessionWorkflowView =
 			readonly state: 'attached';
 			readonly workflow: Workflow;
 			readonly resumeStepId: string | null;
+			/** Steps not started or failed whose dependencies are all settled. */
+			readonly readyStepIds: readonly string[];
 			readonly unfinished: boolean;
 	  }
 	| { readonly sessionId: string; readonly state: 'unrestorable' };
@@ -184,6 +194,8 @@ export interface WorkflowStepInput {
 	readonly title?: unknown;
 	readonly prompt?: unknown;
 	readonly icon?: unknown;
+	/** Ids given to earlier steps of the same request; absent means the step above. */
+	readonly after?: unknown;
 }
 
 export interface WorkflowInput {
