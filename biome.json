@@ -14,7 +14,8 @@
       "!release",
       "!node_modules",
       "!vendor",
-      "!**/*.generated.ts"
+      "!**/*.generated.ts",
+      "!openspec/adr/evidence/**/*.html"
     ]
   },
   "formatter": {

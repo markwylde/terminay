@@ -62,7 +62,9 @@ const reviews = () =>
 
 test("steps given without after run one after another; an empty after waits on nothing", () => {
   const chain = validateWorkflowInput({ name: "Chain", steps: [step("A"), step("B"), step("C"), step("D")] });
-  chain.steps.forEach((item, index) => assert.deepEqual(item.after, index === 0 ? [] : [chain.steps[index - 1].id]));
+  chain.steps.forEach((item, index) => {
+    assert.deepEqual(item.after, index === 0 ? [] : [chain.steps[index - 1].id]);
+  });
   const together = validateWorkflowInput({ name: "Together", steps: [step("A", { after: [] }), step("B", { after: [] }), step("C", { after: [] })] });
   assert.deepEqual(together.steps.map((item) => item.after), [[], [], []]);
   const workflow = instantiateWorkflow(together, null, 0);
@@ -245,7 +247,9 @@ test("a record whose dependencies were dropped by an older server reads as a cha
   const reloaded = new WorkflowStore({ directory });
   reloaded.restore(["s1"]);
   const steps = reloaded.get("s1").workflow.steps;
-  steps.forEach((item, index) => assert.deepEqual(item.after, index === 0 ? [] : [steps[index - 1].id]));
+  steps.forEach((item, index) => {
+    assert.deepEqual(item.after, index === 0 ? [] : [steps[index - 1].id]);
+  });
 });
 
 test("the launch instruction names dependencies and working ready steps together", () => {
