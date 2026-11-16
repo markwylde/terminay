@@ -29,6 +29,10 @@ export interface SavedServerSummary {
 	readonly id: string;
 	readonly label: string;
 	readonly isLocal?: boolean;
+	/** True while this window holds a connection to the server. */
+	readonly attached?: boolean;
+	/** The held connection's state; meaningful only while attached. */
+	readonly status?: string;
 }
 
 /** One row of the saved-server list, whichever source it came from. */
@@ -41,8 +45,25 @@ type ServerRow = Readonly<{
 	status?: string;
 	origin?: string;
 	isLocal: boolean;
+	/** This window holds a connection to it: `status` then says how it is. */
+	attached?: boolean;
 	profile?: ConnectionProfile;
 }>;
+
+/** "connected" → "Connected": statuses arrive as protocol words. */
+function statusLabel(status: string): string {
+	return status.length === 0
+		? status
+		: `${status[0]?.toUpperCase()}${status.slice(1)}`;
+}
+
+function statusTone(status: string | undefined): 'ok' | 'warn' | 'off' {
+	return status === undefined
+		? 'off'
+		: status === 'connected'
+			? 'ok'
+			: 'warn';
+}
 
 let pairingAttemptSequence = 0;
 
@@ -209,6 +230,13 @@ export function SharedConnectionsRouteBody({
 							id: server.id,
 							label: server.label,
 							isLocal: false,
+							// Only a held connection has a state worth showing.
+							...(server.attached === true
+								? {
+										attached: true,
+										status: server.status ?? 'connected',
+									}
+								: {}),
 						}))
 				: connections.map((connection) => ({ ...connection, isLocal: false }));
 	const canRename = (row: ServerRow) =>
@@ -512,7 +540,7 @@ export function SharedConnectionsRouteBody({
 			<strong>
 				{confirm.action === 'revoke'
 					? 'Revoke server access?'
-					: 'Forget this local profile?'}
+					: `Forget ${confirm.row.label}?`}
 			</strong>
 			<p>
 				{confirm.action === 'revoke'
@@ -674,13 +702,13 @@ export function SharedConnectionsRouteBody({
 				items: visibleConnections.map((connection) => ({
 					id: connection.id,
 					label: connection.label,
-					status: connection.status ?? 'Saved',
-					tone:
+					status:
 						connection.status === undefined
-							? ('off' as const)
-							: connection.status === 'connected'
-								? ('ok' as const)
-								: ('warn' as const),
+							? 'Saved · not attached'
+							: connection.attached === true
+								? `${statusLabel(connection.status)} · attached`
+								: statusLabel(connection.status),
+					tone: statusTone(connection.status),
 				})),
 			},
 		];
@@ -710,123 +738,208 @@ export function SharedConnectionsRouteBody({
 		const renderServerDetail = (row: ServerRow) => {
 			const profile = row.profile;
 			const isCurrent = row.id === currentId;
-			const editing = rename?.id === row.id || confirm?.row.id === row.id;
-			return (
-				<section className="settings-section" aria-label={row.label}>
-					<div className="settings-group">
-						<div className="settings-row">
-							<div className="settings-row-info">
-								<span className="settings-row-label">Status</span>
-								<span className="settings-row-description">
-									{row.status === undefined
-										? 'Saved on this computer. Attach it to a window from the connection menu.'
-										: isCurrent
-											? 'The server this window is connected to.'
-											: 'Attach it to a window from the connection menu.'}
-								</span>
-							</div>
-							<div className="settings-row-control">
-								<span className="settings-status-pill">
-									<span
-										className={`settings-status-dot settings-status-dot--${row.status === undefined ? 'off' : row.status === 'connected' ? 'ok' : 'warn'}`}
-										aria-hidden="true"
-									/>
-									{row.status ?? 'Saved'}
-								</span>
-							</div>
+			const renaming = rename?.id === row.id;
+			const confirming = confirm?.row.id === row.id ? confirm.action : undefined;
+			const forgettable = canForget(row);
+			const revocable =
+				profile !== undefined &&
+				!row.isLocal &&
+				canRevoke &&
+				onRevoke !== undefined;
+			const statusDescription =
+				row.status === undefined
+					? 'Saved on this computer and not attached to this window. Attach it from the connection menu.'
+					: row.attached === true
+						? 'Attached to this window.'
+						: isCurrent
+							? 'The server this window is connected to.'
+							: 'Attach it to a window from the connection menu.';
+			const dangerRow = (
+				action: 'forget' | 'revoke',
+				label: string,
+				description: string,
+			) =>
+				confirming === action ? (
+					<section
+						key={action}
+						aria-label={`Confirm ${action}`}
+						className="settings-danger-confirm"
+					>
+						<h4 className="settings-danger-confirm-title">
+							{action === 'revoke'
+								? `Revoke this device's access to ${row.label}?`
+								: `Forget ${row.label}?`}
+						</h4>
+						<p className="settings-row-description">
+							{action === 'revoke'
+								? 'This invalidates this device on the server and closes its connections. Connecting again needs a new pairing link.'
+								: `${row.label} and this device's key for it are removed from this computer. Forgetting does not revoke server access.`}
+						</p>
+						<div className="settings-inline-actions settings-danger-confirm-actions">
+							<button
+								type="button"
+								className="settings-secondary-button"
+								// The confirmation replaces the button that opened it;
+								// Cancel is the safe place for keyboard focus to land.
+								autoFocus
+								onClick={() => setConfirm(undefined)}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								className="settings-danger-button settings-danger-button--solid"
+								disabled={busy !== undefined}
+								onClick={confirmDestructiveAction}
+							>
+								{action === 'revoke' ? 'Revoke access' : 'Forget server'}
+							</button>
 						</div>
-						{row.origin !== undefined && (
+					</section>
+				) : (
+					<div key={action} className="settings-row">
+						<div className="settings-row-info">
+							<span className="settings-row-label">{label}</span>
+							<span className="settings-row-description">{description}</span>
+						</div>
+						<div className="settings-row-control">
+							<button
+								type="button"
+								className="settings-danger-button"
+								disabled={busy !== undefined}
+								onClick={() => {
+									setRename(undefined);
+									setConfirm({ action, row });
+								}}
+							>
+								{action === 'revoke' ? 'Revoke access' : 'Forget'}
+							</button>
+						</div>
+					</div>
+				);
+			const actions = [
+				profile !== undefined && onSelect !== undefined && (
+					<button
+						key="select"
+						type="button"
+						className="settings-secondary-button"
+						disabled={busy !== undefined}
+						onClick={() =>
+							void mutate(
+								`select:${profile.id}`,
+								async () => {
+									await onSelect(profile);
+									profileStore?.select(profile.id);
+								},
+								`Switched to ${row.label}.`,
+							)
+						}
+					>
+						{isCurrent ? 'Reconnect' : `Switch to ${row.label}`}
+					</button>
+				),
+				profile !== undefined &&
+					canExpose &&
+					onExpose !== undefined &&
+					isCurrent &&
+					profile.status === 'connected' && (
+						<button
+							key="expose"
+							type="button"
+							className="settings-secondary-button"
+							disabled={busy !== undefined}
+							onClick={() =>
+								void mutate(
+									`expose:${profile.id}`,
+									() => onExpose(profile),
+									'Server exposure enabled.',
+								)
+							}
+						>
+							Expose server
+						</button>
+					),
+				canRename(row) && (
+					<button
+						key="rename"
+						type="button"
+						className="settings-secondary-button"
+						disabled={busy !== undefined}
+						onClick={() => {
+							setConfirm(undefined);
+							setRename(row);
+							setRenameLabel(row.label);
+						}}
+					>
+						Rename
+					</button>
+				),
+			].filter(Boolean);
+			return (
+				<section
+					className="settings-section settings-server-detail"
+					aria-label={row.label}
+				>
+					<div className="settings-server-detail-block">
+						<h3 className="settings-section-title">Connection</h3>
+						<div className="settings-group">
 							<div className="settings-row">
 								<div className="settings-row-info">
-									<span className="settings-row-label">Address</span>
+									<span className="settings-row-label">Status</span>
+									<span className="settings-row-description">
+										{statusDescription}
+									</span>
 								</div>
 								<div className="settings-row-control">
-									<code className="settings-code">{row.origin}</code>
+									<span className="settings-status-pill">
+										<span
+											className={`settings-status-dot settings-status-dot--${statusTone(row.status)}`}
+											aria-hidden="true"
+										/>
+										{row.status === undefined ? 'Saved' : statusLabel(row.status)}
+									</span>
 								</div>
 							</div>
-						)}
+							{row.origin !== undefined && (
+								<div className="settings-row">
+									<div className="settings-row-info">
+										<span className="settings-row-label">Address</span>
+									</div>
+									<div className="settings-row-control">
+										<code className="settings-code">{row.origin}</code>
+									</div>
+								</div>
+							)}
+						</div>
+						{renaming ? (
+							<div className="settings-server-rename">{renameForm}</div>
+						) : actions.length > 0 ? (
+							<div className="settings-inline-actions settings-detail-buttons">
+								{actions}
+							</div>
+						) : null}
 					</div>
-					{!editing && (
-						<div className="settings-inline-actions settings-detail-buttons">
-							{profile !== undefined && onSelect !== undefined && (
-								<button
-									type="button"
-									className="settings-secondary-button"
-									disabled={busy !== undefined}
-									onClick={() =>
-										void mutate(
-											`select:${profile.id}`,
-											async () => {
-												await onSelect(profile);
-												profileStore?.select(profile.id);
-											},
-											`Switched to ${row.label}.`,
-										)
-									}
-								>
-									{isCurrent ? 'Reconnect' : `Switch to ${row.label}`}
-								</button>
-							)}
-							{profile !== undefined &&
-								canExpose &&
-								onExpose !== undefined &&
-								isCurrent &&
-								profile.status === 'connected' && (
-									<button
-										type="button"
-										className="settings-secondary-button"
-										disabled={busy !== undefined}
-										onClick={() =>
-											void mutate(
-												`expose:${profile.id}`,
-												() => onExpose(profile),
-												'Server exposure enabled.',
-											)
-										}
-									>
-										Expose server
-									</button>
-								)}
-							{canRename(row) && (
-								<button
-									type="button"
-									className="settings-secondary-button"
-									disabled={busy !== undefined}
-									onClick={() => {
-										setRename(row);
-										setRenameLabel(row.label);
-									}}
-								>
-									Rename
-								</button>
-							)}
-							{canForget(row) && (
-								<button
-									type="button"
-									className="settings-secondary-button"
-									disabled={busy !== undefined}
-									onClick={() => setConfirm({ action: 'forget', row })}
-								>
-									Forget
-								</button>
-							)}
-							{profile !== undefined &&
-								!row.isLocal &&
-								canRevoke &&
-								onRevoke !== undefined && (
-									<button
-										type="button"
-										className="settings-danger-button"
-										disabled={busy !== undefined}
-										onClick={() => setConfirm({ action: 'revoke', row })}
-									>
-										Revoke access
-									</button>
-								)}
+					{!renaming && (forgettable || revocable) && (
+						<div className="settings-server-detail-block">
+							<h3 className="settings-section-title settings-section-title--danger">
+								Danger zone
+							</h3>
+							<div className="settings-group settings-group--danger">
+								{forgettable &&
+									dangerRow(
+										'forget',
+										'Forget this server',
+										"Remove it and this device's key for it from this computer. The server keeps this device's access.",
+									)}
+								{revocable &&
+									dangerRow(
+										'revoke',
+										'Revoke access',
+										'Invalidate this device on the server and close its connections.',
+									)}
+							</div>
 						</div>
 					)}
-					{rename?.id === row.id && renameForm}
-					{confirm?.row.id === row.id && confirmPanel}
 				</section>
 			);
 		};
