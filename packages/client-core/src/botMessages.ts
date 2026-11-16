@@ -1,14 +1,23 @@
 import {
-	BOT_MESSAGE_OPERATIONS as op,
+	assertJsonValue,
+	BOT_OPAQUE_ATTACHMENT_MIME,
 	type BotMessage,
-	type BotMessagePage,
 	type BotMessageDetail,
+	type BotMessagePage,
 	type BotMessageUpload,
 	type BotRuntimeEventPage,
+	botAttachmentLimit,
+	isBotImageMime,
 	type JsonValue,
-	assertJsonValue,
+	BOT_MESSAGE_OPERATIONS as op,
 } from '@terminay/protocol';
 import type { BotTransport } from './bots.js';
+
+/** A raster image type, or the opaque type every other file is stored as. */
+function knownMime(value: unknown): boolean {
+	const mime = String(value);
+	return isBotImageMime(mime) || mime === BOT_OPAQUE_ATTACHMENT_MIME;
+}
 function json(value: unknown): JsonValue {
 	const clean = JSON.parse(JSON.stringify(value));
 	assertJsonValue(clean);
@@ -70,7 +79,7 @@ export class BotMessagesClient {
 			}),
 		) as unknown as { message: BotMessage; sessionId?: string; error?: string };
 	}
-	/** Stages one image for a later post. The server sniffs its type and bounds its size. */
+	/** Stages one file of any type for a later post. The server types it by content and bounds its size. */
 	async upload(
 		botId: string,
 		name: string,
@@ -86,9 +95,10 @@ export class BotMessagesClient {
 			!a ||
 			typeof a.name !== 'string' ||
 			typeof a.size !== 'number' ||
-			!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
-				String(a.mime),
-			)
+			!Number.isSafeInteger(a.size) ||
+			a.size < 1 ||
+			a.size > botAttachmentLimit(String(a.mime)) ||
+			!knownMime(a.mime)
 		)
 			throw new TypeError('Invalid upload response');
 		return r as unknown as BotMessageUpload;
@@ -170,12 +180,7 @@ export class BotMessagesClient {
 			{ signal },
 		);
 		const r = record(result);
-		if (
-			!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
-				String(r.mime),
-			) ||
-			body.length > 2 * 1024 * 1024
-		)
+		if (!knownMime(r.mime) || body.length > botAttachmentLimit(String(r.mime)))
 			throw new TypeError('Invalid attachment');
 		return { mime: String(r.mime), bytes: body };
 	}

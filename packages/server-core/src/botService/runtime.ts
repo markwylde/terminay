@@ -1,15 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-	botTriggerOrigin,
+	type BotExecutionRuntimeState,
 	type BotSessionOrigin,
 	type BotSessionRecord,
-	type BotExecutionRuntimeState,
+	botTriggerOrigin,
 } from '@terminay/protocol';
-import type { BotService } from './service.js';
-import { BotError, text, object } from './store.js';
+import { executionAttachmentPath, readBotImage } from './images.js';
 import { utf8 } from './messages.js';
-import { executionImagePath, readBotImage } from './images.js';
 import { BOT_TRIGGER_TOOLS, callTriggerTool } from './runtimeTriggers.js';
+import type { BotService } from './service.js';
+import { BotError, object, text } from './store.js';
 import { triggerId } from './triggerState.js';
 
 const schema = (
@@ -374,7 +374,7 @@ export class BotExecutionRuntime {
 							name: a.name,
 							mime: a.mime,
 							size: a.size,
-							path: executionImagePath(id, index, a.mime),
+							path: executionAttachmentPath(id, index, a.mime, a.name),
 						})),
 					}
 				: detail;
@@ -385,8 +385,7 @@ export class BotExecutionRuntime {
 			.list(r.botId)
 			.filter((s) => s.id !== id);
 		const active = peers.filter(
-			(s) =>
-				['running', 'needs-you'].includes(s.state) && !s.runtime?.revoked,
+			(s) => ['running', 'needs-you'].includes(s.state) && !s.runtime?.revoked,
 		);
 		const queuedExecutions = peers.filter((s) => s.state === 'queued').length;
 		const others = active.slice(0, 5).map((s) => this.summary(s));

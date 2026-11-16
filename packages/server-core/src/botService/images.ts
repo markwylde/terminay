@@ -1,5 +1,9 @@
 import { Buffer } from 'node:buffer';
-import { botEnvironmentId } from '@terminay/protocol';
+import {
+	BOT_MESSAGE_UPLOAD_LIMITS,
+	botAttachmentLimit,
+	botEnvironmentId,
+} from '@terminay/protocol';
 import { type EngineDriver, ownedResource } from './engine.js';
 
 export const BOT_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -89,24 +93,32 @@ const extensions: Readonly<Record<string, string>> = {
 	'image/gif': 'gif',
 	'image/webp': 'webp',
 };
-/** Server-chosen: position and type only, never the name a person offered. */
-export function executionImagePath(
+/** An image's extension from its type; any other file's from the offered
+ * name's last extension when it is 1-10 ASCII letters or digits, else `bin`. */
+export function attachmentExtension(mime: string, name: string): string {
+	const image = extensions[mime];
+	if (image) return image;
+	const dot = name.lastIndexOf('.');
+	const tail = dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+	return /^[a-z0-9]{1,10}$/.test(tail) ? tail : 'bin';
+}
+/** Server-chosen: position and extension only, never the rest of the offered name. */
+export function executionAttachmentPath(
 	executionId: string,
 	index: number,
 	mime: string,
+	name: string,
 ): string {
 	if (!/^[a-z0-9]{24}$/.test(executionId) || !Number.isSafeInteger(index))
-		throw new Error('Invalid execution image');
-	const extension = extensions[mime];
-	if (!extension) throw new Error('Invalid execution image type');
-	return `${BOT_EXECUTION_IMAGE_ROOT}/${executionId}/${index + 1}.${extension}`;
+		throw new Error('Invalid execution attachment');
+	return `${BOT_EXECUTION_IMAGE_ROOT}/${executionId}/${index + 1}.${attachmentExtension(mime, name)}`;
 }
 // Traverses with dir_fd and O_NOFOLLOW, writes a temporary file, then renames it
 // into place, so a symlink is never followed and no partial image is left.
 const writer = `import os,sys
 execution,name=sys.argv[1],sys.argv[2]
-data=sys.stdin.buffer.read(${BOT_IMAGE_BYTES + 1})
-if len(data)>${BOT_IMAGE_BYTES}: raise ValueError('image too large')
+data=sys.stdin.buffer.read(${BOT_MESSAGE_UPLOAD_LIMITS.fileBytes + 1})
+if len(data)>${BOT_MESSAGE_UPLOAD_LIMITS.fileBytes}: raise ValueError('attachment too large')
 def sub(parent,part):
  try: os.mkdir(part,0o700,dir_fd=parent)
  except FileExistsError: pass
@@ -139,28 +151,39 @@ async function ownedRunningContainer(
 		!ownedResource(container, serverId, botId) ||
 		!container.State?.Running
 	)
-		throw new Error('The bot container must be running to receive images');
+		throw new Error('The bot container must be running to receive attachments');
 	return name;
 }
-/** Copy one execution's message images into the owning bot container. */
-export async function writeExecutionImages(
+/** Copy one execution's message attachments into the owning bot container. */
+export async function writeExecutionAttachments(
 	driver: EngineDriver,
 	serverId: string,
 	botId: string,
 	executionId: string,
-	images: readonly { mime: string; bytes: Uint8Array }[],
+	files: readonly { name: string; mime: string; bytes: Uint8Array }[],
 	signal?: AbortSignal,
 ): Promise<string[]> {
-	if (!images.length) return [];
+	if (!files.length) return [];
 	const container = await ownedRunningContainer(driver, serverId, botId);
 	const paths: string[] = [];
-	for (const [index, image] of images.entries()) {
-		if (image.bytes.length > BOT_IMAGE_BYTES)
-			throw new Error('Image exceeds 2 MiB');
-		const path = executionImagePath(executionId, index, botImageMime(image.bytes));
+	for (const [index, image] of files.entries()) {
+		if (image.bytes.length > botAttachmentLimit(image.mime))
+			throw new Error('Attachment exceeds its size limit');
+		const path = executionAttachmentPath(
+			executionId,
+			index,
+			image.mime,
+			image.name,
+		);
 		await driver.exec(
 			container,
-			['python3', '-c', writer, executionId, path.slice(path.lastIndexOf('/') + 1)],
+			[
+				'python3',
+				'-c',
+				writer,
+				executionId,
+				path.slice(path.lastIndexOf('/') + 1),
+			],
 			{
 				user: 'bot',
 				signal,
@@ -173,8 +196,8 @@ export async function writeExecutionImages(
 	}
 	return paths;
 }
-/** Best effort: remove an execution's image copies; the durable attachment remains. */
-export async function removeExecutionImages(
+/** Best effort: remove an execution's attachment copies; the durable attachment remains. */
+export async function removeExecutionAttachments(
 	driver: EngineDriver,
 	botId: string,
 	executionId: string,

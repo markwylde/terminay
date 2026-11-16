@@ -2163,3 +2163,36 @@ test('Sessions shows startup attempts and the outcome the bot reported', async (
 		await page.close();
 	}
 });
+
+test('bot Markdown cannot render an opaque durable attachment as an image', async () => {
+	const page = await open(
+		TAB({
+			attachmentMime: 'application/octet-stream',
+			transcripts: {
+				s1: [
+					{
+						sessionUpdate: 'agent_message_chunk',
+						content: {
+							type: 'text',
+							text: `![Opaque file](bot-attachment:${'a'.repeat(24)})`,
+						},
+					},
+				],
+			},
+		}),
+	);
+	try {
+		await page
+			.getByText('Image unavailable: Opaque file', { exact: true })
+			.waitFor();
+		assert.equal(await page.locator('.bots-inline-image').count(), 0);
+		assert.equal(
+			(await calls(page, 'transport.queryWithBody')).filter(
+				(c) => c.args[0] === 'bots.messages.attachment',
+			).length,
+			1,
+		);
+	} finally {
+		await page.close();
+	}
+});

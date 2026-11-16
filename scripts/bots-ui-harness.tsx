@@ -47,6 +47,7 @@ type Scenario = {
 	starts?: (string | null)[];
 	postDelayMs?: number;
 	imageDelayMs?: number;
+	attachmentMime?: string;
 	imageSize?: { width: number; height: number };
 };
 
@@ -348,7 +349,11 @@ const transport = {
 					base64 = canvas.toDataURL('image/png').split(',')[1]!;
 				}
 				return {
-					result: { mime: 'image/png' },
+					result: {
+						mime: op === 'bots.messages.attachment'
+							? (scenario.attachmentMime ?? 'image/png')
+							: 'image/png',
+					},
 					body: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
 				};
 			}
