@@ -503,11 +503,11 @@ html.is-framed .responsive-workspace-shell {
 
 /* Native window controls drawn over the page: macOS traffic lights and the
    Windows title-bar overlay. Settings keeps its header band below them. */
-.connected-web-native-auxiliary[data-native-titlebar="mac"] {
+.connected-web-native-auxiliary[data-native-titlebar='mac'] {
 	--settings-chrome-top: 28px;
 }
 
-.connected-web-native-auxiliary[data-native-titlebar="overlay"] {
+.connected-web-native-auxiliary[data-native-titlebar='overlay'] {
 	--settings-chrome-top: 38px;
 }
 
@@ -516,9 +516,8 @@ html.is-framed .responsive-workspace-shell {
    decision rather than measuring the viewport a second time and disagreeing.
    Below that width the same menus live across the top of the switcher. */
 .connected-web-renderer-workspace:has(
-		.app-shell[data-terminay-compact-chrome="true"]
-	)
-	.connected-web-menubar {
+	.app-shell[data-terminay-compact-chrome="true"]
+) .connected-web-menubar {
 	display: none;
 }
 

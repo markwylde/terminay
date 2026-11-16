@@ -606,10 +606,7 @@ test('at phone width the title block carries the upgrade warning and names it', 
 	);
 	assert.match(warned, /data-compact-breadcrumb-alert="true"/);
 	const unreachable = compactRow({ isReachable: false });
-	assert.match(
-		unreachable,
-		/aria-label="Switch terminal — Paged — VPS unreachable"/,
-	);
+	assert.match(unreachable, /aria-label="Switch terminal — Paged — VPS unreachable"/);
 });
 
 test('at phone width the drawer Servers panel lists the same server updates', async () => {
@@ -645,10 +642,7 @@ test('a server with an upgrader offers a check even with nothing on offer', () =
 		row({ available: undefined, action: 'none', checkable: true }),
 	]);
 	assert.match(quiet, /Running 5\.1\.1/);
-	assert.match(
-		quiet,
-		/data-server-upgrade-check[^>]*>(<span>)?Check for updates/,
-	);
+	assert.match(quiet, /data-server-upgrade-check[^>]*>(<span>)?Check for updates/);
 	assert.match(quiet, /server-upgrade-row__icon--quiet/);
 	assert.doesNotMatch(quiet, /Upgrade server…/);
 	// Alongside an upgrade on offer too, but never while one runs.

@@ -135,7 +135,8 @@ export function serverUpgradeSources(
 			const named = profiles.find(
 				(profile) =>
 					profile.id === connection.profileId ||
-					(connection.role === 'primary' && profile.id === currentProfileId) ||
+					(connection.role === 'primary' &&
+						profile.id === currentProfileId) ||
 					(profile.serverId !== undefined &&
 						profile.serverId === connection.serverId),
 			)?.label;
@@ -534,7 +535,8 @@ export class ServerUpgradeBoard {
 		}> = {},
 	) {
 		this.now = options.now ?? Date.now;
-		this.randomId = options.randomId ?? (() => globalThis.crypto.randomUUID());
+		this.randomId =
+			options.randomId ?? (() => globalThis.crypto.randomUUID());
 		this.deadlineMs = options.deadlineMs ?? SERVER_UPGRADE_RETURN_DEADLINE_MS;
 		this.memory = options.memory;
 		this.setTimer =
@@ -871,21 +873,11 @@ export class ServerUpgradeBoard {
 		switch (ending.kind) {
 			case 'succeeded':
 				this.unfollow(record, {});
-				this.tell(
-					record,
-					key,
-					'success',
-					upgradeSucceededText(label, ending.to),
-				);
+				this.tell(record, key, 'success', upgradeSucceededText(label, ending.to));
 				return;
 			case 'unchanged':
 				this.unfollow(record, {});
-				this.tell(
-					record,
-					key,
-					'success',
-					upgradeUnchangedText(label, ending.to),
-				);
+				this.tell(record, key, 'success', upgradeUnchangedText(label, ending.to));
 				return;
 			case 'rolled-back': {
 				const text = upgradeFailedText(label, ending.from, ending.reason);
@@ -1299,32 +1291,32 @@ function progressView(
 						running: 'waiting',
 					}
 				: end.failed === 'install'
+				? {
+						start: 'done',
+						install: 'failed',
+						restart: 'waiting',
+						running: 'waiting',
+					}
+				: end.failed === 'restart'
+				? {
+						start: 'done',
+						install: 'done',
+						restart: 'failed',
+						running: 'waiting',
+					}
+				: end.failed === 'running'
 					? {
 							start: 'done',
-							install: 'failed',
-							restart: 'waiting',
-							running: 'waiting',
+							install: 'done',
+							restart: 'done',
+							running: 'failed',
 						}
-					: end.failed === 'restart'
-						? {
-								start: 'done',
-								install: 'done',
-								restart: 'failed',
-								running: 'waiting',
-							}
-						: end.failed === 'running'
-							? {
-									start: 'done',
-									install: 'done',
-									restart: 'done',
-									running: 'failed',
-								}
-							: {
-									start: 'done',
-									install: 'done',
-									restart: 'done',
-									running: 'done',
-								};
+					: {
+							start: 'done',
+							install: 'done',
+							restart: 'done',
+							running: 'done',
+						};
 	} else if (record.dropped) {
 		states = {
 			start: 'done',
@@ -1643,22 +1635,22 @@ export async function requestServerUpgrade(
 					},
 				) => Promise<unknown>;
 		  }>
-		| undefined,
-	mode: ServerUpgradeMode,
-	options: { readonly allowOlder?: boolean; readonly requestId?: string } = {},
+	| undefined,
+mode: ServerUpgradeMode,
+options: { readonly allowOlder?: boolean; readonly requestId?: string } = {},
 ): Promise<string | undefined> {
-	if (client === undefined) return 'This server is not connected.';
-	try {
-		const sent = {
-			...(options.allowOlder === true ? { allowOlder: true } : {}),
-			...(options.requestId === undefined
-				? {}
-				: { requestId: options.requestId }),
-		};
-		if (Object.keys(sent).length > 0)
-			await client.startServerUpgrade(mode, sent);
-		else await client.startServerUpgrade(mode);
-	} catch (cause) {
+if (client === undefined) return 'This server is not connected.';
+try {
+	const sent = {
+		...(options.allowOlder === true ? { allowOlder: true } : {}),
+		...(options.requestId === undefined
+			? {}
+			: { requestId: options.requestId }),
+	};
+	if (Object.keys(sent).length > 0)
+		await client.startServerUpgrade(mode, sent);
+	else await client.startServerUpgrade(mode);
+} catch (cause) {
 		if (!upgradeStartOutcomeUnknown(cause)) return upgradeStartErrorText(cause);
 	}
 	return undefined;

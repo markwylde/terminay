@@ -241,7 +241,10 @@ test('an upgrade names the server as its profile is named now', () => {
 		'Pop Terminay',
 	);
 	// Without a remembered profile, the name it was opened under stands.
-	assert.equal(serverUpgradeSources([remote], [])[0]?.label, '127.0.0.1:4000');
+	assert.equal(
+		serverUpgradeSources([remote], [])[0]?.label,
+		'127.0.0.1:4000',
+	);
 });
 
 test('each status shape gives the menu row its own content', () => {
@@ -1440,17 +1443,14 @@ test('an upgrader that never starts fails the first step, with what to run', asy
 			from: '5.1.1',
 			to: '5.1.1',
 			reason:
-				"the upgrader did not start. Run `sudo terminay daemon upgrade --system` on the server's host to upgrade it.",
+				'the upgrader did not start. Run `sudo terminay daemon upgrade --system` on the server\'s host to upgrade it.',
 			at: 121_000,
 		}),
 	);
 	const view = board.snapshot.progress[0];
 	assert.equal(view?.outcome, 'failure');
 	assert.equal(view?.steps[0]?.state, 'failed');
-	assert.match(
-		view?.steps[0]?.detail ?? '',
-		/sudo terminay daemon upgrade --system/u,
-	);
+	assert.match(view?.steps[0]?.detail ?? '', /sudo terminay daemon upgrade --system/u);
 });
 
 test('a late reply for an attempt that has ended changes nothing', async () => {

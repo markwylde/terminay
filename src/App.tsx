@@ -1,4 +1,5 @@
 import type { FileViewerClient } from '@terminay/client-core';
+import { FEATURE_CAPABILITIES, type JsonValue } from '@terminay/protocol';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
@@ -10,7 +11,6 @@ import {
 	TerminayGitClient,
 	WORKFLOWS_CAPABILITY,
 } from '@terminay/client-core';
-import { FEATURE_CAPABILITIES, type JsonValue } from '@terminay/protocol';
 import type { DockviewApi, IDockviewPanel } from 'dockview-react';
 import { DockviewReact } from 'dockview-react';
 import {
@@ -29,25 +29,26 @@ import {
 	ListChecks,
 	Loader2,
 	Mic,
-	PanelBottom,
 	Play,
 	Plug,
+	PanelBottom,
 	Radio,
 	RefreshCw,
+	Trash2,
 	Settings,
 	Sidebar,
 	Sparkles,
 	Terminal,
-	Trash2,
 	Workflow,
 } from 'lucide-react';
+import { useIsDesktopHost } from './host/useIsDesktopHost';
 import {
 	CSSProperties,
 	type FormEvent,
 	forwardRef,
+	memo,
 	type MouseEvent,
 	type MutableRefObject,
-	memo,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	useCallback,
@@ -60,6 +61,58 @@ import {
 	useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import {
+	FocusedFileSummary,
+	FocusedTerminalSummary,
+	useFocusedFileStatus,
+	useFocusedTerminalStatus,
+	WorkspaceStatusBar,
+} from './workspace/WorkspaceStatusBar';
+import { PixelCompanion } from './pixel/Pixel';
+import { usePixelServer } from './pixel/usePixelServer';
+import { hostStatsItems } from './workspace/hostStatsModel';
+import { useHostStats } from './workspace/useHostStats';
+import type { TerminalLauncherView } from './types/terminalLaunchers';
+import type {
+	FolderMenuActionId,
+	FolderMenuEntry,
+} from './workspace/folderMenuModel';
+import { useServerTerminalLaunchers } from './workspace/useServerTerminalLaunchers';
+import {
+	ForgeHomeSection,
+
+	useForgeClaims,
+	useForgeHomeAvailability,
+	useForgeSources,
+	useProjectGitTab,
+} from './forge/ForgeHome';
+import { openInWorktree as openForgeWorktree } from './forge/forgeActions';
+import type { ForgeEnvironment, ForgeWorktreePlan } from './forge/ForgeViews';
+import {
+	FORGE_ITEM_PANEL_COMPONENT,
+	FORGE_ITEM_TAB_COMPONENT,
+	ForgeItemPanel,
+	type ForgeItemPanelParams,
+	ForgeItemTab,
+	ForgeItemView,
+	ForgeTabContext,
+	type ForgeTabContextValue,
+} from './forge/ForgeItemTab';
+import {
+	type ForgeClaimView,
+	type ForgeHomeFocus,
+	type ForgeItemTarget,
+	forgeItemPlaceholderTitle,
+	itemKey as forgeItemKey,
+	readForgeItemTarget,
+} from './forge/forgeModel';
+import { useForgeClient } from './forge/useForge';
+import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
+import {
+	createGitListingMemory,
+	type GitListingMemory,
+} from './workspace/gitListingMemory';
+import { publishStatusBarVisibility } from './shared/statusBarVisibility';
 import {
 	aggregateAgentStatusForTerminal,
 	EMPTY_AGENT_STATUS_SNAPSHOT,
@@ -75,7 +128,6 @@ import {
 	AgentsSidebar,
 	type AgentsSidebarItem,
 } from './components/AgentsSidebar';
-import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { DocumentationTree } from './components/DocumentationTree';
 import { ErrorBanner } from './components/ErrorBanner';
@@ -96,22 +148,22 @@ import {
 	EmptyFolderPlaceholder,
 } from './components/folders/EmptyFolderPlaceholder';
 import { FoldersColumn } from './components/folders/FoldersColumn';
-import { ChangesPane } from './components/git-panel/ChangesPane';
 import { WorktreeSignInDialog } from './components/git-panel/WorktreeSignInDialog';
+import { ChangesPane } from './components/git-panel/ChangesPane';
+import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { McpInstallModal } from './components/McpInstallModal';
-import { useFilePathDrop } from './components/macros/useFilePathDrop';
 import {
 	SIDEBAR_GROUP_TABS,
 	SidebarGroupTabs,
 } from './components/sidebar/SidebarGroupTabs';
 import {
-	SidebarPanelStack,
-	type SidebarPanelStackItem,
-} from './components/sidebar/SidebarPanelStack';
-import {
 	applySidebarGroupReorder,
 	panelsInSidebarGroup,
 } from './components/sidebar/sidebarGroups';
+import {
+	SidebarPanelStack,
+	type SidebarPanelStackItem,
+} from './components/sidebar/SidebarPanelStack';
 import {
 	TERMINAL_PANEL_EXIT_EVENT,
 	TERMINAL_PANEL_INPUT_EVENT,
@@ -132,34 +184,6 @@ import {
 	terminalSwitcherLabels,
 } from './components/terminalSwitcherInteraction';
 import {
-	ForgeHomeSection,
-	useForgeClaims,
-	useForgeHomeAvailability,
-	useForgeSources,
-	useProjectGitTab,
-} from './forge/ForgeHome';
-import {
-	FORGE_ITEM_PANEL_COMPONENT,
-	FORGE_ITEM_TAB_COMPONENT,
-	ForgeItemPanel,
-	type ForgeItemPanelParams,
-	ForgeItemTab,
-	ForgeItemView,
-	ForgeTabContext,
-	type ForgeTabContextValue,
-} from './forge/ForgeItemTab';
-import type { ForgeEnvironment, ForgeWorktreePlan } from './forge/ForgeViews';
-import { openInWorktree as openForgeWorktree } from './forge/forgeActions';
-import {
-	type ForgeClaimView,
-	type ForgeHomeFocus,
-	type ForgeItemTarget,
-	itemKey as forgeItemKey,
-	forgeItemPlaceholderTitle,
-	readForgeItemTarget,
-} from './forge/forgeModel';
-import { useForgeClient } from './forge/useForge';
-import {
 	createServerMacroSettingsClient,
 	useMacroSettings,
 } from './hooks/useMacroSettings';
@@ -179,7 +203,6 @@ import {
 	subscribeAppUpdateStatusChanged,
 	subscribeWindowFullScreenState,
 } from './host/nativeEvents';
-import { useIsDesktopHost } from './host/useIsDesktopHost';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -187,8 +210,6 @@ import {
 } from './keyboardShortcuts';
 import { tryRenderMacroTemplate } from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
-import { PixelCompanion } from './pixel/Pixel';
-import { usePixelServer } from './pixel/usePixelServer';
 import {
 	createServerMcpInstallClient,
 	createServerRemoteAccessClients,
@@ -198,29 +219,19 @@ import {
 	createAuxiliaryRouteController,
 } from './shared/auxiliaryRoutes';
 import {
-	useConnections,
-	useServerConnection,
-} from './shared/connections/ConnectionsContext';
-import {
-	type CompositionTabHandle,
-	compositionTabKey,
-	insertCompositionTabBefore,
-	parseCompositionTabKey,
-} from './shared/connections/composition';
-import { isConnectionReconnecting } from './shared/connections/connectionRegistry';
-import {
 	clearSucceededFeatureFailure,
 	clearTransportFeatureFailure,
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	featureProjectRoot,
+	resolveFeatureProjectRoot,
+	rootScopedFeatureAuthority,
 	isCancelledFeatureFailure,
 	isOptionalObservationFailure,
 	isTransportFeatureFailure,
-	resolveFeatureProjectRoot,
 	resolveProjectFeatureAuthority,
-	rootScopedFeatureAuthority,
 } from './shared/featureQueryAuthority';
+import { isConnectionReconnecting } from './shared/connections/connectionRegistry';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import { RemotePairingModal } from './shared/RemotePairingModal';
 import {
@@ -235,14 +246,16 @@ import {
 	type ServerWorkspaceFolder,
 	type ServerWorkspacePanel,
 } from './shared/serverWorkspaceReconciliation';
-import { publishStatusBarVisibility } from './shared/statusBarVisibility';
 import {
 	TerminalTitleStoreContext,
 	useWorkspaceProjectSlice,
 	useWorkspaceSelection,
 } from './shared/useWorkspaceProjection';
-import { WorkspaceSplitLayout } from './shared/WorkspaceSplitLayout';
 import { sameJsonValue } from './shared/workspaceProjection';
+import { changedTerminalAppearance } from './workspace/unchangedPresentation';
+import {
+	WorkspaceSplitLayout,
+} from './shared/WorkspaceSplitLayout';
 import {
 	type TerminalActivityEvaluation,
 	TerminalActivityStore,
@@ -258,14 +271,13 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
+import { useFilePathDrop } from './components/macros/useFilePathDrop';
 import type {
 	FoldersColumnTabId,
-	HomeDashboardSettings,
 	SidebarGroupId,
 	SidebarPanelId,
 	SidebarSettings,
 } from './types/settings';
-import type { TerminalLauncherView } from './types/terminalLaunchers';
 import type {
 	AiTabMetadataTarget,
 	AppCommand,
@@ -276,50 +288,18 @@ import type {
 	TerminalRecordingState,
 	WorktreePanelStatus,
 } from './types/terminay';
+import {
+	confirmTerminalClose,
+	observeTerminalClosePreflight,
+} from './workspace/closeProtection';
+import { FileExplorerTree } from './workspace/FileExplorerTree';
+import { requestFrameOrTimeout } from './workspace/frameOrTimeout';
+import {
+	createTerminalNoteSync,
+	decideTerminalNoteReconcile,
+	type TerminalNoteSync,
+} from './workspace/terminalNoteSync';
 import { ApplicationMenuButton } from './workspace/ApplicationMenuButton';
-import {
-	type ActivityCountBadge,
-	formatActivityCount,
-	summarizeActivityBadge,
-} from './workspace/activityCountBadge';
-import {
-	APP_WINDOW_LAYOUT_EVENT,
-	AppWindowHost,
-} from './workspace/appWindows/AppWindowHost';
-import {
-	AppWindowsContext,
-	useServerAppWindows,
-} from './workspace/appWindows/useServerAppWindows';
-import type {
-	AutomationsData,
-	AutomationsSectionServer,
-} from './workspace/automations/AutomationPanels';
-import {
-	overviewOutcome as automationOverviewOutcome,
-	describeTrigger as describeAutomationTrigger,
-	nextRunAt as nextAutomationRunAt,
-	selectAutomationServer,
-} from './workspace/automations/automationsModel';
-import { MissedRunsNotice } from './workspace/automations/MissedRunsNotice';
-import {
-	type AutomationConnectionEntry,
-	useServerAutomations,
-} from './workspace/automations/useServerAutomations';
-import { BotsSection } from './workspace/bots/BotsSection';
-import { BotsSidebarList, BotTabIcon } from './workspace/bots/BotsSidebarList';
-import { BotTab } from './workspace/bots/BotTab';
-import { requestNewBot } from './workspace/bots/botFocus';
-import { botEntries, useServerBots } from './workspace/bots/useServerBots';
-import {
-	CommandBarDialog,
-	type CommandBarItem,
-	commandBarPlaceItems,
-	filterCommandBarItems,
-	macroCommandGroup,
-	orderMacrosByCategory,
-	useCommandBarNavigation,
-	ViewCommandBar,
-} from './workspace/CommandBar';
 import {
 	CompactChromeRow,
 	type CompactTitle,
@@ -329,35 +309,40 @@ import {
 	CompactSwitcher,
 } from './workspace/CompactSwitcher';
 import { serverRows } from './workspace/ConnectionsControl';
-import {
-	confirmTerminalClose,
-	observeTerminalClosePreflight,
-} from './workspace/closeProtection';
 import type {
 	CompactSwitcherFolderGroup,
 	CompactSwitcherPanelRow,
 	CompactSwitcherProjectGroup,
 } from './workspace/compactSwitcherModel';
 import { buildCompactSwitcherGroups } from './workspace/compactSwitcherModel';
-import { buildCrossServerDashboardGroups } from './workspace/crossServerRows';
-import { shouldAutoExpandDocumentationPane } from './workspace/documentationAutoExpand';
-import { FileExplorerTree } from './workspace/FileExplorerTree';
+import type { HomeFrontTab } from './workspace/HomeWorkspace';
+import { ProjectTabList } from './workspace/ProjectTabList';
 import {
-	type FolderTerminalCapture,
-	type FrontPanelHistory,
-	recordFrontPanel,
-	wasLookingAt,
-} from './workspace/folderCapture';
-import type {
-	FolderMenuActionId,
-	FolderMenuEntry,
-} from './workspace/folderMenuModel';
+	createProjectAcrossReconnects,
+	isConnectionLoss,
+	type ResynchronisedProject,
+} from './workspace/projectCreationRecovery';
+import { newProjectCreateRequest } from './workspace/projectCreationRequest';
+import { projectAwaitsStartChoice } from './workspace/projectStart';
+import { ProjectStartChooser } from './workspace/ProjectStartChooser';
+import { NoRootFolderState } from './workspace/NoRootFolderState';
+import { RootFolderBrowser } from './workspace/RootFolderBrowser';
+import { useCompactChrome } from './workspace/useCompactChrome';
+import {
+	createProjectTab,
+	isProjectFoldersTreeOpenOnDevice,
+	type ProjectTab,
+	collapsedFoldersAfterToggle,
+	projectCollapsedFoldersOnDevice,
+	projectFoldersColumnTabOnDevice,
+	projectSidebarVisibilityKey,
+	withProjectCollapsedFolders,
+	withProjectFoldersColumnTab,
+	withProjectFoldersTreeVisibility,
+	withProjectSidebarActiveGroup,
+	withProjectSidebarVisibility,
+} from './workspace/projectTabModel';
 import { generalFolderIdOf } from './workspace/folderTreeModel';
-import {
-	activePanelIdFromInventory,
-	buildProjectFolderTree,
-	folderNameFromStatus,
-} from './workspace/folderTreeSources';
 import {
 	activeSessionMemoryKey,
 	commandFolderId,
@@ -371,77 +356,60 @@ import {
 	projectHoldsNoPanels,
 	withFolderInventory,
 } from './workspace/folderWorkspaces';
+import {
+	activePanelIdFromInventory,
+	buildProjectFolderTree,
+	folderNameFromStatus,
+} from './workspace/folderTreeSources';
+import {
+	type FolderTerminalCapture,
+	type FrontPanelHistory,
+	recordFrontPanel,
+	wasLookingAt,
+} from './workspace/folderCapture';
 import { folderChanges, isGitProject } from './workspace/folderWorktree';
-import { requestFrameOrTimeout } from './workspace/frameOrTimeout';
-import {
-	createGitListingMemory,
-	type GitListingMemory,
-} from './workspace/gitListingMemory';
-import {
-	HomeOverview,
-	type HomeOverviewAutomationTarget,
-	type HomeWidgetActions,
-} from './workspace/HomeOverview';
-import type { HomeFrontTab } from './workspace/HomeWorkspace';
-import {
-	type HomeComposedSection,
-	HomeWorkspace,
-	type HomeWorkspaceHandle,
-} from './workspace/HomeWorkspace';
-import { buildHomeOverview } from './workspace/homeOverviewModel';
-import {
-	type HomeSearchAutomation,
-	type HomeSearchResult,
-	searchHome,
-} from './workspace/homeSearchModel';
-import { HOME_SECTIONS, type HomeSection } from './workspace/homeSection.ts';
-import { hostStatsItems } from './workspace/hostStatsModel';
-import {
-	COMPACT_SHELL_LAUNCHER,
-	recallCompactLauncher,
-	recallHomeSidebarVisible,
-	recallSelectedFolder,
-	rememberCompactLauncher,
-	rememberHomeSidebarVisible,
-	rememberSelectedFolder,
-} from './workspace/localViewState';
-import {
-	McpApprovalsContext,
-	useServerMcpApprovals,
-} from './workspace/mcpApprovals/useServerMcpApprovals';
-import { NoRootFolderState } from './workspace/NoRootFolderState';
-import { ProjectStartChooser } from './workspace/ProjectStartChooser';
-import { ProjectTabList } from './workspace/ProjectTabList';
 import { ProjectTabPeek } from './workspace/ProjectTabPeek';
+import { openTerminalTabMenuOnceDrawn } from './workspace/terminalTabMenu';
+import { useFolderCaptureEvents } from './workspace/useFolderCaptureEvents';
+import { useFolderMenuController } from './workspace/useFolderMenuController';
 import {
-	createProjectAcrossReconnects,
-	isConnectionLoss,
-	type ResynchronisedProject,
-} from './workspace/projectCreationRecovery';
-import { newProjectCreateRequest } from './workspace/projectCreationRequest';
-import { projectAwaitsStartChoice } from './workspace/projectStart';
-import {
-	type ComposedProjectTab,
 	composeProjectTabs,
+	type ComposedProjectTab,
 	panelMoveTargets,
 	projectTabAcceptsTerminalDrop,
 	projectTabSourceFor,
 	shouldNameServers,
 } from './workspace/projectTabComposition';
+import { useConnectionProjectTabs } from './workspace/useConnectionProjectTabs';
 import {
-	collapsedFoldersAfterToggle,
-	createProjectTab,
-	isProjectFoldersTreeOpenOnDevice,
-	type ProjectTab,
-	projectCollapsedFoldersOnDevice,
-	projectFoldersColumnTabOnDevice,
-	projectSidebarVisibilityKey,
-	withProjectCollapsedFolders,
-	withProjectFoldersColumnTab,
-	withProjectFoldersTreeVisibility,
-	withProjectSidebarActiveGroup,
-	withProjectSidebarVisibility,
-} from './workspace/projectTabModel';
+	agentBadgesForOtherServers,
+	useConnectionAgentSnapshots,
+} from './workspace/useConnectionAgentSnapshots';
+import {
+	useConnections,
+	useServerConnection,
+} from './shared/connections/ConnectionsContext';
+import {
+	type CompositionTabHandle,
+	compositionTabKey,
+	insertCompositionTabBefore,
+	parseCompositionTabKey,
+} from './shared/connections/composition';
+import {
+	type ConnectionSwitcherEntry,
+	RemoteAccessConnectionMenu,
+} from './workspace/RemoteAccessConnectionMenu';
+import {
+	type ActivityCountBadge,
+	formatActivityCount,
+	summarizeActivityBadge,
+} from './workspace/activityCountBadge';
+import {
+	buildTerminalActivityOverview,
+	CompactNotifications,
+	TerminalActivityOverview,
+	type TerminalActivityOverviewItem,
+} from './workspace/TerminalActivityOverview';
 import {
 	botUnreadCounts,
 	botUnreadLabel,
@@ -453,89 +421,11 @@ import {
 	findNotificationTargetPanel,
 	readSessionNotificationsHost,
 } from './workspace/pushHost';
-import {
-	type ConnectionSwitcherEntry,
-	RemoteAccessConnectionMenu,
-} from './workspace/RemoteAccessConnectionMenu';
-import { RootFolderBrowser } from './workspace/RootFolderBrowser';
+import { usePublishedNotifications } from './workspace/usePublishedNotifications';
 import { ServerUpgradeDialog } from './workspace/ServerUpgradeDialog';
 import { ServerUpgradeMenuRows } from './workspace/ServerUpgradeMenuRows';
 import { withServerUpgradeNotifications } from './workspace/serverUpgradeNotifications';
-import {
-	buildTerminalActivityOverview,
-	CompactNotifications,
-	TerminalActivityOverview,
-	type TerminalActivityOverviewItem,
-} from './workspace/TerminalActivityOverview';
-import {
-	activateTerminalPanel,
-	findTerminalFocusTarget,
-	findTerminalPanel,
-	getActiveTerminalSessionId,
-	saveActiveDockviewPanel,
-} from './workspace/terminalDockviewCommands';
-import {
-	createTerminalNoteSync,
-	decideTerminalNoteReconcile,
-	type TerminalNoteSync,
-} from './workspace/terminalNoteSync';
-import { openTerminalTabMenuOnceDrawn } from './workspace/terminalTabMenu';
-import {
-	terminalTitleDraft,
-	terminalTitleSubmission,
-} from './workspace/terminalTitleEdit';
-import {
-	exportProjectPresentationsForMove,
-	exportTerminalPresentationForMove,
-	type MovedProject,
-	type MovedTerminalTab,
-} from './workspace/terminalTransferOrchestration';
-import { changedTerminalAppearance } from './workspace/unchangedPresentation';
-import { useCompactChrome } from './workspace/useCompactChrome';
-import {
-	agentBadgesForOtherServers,
-	useConnectionAgentSnapshots,
-} from './workspace/useConnectionAgentSnapshots';
-import { useConnectionProjectTabs } from './workspace/useConnectionProjectTabs';
-import { useDictationController } from './workspace/useDictationController';
-import { useDockviewPanelLifecycle } from './workspace/useDockviewPanelLifecycle';
-import { useDocumentationController } from './workspace/useDocumentationController';
-import { useFileExplorerController } from './workspace/useFileExplorerController';
-import { useFolderCaptureEvents } from './workspace/useFolderCaptureEvents';
-import { useFolderMenuController } from './workspace/useFolderMenuController';
-import {
-	type GitPushMenuTarget,
-	useGitPushMenuController,
-} from './workspace/useGitPushMenuController';
-import {
-	useHomeDashboardLayout,
-	useHomeRecordings,
-} from './workspace/useHomeOverviewState';
-import { useHostStats } from './workspace/useHostStats';
-import { useMacroLauncherController } from './workspace/useMacroLauncherController';
-import { useMacroRunController } from './workspace/useMacroRunController';
-import { useProjectCollection } from './workspace/useProjectCollection';
-import { usePublishedNotifications } from './workspace/usePublishedNotifications';
-import { useServerTerminalLaunchers } from './workspace/useServerTerminalLaunchers';
 import { useServerUpgrades } from './workspace/useServerUpgrades';
-import { WorkspaceDashboard } from './workspace/WorkspaceDashboard';
-import {
-	FocusedFileSummary,
-	FocusedTerminalSummary,
-	useFocusedFileStatus,
-	useFocusedTerminalStatus,
-	WorkspaceStatusBar,
-} from './workspace/WorkspaceStatusBar';
-import { useWorkflowCommands } from './workspace/workflows/commandBarWorkflows';
-import {
-	useServerWorkflows,
-	WorkflowsContext,
-} from './workspace/workflows/useServerWorkflows';
-import { WorkflowsHome } from './workspace/workflows/WorkflowsHome';
-import {
-	buildWorkflowRows,
-	needsYouCount,
-} from './workspace/workflows/workflowsHomeModel';
 import {
 	areTerminalActivityIndicatorsEnabled,
 	buildProjectInventoryEntries,
@@ -548,12 +438,130 @@ import {
 	type WorkspaceInventoryWorktreeFacts,
 	worktreeFactsFromProperties,
 } from './workspace/workspaceInventory';
-import { remoteIndicatorState } from './workspace/workspaceStatusBarModel';
+import {
+	activateTerminalPanel,
+	findTerminalFocusTarget,
+	findTerminalPanel,
+	getActiveTerminalSessionId,
+	saveActiveDockviewPanel,
+} from './workspace/terminalDockviewCommands';
+import {
+	exportProjectPresentationsForMove,
+	exportTerminalPresentationForMove,
+	type MovedProject,
+	type MovedTerminalTab,
+} from './workspace/terminalTransferOrchestration';
+import {
+	terminalTitleDraft,
+	terminalTitleSubmission,
+} from './workspace/terminalTitleEdit';
+import { useDictationController } from './workspace/useDictationController';
+import { useDockviewPanelLifecycle } from './workspace/useDockviewPanelLifecycle';
+import { shouldAutoExpandDocumentationPane } from './workspace/documentationAutoExpand';
+import { useDocumentationController } from './workspace/useDocumentationController';
+import { useFileExplorerController } from './workspace/useFileExplorerController';
+import {
+	type GitPushMenuTarget,
+	useGitPushMenuController,
+} from './workspace/useGitPushMenuController';
+import { useMacroLauncherController } from './workspace/useMacroLauncherController';
+import { useMacroRunController } from './workspace/useMacroRunController';
+import { useProjectCollection } from './workspace/useProjectCollection';
+import { WorkspaceDashboard } from './workspace/WorkspaceDashboard';
+import type {
+	AutomationsData,
+	AutomationsSectionServer,
+} from './workspace/automations/AutomationPanels';
+import {
+	describeTrigger as describeAutomationTrigger,
+	nextRunAt as nextAutomationRunAt,
+	overviewOutcome as automationOverviewOutcome,
+	selectAutomationServer,
+} from './workspace/automations/automationsModel';
+import { MissedRunsNotice } from './workspace/automations/MissedRunsNotice';
+import {
+	McpApprovalsContext,
+	useServerMcpApprovals,
+} from './workspace/mcpApprovals/useServerMcpApprovals';
+import {
+	APP_WINDOW_LAYOUT_EVENT,
+	AppWindowHost,
+} from './workspace/appWindows/AppWindowHost';
+import {
+	AppWindowsContext,
+	useServerAppWindows,
+} from './workspace/appWindows/useServerAppWindows';
+import { useWorkflowCommands } from './workspace/workflows/commandBarWorkflows';
+import {
+	useServerWorkflows,
+	WorkflowsContext,
+} from './workspace/workflows/useServerWorkflows';
+import { WorkflowsHome } from './workspace/workflows/WorkflowsHome';
+import {
+	buildWorkflowRows,
+	needsYouCount,
+} from './workspace/workflows/workflowsHomeModel';
+import {
+	type AutomationConnectionEntry,
+	useServerAutomations,
+} from './workspace/automations/useServerAutomations';
+import { BotTab } from './workspace/bots/BotTab';
+import { BotsSection } from './workspace/bots/BotsSection';
+import { BotTabIcon, BotsSidebarList } from './workspace/bots/BotsSidebarList';
+import { requestNewBot } from './workspace/bots/botFocus';
+import { botEntries, useServerBots } from './workspace/bots/useServerBots';
+import {
+	HomeOverview,
+	type HomeOverviewAutomationTarget,
+	type HomeWidgetActions,
+} from './workspace/HomeOverview';
+import {
+	useHomeDashboardLayout,
+	useHomeRecordings,
+} from './workspace/useHomeOverviewState';
+import type { HomeDashboardSettings } from './types/settings';
+import {
+	type HomeComposedSection,
+	HomeWorkspace,
+	type HomeWorkspaceHandle,
+} from './workspace/HomeWorkspace';
+import { HOME_SECTIONS, type HomeSection } from './workspace/homeSection.ts';
+import {
+	type CommandBarItem,
+	CommandBarDialog,
+	commandBarPlaceItems,
+	filterCommandBarItems,
+	macroCommandGroup,
+	orderMacrosByCategory,
+	useCommandBarNavigation,
+	ViewCommandBar,
+} from './workspace/CommandBar';
+import { buildCrossServerDashboardGroups } from './workspace/crossServerRows';
+import {
+	type HomeSearchAutomation,
+	type HomeSearchResult,
+	searchHome,
+} from './workspace/homeSearchModel';
+import { buildHomeOverview } from './workspace/homeOverviewModel';
+import {
+	COMPACT_SHELL_LAUNCHER,
+	recallCompactLauncher,
+	recallHomeSidebarVisible,
+	recallSelectedFolder,
+	rememberCompactLauncher,
+	rememberHomeSidebarVisible,
+	rememberSelectedFolder,
+} from './workspace/localViewState';
 
 /** A project on another server has no collapse this device knows of. */
 const NO_COLLAPSED_FOLDERS: ReadonlySet<string> = new Set();
-
-import type { DashboardServerSource } from './workspace/crossServerRows';
+import {
+	useWorkspaceViewController,
+	type WorkspaceViewWindow,
+} from './workspace/useWorkspaceViewController';
+import { pathInsideRoot } from './workspace/workspaceView';
+import { elsewhereTerminals } from './workspace/elsewhereTerminals';
+import { useRememberedColumnWidth } from './workspace/useRememberedColumnWidth';
 import {
 	type DashboardActivation,
 	type DashboardAgent,
@@ -561,13 +569,12 @@ import {
 	resolveAgentActivation,
 	resolveDashboardActivation,
 } from './workspace/dashboardRows';
-import { elsewhereTerminals } from './workspace/elsewhereTerminals';
-import { shouldAcknowledgeInteractedActivity } from './workspace/terminalActivityAcknowledgement';
+import type { DashboardServerSource } from './workspace/crossServerRows';
 import { useProjectEditor } from './workspace/useProjectEditor';
 import { useProjectTabTransfer } from './workspace/useProjectTabTransfer';
 import { useProjectTerminalCwd } from './workspace/useProjectTerminalCwd';
-import { useRememberedColumnWidth } from './workspace/useRememberedColumnWidth';
 import { useRemoteAccessController } from './workspace/useRemoteAccessController';
+import { shouldAcknowledgeInteractedActivity } from './workspace/terminalActivityAcknowledgement';
 import { useTerminalActivityController } from './workspace/useTerminalActivityController';
 import { useTerminalAdoptionController } from './workspace/useTerminalAdoptionController';
 import {
@@ -580,11 +587,6 @@ import {
 } from './workspace/useTerminalDockviewWindowController';
 import { useTerminalRecordingController } from './workspace/useTerminalRecordingController';
 import { useTerminalSwitcherController } from './workspace/useTerminalSwitcherController';
-import {
-	useWorkspaceViewController,
-	type WorkspaceViewWindow,
-} from './workspace/useWorkspaceViewController';
-import { pathInsideRoot } from './workspace/workspaceView';
 import './App.css';
 import { recordBootstrapDiagnostic } from './shared/rendererDiagnostics';
 
@@ -1618,1187 +1620,710 @@ const NO_MACRO_RUNS: readonly never[] = Object.freeze([]);
  * does not render it (ADR-0059). What it reads of the projection it
  * subscribes to itself, by project.
  */
-const ProjectWorkspace = memo(
-	forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProps>(
-		(
-			{
-				acceptsFolderTerminalDrop,
-				agentStatusSnapshot,
-				auxiliaryRoutes,
-				folder,
-				foldersColumnTab,
-				collapsedFolderIds,
-				gitListingMemory,
-				onToggleFolderCollapsed,
-				compactAgentsHost,
-				onCompactAgentActivated,
-				foldersTreeWidth,
-				isActive,
-				isCompactChrome = false,
-				isFoldersTreeOpen,
-				isMac,
-				macros,
-				macroCategories,
-				onActivateFolderPanel,
-				onAddProject,
-				onAnswerFolderOffer,
-				onCloseFolderPanel,
-				onDropTerminalOnFolder,
-				onNewTerminalInFolder,
-				terminalLaunchers,
-				forge,
-				onLaunchTerminalInFolder,
-				onOpenShellInFolder,
-				onEditProject,
-				onFoldersColumnTabChange,
-				onFoldersTreeWidthCommit,
-				onSidebarWidthCommit,
-				onSelectFolder,
-				onMoveTerminalToFolder,
-				onMoveTerminalToProject,
-				onPopoutProject,
-				onTerminalTabDrag,
-				onShowDashboard,
-				onShowRecordings,
-				onShowWorkflows,
-				onCloseActiveWithNoPanel,
-				searchPlaces,
-				sidebarWidth,
-				onToggleStatusBar,
-				isStatusBarVisible,
-				statusBarSlot,
-				onWorkspaceInventoryChange,
-				onWorktreeStatusChange,
-				onCommitProjectSidebar,
-				onUpdateProject,
-				popoutUrl,
-				project,
-				projectInventory,
-				projects,
-				sharedTerminalContextReaders,
+const ProjectWorkspace = memo(forwardRef<
+	ProjectWorkspaceHandle,
+	ProjectWorkspaceProps
+>(
+	(
+		{
+			acceptsFolderTerminalDrop,
+			agentStatusSnapshot,
+			auxiliaryRoutes,
+			folder,
+			foldersColumnTab,
+			collapsedFolderIds,
+			gitListingMemory,
+			onToggleFolderCollapsed,
+			compactAgentsHost,
+			onCompactAgentActivated,
+			foldersTreeWidth,
+			isActive,
+			isCompactChrome = false,
+			isFoldersTreeOpen,
+			isMac,
+			macros,
+			macroCategories,
+			onActivateFolderPanel,
+			onAddProject,
+			onAnswerFolderOffer,
+			onCloseFolderPanel,
+			onDropTerminalOnFolder,
+			onNewTerminalInFolder,
+			terminalLaunchers,
+			forge,
+			onLaunchTerminalInFolder,
+			onOpenShellInFolder,
+			onEditProject,
+			onFoldersColumnTabChange,
+			onFoldersTreeWidthCommit,
+			onSidebarWidthCommit,
+			onSelectFolder,
+			onMoveTerminalToFolder,
+			onMoveTerminalToProject,
+			onPopoutProject,
+			onTerminalTabDrag,
+			onShowDashboard,
+			onShowRecordings,
+			onShowWorkflows,
+			onCloseActiveWithNoPanel,
+			searchPlaces,
+			sidebarWidth,
+			onToggleStatusBar,
+			isStatusBarVisible,
+			statusBarSlot,
+			onWorkspaceInventoryChange,
+			onWorktreeStatusChange,
+			onCommitProjectSidebar,
+			onUpdateProject,
+			popoutUrl,
+			project,
+			projectInventory,
+			projects,
+			sharedTerminalContextReaders,
+			terminalClientContext,
+		},
+		ref,
+	) => {
+		// One count per workspace: a project's folders render together, and
+		// sharing a key would read that as one workspace rendering in a loop.
+		recordBoundedRendererRender(
+			`project-workspace:${project.id}:${folder.id}`,
+			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
+		);
+		// Rendered again when this project, one of its folders, or one of its
+		// panels changes in the projection, and not for any other project's.
+		// The projection itself is then read whole: everything below that takes
+		// it looks only at this project's part.
+		useWorkspaceProjectSlice(
+			terminalClientContext?.workspaceSnapshotStore,
+			project.id,
+		);
+		const workspaceSnapshot =
+			terminalClientContext?.workspaceSnapshotStore?.snapshot ?? null;
+		// The folder as the server knows it. A project no projection describes
+		// yet is shown through a stand-in, which is never named to the server.
+		const projectedFolderId =
+			workspaceSnapshot?.folders[folder.id]?.projectId === project.id
+				? folder.id
+				: undefined;
+		// Only a linked folder has a root of its own. The server resolves it
+		// from the folder id; the path here is for showing and for making the
+		// paths this workspace sends relative to it.
+		const linkedFolderId =
+			projectedFolderId !== undefined &&
+			folder.kind === 'linked' &&
+			folder.worktree !== undefined
+				? projectedFolderId
+				: undefined;
+		const linkedFolderRoot =
+			linkedFolderId === undefined ? undefined : folder.worktree?.path;
+		/** What this workspace's file and folder panels are rooted at. */
+		const folderRootPath = linkedFolderRoot ?? project.rootFolder;
+		// The authority is made of the connection and of what the projection
+		// holds for this project: that it is loaded, whose project it is, and
+		// its root. It is derived again when one of those changes and not when
+		// the workspace revision does: the explorer, its watches, and Git are
+		// keyed on it, and a revision that changed none of them is no reason to
+		// load any of them again (ADR-0059).
+		const projectionStore = terminalClientContext?.workspaceSnapshotStore;
+		const isProjectionLoaded = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot !== null,
+		);
+		const projectedServerId = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.serverId,
+		);
+		const projectedRoot = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.root,
+		);
+		const projectedRootOrigin = useWorkspaceSelection(
+			projectionStore,
+			(snapshot) => snapshot?.projects[project.id]?.rootOrigin,
+		);
+		const featureAvailability = useMemo(
+			() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
+			[
+				project.id,
 				terminalClientContext,
-			},
-			ref,
-		) => {
-			// One count per workspace: a project's folders render together, and
-			// sharing a key would read that as one workspace rendering in a loop.
-			recordBoundedRendererRender(
-				`project-workspace:${project.id}:${folder.id}`,
-				`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
-			);
-			// Rendered again when this project, one of its folders, or one of its
-			// panels changes in the projection, and not for any other project's.
-			// The projection itself is then read whole: everything below that takes
-			// it looks only at this project's part.
-			useWorkspaceProjectSlice(
-				terminalClientContext?.workspaceSnapshotStore,
-				project.id,
-			);
-			const workspaceSnapshot =
-				terminalClientContext?.workspaceSnapshotStore?.snapshot ?? null;
-			// The folder as the server knows it. A project no projection describes
-			// yet is shown through a stand-in, which is never named to the server.
-			const projectedFolderId =
-				workspaceSnapshot?.folders[folder.id]?.projectId === project.id
-					? folder.id
-					: undefined;
-			// Only a linked folder has a root of its own. The server resolves it
-			// from the folder id; the path here is for showing and for making the
-			// paths this workspace sends relative to it.
-			const linkedFolderId =
-				projectedFolderId !== undefined &&
-				folder.kind === 'linked' &&
-				folder.worktree !== undefined
-					? projectedFolderId
-					: undefined;
-			const linkedFolderRoot =
-				linkedFolderId === undefined ? undefined : folder.worktree?.path;
-			/** What this workspace's file and folder panels are rooted at. */
-			const folderRootPath = linkedFolderRoot ?? project.rootFolder;
-			// The authority is made of the connection and of what the projection
-			// holds for this project: that it is loaded, whose project it is, and
-			// its root. It is derived again when one of those changes and not when
-			// the workspace revision does: the explorer, its watches, and Git are
-			// keyed on it, and a revision that changed none of them is no reason to
-			// load any of them again (ADR-0059).
-			const projectionStore = terminalClientContext?.workspaceSnapshotStore;
-			const isProjectionLoaded = useWorkspaceSelection(
-				projectionStore,
-				(snapshot) => snapshot !== null,
-			);
-			const projectedServerId = useWorkspaceSelection(
-				projectionStore,
-				(snapshot) => snapshot?.projects[project.id]?.serverId,
-			);
-			const projectedRoot = useWorkspaceSelection(
-				projectionStore,
-				(snapshot) => snapshot?.projects[project.id]?.root,
-			);
-			const projectedRootOrigin = useWorkspaceSelection(
-				projectionStore,
-				(snapshot) => snapshot?.projects[project.id]?.rootOrigin,
-			);
-			const featureAvailability = useMemo(
-				() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
-				[
-					project.id,
-					terminalClientContext,
-					isProjectionLoaded,
-					projectedServerId,
-					projectedRoot,
-					projectedRootOrigin,
-				],
-			);
-			const featureAuthority =
-				featureAvailability.state === 'available'
-					? featureAvailability.authority
-					: undefined;
-			// A project with no root folder keeps its terminals, agents, and
-			// recordings; its Explorer, watches, Git, and Documentation get no
-			// client at all, so none of them can ask the server anything.
-			const isNoRootProject =
-				linkedFolderRoot === undefined &&
-				resolveFeatureProjectRoot(featureAvailability, project.rootFolder)
-					.state === 'no-root';
-			const rootScopedAuthority =
-				rootScopedFeatureAuthority(featureAvailability);
-			// Assigned once the Dockview it adds tabs to is in scope below.
-			const openForgeItemRef = useRef<(target: ForgeItemTarget) => void>(
-				() => undefined,
-			);
-			const forgeGitTab = useProjectGitTab({
+				isProjectionLoaded,
+				projectedServerId,
+				projectedRoot,
+				projectedRootOrigin,
+			],
+		);
+		const featureAuthority =
+			featureAvailability.state === 'available'
+				? featureAvailability.authority
+				: undefined;
+		// A project with no root folder keeps its terminals, agents, and
+		// recordings; its Explorer, watches, Git, and Documentation get no
+		// client at all, so none of them can ask the server anything.
+		const isNoRootProject =
+			linkedFolderRoot === undefined &&
+			resolveFeatureProjectRoot(featureAvailability, project.rootFolder)
+				.state === 'no-root';
+		const rootScopedAuthority = rootScopedFeatureAuthority(featureAvailability);
+		// Assigned once the Dockview it adds tabs to is in scope below.
+		const openForgeItemRef = useRef<(target: ForgeItemTarget) => void>(
+			() => undefined,
+		);
+		const forgeGitTab = useProjectGitTab({
+			client: forge?.client,
+			projectId: project.id,
+			claims: forge?.claims ?? NO_FORGE_CLAIMS,
+			visible: isActive && forge !== undefined,
+			...(folder.worktree?.path === undefined
+				? {}
+				: { selectedWorktreePath: folder.worktree.path }),
+			bound: forge?.bound ?? false,
+			environment: forge?.environment ?? NO_FORGE_ENVIRONMENT,
+			openInHome: forge?.openInHome ?? (() => undefined),
+			openInTab: (target) => openForgeItemRef.current(target),
+		});
+		const forgeTabContext = useMemo<ForgeTabContextValue>(
+			() => ({
 				client: forge?.client,
-				projectId: project.id,
-				claims: forge?.claims ?? NO_FORGE_CLAIMS,
-				visible: isActive && forge !== undefined,
-				...(folder.worktree?.path === undefined
-					? {}
-					: { selectedWorktreePath: folder.worktree.path }),
-				bound: forge?.bound ?? false,
 				environment: forge?.environment ?? NO_FORGE_ENVIRONMENT,
-				openInHome: forge?.openInHome ?? (() => undefined),
-				openInTab: (target) => openForgeItemRef.current(target),
-			});
-			const forgeTabContext = useMemo<ForgeTabContextValue>(
-				() => ({
-					client: forge?.client,
-					environment: forge?.environment ?? NO_FORGE_ENVIRONMENT,
-				}),
-				[forge?.client, forge?.environment],
-			);
-			const [isRootFolderBrowserOpen, setIsRootFolderBrowserOpen] =
-				useState(false);
-			const explorerProjectRoot =
-				linkedFolderRoot ??
-				featureProjectRoot(featureAvailability, project.rootFolder);
-			const explorerProject = useMemo(
+			}),
+			[forge?.client, forge?.environment],
+		);
+		const [isRootFolderBrowserOpen, setIsRootFolderBrowserOpen] =
+			useState(false);
+		const explorerProjectRoot =
+			linkedFolderRoot ??
+			featureProjectRoot(featureAvailability, project.rootFolder);
+		const explorerProject = useMemo(
+			() =>
+				explorerProjectRoot === project.rootFolder
+					? project
+					: { ...project, rootFolder: explorerProjectRoot },
+			[explorerProjectRoot, project],
+		);
+		// Everything a file or folder panel of a linked folder reads goes through
+		// clients that name the folder, so it reads that folder's worktree. Any
+		// other folder uses the connection's clients unchanged.
+		const terminalPanelClientContext =
+			useMemo<TerminalPanelClientContextValue | null>(
 				() =>
-					explorerProjectRoot === project.rootFolder
-						? project
-						: { ...project, rootFolder: explorerProjectRoot },
-				[explorerProjectRoot, project],
-			);
-			// Everything a file or folder panel of a linked folder reads goes through
-			// clients that name the folder, so it reads that folder's worktree. Any
-			// other folder uses the connection's clients unchanged.
-			const terminalPanelClientContext =
-				useMemo<TerminalPanelClientContextValue | null>(
-					() =>
-						terminalClientContext === undefined
-							? null
-							: composeProjectTerminalClientContext(
-									linkedFolderId === undefined
-										? terminalClientContext
-										: {
-												...terminalClientContext,
-												...(terminalClientContext.fileViewerClient === undefined
-													? {}
-													: {
-															fileViewerClient:
-																terminalClientContext.fileViewerClient.forFolder(
-																	linkedFolderId,
-																),
-														}),
-												...(terminalClientContext.fileObservationClient ===
-												undefined
-													? {}
-													: {
-															fileObservationClient:
-																terminalClientContext.fileObservationClient.forFolder(
-																	linkedFolderId,
-																),
-														}),
-												// Documentation, MDX, and language intelligence
-												// are still bound to the project root; a file
-												// panel that knows it is in a linked folder
-												// leaves them alone.
-												linkedFolderId,
-											},
-									project.id,
-									folderRootPath,
-								),
-					[folderRootPath, linkedFolderId, project.id, terminalClientContext],
-				);
-			const serverActivityClient = terminalClientContext?.activityClient;
-			// Agent status is a selected-server projection, not a project-scoped
-			// feature. A newly-created terminal can emit journal records before its
-			// project feature snapshot is hydrated, so bind its presentation scope to
-			// the canonical server client directly.
-			const serverAgentStatusClient = terminalClientContext?.agentStatusClient;
-			const serverMacroClient = useMemo(
-				() =>
-					terminalClientContext?.applicationClient === undefined
-						? undefined
-						: new MacroClient(
-								new TerminayClientFacade(
-									terminalClientContext.applicationClient,
-								),
+					terminalClientContext === undefined
+						? null
+						: composeProjectTerminalClientContext(
+								linkedFolderId === undefined
+									? terminalClientContext
+									: {
+											...terminalClientContext,
+											...(terminalClientContext.fileViewerClient === undefined
+												? {}
+												: {
+														fileViewerClient:
+															terminalClientContext.fileViewerClient.forFolder(
+																linkedFolderId,
+															),
+													}),
+											...(terminalClientContext.fileObservationClient ===
+											undefined
+												? {}
+												: {
+														fileObservationClient:
+															terminalClientContext.fileObservationClient.forFolder(
+																linkedFolderId,
+															),
+													}),
+											// Documentation, MDX, and language intelligence
+											// are still bound to the project root; a file
+											// panel that knows it is in a linked folder
+											// leaves them alone.
+											linkedFolderId,
+										},
+								project.id,
+								folderRootPath,
 							),
-				[terminalClientContext?.applicationClient],
+				[folderRootPath, linkedFolderId, project.id, terminalClientContext],
 			);
-			const mcpInstallClient = useMemo(
-				() =>
-					terminalClientContext?.applicationClient === undefined
-						? undefined
-						: createServerMcpInstallClient(
-								terminalClientContext.applicationClient,
-							),
-				[terminalClientContext?.applicationClient],
-			);
-			const getServerTerminalCwd = useProjectTerminalCwd(
-				terminalPanelClientContext,
-			);
-			const serverSettingsClient = useMemo(() => {
-				if (terminalClientContext?.applicationClient === undefined)
-					throw new Error(
-						'The selected server settings client is unavailable.',
-					);
-				return createServerTerminalSettingsClient(
-					new SettingsClient(
-						new TerminayClientFacade(terminalClientContext.applicationClient),
-					),
-				);
-			}, [terminalClientContext?.applicationClient]);
-			const { settings, error: settingsError } =
-				useTerminalSettings(serverSettingsClient);
-			// The macro launcher searches the project, so it keeps the project's
-			// client; the Files pane follows the folder.
-			const projectFileViewerClient = rootScopedAuthority?.fileViewerClient;
-			const serverFileViewerClient = useMemo(
-				() => projectFileViewerClient?.forFolder(linkedFolderId),
-				[linkedFolderId, projectFileViewerClient],
-			);
-			const explorerFileObservationClient = useMemo(
-				() =>
-					rootScopedAuthority?.fileObservationClient?.forFolder(linkedFolderId),
-				[rootScopedAuthority?.fileObservationClient, linkedFolderId],
-			);
-			const activeSidebarGroup = project.sidebarActiveGroup;
-			const isDocumentationGroupVisible =
-				project.isFileExplorerOpen && activeSidebarGroup === 'documentation';
-			// Indexing latches on at the first visit and then belongs to the project:
-			// collapsing the pane or switching sidebar group must not cancel a build.
-			const [isDocumentationIndexingStarted, setDocumentationIndexingStarted] =
-				useState(false);
-			useEffect(() => {
-				if (!isDocumentationGroupVisible) return;
-				setDocumentationIndexingStarted(true);
-				if (
-					!shouldAutoExpandDocumentationPane(
-						project.id,
-						project.isDocumentationPaneCollapsed,
-					)
-				)
-					return;
-				onUpdateProject(project.id, { isDocumentationPaneCollapsed: false });
-			}, [
-				isDocumentationGroupVisible,
-				onUpdateProject,
-				project.id,
-				project.isDocumentationPaneCollapsed,
-			]);
-			const documentation = useDocumentationController({
-				enabled: isDocumentationIndexingStarted && !isNoRootProject,
-				client: rootScopedAuthority?.documentationClient,
-				observationClient: rootScopedAuthority?.fileObservationClient,
-				projectId: project.id,
-				scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder,
-				expandedFolderIds: project.expandedDocumentationFolderIds,
-				onExpandedFolderIdsChange: (expandedDocumentationFolderIds) =>
-					onUpdateProject(project.id, { expandedDocumentationFolderIds }),
-			});
-			const fileViewerClient = useMemo(
-				() =>
-					serverFileViewerClient ??
-					unavailableFileViewerClient(
-						featureAvailability.state === 'unavailable'
-							? featureAvailability.reason
-							: isNoRootProject
-								? 'This project has no root folder.'
-								: 'Explorer is unavailable on the selected server.',
-					),
-				[featureAvailability, isNoRootProject, serverFileViewerClient],
-			);
-			const fileClientPath = useCallback(
-				(path: string) => getPathRelativeToRoot(path, explorerProjectRoot),
-				[explorerProjectRoot],
-			);
-			const fileClientProjectId = project.id;
-			const serverRecordingsClient = featureAuthority?.recordingsClient;
-			const serverAiClient = useMemo(
-				() =>
-					terminalClientContext?.applicationClient === undefined
-						? undefined
-						: new TerminayAiClient(
-								new TerminayClientFacade(
-									terminalClientContext.applicationClient,
-								),
-							),
-				[terminalClientContext?.applicationClient],
-			);
-			const settingsRef = useRef(settings);
-			useEffect(() => {
-				settingsRef.current = settings;
-			}, [settings]);
-			const dockviewApiRef = useRef<DockviewApi | null>(null);
-			const panelSessionMapRef = useRef<Map<string, string>>(new Map());
-			const ownTerminalContextReadersRef = useRef<
-				Map<string, TerminalContextReader>
-			>(new Map());
-			const terminalContextReadersRef =
-				sharedTerminalContextReaders ?? ownTerminalContextReadersRef;
-			const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
-			const workspaceSnapshotStoreRef = useRef(
-				terminalClientContext?.workspaceSnapshotStore,
-			);
-			workspaceSnapshotStoreRef.current =
-				terminalClientContext?.workspaceSnapshotStore;
-			const terminalNoteSyncRef = useRef<TerminalNoteSync | null>(null);
-			if (terminalNoteSyncRef.current === null)
-				terminalNoteSyncRef.current = createTerminalNoteSync({
-					send: async (panelId, note) => {
-						await workspaceSnapshotStoreRef.current?.updatePanel({
-							panelId,
-							patch: { note },
-						});
-					},
-					onError: (error) =>
-						setErrorText(
-							`Unable to save the terminal note: ${error instanceof Error ? error.message : String(error)}`,
+		const serverActivityClient = terminalClientContext?.activityClient;
+		// Agent status is a selected-server projection, not a project-scoped
+		// feature. A newly-created terminal can emit journal records before its
+		// project feature snapshot is hydrated, so bind its presentation scope to
+		// the canonical server client directly.
+		const serverAgentStatusClient = terminalClientContext?.agentStatusClient;
+		const serverMacroClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: new MacroClient(
+							new TerminayClientFacade(terminalClientContext.applicationClient),
 						),
-				});
-			const terminalNoteSync = terminalNoteSyncRef.current;
-			// The debounce must not outlive the edit: leaving the note field or the
-			// page sends whatever is still waiting.
-			useEffect(() => {
-				const flushOnNoteBlur = (event: FocusEvent) => {
-					if (
-						event.target instanceof Element &&
-						event.target.closest('.terminal-note-editor')
-					)
-						terminalNoteSync.flushAll();
-				};
-				const flushOnPageHide = () => terminalNoteSync.flushAll();
-				document.addEventListener('focusout', flushOnNoteBlur);
-				window.addEventListener('pagehide', flushOnPageHide);
-				return () => {
-					document.removeEventListener('focusout', flushOnNoteBlur);
-					window.removeEventListener('pagehide', flushOnPageHide);
-				};
-			}, [terminalNoteSync]);
-			const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
-			const [isMcpInstallModalOpen, setIsMcpInstallModalOpen] = useState(false);
-			const terminalActivityStoreRef = useRef(new TerminalActivityStore());
-			const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
-			const evaluateTerminalActivityStateRef = useRef<
-				(sessionId: string, now?: number) => void
-			>(() => {});
-			const focusedSessionIdRef = useRef<string | null>(null);
-			// The terminal the user last clicked or typed in, until focus moves to
-			// another or something arrives for it while they are away.
-			const interactedSessionIdRef = useRef<string | null>(null);
-			const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
-			const filePanelSaveHandlersRef = useRef<
-				Map<string, FilePanelSaveRegistration>
-			>(new Map());
-			const filePanelSaveRegistry = useMemo(
-				() => ({
-					register: (
-						panelId: string,
-						registration: FilePanelSaveRegistration,
-					) => {
-						filePanelSaveHandlersRef.current.set(panelId, registration);
-						return () => {
-							if (
-								filePanelSaveHandlersRef.current.get(panelId) === registration
-							)
-								filePanelSaveHandlersRef.current.delete(panelId);
-						};
-					},
-				}),
-				[],
+			[terminalClientContext?.applicationClient],
+		);
+		const mcpInstallClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: createServerMcpInstallClient(
+							terminalClientContext.applicationClient,
+						),
+			[terminalClientContext?.applicationClient],
+		);
+		const getServerTerminalCwd = useProjectTerminalCwd(
+			terminalPanelClientContext,
+		);
+		const serverSettingsClient = useMemo(() => {
+			if (terminalClientContext?.applicationClient === undefined)
+				throw new Error('The selected server settings client is unavailable.');
+			return createServerTerminalSettingsClient(
+				new SettingsClient(
+					new TerminayClientFacade(terminalClientContext.applicationClient),
+				),
 			);
-			const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
-			const terminalCounterRef = useRef(0);
-			const filePanelCounterRef = useRef(0);
-			const forgePanelCounterRef = useRef(0);
-			const folderPanelCounterRef = useRef(0);
-			const draggingTransferRef = useRef<{
-				panelId?: string;
-				groupId: string;
-			} | null>(null);
-			const workspaceRef = useRef<HTMLElement | null>(null);
-			const isDockviewSashDraggingRef = useRef(false);
-			const deferredTerminalActivitySessionIdsRef = useRef<Set<string>>(
-				new Set(),
-			);
-			const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
-			const [errorText, setErrorText] = useState<string | null>(null);
-			// A project with no root folder is given one from the server's own
-			// folders, the same browser its start chooser opens (ADR-0066).
-			const openRootFolderBrowser = useCallback(
-				() => setIsRootFolderBrowserOpen(true),
-				[],
-			);
-			const browseRootFolders = useCallback(
-				(path?: string) => {
-					const store = terminalClientContext?.workspaceSnapshotStore;
-					if (store === undefined)
-						return Promise.reject(
-							new Error('The selected server workspace is not ready.'),
-						);
-					return store.browseRootFolders(path);
-				},
-				[terminalClientContext?.workspaceSnapshotStore],
-			);
-			const chooseProjectRoot = useCallback(
-				async (root: string) => {
-					setIsRootFolderBrowserOpen(false);
-					const store = terminalClientContext?.workspaceSnapshotStore;
-					if (store === undefined) return;
-					try {
-						await store.setProjectRoot({ projectId: project.id, root });
-						setErrorText(null);
-					} catch (error) {
-						const message =
-							error instanceof Error ? error.message : String(error);
-						setErrorText(`Unable to set the project root folder: ${message}`);
-					}
-				},
-				[project.id, terminalClientContext?.workspaceSnapshotStore],
-			);
-			const featureFailureRef = useRef<
-				import('./shared/featureQueryAuthority').VisibleFeatureFailure | null
-			>(null);
-			// While the connection that owns this project is between transports,
-			// the reconnecting surface is the one message. A refresh that hit the
-			// dead transport is that same outage, not a feature failure to report.
-			const connectionReconnecting = isConnectionReconnecting(
-				useServerConnection(terminalClientContext?.serverId)?.phase,
-			);
-			const connectionReconnectingRef = useRef(connectionReconnecting);
-			connectionReconnectingRef.current = connectionReconnecting;
-			// A folder whose worktree directory is gone has nothing to list. Its
-			// Files pane says so, and a listing that failed for that reason is not
-			// reported a second time as an error.
-			const worktreeMissingRef = useRef(false);
-			const reportFeatureFailure = useCallback(
-				(
-					feature: 'Explorer' | 'Agents' | 'Git' | 'Settings',
-					error: unknown,
-					source: 'action' | 'refresh' = 'action',
-				) => {
-					if (feature === 'Explorer' && worktreeMissingRef.current) return '';
-					if (featureAvailability.state === 'unavailable') {
-						setErrorText(featureAvailability.reason);
-						return featureAvailability.reason;
-					}
-					if (isCancelledFeatureFailure(error)) return '';
-					if (isOptionalObservationFailure(error)) return '';
-					const transport = isTransportFeatureFailure(error);
-					if (transport && connectionReconnectingRef.current) return '';
-					const failure = describeFeatureFailure(
-						feature,
-						error,
-						featureAvailability.authority.scope,
-					);
-					const message = `${failure.title}. ${failure.detail}`;
-					featureFailureRef.current = {
-						feature,
-						message,
-						transport,
-						refresh: source === 'refresh',
-					};
-					setErrorText(message);
-					return message;
-				},
-				[featureAvailability],
-			);
-			useEffect(() => {
-				// The transport can reject an in-flight refresh before the registry
-				// has flipped to reconnecting. Once it has, that notice is stale.
-				if (!connectionReconnecting) return;
-				const failure = featureFailureRef.current;
-				if (failure === null || !failure.transport) return;
-				setErrorText((current) => {
-					const next = clearTransportFeatureFailure(failure, current);
-					featureFailureRef.current = next;
-					return next === null ? null : current;
-				});
-			}, [connectionReconnecting]);
-			const clearFeatureFailure = useCallback((feature: 'Explorer' | 'Git') => {
-				const failure = featureFailureRef.current;
-				if (failure === null) return;
-				setErrorText((current) => {
-					const next = clearSucceededFeatureFailure(failure, feature, current);
-					featureFailureRef.current = next;
-					return next === null ? null : current;
-				});
-			}, []);
-			const dismissError = useCallback(() => {
-				featureFailureRef.current = null;
-				setErrorText(null);
-			}, []);
-			useEffect(() => {
-				if (settingsError !== null)
-					reportFeatureFailure('Settings', settingsError);
-			}, [reportFeatureFailure, settingsError]);
-			const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
-				null,
-			);
-			const [isDockviewReady, setIsDockviewReady] = useState(false);
-			// Dockview treats its component registries as configuration. Keep their
-			// identities stable across ordinary workspace state changes (for example,
-			// opening the Explorer) so it does not recreate the layout and orphan the
-			// terminal-to-agent ownership map.
-			const dockviewComponents = useMemo(
-				() => ({
-					file: FilePanel,
-					folder: FolderPanel,
-					terminal: TerminalPanel,
-					[FORGE_ITEM_PANEL_COMPONENT]: ForgeItemPanel,
-				}),
-				[],
-			);
-			const dockviewTabComponents = useMemo(
-				() => ({
-					fileTab: FileTab,
-					folderTab: FolderTab,
-					terminalTab: TerminalTab,
-					[FORGE_ITEM_TAB_COMPONENT]: ForgeItemTab,
-				}),
-				[],
-			);
-			const projectAgentItems = useMemo<AgentsSidebarItem[]>(() => {
-				if (!settings.agentIntegration.enabled) {
-					return [];
-				}
-
-				const terminalSessionIds = new Set<string>();
-				const terminalTitlesBySession = new Map<string, string>();
-				const terminalPanelsBySession = new Map<string, string>();
-				const dockviewApi = dockviewApiRef.current;
-				for (const panel of dockviewApi?.panels ?? []) {
-					const sessionId = panel.params?.sessionId;
-					if (typeof sessionId !== 'string' || sessionId.length === 0) {
-						continue;
-					}
-					terminalSessionIds.add(sessionId);
-					// The index can lag during panel adoption/moves. Keep it in sync
-					// from Dockview's live immutable terminal identity.
-					panelSessionMapRef.current.set(panel.id, sessionId);
-					terminalPanelsBySession.set(sessionId, panel.id);
-					const title =
-						typeof panel.title === 'string' && panel.title.trim().length > 0
-							? panel.title
-							: panel.params?.title;
-					if (typeof title === 'string' && title.trim()) {
-						terminalTitlesBySession.set(sessionId, title.trim());
-					}
-				}
-				// Agents are the project's, not one folder's: a terminal in another
-				// folder is still one of this project's terminals.
-				const untrackedSessionIds = new Set<string>();
-				for (const entry of projectInventory) {
-					if (entry.sessionId === undefined) continue;
-					terminalSessionIds.add(entry.sessionId);
-					if (entry.untracked) untrackedSessionIds.add(entry.sessionId);
-					if (!terminalPanelsBySession.has(entry.sessionId))
-						terminalPanelsBySession.set(entry.sessionId, entry.panelId);
-					if (!terminalTitlesBySession.has(entry.sessionId))
-						terminalTitlesBySession.set(entry.sessionId, entry.title);
-				}
-				const priority: Record<AgentState, number> = {
-					blocked: 0,
-					waiting: 1,
-					working: 2,
-					done: 3,
-					idle: 4,
-				};
-				// The server scopes each session to projects by directory and worktree,
-				// including sessions started outside Terminay; a session bound to one of
-				// this project's terminals belongs here wherever its directory is.
-				return selectLiveAgentStatusesForProject(
-					agentStatusSnapshot,
+		}, [terminalClientContext?.applicationClient]);
+		const { settings, error: settingsError } =
+			useTerminalSettings(serverSettingsClient);
+		// The macro launcher searches the project, so it keeps the project's
+		// client; the Files pane follows the folder.
+		const projectFileViewerClient = rootScopedAuthority?.fileViewerClient;
+		const serverFileViewerClient = useMemo(
+			() => projectFileViewerClient?.forFolder(linkedFolderId),
+			[linkedFolderId, projectFileViewerClient],
+		);
+		const explorerFileObservationClient = useMemo(
+			() => rootScopedAuthority?.fileObservationClient?.forFolder(linkedFolderId),
+			[rootScopedAuthority?.fileObservationClient, linkedFolderId],
+		);
+		const activeSidebarGroup = project.sidebarActiveGroup;
+		const isDocumentationGroupVisible =
+			project.isFileExplorerOpen && activeSidebarGroup === 'documentation';
+		// Indexing latches on at the first visit and then belongs to the project:
+		// collapsing the pane or switching sidebar group must not cancel a build.
+		const [isDocumentationIndexingStarted, setDocumentationIndexingStarted] =
+			useState(false);
+		useEffect(() => {
+			if (!isDocumentationGroupVisible) return;
+			setDocumentationIndexingStarted(true);
+			if (
+				!shouldAutoExpandDocumentationPane(
 					project.id,
-					terminalSessionIds,
+					project.isDocumentationPaneCollapsed,
 				)
-					.map((entry) => presentAgentForTracking(entry, untrackedSessionIds))
-					.sort(
-						(left, right) =>
-							priority[left.state] - priority[right.state] ||
-							right.updatedAt - left.updatedAt ||
-							left.entryId.localeCompare(right.entryId),
-					)
-					.map((entry) => ({
-						entry,
-						projectId: project.id,
-						model: entry.model?.displayName ?? entry.model?.id,
-						prompt: entry.promptText,
-						terminalTitle:
-							entry.activationTerminalSessionId === null
-								? undefined
-								: terminalTitlesBySession.get(
-										entry.activationTerminalSessionId,
-									),
-						terminalPanelId:
-							entry.activationTerminalSessionId === null
-								? undefined
-								: terminalPanelsBySession.get(
-										entry.activationTerminalSessionId,
-									),
-					}));
-			}, [
-				agentStatusSnapshot,
-				focusedSessionId,
-				isDockviewReady,
-				project.id,
-				projectInventory,
-				settings.agentIntegration.enabled,
-			]);
-
-			useEffect(() => {
-				terminalActivityStoreRef.current.configure(
-					{
-						amberDelayMs: settings.activityIndicators.amberDelaySeconds * 1000,
-						greenDelayMs: settings.activityIndicators.greenDelaySeconds * 1000,
-						tabSwitchSuppressionMs:
-							settings.activityIndicators.tabSwitchSuppressionSeconds * 1000,
-					},
-					{
-						signalDetectionEnabled: settings.activityIndicators.signalDetection,
-					},
-				);
-
-				const now = Date.now();
-				for (const sessionId of panelSessionMapRef.current.values()) {
-					evaluateTerminalActivityStateRef.current(sessionId, now);
-				}
-			}, [
-				settings.activityIndicators.amberDelaySeconds,
-				settings.activityIndicators.greenDelaySeconds,
-				settings.activityIndicators.tabSwitchSuppressionSeconds,
-				settings.activityIndicators.signalDetection,
-			]);
-
-			const getProjectsForTerminalMove =
-				useCallback((): TerminalTabMoveProject[] => {
-					// Same server only. A panel cannot move to a project another server
-					// owns, and that is enforced by never offering it as a target.
-					return panelMoveTargets(project, projects).map((candidate) => ({
-						emoji: candidate.emoji,
-						id: candidate.id,
-						title: candidate.title,
-					}));
-				}, [project, projects]);
-
-			const getActiveSessionId = useCallback(() => {
-				return getActiveTerminalSessionId(dockviewApiRef.current);
-			}, []);
-
-			const getPanelForSession = useCallback(
-				(sessionId: string) =>
-					findTerminalPanel(
-						dockviewApiRef.current,
-						panelSessionMapRef.current,
-						sessionId,
+			)
+				return;
+			onUpdateProject(project.id, { isDocumentationPaneCollapsed: false });
+		}, [
+			isDocumentationGroupVisible,
+			onUpdateProject,
+			project.id,
+			project.isDocumentationPaneCollapsed,
+		]);
+		const documentation = useDocumentationController({
+			enabled: isDocumentationIndexingStarted && !isNoRootProject,
+			client: rootScopedAuthority?.documentationClient,
+			observationClient: rootScopedAuthority?.fileObservationClient,
+			projectId: project.id,
+			scopeKey: featureAuthority?.scope.projectRoot ?? project.rootFolder,
+			expandedFolderIds: project.expandedDocumentationFolderIds,
+			onExpandedFolderIdsChange: (expandedDocumentationFolderIds) =>
+				onUpdateProject(project.id, { expandedDocumentationFolderIds }),
+		});
+		const fileViewerClient = useMemo(
+			() =>
+				serverFileViewerClient ??
+				unavailableFileViewerClient(
+					featureAvailability.state === 'unavailable'
+						? featureAvailability.reason
+						: isNoRootProject
+							? 'This project has no root folder.'
+							: 'Explorer is unavailable on the selected server.',
+				),
+			[featureAvailability, isNoRootProject, serverFileViewerClient],
+		);
+		const fileClientPath = useCallback(
+			(path: string) => getPathRelativeToRoot(path, explorerProjectRoot),
+			[explorerProjectRoot],
+		);
+		const fileClientProjectId = project.id;
+		const serverRecordingsClient = featureAuthority?.recordingsClient;
+		const serverAiClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: new TerminayAiClient(
+							new TerminayClientFacade(terminalClientContext.applicationClient),
+						),
+			[terminalClientContext?.applicationClient],
+		);
+		const settingsRef = useRef(settings);
+		useEffect(() => {
+			settingsRef.current = settings;
+		}, [settings]);
+		const dockviewApiRef = useRef<DockviewApi | null>(null);
+		const panelSessionMapRef = useRef<Map<string, string>>(new Map());
+		const ownTerminalContextReadersRef = useRef<
+			Map<string, TerminalContextReader>
+		>(new Map());
+		const terminalContextReadersRef =
+			sharedTerminalContextReaders ?? ownTerminalContextReadersRef;
+		const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
+		const workspaceSnapshotStoreRef = useRef(
+			terminalClientContext?.workspaceSnapshotStore,
+		);
+		workspaceSnapshotStoreRef.current =
+			terminalClientContext?.workspaceSnapshotStore;
+		const terminalNoteSyncRef = useRef<TerminalNoteSync | null>(null);
+		if (terminalNoteSyncRef.current === null)
+			terminalNoteSyncRef.current = createTerminalNoteSync({
+				send: async (panelId, note) => {
+					await workspaceSnapshotStoreRef.current?.updatePanel({
+						panelId,
+						patch: { note },
+					});
+				},
+				onError: (error) =>
+					setErrorText(
+						`Unable to save the terminal note: ${error instanceof Error ? error.message : String(error)}`,
 					),
-				[],
-			);
-
-			const { start: startDictation } = useDictationController({
-				aiClient: serverAiClient,
-				closeLauncher: () => {
-					setIsMacroLauncherOpen(false);
-					setMacroQuery('');
-				},
-				defaultLanguage: defaultTerminalSettings.dictation.language,
-				focusTargetSession: (sessionId) => {
-					const panel = getPanelForSession(sessionId);
-					if (!panel) return;
-					panel.api.setActive();
-					focusedSessionIdRef.current = sessionId;
-					setFocusedSessionId(sessionId);
-					window.requestAnimationFrame(() => {
-						window.dispatchEvent(
-							new CustomEvent('terminay-focus-terminal', {
-								detail: { sessionId },
-							}),
-						);
-					});
-				},
-				getActiveSessionId,
-				getOverlayTargets: () =>
-					[...panelSessionMapRef.current.entries()].flatMap(
-						([panelId, sessionId]) => {
-							const panel = dockviewApiRef.current?.getPanel(panelId);
-							return panel
-								? [{ color: panel.params?.color ?? project.color, sessionId }]
-								: [];
-						},
-					),
-				getSettings: () => settingsRef.current.dictation,
-				getDisclosure: () => {
-					if (terminalClientContext === undefined) {
-						throw new Error('The connected dictation server is unavailable.');
-					}
-					const provider = settingsRef.current.dictation.provider;
-					return {
-						audioDestination:
-							provider === 'openai' ? 'openai' : 'selected-server',
-						confirmed: true,
-						credentialStatus: 'configured',
-						provider,
-						serverLabel:
-							terminalClientContext.connectionLabel ??
-							terminalClientContext.serverId,
-					};
-				},
-				getTargetIdentity: (sessionId) => {
-					const panel = getPanelForSession(sessionId);
-					if (panel === null || terminalClientContext === undefined) {
-						throw new Error('The connected dictation target is unavailable.');
-					}
-					return {
-						serverId: terminalClientContext.serverId,
-						projectId: project.id,
-						panelId: panel.id,
-						sessionId,
-					};
-				},
-				hasTargetSession: (sessionId) => getPanelForSession(sessionId) !== null,
-				openSettings: auxiliaryRoutes.openSettings,
-				sendTerminalInput: sendTerminalPanelInput,
-				setErrorText,
 			});
-
-			const getRecordingStartMetadataForSession = useCallback(
-				(sessionId: string): TerminalRecordingStartMetadata => {
-					const panel = getPanelForSession(sessionId);
-					const params = panel?.params as TerminalPanelParams | undefined;
-					const title =
-						typeof panel?.title === 'string' && panel.title.trim().length > 0
-							? panel.title
-							: 'Terminal';
-
-					return {
-						color:
-							typeof params?.color === 'string' ? params.color : project.color,
-						emoji: typeof params?.emoji === 'string' ? params.emoji : '',
-						inheritsProjectColor: params?.inheritsProjectColor === true,
-						projectColor: project.color,
-						projectEmoji: project.emoji,
-						projectId: project.id,
-						projectTitle: project.title,
-						title,
-					};
-				},
-				[
-					getPanelForSession,
-					project.color,
-					project.emoji,
-					project.id,
-					project.title,
-				],
-			);
-
-			const applyTerminalRecordingState = useCallback(
-				(state: TerminalRecordingState) => {
-					const panel = getPanelForSession(state.sessionId);
-					if (!panel) {
-						return;
-					}
-
-					panel.api.updateParameters({
-						recordingError: state.errorMessage,
-						recordingId:
-							state.recordingId ??
-							(panel.params as TerminalPanelParams | undefined)?.recordingId ??
-							null,
-						recordingStatus: state.status,
-						titleUpdateNonce: Date.now(),
-					});
-				},
-				[getPanelForSession],
-			);
-
-			const {
-				hydrateRecordingStateForSession,
-				revealRecording,
-				startRecordingForSession,
-				stopRecordingForSession,
-			} = useTerminalRecordingController({
-				applyState: applyTerminalRecordingState,
-				getStartMetadata: getRecordingStartMetadataForSession,
-				projectId: project.id,
-				serverClient: serverRecordingsClient,
-				setErrorText,
-			});
-
-			// The pull request and checks of this folder's worktree. Set once the
-			// explorer has listed the worktree, below; every panel here carries them.
-			const folderWorktreeFactsRef = useRef<
-				WorkspaceInventoryWorktreeFacts | undefined
-			>(undefined);
-			const getWorkspaceInventoryItems =
-				useCallback((): WorkspaceInventoryEntry[] => {
-					const api = dockviewApiRef.current;
-					if (!api) {
-						return [];
-					}
-
-					const panels: InventoryPanelSource[] = [];
-					for (const group of api.groups) {
-						for (const panel of group.panels) {
-							panels.push({
-								id: panel.id,
-								params: panel.params as InventoryPanelParams | undefined,
-								...(panel.title === undefined ? {} : { title: panel.title }),
-							});
-						}
-					}
-
-					// Each entry names its folder, so a project's merged inventory can
-					// still say where every panel is.
-					// The panel in front is read off Dockview, not off a tab's own
-					// focus flag: only a terminal announces its focus.
-					const activePanelId = api.activePanel?.id;
-					return buildProjectInventoryEntries({
-						...(activePanelId === undefined ? {} : { activePanelId }),
-						agentIntegrationEnabled: settings.agentIntegration.enabled,
-						panels,
-						project: {
-							color: project.color,
-							emoji: project.emoji,
-							id: project.id,
-							title: project.title,
-						},
-					}).map((entry) => {
-						const worktree = folderWorktreeFactsRef.current;
-						return {
-							...entry,
-							folderId: folder.id,
-							...(worktree === undefined ? {} : { worktree }),
-						};
-					});
-				}, [
-					folder.id,
-					project.color,
-					project.emoji,
-					project.id,
-					project.title,
-					settings.agentIntegration.enabled,
-				]);
-
-			const publishWorkspaceInventory = useCallback(() => {
-				onWorkspaceInventoryChange(
-					project.id,
-					folder.id,
-					getWorkspaceInventoryItems(),
-				);
-			}, [
-				folder.id,
-				getWorkspaceInventoryItems,
-				onWorkspaceInventoryChange,
-				project.id,
-			]);
-
-			const registerTerminalContextReader = useCallback(
-				(sessionId: string, reader: TerminalContextReader) => {
-					terminalContextReadersRef.current.set(sessionId, reader);
-
+		const terminalNoteSync = terminalNoteSyncRef.current;
+		// The debounce must not outlive the edit: leaving the note field or the
+		// page sends whatever is still waiting.
+		useEffect(() => {
+			const flushOnNoteBlur = (event: FocusEvent) => {
+				if (
+					event.target instanceof Element &&
+					event.target.closest('.terminal-note-editor')
+				)
+					terminalNoteSync.flushAll();
+			};
+			const flushOnPageHide = () => terminalNoteSync.flushAll();
+			document.addEventListener('focusout', flushOnNoteBlur);
+			window.addEventListener('pagehide', flushOnPageHide);
+			return () => {
+				document.removeEventListener('focusout', flushOnNoteBlur);
+				window.removeEventListener('pagehide', flushOnPageHide);
+			};
+		}, [terminalNoteSync]);
+		const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
+		const [isMcpInstallModalOpen, setIsMcpInstallModalOpen] = useState(false);
+		const terminalActivityStoreRef = useRef(new TerminalActivityStore());
+		const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
+		const evaluateTerminalActivityStateRef = useRef<
+			(sessionId: string, now?: number) => void
+		>(() => {});
+		const focusedSessionIdRef = useRef<string | null>(null);
+		// The terminal the user last clicked or typed in, until focus moves to
+		// another or something arrives for it while they are away.
+		const interactedSessionIdRef = useRef<string | null>(null);
+		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
+		const filePanelSaveHandlersRef = useRef<
+			Map<string, FilePanelSaveRegistration>
+		>(new Map());
+		const filePanelSaveRegistry = useMemo(
+			() => ({
+				register: (
+					panelId: string,
+					registration: FilePanelSaveRegistration,
+				) => {
+					filePanelSaveHandlersRef.current.set(panelId, registration);
 					return () => {
-						if (terminalContextReadersRef.current.get(sessionId) === reader) {
-							terminalContextReadersRef.current.delete(sessionId);
-						}
+						if (filePanelSaveHandlersRef.current.get(panelId) === registration)
+							filePanelSaveHandlersRef.current.delete(panelId);
 					};
 				},
-				[],
-			);
-
-			const {
-				applyEvaluation: applyTerminalActivityEvaluation,
-				clearDeferredTimer: clearDeferredTerminalActivityFlushTimer,
-				evaluate: evaluateTerminalActivityState,
-				markViewed: markTerminalActivityViewed,
-				scheduleDeferredFlush: scheduleDeferredTerminalActivityFlush,
-			} = useTerminalActivityController({
-				acknowledgeAgent: (sessionId) => {
-					if (!settingsRef.current.agentIntegration.enabled) return;
-					return serverAgentStatusClient
-						?.acknowledge({ projectId: project.id, sessionId })
-						.catch(() => undefined);
-				},
-				acknowledgeServerActivity:
-					serverActivityClient === undefined
-						? undefined
-						: (sessionId) => {
-								return serverActivityClient
-									.acknowledge(
-										{ projectId: project.id, sessionId },
-										{ fence: false },
-									)
-									.catch(() => undefined);
-							},
-				applyPanelState: (sessionId, state) => {
-					const panel = getPanelForSession(sessionId);
-					if (!panel || panel.params?.terminalActivityState === state)
-						return false;
-					panel.api.updateParameters({
-						terminalActivitySince: Date.now(),
-						terminalActivityState: state,
-						titleUpdateNonce: Date.now(),
-					});
-					return true;
-				},
-				deferredFlushMs: DOCKVIEW_SASH_ACTIVITY_DEFER_MS,
-				deferredSessionsRef: deferredTerminalActivitySessionIdsRef,
-				deferredTimerRef: deferredTerminalActivityFlushTimerRef,
-				evaluateRef: evaluateTerminalActivityStateRef,
-				getEvaluation: (sessionId, now) => {
-					if (!getPanelForSession(sessionId)) return null;
-					const snapshot =
-						serverActivityClient?.store.snapshot.sessions[sessionId];
-					return snapshot === undefined
-						? terminalActivityStoreRef.current.evaluate(sessionId, now)
-						: serverActivityEvaluation(snapshot);
-				},
-				isSashDraggingRef: isDockviewSashDraggingRef,
-				markLocalViewed: (sessionId) =>
-					terminalActivityStoreRef.current.markViewed(sessionId),
-				onOverviewChanged: publishWorkspaceInventory,
-				timersRef: terminalActivityTimersRef,
+			}),
+			[],
+		);
+		const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
+		const terminalCounterRef = useRef(0);
+		const filePanelCounterRef = useRef(0);
+		const forgePanelCounterRef = useRef(0);
+		const folderPanelCounterRef = useRef(0);
+		const draggingTransferRef = useRef<{
+			panelId?: string;
+			groupId: string;
+		} | null>(null);
+		const workspaceRef = useRef<HTMLElement | null>(null);
+		const isDockviewSashDraggingRef = useRef(false);
+		const deferredTerminalActivitySessionIdsRef = useRef<Set<string>>(
+			new Set(),
+		);
+		const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
+		const [errorText, setErrorText] = useState<string | null>(null);
+		// A project with no root folder is given one from the server's own
+		// folders, the same browser its start chooser opens (ADR-0066).
+		const openRootFolderBrowser = useCallback(
+			() => setIsRootFolderBrowserOpen(true),
+			[],
+		);
+		const browseRootFolders = useCallback(
+			(path?: string) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				if (store === undefined)
+					return Promise.reject(
+						new Error('The selected server workspace is not ready.'),
+					);
+				return store.browseRootFolders(path);
+			},
+			[terminalClientContext?.workspaceSnapshotStore],
+		);
+		const chooseProjectRoot = useCallback(
+			async (root: string) => {
+				setIsRootFolderBrowserOpen(false);
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				if (store === undefined) return;
+				try {
+					await store.setProjectRoot({ projectId: project.id, root });
+					setErrorText(null);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					setErrorText(`Unable to set the project root folder: ${message}`);
+				}
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
+		const featureFailureRef = useRef<
+			import('./shared/featureQueryAuthority').VisibleFeatureFailure | null
+		>(null);
+		// While the connection that owns this project is between transports,
+		// the reconnecting surface is the one message. A refresh that hit the
+		// dead transport is that same outage, not a feature failure to report.
+		const connectionReconnecting = isConnectionReconnecting(
+			useServerConnection(terminalClientContext?.serverId)?.phase,
+		);
+		const connectionReconnectingRef = useRef(connectionReconnecting);
+		connectionReconnectingRef.current = connectionReconnecting;
+		// A folder whose worktree directory is gone has nothing to list. Its
+		// Files pane says so, and a listing that failed for that reason is not
+		// reported a second time as an error.
+		const worktreeMissingRef = useRef(false);
+		const reportFeatureFailure = useCallback(
+			(
+				feature: 'Explorer' | 'Agents' | 'Git' | 'Settings',
+				error: unknown,
+				source: 'action' | 'refresh' = 'action',
+			) => {
+				if (feature === 'Explorer' && worktreeMissingRef.current) return '';
+				if (featureAvailability.state === 'unavailable') {
+					setErrorText(featureAvailability.reason);
+					return featureAvailability.reason;
+				}
+				if (isCancelledFeatureFailure(error)) return '';
+				if (isOptionalObservationFailure(error)) return '';
+				const transport = isTransportFeatureFailure(error);
+				if (transport && connectionReconnectingRef.current) return '';
+				const failure = describeFeatureFailure(
+					feature,
+					error,
+					featureAvailability.authority.scope,
+				);
+				const message = `${failure.title}. ${failure.detail}`;
+				featureFailureRef.current = {
+					feature,
+					message,
+					transport,
+					refresh: source === 'refresh',
+				};
+				setErrorText(message);
+				return message;
+			},
+			[featureAvailability],
+		);
+		useEffect(() => {
+			// The transport can reject an in-flight refresh before the registry
+			// has flipped to reconnecting. Once it has, that notice is stale.
+			if (!connectionReconnecting) return;
+			const failure = featureFailureRef.current;
+			if (failure === null || !failure.transport) return;
+			setErrorText((current) => {
+				const next = clearTransportFeatureFailure(failure, current);
+				featureFailureRef.current = next;
+				return next === null ? null : current;
 			});
+		}, [connectionReconnecting]);
+		const clearFeatureFailure = useCallback((feature: 'Explorer' | 'Git') => {
+			const failure = featureFailureRef.current;
+			if (failure === null) return;
+			setErrorText((current) => {
+				const next = clearSucceededFeatureFailure(failure, feature, current);
+				featureFailureRef.current = next;
+				return next === null ? null : current;
+			});
+		}, []);
+		const dismissError = useCallback(() => {
+			featureFailureRef.current = null;
+			setErrorText(null);
+		}, []);
+		useEffect(() => {
+			if (settingsError !== null)
+				reportFeatureFailure('Settings', settingsError);
+		}, [reportFeatureFailure, settingsError]);
+		const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
+			null,
+		);
+		const [isDockviewReady, setIsDockviewReady] = useState(false);
+		// Dockview treats its component registries as configuration. Keep their
+		// identities stable across ordinary workspace state changes (for example,
+		// opening the Explorer) so it does not recreate the layout and orphan the
+		// terminal-to-agent ownership map.
+		const dockviewComponents = useMemo(
+			() => ({
+				file: FilePanel,
+				folder: FolderPanel,
+				terminal: TerminalPanel,
+				[FORGE_ITEM_PANEL_COMPONENT]: ForgeItemPanel,
+			}),
+			[],
+		);
+		const dockviewTabComponents = useMemo(
+			() => ({
+				fileTab: FileTab,
+				folderTab: FolderTab,
+				terminalTab: TerminalTab,
+				[FORGE_ITEM_TAB_COMPONENT]: ForgeItemTab,
+			}),
+			[],
+		);
+		const projectAgentItems = useMemo<AgentsSidebarItem[]>(() => {
+			if (!settings.agentIntegration.enabled) {
+				return [];
+			}
 
-			useEffect(() => {
-				let didChange = false;
-				const enabled = settings.agentIntegration.enabled;
-				const dockviewApi = dockviewApiRef.current;
-
-				for (const panel of dockviewApi?.panels ?? []) {
-					const sessionId = panel.params?.sessionId;
-					if (typeof sessionId !== 'string' || sessionId.length === 0) {
-						continue;
-					}
-
-					const aggregate = enabled
-						? aggregateAgentStatusForTerminal(agentStatusSnapshot, sessionId)
-						: null;
-					const nextState = aggregate?.state;
-					const nextNeedsAttention =
-						nextState !== undefined && isAgentAttentionState(nextState);
-					const nextUnread = aggregate?.unread === true;
-					const nextStateSince = aggregate?.stateSince;
-					if (
-						panel.params?.agentState === nextState &&
-						panel.params?.agentNeedsAttention === nextNeedsAttention &&
-						panel.params?.agentUnread === nextUnread &&
-						panel.params?.agentStateSince === nextStateSince
-					) {
-						continue;
-					}
-
-					panel.api.updateParameters({
-						agentState: nextState,
-						agentNeedsAttention: nextNeedsAttention,
-						agentStateSince: nextStateSince,
-						agentUnread: nextUnread,
-					});
-					didChange = true;
+			const terminalSessionIds = new Set<string>();
+			const terminalTitlesBySession = new Map<string, string>();
+			const terminalPanelsBySession = new Map<string, string>();
+			const dockviewApi = dockviewApiRef.current;
+			for (const panel of dockviewApi?.panels ?? []) {
+				const sessionId = panel.params?.sessionId;
+				if (typeof sessionId !== 'string' || sessionId.length === 0) {
+					continue;
 				}
-
-				if (didChange) {
-					requestFrameOrTimeout(publishWorkspaceInventory);
+				terminalSessionIds.add(sessionId);
+				// The index can lag during panel adoption/moves. Keep it in sync
+				// from Dockview's live immutable terminal identity.
+				panelSessionMapRef.current.set(panel.id, sessionId);
+				terminalPanelsBySession.set(sessionId, panel.id);
+				const title =
+					typeof panel.title === 'string' && panel.title.trim().length > 0
+						? panel.title
+						: panel.params?.title;
+				if (typeof title === 'string' && title.trim()) {
+					terminalTitlesBySession.set(sessionId, title.trim());
 				}
-			}, [
+			}
+			// Agents are the project's, not one folder's: a terminal in another
+			// folder is still one of this project's terminals.
+			const untrackedSessionIds = new Set<string>();
+			for (const entry of projectInventory) {
+				if (entry.sessionId === undefined) continue;
+				terminalSessionIds.add(entry.sessionId);
+				if (entry.untracked) untrackedSessionIds.add(entry.sessionId);
+				if (!terminalPanelsBySession.has(entry.sessionId))
+					terminalPanelsBySession.set(entry.sessionId, entry.panelId);
+				if (!terminalTitlesBySession.has(entry.sessionId))
+					terminalTitlesBySession.set(entry.sessionId, entry.title);
+			}
+			const priority: Record<AgentState, number> = {
+				blocked: 0,
+				waiting: 1,
+				working: 2,
+				done: 3,
+				idle: 4,
+			};
+			// The server scopes each session to projects by directory and worktree,
+			// including sessions started outside Terminay; a session bound to one of
+			// this project's terminals belongs here wherever its directory is.
+			return selectLiveAgentStatusesForProject(
 				agentStatusSnapshot,
-				isDockviewReady,
-				publishWorkspaceInventory,
-				settings.agentIntegration.enabled,
 				project.id,
-				serverAgentStatusClient,
-			]);
+				terminalSessionIds,
+			)
+				.map((entry) => presentAgentForTracking(entry, untrackedSessionIds))
+				.sort(
+					(left, right) =>
+						priority[left.state] - priority[right.state] ||
+						right.updatedAt - left.updatedAt ||
+						left.entryId.localeCompare(right.entryId),
+				)
+				.map((entry) => ({
+					entry,
+					projectId: project.id,
+					model: entry.model?.displayName ?? entry.model?.id,
+					prompt: entry.promptText,
+					terminalTitle:
+						entry.activationTerminalSessionId === null
+							? undefined
+							: terminalTitlesBySession.get(entry.activationTerminalSessionId),
+					terminalPanelId:
+						entry.activationTerminalSessionId === null
+							? undefined
+							: terminalPanelsBySession.get(entry.activationTerminalSessionId),
+				}));
+		}, [
+			agentStatusSnapshot,
+			focusedSessionId,
+			isDockviewReady,
+			project.id,
+			projectInventory,
+			settings.agentIntegration.enabled,
+		]);
 
-			const suppressInitialTerminalActivity = useCallback(
-				(sessionId: string) => {
-					if (serverActivityClient !== undefined) {
-						return;
-					}
-					terminalActivityStoreRef.current.recordInitialSuppression(sessionId);
+		useEffect(() => {
+			terminalActivityStoreRef.current.configure(
+				{
+					amberDelayMs: settings.activityIndicators.amberDelaySeconds * 1000,
+					greenDelayMs: settings.activityIndicators.greenDelaySeconds * 1000,
+					tabSwitchSuppressionMs:
+						settings.activityIndicators.tabSwitchSuppressionSeconds * 1000,
 				},
-				[serverActivityClient],
+				{ signalDetectionEnabled: settings.activityIndicators.signalDetection },
 			);
 
-			useEffect(() => {
-				if (serverAgentStatusClient === undefined || !isDockviewReady) {
-					return;
-				}
+			const now = Date.now();
+			for (const sessionId of panelSessionMapRef.current.values()) {
+				evaluateTerminalActivityStateRef.current(sessionId, now);
+			}
+		}, [
+			settings.activityIndicators.amberDelaySeconds,
+			settings.activityIndicators.greenDelaySeconds,
+			settings.activityIndicators.tabSwitchSuppressionSeconds,
+			settings.activityIndicators.signalDetection,
+		]);
 
-				// Desktop can create an initial terminal before the workspace snapshot
-				// observes it. This shared client serves every project view in the
-				// window, so a project with no panels must not clear another project's
-				// already-rendered server-owned agent projection.
-				serverAgentStatusClient.mergeSessionScope([
-					...new Set(panelSessionMapRef.current.values()),
-				]);
-				// Sessions outside every terminal still belong to this project when the
-				// server scoped them to it by directory or worktree.
-				serverAgentStatusClient.mergeProjectScope([project.id]);
-			}, [
-				focusedSessionId,
-				isDockviewReady,
-				project.id,
-				serverAgentStatusClient,
-			]);
+		const getProjectsForTerminalMove =
+			useCallback((): TerminalTabMoveProject[] => {
+				// Same server only. A panel cannot move to a project another server
+				// owns, and that is enforced by never offering it as a target.
+				return panelMoveTargets(project, projects).map((candidate) => ({
+					emoji: candidate.emoji,
+					id: candidate.id,
+					title: candidate.title,
+				}));
+			}, [project, projects]);
 
-			useEffect(() => {
-				if (serverActivityClient === undefined) {
-					return;
-				}
-				// Activity revisions belong to one server authority. A replacement
-				// connection (including a server restart) begins from a fresh snapshot;
-				// clear the old panel indicators and control facts before applying it so
-				// an empty replacement snapshot cannot leave stale attention behind.
-				for (const sessionId of panelSessionMapRef.current.values()) {
-					applyTerminalActivityEvaluation(sessionId, {
-						state: 'viewed',
-						nextDeadline: null,
-					});
-				}
-				const applySnapshot = () => {
-					for (const snapshot of Object.values(
-						serverActivityClient.store.snapshot.sessions,
-					)) {
-						if (
-							snapshot.projectId !== project.id ||
-							!getPanelForSession(snapshot.sessionId)
-						) {
-							continue;
-						}
-						const arrival = {
-							acknowledged: snapshot.acknowledged,
-							claimed: snapshot.claimed,
-							focusedSessionId: focusedSessionIdRef.current,
-							interactedSessionId: interactedSessionIdRef.current,
-							sessionId: snapshot.sessionId,
-							status: snapshot.status,
-						};
-						// A terminal moved to a window of its own is judged by that
-						// window.
-						const windowFocused = (
-							getPanelForSession(snapshot.sessionId)?.view.content.element
-								.ownerDocument ?? document
-						).hasFocus();
-						if (
-							!windowFocused &&
-							shouldAcknowledgeInteractedActivity({
-								...arrival,
-								windowFocused: true,
-							})
-						) {
-							// It arrived while they were in another application. Coming
-							// back is not acknowledgement, so the interaction ends here; a
-							// click or a keystroke starts another.
-							interactedSessionIdRef.current = null;
-						}
-						if (
-							shouldAcknowledgeInteractedActivity({ ...arrival, windowFocused })
-						) {
-							// A plain shell's own finished or bell, in the terminal the user
-							// is typing in, is not news to them. An agent's terminal never
-							// takes this path: only what the user does in it clears it.
-							applyTerminalActivityEvaluation(snapshot.sessionId, {
-								state: 'viewed',
-								nextDeadline: null,
-							});
-							// Passive: the user did nothing, so a notification a process
-							// sent to this terminal is not theirs to have seen.
-							void serverActivityClient
-								.acknowledge(
-									{ projectId: project.id, sessionId: snapshot.sessionId },
-									{ fence: false, passive: true },
-								)
-								.catch(() => undefined);
-						} else {
-							applyTerminalActivityEvaluation(
-								snapshot.sessionId,
-								serverActivityEvaluation(snapshot),
-							);
-						}
-					}
-				};
-				applySnapshot();
-				const unsubscribe = serverActivityClient.store.subscribe(() =>
-					applySnapshot(),
-				);
-				void serverActivityClient.refresh().catch(() => undefined);
-				return unsubscribe;
-			}, [
-				applyTerminalActivityEvaluation,
-				getPanelForSession,
-				isActive,
-				project.id,
-				serverActivityClient,
-			]);
+		const getActiveSessionId = useCallback(() => {
+			return getActiveTerminalSessionId(dockviewApiRef.current);
+		}, []);
 
-			useEffect(() => {
-				if (!isActive) interactedSessionIdRef.current = null;
-				if (isActive || serverActivityClient === undefined) return;
-				const sessionId =
-					dockviewApiRef.current?.activePanel?.params?.sessionId;
-				if (typeof sessionId !== 'string' || sessionId.length === 0) return;
-				const acknowledgeVisibleFallback = () => {
-					const snapshot =
-						serverActivityClient.store.snapshot.sessions[sessionId];
-					if (snapshot !== undefined && !snapshot.claimed) {
-						markTerminalActivityViewed(sessionId);
-					}
-				};
-				// Leaving a project is the last point at which its active shell was
-				// visibly observed. Clear only fallback shell noise here; structured
-				// completion remains meaningful and may still surface as finished. Shell
-				// foreground detection can settle just after the project switch, so fold
-				// that final lifecycle update into the same viewing acknowledgement.
-				acknowledgeVisibleFallback();
-				const settleTimer = window.setTimeout(
-					acknowledgeVisibleFallback,
-					PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS,
-				);
-				return () => window.clearTimeout(settleTimer);
-			}, [isActive, markTerminalActivityViewed, serverActivityClient]);
+		const getPanelForSession = useCallback(
+			(sessionId: string) =>
+				findTerminalPanel(
+					dockviewApiRef.current,
+					panelSessionMapRef.current,
+					sessionId,
+				),
+			[],
+		);
 
-			const focusActiveTerminal = useCallback(() => {
-				const terminalPanel = findTerminalFocusTarget({
-					api: dockviewApiRef.current,
-					focusedSessionId: focusedSessionIdRef.current,
-					panelSessions: panelSessionMapRef.current,
-				});
-				const sessionId = terminalPanel?.params?.sessionId ?? null;
-				if (!terminalPanel || !sessionId) {
-					return;
-				}
-
-				terminalPanel.api.setActive();
+		const { start: startDictation } = useDictationController({
+			aiClient: serverAiClient,
+			closeLauncher: () => {
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+			},
+			defaultLanguage: defaultTerminalSettings.dictation.language,
+			focusTargetSession: (sessionId) => {
+				const panel = getPanelForSession(sessionId);
+				if (!panel) return;
+				panel.api.setActive();
 				focusedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
 				window.requestAnimationFrame(() => {
@@ -2808,2713 +2333,3156 @@ const ProjectWorkspace = memo(
 						}),
 					);
 				});
-			}, []);
-
-			const {
-				cancelRun: cancelMacroRun,
-				cancelSessionRuns: cancelMacroRunsForSession,
-				clearFinishedSessionRuns: clearFinishedMacroRunsForSession,
-				clearRun: clearMacroRunForSession,
-				clearSessionRuns: clearMacroRunsForSession,
-				executeMacro: executeMacroRun,
-				replaceSessionRuns: replaceMacroRunsForSession,
-				runningMacroRunsBySession,
-			} = useMacroRunController({
-				focusActiveTerminal,
-				getActiveSessionId,
-				sendInput: sendTerminalPanelInput,
-				setErrorText,
-				waitForInactivity: waitForSessionInactivity,
-				serverMacroClient,
-				serverTargetForSession: (sessionId) => ({
-					serverId: terminalClientContext?.serverId ?? 'desktop-local',
+			},
+			getActiveSessionId,
+			getOverlayTargets: () =>
+				[...panelSessionMapRef.current.entries()].flatMap(
+					([panelId, sessionId]) => {
+						const panel = dockviewApiRef.current?.getPanel(panelId);
+						return panel
+							? [{ color: panel.params?.color ?? project.color, sessionId }]
+							: [];
+					},
+				),
+			getSettings: () => settingsRef.current.dictation,
+			getDisclosure: () => {
+				if (terminalClientContext === undefined) {
+					throw new Error('The connected dictation server is unavailable.');
+				}
+				const provider = settingsRef.current.dictation.provider;
+				return {
+					audioDestination:
+						provider === 'openai' ? 'openai' : 'selected-server',
+					confirmed: true,
+					credentialStatus: 'configured',
+					provider,
+					serverLabel:
+						terminalClientContext.connectionLabel ??
+						terminalClientContext.serverId,
+				};
+			},
+			getTargetIdentity: (sessionId) => {
+				const panel = getPanelForSession(sessionId);
+				if (panel === null || terminalClientContext === undefined) {
+					throw new Error('The connected dictation target is unavailable.');
+				}
+				return {
+					serverId: terminalClientContext.serverId,
 					projectId: project.id,
+					panelId: panel.id,
 					sessionId,
-				}),
-			});
+				};
+			},
+			hasTargetSession: (sessionId) => getPanelForSession(sessionId) !== null,
+			openSettings: auxiliaryRoutes.openSettings,
+			sendTerminalInput: sendTerminalPanelInput,
+			setErrorText,
+		});
 
-			const activateTerminal = useCallback(
-				(
-					panelId: string,
-					sessionId: string,
-					// Going to a terminal dismisses the error on screen. Being put
-					// back on one is not that: an error raised meanwhile stays.
-					options: { keepError?: boolean } = {},
-				) => {
-					const panel = activateTerminalPanel({
-						api: dockviewApiRef.current,
-						panelId,
-						sessionId,
-					});
-					if (!panel) {
-						return;
+		const getRecordingStartMetadataForSession = useCallback(
+			(sessionId: string): TerminalRecordingStartMetadata => {
+				const panel = getPanelForSession(sessionId);
+				const params = panel?.params as TerminalPanelParams | undefined;
+				const title =
+					typeof panel?.title === 'string' && panel.title.trim().length > 0
+						? panel.title
+						: 'Terminal';
+
+				return {
+					color:
+						typeof params?.color === 'string' ? params.color : project.color,
+					emoji: typeof params?.emoji === 'string' ? params.emoji : '',
+					inheritsProjectColor: params?.inheritsProjectColor === true,
+					projectColor: project.color,
+					projectEmoji: project.emoji,
+					projectId: project.id,
+					projectTitle: project.title,
+					title,
+				};
+			},
+			[
+				getPanelForSession,
+				project.color,
+				project.emoji,
+				project.id,
+				project.title,
+			],
+		);
+
+		const applyTerminalRecordingState = useCallback(
+			(state: TerminalRecordingState) => {
+				const panel = getPanelForSession(state.sessionId);
+				if (!panel) {
+					return;
+				}
+
+				panel.api.updateParameters({
+					recordingError: state.errorMessage,
+					recordingId:
+						state.recordingId ??
+						(panel.params as TerminalPanelParams | undefined)?.recordingId ??
+						null,
+					recordingStatus: state.status,
+					titleUpdateNonce: Date.now(),
+				});
+			},
+			[getPanelForSession],
+		);
+
+		const {
+			hydrateRecordingStateForSession,
+			revealRecording,
+			startRecordingForSession,
+			stopRecordingForSession,
+		} = useTerminalRecordingController({
+			applyState: applyTerminalRecordingState,
+			getStartMetadata: getRecordingStartMetadataForSession,
+			projectId: project.id,
+			serverClient: serverRecordingsClient,
+			setErrorText,
+		});
+
+		// The pull request and checks of this folder's worktree. Set once the
+		// explorer has listed the worktree, below; every panel here carries them.
+		const folderWorktreeFactsRef = useRef<
+			WorkspaceInventoryWorktreeFacts | undefined
+		>(undefined);
+		const getWorkspaceInventoryItems =
+			useCallback((): WorkspaceInventoryEntry[] => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return [];
+				}
+
+				const panels: InventoryPanelSource[] = [];
+				for (const group of api.groups) {
+					for (const panel of group.panels) {
+						panels.push({
+							id: panel.id,
+							params: panel.params as InventoryPanelParams | undefined,
+							...(panel.title === undefined ? {} : { title: panel.title }),
+						});
 					}
-					focusedSessionIdRef.current = sessionId;
-					interactedSessionIdRef.current = sessionId;
-					setFocusedSessionId(sessionId);
+				}
+
+				// Each entry names its folder, so a project's merged inventory can
+				// still say where every panel is.
+				// The panel in front is read off Dockview, not off a tab's own
+				// focus flag: only a terminal announces its focus.
+				const activePanelId = api.activePanel?.id;
+				return buildProjectInventoryEntries({
+					...(activePanelId === undefined ? {} : { activePanelId }),
+					agentIntegrationEnabled: settings.agentIntegration.enabled,
+					panels,
+					project: {
+						color: project.color,
+						emoji: project.emoji,
+						id: project.id,
+						title: project.title,
+					},
+				}).map((entry) => {
+					const worktree = folderWorktreeFactsRef.current;
+					return {
+						...entry,
+						folderId: folder.id,
+						...(worktree === undefined ? {} : { worktree }),
+					};
+				});
+			}, [
+				folder.id,
+				project.color,
+				project.emoji,
+				project.id,
+				project.title,
+				settings.agentIntegration.enabled,
+			]);
+
+		const publishWorkspaceInventory = useCallback(() => {
+			onWorkspaceInventoryChange(
+				project.id,
+				folder.id,
+				getWorkspaceInventoryItems(),
+			);
+		}, [
+			folder.id,
+			getWorkspaceInventoryItems,
+			onWorkspaceInventoryChange,
+			project.id,
+		]);
+
+		const registerTerminalContextReader = useCallback(
+			(sessionId: string, reader: TerminalContextReader) => {
+				terminalContextReadersRef.current.set(sessionId, reader);
+
+				return () => {
+					if (terminalContextReadersRef.current.get(sessionId) === reader) {
+						terminalContextReadersRef.current.delete(sessionId);
+					}
+				};
+			},
+			[],
+		);
+
+		const {
+			applyEvaluation: applyTerminalActivityEvaluation,
+			clearDeferredTimer: clearDeferredTerminalActivityFlushTimer,
+			evaluate: evaluateTerminalActivityState,
+			markViewed: markTerminalActivityViewed,
+			scheduleDeferredFlush: scheduleDeferredTerminalActivityFlush,
+		} = useTerminalActivityController({
+			acknowledgeAgent: (sessionId) => {
+				if (!settingsRef.current.agentIntegration.enabled) return;
+				return serverAgentStatusClient
+					?.acknowledge({ projectId: project.id, sessionId })
+					.catch(() => undefined);
+			},
+			acknowledgeServerActivity:
+				serverActivityClient === undefined
+					? undefined
+					: (sessionId) => {
+							return serverActivityClient
+								.acknowledge(
+									{ projectId: project.id, sessionId },
+									{ fence: false },
+								)
+								.catch(() => undefined);
+						},
+			applyPanelState: (sessionId, state) => {
+				const panel = getPanelForSession(sessionId);
+				if (!panel || panel.params?.terminalActivityState === state)
+					return false;
+				panel.api.updateParameters({
+					terminalActivitySince: Date.now(),
+					terminalActivityState: state,
+					titleUpdateNonce: Date.now(),
+				});
+				return true;
+			},
+			deferredFlushMs: DOCKVIEW_SASH_ACTIVITY_DEFER_MS,
+			deferredSessionsRef: deferredTerminalActivitySessionIdsRef,
+			deferredTimerRef: deferredTerminalActivityFlushTimerRef,
+			evaluateRef: evaluateTerminalActivityStateRef,
+			getEvaluation: (sessionId, now) => {
+				if (!getPanelForSession(sessionId)) return null;
+				const snapshot =
+					serverActivityClient?.store.snapshot.sessions[sessionId];
+				return snapshot === undefined
+					? terminalActivityStoreRef.current.evaluate(sessionId, now)
+					: serverActivityEvaluation(snapshot);
+			},
+			isSashDraggingRef: isDockviewSashDraggingRef,
+			markLocalViewed: (sessionId) =>
+				terminalActivityStoreRef.current.markViewed(sessionId),
+			onOverviewChanged: publishWorkspaceInventory,
+			timersRef: terminalActivityTimersRef,
+		});
+
+		useEffect(() => {
+			let didChange = false;
+			const enabled = settings.agentIntegration.enabled;
+			const dockviewApi = dockviewApiRef.current;
+
+			for (const panel of dockviewApi?.panels ?? []) {
+				const sessionId = panel.params?.sessionId;
+				if (typeof sessionId !== 'string' || sessionId.length === 0) {
+					continue;
+				}
+
+				const aggregate = enabled
+					? aggregateAgentStatusForTerminal(agentStatusSnapshot, sessionId)
+					: null;
+				const nextState = aggregate?.state;
+				const nextNeedsAttention =
+					nextState !== undefined && isAgentAttentionState(nextState);
+				const nextUnread = aggregate?.unread === true;
+				const nextStateSince = aggregate?.stateSince;
+				if (
+					panel.params?.agentState === nextState &&
+					panel.params?.agentNeedsAttention === nextNeedsAttention &&
+					panel.params?.agentUnread === nextUnread &&
+					panel.params?.agentStateSince === nextStateSince
+				) {
+					continue;
+				}
+
+				panel.api.updateParameters({
+					agentState: nextState,
+					agentNeedsAttention: nextNeedsAttention,
+					agentStateSince: nextStateSince,
+					agentUnread: nextUnread,
+				});
+				didChange = true;
+			}
+
+			if (didChange) {
+				requestFrameOrTimeout(publishWorkspaceInventory);
+			}
+		}, [
+			agentStatusSnapshot,
+			isDockviewReady,
+			publishWorkspaceInventory,
+			settings.agentIntegration.enabled,
+			project.id,
+			serverAgentStatusClient,
+		]);
+
+		const suppressInitialTerminalActivity = useCallback(
+			(sessionId: string) => {
+				if (serverActivityClient !== undefined) {
+					return;
+				}
+				terminalActivityStoreRef.current.recordInitialSuppression(sessionId);
+			},
+			[serverActivityClient],
+		);
+
+		useEffect(() => {
+			if (serverAgentStatusClient === undefined || !isDockviewReady) {
+				return;
+			}
+
+			// Desktop can create an initial terminal before the workspace snapshot
+			// observes it. This shared client serves every project view in the
+			// window, so a project with no panels must not clear another project's
+			// already-rendered server-owned agent projection.
+			serverAgentStatusClient.mergeSessionScope([
+				...new Set(panelSessionMapRef.current.values()),
+			]);
+			// Sessions outside every terminal still belong to this project when the
+			// server scoped them to it by directory or worktree.
+			serverAgentStatusClient.mergeProjectScope([project.id]);
+		}, [focusedSessionId, isDockviewReady, project.id, serverAgentStatusClient]);
+
+		useEffect(() => {
+			if (serverActivityClient === undefined) {
+				return;
+			}
+			// Activity revisions belong to one server authority. A replacement
+			// connection (including a server restart) begins from a fresh snapshot;
+			// clear the old panel indicators and control facts before applying it so
+			// an empty replacement snapshot cannot leave stale attention behind.
+			for (const sessionId of panelSessionMapRef.current.values()) {
+				applyTerminalActivityEvaluation(sessionId, {
+					state: 'viewed',
+					nextDeadline: null,
+				});
+			}
+			const applySnapshot = () => {
+				for (const snapshot of Object.values(
+					serverActivityClient.store.snapshot.sessions,
+				)) {
+					if (
+						snapshot.projectId !== project.id ||
+						!getPanelForSession(snapshot.sessionId)
+					) {
+						continue;
+					}
+					const arrival = {
+						acknowledged: snapshot.acknowledged,
+						claimed: snapshot.claimed,
+						focusedSessionId: focusedSessionIdRef.current,
+						interactedSessionId: interactedSessionIdRef.current,
+						sessionId: snapshot.sessionId,
+						status: snapshot.status,
+					};
+					// A terminal moved to a window of its own is judged by that
+					// window.
+					const windowFocused = (
+						getPanelForSession(snapshot.sessionId)?.view.content.element
+							.ownerDocument ?? document
+					).hasFocus();
+					if (
+						!windowFocused &&
+						shouldAcknowledgeInteractedActivity({
+							...arrival,
+							windowFocused: true,
+						})
+					) {
+						// It arrived while they were in another application. Coming
+						// back is not acknowledgement, so the interaction ends here; a
+						// click or a keystroke starts another.
+						interactedSessionIdRef.current = null;
+					}
+					if (
+						shouldAcknowledgeInteractedActivity({ ...arrival, windowFocused })
+					) {
+						// A plain shell's own finished or bell, in the terminal the user
+						// is typing in, is not news to them. An agent's terminal never
+						// takes this path: only what the user does in it clears it.
+						applyTerminalActivityEvaluation(snapshot.sessionId, {
+							state: 'viewed',
+							nextDeadline: null,
+						});
+						// Passive: the user did nothing, so a notification a process
+						// sent to this terminal is not theirs to have seen.
+						void serverActivityClient
+							.acknowledge(
+								{ projectId: project.id, sessionId: snapshot.sessionId },
+								{ fence: false, passive: true },
+							)
+							.catch(() => undefined);
+					} else {
+						applyTerminalActivityEvaluation(
+							snapshot.sessionId,
+							serverActivityEvaluation(snapshot),
+						);
+					}
+				}
+			};
+			applySnapshot();
+			const unsubscribe = serverActivityClient.store.subscribe(() =>
+				applySnapshot(),
+			);
+			void serverActivityClient.refresh().catch(() => undefined);
+			return unsubscribe;
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			isActive,
+			project.id,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			if (!isActive) interactedSessionIdRef.current = null;
+			if (isActive || serverActivityClient === undefined) return;
+			const sessionId = dockviewApiRef.current?.activePanel?.params?.sessionId;
+			if (typeof sessionId !== 'string' || sessionId.length === 0) return;
+			const acknowledgeVisibleFallback = () => {
+				const snapshot =
+					serverActivityClient.store.snapshot.sessions[sessionId];
+				if (snapshot !== undefined && !snapshot.claimed) {
 					markTerminalActivityViewed(sessionId);
-					if (options.keepError !== true) setErrorText(null);
-					window.requestAnimationFrame(() => {
-						window.dispatchEvent(
-							new CustomEvent('terminay-focus-terminal', {
-								detail: { sessionId },
-							}),
-						);
-					});
-				},
-				[markTerminalActivityViewed],
+				}
+			};
+			// Leaving a project is the last point at which its active shell was
+			// visibly observed. Clear only fallback shell noise here; structured
+			// completion remains meaningful and may still surface as finished. Shell
+			// foreground detection can settle just after the project switch, so fold
+			// that final lifecycle update into the same viewing acknowledgement.
+			acknowledgeVisibleFallback();
+			const settleTimer = window.setTimeout(
+				acknowledgeVisibleFallback,
+				PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS,
 			);
-			const activatePanel = useCallback((panelId: string) => {
-				dockviewApiRef.current?.getPanel(panelId)?.api.setActive();
-			}, []);
-			const activateAgentTerminal = useCallback(
-				(terminalSessionId: string) => {
-					const panel = getPanelForSession(terminalSessionId);
-					if (panel) {
-						activateTerminal(panel.id, terminalSessionId);
-						return;
-					}
-					// The agent's terminal is in another folder of this project: go
-					// to that folder first, then to the terminal.
-					const elsewhere = projectInventory.find(
-						(entry) => entry.sessionId === terminalSessionId,
-					);
-					if (elsewhere?.folderId !== undefined)
-						onActivateFolderPanel(
-							project.id,
-							elsewhere.folderId,
-							elsewhere.panelId,
-						);
-				},
-				[
-					activateTerminal,
-					getPanelForSession,
-					onActivateFolderPanel,
-					project.id,
-					projectInventory,
-				],
-			);
+			return () => window.clearTimeout(settleTimer);
+		}, [isActive, markTerminalActivityViewed, serverActivityClient]);
 
-			const syncPanelFocusState = useCallback(() => {
+		const focusActiveTerminal = useCallback(() => {
+			const terminalPanel = findTerminalFocusTarget({
+				api: dockviewApiRef.current,
+				focusedSessionId: focusedSessionIdRef.current,
+				panelSessions: panelSessionMapRef.current,
+			});
+			const sessionId = terminalPanel?.params?.sessionId ?? null;
+			if (!terminalPanel || !sessionId) {
+				return;
+			}
+
+			terminalPanel.api.setActive();
+			focusedSessionIdRef.current = sessionId;
+			setFocusedSessionId(sessionId);
+			window.requestAnimationFrame(() => {
+				window.dispatchEvent(
+					new CustomEvent('terminay-focus-terminal', {
+						detail: { sessionId },
+					}),
+				);
+			});
+		}, []);
+
+		const {
+			cancelRun: cancelMacroRun,
+			cancelSessionRuns: cancelMacroRunsForSession,
+			clearFinishedSessionRuns: clearFinishedMacroRunsForSession,
+			clearRun: clearMacroRunForSession,
+			clearSessionRuns: clearMacroRunsForSession,
+			executeMacro: executeMacroRun,
+			replaceSessionRuns: replaceMacroRunsForSession,
+			runningMacroRunsBySession,
+		} = useMacroRunController({
+			focusActiveTerminal,
+			getActiveSessionId,
+			sendInput: sendTerminalPanelInput,
+			setErrorText,
+			waitForInactivity: waitForSessionInactivity,
+			serverMacroClient,
+			serverTargetForSession: (sessionId) => ({
+				serverId: terminalClientContext?.serverId ?? 'desktop-local',
+				projectId: project.id,
+				sessionId,
+			}),
+		});
+
+		const activateTerminal = useCallback(
+			(
+				panelId: string,
+				sessionId: string,
+				// Going to a terminal dismisses the error on screen. Being put
+				// back on one is not that: an error raised meanwhile stays.
+				options: { keepError?: boolean } = {},
+			) => {
+				const panel = activateTerminalPanel({
+					api: dockviewApiRef.current,
+					panelId,
+					sessionId,
+				});
+				if (!panel) {
+					return;
+				}
+				focusedSessionIdRef.current = sessionId;
+				interactedSessionIdRef.current = sessionId;
+				setFocusedSessionId(sessionId);
+				markTerminalActivityViewed(sessionId);
+				if (options.keepError !== true) setErrorText(null);
+				window.requestAnimationFrame(() => {
+					window.dispatchEvent(
+						new CustomEvent('terminay-focus-terminal', {
+							detail: { sessionId },
+						}),
+					);
+				});
+			},
+			[markTerminalActivityViewed],
+		);
+		const activatePanel = useCallback((panelId: string) => {
+			dockviewApiRef.current?.getPanel(panelId)?.api.setActive();
+		}, []);
+		const activateAgentTerminal = useCallback(
+			(terminalSessionId: string) => {
+				const panel = getPanelForSession(terminalSessionId);
+				if (panel) {
+					activateTerminal(panel.id, terminalSessionId);
+					return;
+				}
+				// The agent's terminal is in another folder of this project: go
+				// to that folder first, then to the terminal.
+				const elsewhere = projectInventory.find(
+					(entry) => entry.sessionId === terminalSessionId,
+				);
+				if (elsewhere?.folderId !== undefined)
+					onActivateFolderPanel(
+						project.id,
+						elsewhere.folderId,
+						elsewhere.panelId,
+					);
+			},
+			[
+				activateTerminal,
+				getPanelForSession,
+				onActivateFolderPanel,
+				project.id,
+				projectInventory,
+			],
+		);
+
+		const syncPanelFocusState = useCallback(() => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return;
+			}
+
+			const activePanelId = api.activePanel?.id ?? null;
+
+			for (const group of api.groups) {
+				for (const panel of group.panels) {
+					panel.api.updateParameters({
+						...panel.params,
+						isFocused: panel.id === activePanelId,
+					});
+				}
+			}
+		}, []);
+
+		const openFile = useCallback(
+			async (filePath: string, options?: OpenFileOptions) => {
 				const api = dockviewApiRef.current;
 				if (!api) {
 					return;
 				}
 
-				const activePanelId = api.activePanel?.id ?? null;
-
-				for (const group of api.groups) {
-					for (const panel of group.panels) {
-						panel.api.updateParameters({
-							...panel.params,
-							isFocused: panel.id === activePanelId,
-						});
+				const existingPanelId = filePathPanelMapRef.current.get(filePath);
+				if (existingPanelId) {
+					const existingPanel = api.getPanel(existingPanelId);
+					if (existingPanel) {
+						// An open that names no view keeps the panel's current view. A
+						// named view is switched to by the panel, which flushes a
+						// pending Document autosave first.
+						if (options?.initialMode) {
+							existingPanel.api.updateParameters({
+								...existingPanel.params,
+								initialMode: options.initialMode,
+							});
+						}
+						existingPanel.api.setActive();
+						syncPanelFocusState();
+						if (options?.initialMode) {
+							window.requestAnimationFrame(() => {
+								window.dispatchEvent(
+									new CustomEvent('terminay-file-mode-request', {
+										detail: {
+											mode: options.initialMode,
+											path: filePath,
+										},
+									}),
+								);
+							});
+						}
+						return;
 					}
 				}
-			}, []);
 
-			const openFile = useCallback(
-				async (filePath: string, options?: OpenFileOptions) => {
-					const api = dockviewApiRef.current;
-					if (!api) {
-						return;
-					}
+				filePanelCounterRef.current += 1;
+				const panelId = `file-${filePanelCounterRef.current}`;
+				const title = filePath.split(/[/\\]/).pop() || filePath;
 
-					const existingPanelId = filePathPanelMapRef.current.get(filePath);
-					if (existingPanelId) {
-						const existingPanel = api.getPanel(existingPanelId);
-						if (existingPanel) {
-							// An open that names no view keeps the panel's current view. A
-							// named view is switched to by the panel, which flushes a
-							// pending Document autosave first.
-							if (options?.initialMode) {
-								existingPanel.api.updateParameters({
-									...existingPanel.params,
-									initialMode: options.initialMode,
-								});
+				const panel = api.addPanel<FilePanelInstanceParams>({
+					component: 'file',
+					id: panelId,
+					params: {
+						color: project.color,
+						filePath,
+						initialMode: options?.initialMode,
+						inheritsProjectColor: true,
+						isFocused: false,
+						preferredEngine: 'auto',
+						projectColor: project.color,
+						projectRoot: folderRootPath,
+					},
+					position: api.activePanel
+						? {
+								direction: 'within',
+								referenceGroup: api.activePanel.group.id,
 							}
-							existingPanel.api.setActive();
-							syncPanelFocusState();
-							if (options?.initialMode) {
-								window.requestAnimationFrame(() => {
-									window.dispatchEvent(
-										new CustomEvent('terminay-file-mode-request', {
-											detail: {
-												mode: options.initialMode,
-												path: filePath,
-											},
-										}),
-									);
-								});
+						: undefined,
+					tabComponent: 'fileTab',
+					title,
+				});
+
+				filePathPanelMapRef.current.set(filePath, panel.id);
+				panel.api.setActive();
+				syncPanelFocusState();
+			},
+			[folderRootPath, project.color, syncPanelFocusState],
+		);
+
+		/** Open a pull request or issue as a tab in this folder, or bring its
+		 * tab forward when it is already open here. */
+		const openForgeItem = useCallback(
+			(target: ForgeItemTarget) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return;
+				}
+				const key = forgeItemKey(target.reference);
+				const existing = api.panels.find((panel) => {
+					const open = readForgeItemTarget(
+						(panel.params as { forgeItem?: unknown } | undefined)?.forgeItem,
+					);
+					return open !== undefined && forgeItemKey(open.reference) === key;
+				});
+				if (existing) {
+					existing.api.setActive();
+					syncPanelFocusState();
+					return;
+				}
+				forgePanelCounterRef.current += 1;
+				const panel = api.addPanel<ForgeItemPanelParams>({
+					component: FORGE_ITEM_PANEL_COMPONENT,
+					id: `forge-item-${forgePanelCounterRef.current}`,
+					params: {
+						color: project.color,
+						forgeItem: target,
+						isFocused: false,
+					},
+					position: api.activePanel
+						? {
+								direction: 'within',
+								referenceGroup: api.activePanel.group.id,
 							}
-							return;
-						}
-					}
-
-					filePanelCounterRef.current += 1;
-					const panelId = `file-${filePanelCounterRef.current}`;
-					const title = filePath.split(/[/\\]/).pop() || filePath;
-
-					const panel = api.addPanel<FilePanelInstanceParams>({
-						component: 'file',
-						id: panelId,
-						params: {
-							color: project.color,
-							filePath,
-							initialMode: options?.initialMode,
-							inheritsProjectColor: true,
-							isFocused: false,
-							preferredEngine: 'auto',
-							projectColor: project.color,
-							projectRoot: folderRootPath,
-						},
-						position: api.activePanel
-							? {
-									direction: 'within',
-									referenceGroup: api.activePanel.group.id,
-								}
-							: undefined,
-						tabComponent: 'fileTab',
-						title,
-					});
-
-					filePathPanelMapRef.current.set(filePath, panel.id);
-					panel.api.setActive();
-					syncPanelFocusState();
-				},
-				[folderRootPath, project.color, syncPanelFocusState],
+						: undefined,
+					tabComponent: FORGE_ITEM_TAB_COMPONENT,
+					title: forgeItemPlaceholderTitle(target.reference),
+				});
+				panel.api.setActive();
+				syncPanelFocusState();
+			},
+			[project.color, syncPanelFocusState],
+		);
+		openForgeItemRef.current = openForgeItem;
+		useEffect(() => {
+			// A link is followed where it was clicked. Every folder of the project
+			// hears this, and only the one on screen can have been clicked in.
+			if (!isActive) return;
+			const openDocumentationLink = (event: Event) => {
+				const path = (event as CustomEvent<{ path?: unknown }>).detail?.path;
+				if (
+					typeof path !== 'string' ||
+					!path ||
+					path.startsWith('/') ||
+					path.includes('\\') ||
+					path.split('/').some((part) => !part || part === '.' || part === '..')
+				)
+					return;
+				void openFile(path);
+			};
+			window.addEventListener(
+				'terminay-documentation-open',
+				openDocumentationLink,
 			);
-
-			/** Open a pull request or issue as a tab in this folder, or bring its
-			 * tab forward when it is already open here. */
-			const openForgeItem = useCallback(
-				(target: ForgeItemTarget) => {
-					const api = dockviewApiRef.current;
-					if (!api) {
-						return;
-					}
-					const key = forgeItemKey(target.reference);
-					const existing = api.panels.find((panel) => {
-						const open = readForgeItemTarget(
-							(panel.params as { forgeItem?: unknown } | undefined)?.forgeItem,
-						);
-						return open !== undefined && forgeItemKey(open.reference) === key;
-					});
-					if (existing) {
-						existing.api.setActive();
-						syncPanelFocusState();
-						return;
-					}
-					forgePanelCounterRef.current += 1;
-					const panel = api.addPanel<ForgeItemPanelParams>({
-						component: FORGE_ITEM_PANEL_COMPONENT,
-						id: `forge-item-${forgePanelCounterRef.current}`,
-						params: {
-							color: project.color,
-							forgeItem: target,
-							isFocused: false,
-						},
-						position: api.activePanel
-							? {
-									direction: 'within',
-									referenceGroup: api.activePanel.group.id,
-								}
-							: undefined,
-						tabComponent: FORGE_ITEM_TAB_COMPONENT,
-						title: forgeItemPlaceholderTitle(target.reference),
-					});
-					panel.api.setActive();
-					syncPanelFocusState();
-				},
-				[project.color, syncPanelFocusState],
-			);
-			openForgeItemRef.current = openForgeItem;
-			useEffect(() => {
-				// A link is followed where it was clicked. Every folder of the project
-				// hears this, and only the one on screen can have been clicked in.
-				if (!isActive) return;
-				const openDocumentationLink = (event: Event) => {
-					const path = (event as CustomEvent<{ path?: unknown }>).detail?.path;
-					if (
-						typeof path !== 'string' ||
-						!path ||
-						path.startsWith('/') ||
-						path.includes('\\') ||
-						path
-							.split('/')
-							.some((part) => !part || part === '.' || part === '..')
-					)
-						return;
-					void openFile(path);
-				};
-				window.addEventListener(
+			return () =>
+				window.removeEventListener(
 					'terminay-documentation-open',
 					openDocumentationLink,
 				);
-				return () =>
-					window.removeEventListener(
-						'terminay-documentation-open',
-						openDocumentationLink,
-					);
-			}, [isActive, openFile]);
+		}, [isActive, openFile]);
 
-			const handleOpenTerminalAt = useCallback(
-				async (path: string, isDirectory = false) => {
-					const api = dockviewApiRef.current;
-					if (!api) {
-						return;
-					}
+		const handleOpenTerminalAt = useCallback(
+			async (path: string, isDirectory = false) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return;
+				}
 
-					let cwd = path;
-					if (!isDirectory) {
-						// If it's a file, get the parent directory.
-						try {
-							const clientPath = fileClientPath(path);
-							const info = await fileViewerClient.listFolder(
-								clientPath,
-								fileClientProjectId,
-							);
-							if (info.root !== clientPath) {
-								cwd = path.substring(
-									0,
-									Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
-								);
-							}
-						} catch {
+				let cwd = path;
+				if (!isDirectory) {
+					// If it's a file, get the parent directory.
+					try {
+						const clientPath = fileClientPath(path);
+						const info = await fileViewerClient.listFolder(
+							clientPath,
+							fileClientProjectId,
+						);
+						if (info.root !== clientPath) {
 							cwd = path.substring(
 								0,
 								Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
 							);
 						}
+					} catch {
+						cwd = path.substring(
+							0,
+							Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
+						);
 					}
-
-					try {
-						if (terminalPanelClientContext === null) {
-							throw new Error('The server terminal client is unavailable.');
-						}
-						const sessionId = (
-							await terminalPanelClientContext.client.create({
-								cwd,
-								projectId: project.id,
-								...(projectedFolderId === undefined
-									? {}
-									: { folderId: projectedFolderId }),
-							})
-						).sessionId;
-						suppressInitialTerminalActivity(sessionId);
-						if (settings.recording.recordNewTerminals) {
-							void startRecordingForSession(sessionId);
-						} else {
-							hydrateRecordingStateForSession(sessionId);
-						}
-						const synchronized =
-							await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-								(snapshot) => hasTerminalPresentation(snapshot, sessionId),
-							);
-						if (synchronized === null) {
-							throw new Error(
-								'Server did not publish a terminal panel for the created session.',
-							);
-						}
-						const startedAt = performance.now();
-						await new Promise<void>((resolve) => {
-							const activateServerPanel = () => {
-								const reconciledPanel = getPanelForSession(sessionId);
-								if (reconciledPanel !== null) {
-									reconciledPanel.api.setActive();
-									setFocusedSessionId(sessionId);
-									scheduleCreatedTerminalFocus(sessionId);
-									requestFrameOrTimeout(publishWorkspaceInventory);
-									resolve();
-									return;
-								}
-								if (performance.now() - startedAt >= 2_000) {
-									resolve();
-									return;
-								}
-								window.requestAnimationFrame(activateServerPanel);
-							};
-							activateServerPanel();
-						});
-					} catch (error) {
-						setErrorText(`Failed to open terminal: ${String(error)}`);
-					}
-				},
-				[
-					fileClientPath,
-					fileClientProjectId,
-					fileViewerClient,
-					getPanelForSession,
-					project.id,
-					projectedFolderId,
-					publishWorkspaceInventory,
-					hydrateRecordingStateForSession,
-					settings.recording.recordNewTerminals,
-					startRecordingForSession,
-					terminalPanelClientContext,
-					suppressInitialTerminalActivity,
-				],
-			);
-
-			const {
-				cancelFileExplorerNameDialog,
-				cleanWorktreeDeleteCount,
-				deletingWorktreePaths,
-				directoryChildren,
-				directoryErrors,
-				expandedPaths,
-				fileExplorerNameDialog,
-				gitStatuses,
-				handleCopyPath,
-				handleCopyRelativePath,
-				handleDelete,
-				handleDeleteCleanWorktrees,
-				handleDeleteWorktree,
-				handleRespondWorktreeSignIn,
-				handleNewFile,
-				handleNewFolder,
-				handleOpenGitEntry,
-				handlePullWorktreeFromOrigin,
-				handleRename,
-				handleRenameWorktree,
-				handleLoadWorktreeChecks,
-				handleRevealFolder,
-				loadingPaths,
-				pullingWorktreePaths,
-				refreshFileExplorerTree,
-				refreshGitStatusesForRoot,
-				submitFileExplorerNameDialog,
-				toggleDirectory,
-				worktreePanelStatus,
-			} = useFileExplorerController({
-				fileObservationClient: explorerFileObservationClient,
-				fileViewerClient,
-				gitClient: rootScopedAuthority?.gitClient,
-				isServerFileViewer: true,
-				onOpenFile: openFile,
-				onOperationError: reportFeatureFailure,
-				onOperationSucceeded: clearFeatureFailure,
-				onSetError: setErrorText,
-				project: explorerProject,
-				listingMemory: gitListingMemory,
-				...(project.rootFolder ? { listingRoot: project.rootFolder } : {}),
-			});
-			const worktreePanelStatusRef = useRef(worktreePanelStatus);
-			worktreePanelStatusRef.current = worktreePanelStatus;
-			useEffect(() => {
-				onWorktreeStatusChange?.();
-			}, [onWorktreeStatusChange, worktreePanelStatus]);
-			// The one worktree this folder stands for: what Changes reports.
-			const changes = useMemo(
-				() => folderChanges(folder, project.rootFolder, worktreePanelStatus),
-				[folder, project.rootFolder, worktreePanelStatus],
-			);
-			// The dashboard shows a folder's pull request and checks on each of its
-			// panels, so a change to them is published with the inventory. Keyed by
-			// value: a fresh listing with the same facts publishes nothing.
-			const folderWorktreeFacts =
-				changes.kind === 'worktree'
-					? worktreeFactsFromProperties(changes.worktree.properties)
-					: undefined;
-			const folderWorktreeFactsKey =
-				folderWorktreeFacts === undefined
-					? ''
-					: JSON.stringify(folderWorktreeFacts);
-			folderWorktreeFactsRef.current = folderWorktreeFacts;
-			const publishedWorktreeFactsKeyRef = useRef('');
-			useEffect(() => {
-				if (publishedWorktreeFactsKeyRef.current === folderWorktreeFactsKey)
-					return;
-				publishedWorktreeFactsKeyRef.current = folderWorktreeFactsKey;
-				publishWorkspaceInventory();
-			}, [folderWorktreeFactsKey, publishWorkspaceInventory]);
-			const isWorktreeMissing =
-				changes.kind === 'worktree' && changes.worktree.isPrunable === true;
-			worktreeMissingRef.current = isWorktreeMissing;
-			// The directory can vanish, and a listing fail for it, before Git has
-			// reported the worktree missing. That failure is the same news the Files
-			// pane now gives, so it is withdrawn rather than left standing beside it.
-			useEffect(() => {
-				if (!isWorktreeMissing) return;
-				const failure = featureFailureRef.current;
-				if (failure?.feature !== 'Explorer') return;
-				setErrorText((current) => {
-					if (current !== failure.message) return current;
-					featureFailureRef.current = null;
-					return null;
-				});
-			}, [isWorktreeMissing]);
-			const isRenderingStatusBar =
-				isActive && isStatusBarVisible && statusBarSlot !== null;
-			const focusedTerminalStatus = useFocusedTerminalStatus({
-				apiRef: dockviewApiRef,
-				focusedSessionId,
-				getCwd: getServerTerminalCwd,
-				isActive: isRenderingStatusBar,
-				isDockviewReady,
-			});
-			const focusedFileStatus = useFocusedFileStatus({
-				apiRef: dockviewApiRef,
-				isActive: isRenderingStatusBar,
-				isDockviewReady,
-			});
-			// The Folders column's own menu: what is done to the folders as a list.
-			const [foldersMenuPosition, setFoldersMenuPosition] = useState<{
-				x: number;
-				y: number;
-			} | null>(null);
-			const openFolder = useCallback(
-				(folderPath: string) => {
-					const api = dockviewApiRef.current;
-					if (!api) {
-						return;
-					}
-
-					const existingPanelId = folderPathPanelMapRef.current.get(folderPath);
-					if (existingPanelId) {
-						const existingPanel = api.getPanel(existingPanelId);
-						if (existingPanel) {
-							existingPanel.api.setActive();
-							syncPanelFocusState();
-							return;
-						}
-					}
-
-					folderPanelCounterRef.current += 1;
-					const panelId = `folder-${folderPanelCounterRef.current}`;
-					const title =
-						folderPath.split(/[/\\]/).filter(Boolean).pop() || folderPath;
-
-					const panel = api.addPanel<
-						FolderPanelInstanceParams & {
-							onRename?: (path: string) => void;
-							onDelete?: (path: string) => void;
-							onNewFile?: (dirPath: string) => void;
-							onNewFolder?: (dirPath: string) => void;
-							onOpenTerminal?: (path: string) => void;
-							onCopyPath?: (path: string) => void;
-							onCopyRelativePath?: (path: string) => void;
-							projectRootPath?: string;
-						}
-					>({
-						component: 'folder',
-						id: panelId,
-						params: {
-							color: project.color,
-							folderPath,
-							inheritsProjectColor: true,
-							isFocused: false,
-							onRename: handleRename,
-							onDelete: handleDelete,
-							onNewFile: handleNewFile,
-							onNewFolder: handleNewFolder,
-							onOpenTerminal: handleOpenTerminalAt,
-							onCopyPath: handleCopyPath,
-							onCopyRelativePath: handleCopyRelativePath,
-							projectColor: project.color,
-							projectId: project.id,
-							projectRootPath: folderRootPath,
-						},
-						position: api.activePanel
-							? {
-									direction: 'within',
-									referenceGroup: api.activePanel.group.id,
-								}
-							: undefined,
-						tabComponent: 'folderTab',
-						title,
-					});
-
-					folderPathPanelMapRef.current.set(folderPath, panel.id);
-					panel.api.setActive();
-					syncPanelFocusState();
-				},
-				[
-					handleDelete,
-					handleCopyPath,
-					handleCopyRelativePath,
-					handleNewFile,
-					handleNewFolder,
-					handleOpenTerminalAt,
-					handleRename,
-					folderRootPath,
-					project.color,
-					project.id,
-					syncPanelFocusState,
-				],
-			);
-			const setProjectRootFolderToWorkingDirectory = useCallback(async () => {
-				const sessionId = getActiveSessionId();
-				if (!sessionId) {
-					setErrorText(
-						'Open a terminal before setting the project root to its working directory.',
-					);
-					return;
 				}
 
 				try {
-					const cwd = await getServerTerminalCwd(sessionId);
-					if (!cwd) {
-						setErrorText(
-							'The active terminal does not have a working directory yet.',
-						);
-						return;
+					if (terminalPanelClientContext === null) {
+						throw new Error('The server terminal client is unavailable.');
 					}
-
-					const nextRootFolder = cwd.trim();
-
-					if (!nextRootFolder) {
-						setErrorText(
-							'The active terminal does not have a working directory yet.',
-						);
-						return;
-					}
-
-					const workspaceSnapshotStore =
-						terminalPanelClientContext?.workspaceSnapshotStore;
-					if (workspaceSnapshotStore === undefined) {
-						onUpdateProject(project.id, { rootFolder: nextRootFolder });
-						void refreshGitStatusesForRoot(
-							nextRootFolder,
-							true,
-							undefined,
-							'root',
-						);
-					} else {
-						const committed = await workspaceSnapshotStore.setProjectRoot({
-							projectId: project.id,
-							root: nextRootFolder,
-						});
-						void refreshGitStatusesForRoot(
-							committed.root,
-							true,
-							undefined,
-							'root',
-						);
-					}
-					setErrorText(null);
-					setIsMacroLauncherOpen(false);
-					setMacroQuery('');
-				} catch (error) {
-					const message =
-						error instanceof Error ? error.message : String(error);
-					setErrorText(`Unable to set the project root folder: ${message}`);
-				}
-			}, [
-				getActiveSessionId,
-				getServerTerminalCwd,
-				onUpdateProject,
-				project.id,
-				refreshGitStatusesForRoot,
-				terminalPanelClientContext?.workspaceSnapshotStore,
-			]);
-
-			const executeMacro = useCallback(
-				async (
-					macro: MacroDefinition,
-					values: Record<string, MacroFieldValue>,
-				) => {
-					setMacroToRun(null);
-					setMacroFieldValues({});
-					setMacroFileSearchRootPath('');
-					setIsMacroLauncherOpen(false);
-					setMacroQuery('');
-					setSelectedMacroIndex(0);
-					await executeMacroRun(macro, values);
-				},
-				[executeMacroRun],
-			);
-
-			const {
-				closeMacroLauncher,
-				closeMacroParameterModal,
-				firstMacroFieldRef,
-				isMacroLauncherOpen,
-				macroFieldValues,
-				macroFileSearchRootPath,
-				macroLauncherInputRef,
-				macroLauncherItemRefs,
-				macroLauncherListRef,
-				macroQuery,
-				macroToRun,
-				runMacro,
-				selectedMacroIndex,
-				setIsMacroLauncherOpen,
-				setMacroFieldValues,
-				setMacroFileSearchRootPath,
-				setMacroQuery,
-				setMacroToRun,
-				setSelectedMacroIndex,
-				validateMacroValues,
-			} = useMacroLauncherController({
-				executeMacro,
-				focusActiveTerminal,
-				getActiveSessionId,
-				getServerTerminalCwd,
-				projectRoot: project.rootFolder,
-				setErrorText,
-			});
-			const shellProfilesClient = useMemo(
-				() =>
-					terminalPanelClientContext?.applicationClient === undefined
-						? null
-						: new ShellProfilesClient(
-								new TerminayClientFacade(
-									terminalPanelClientContext.applicationClient,
-								),
-							),
-				[terminalPanelClientContext?.applicationClient],
-			);
-			const [profileChooserEntries, setProfileChooserEntries] = useState<
-				readonly ShellProfileCatalogueEntry[] | null
-			>(null);
-			const [profileChooserQuery, setProfileChooserQuery] = useState('');
-			const profileChooserRef = useRef<HTMLDivElement>(null);
-			const profileChooserSearchRef = useRef<HTMLInputElement>(null);
-			const profileChooserReturnFocusRef = useRef<HTMLElement | null>(null);
-			const openProfileChooser = useCallback(async () => {
-				if (!shellProfilesClient) {
-					setErrorText('Shell profiles are unavailable on this server.');
-					return;
-				}
-				profileChooserReturnFocusRef.current =
-					document.activeElement instanceof HTMLElement
-						? document.activeElement
-						: null;
-				setIsMacroLauncherOpen(false);
-				setMacroQuery('');
-				try {
-					const catalogue = await shellProfilesClient.catalogue();
-					setProfileChooserEntries(
-						catalogue.entries.filter((entry) => entry.availability.available),
-					);
-					setProfileChooserQuery('');
-					setErrorText(null);
-				} catch (error) {
-					setErrorText(
-						`Unable to load shell profiles: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
-			}, [setIsMacroLauncherOpen, setMacroQuery, shellProfilesClient]);
-			const filteredProfileChooserEntries = useMemo(() => {
-				const normalized = profileChooserQuery.trim().toLocaleLowerCase();
-				return (profileChooserEntries ?? []).filter(
-					(entry) =>
-						!normalized ||
-						`${entry.name} ${entry.source}`
-							.toLocaleLowerCase()
-							.includes(normalized),
-				);
-			}, [profileChooserEntries, profileChooserQuery]);
-			useEffect(() => {
-				if (profileChooserEntries === null) return;
-				const focusFrame = window.requestAnimationFrame(() => {
-					profileChooserSearchRef.current?.focus();
-				});
-				const onKeyDown = (event: KeyboardEvent) => {
-					if (event.key === 'Escape') {
-						event.preventDefault();
-						setProfileChooserEntries(null);
-						return;
-					}
-					if (event.key !== 'Tab') return;
-					const focusable = [
-						...(profileChooserRef.current?.querySelectorAll<HTMLElement>(
-							'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
-						) ?? []),
-					].filter((element) => element.offsetParent !== null);
-					if (focusable.length === 0) return;
-					const first = focusable[0]!;
-					const last = focusable[focusable.length - 1]!;
-					if (event.shiftKey && document.activeElement === first) {
-						event.preventDefault();
-						last.focus();
-					} else if (!event.shiftKey && document.activeElement === last) {
-						event.preventDefault();
-						first.focus();
-					}
-				};
-				window.addEventListener('keydown', onKeyDown);
-				return () => {
-					window.cancelAnimationFrame(focusFrame);
-					window.removeEventListener('keydown', onKeyDown);
-					const target = profileChooserReturnFocusRef.current;
-					profileChooserReturnFocusRef.current = null;
-					window.requestAnimationFrame(() =>
-						target?.isConnected &&
-						target.offsetParent !== null &&
-						target.closest(
-							'[aria-hidden="true"], [inert], .macro-launcher-overlay',
-						) === null
-							? target.focus()
-							: focusActiveTerminal(),
-					);
-				};
-			}, [focusActiveTerminal, profileChooserEntries]);
-			const {
-				isOpen: isTerminalSwitcherOpen,
-				items: terminalSwitcherItems,
-				select: selectTerminalSwitcherItem,
-				selectAndCommit: selectAndCommitTerminalSwitcherItem,
-				selectedIndex: terminalSwitcherIndex,
-			} = useTerminalSwitcherController({
-				apiRef: dockviewApiRef,
-				blocked: isMacroLauncherOpen || macroToRun !== null,
-				isActive,
-				onClearError: () => setErrorText(null),
-			});
-			const macroParameterModal = useDraggableModal(macroToRun !== null);
-			const fileExplorerNameModal = useDraggableModal(
-				fileExplorerNameDialog !== null,
-			);
-
-			const syncFocusedTerminalTabs = useCallback(
-				(sessionId: string | null) => {
-					const api = dockviewApiRef.current;
-					if (!api) {
-						return;
-					}
-
-					for (const [
-						panelId,
-						panelSessionId,
-					] of panelSessionMapRef.current.entries()) {
-						const panel = api.getPanel(panelId);
-						if (!panel) {
-							continue;
-						}
-
-						const isFocused = panelSessionId === sessionId;
-						if (panel.params?.isFocused === isFocused) {
-							continue;
-						}
-
-						panel.api.updateParameters({ isFocused });
-					}
-				},
-				[],
-			);
-
-			// The handlers a terminal's tab is given close over these. A new token
-			// means every terminal needs them again; the same token means a
-			// terminal that already has them keeps them.
-			const macroTabHandlers = useMemo(
-				() => ({}),
-				[
-					cancelMacroRun,
-					clearFinishedMacroRunsForSession,
-					clearMacroRunForSession,
-					onMoveTerminalToProject,
-					project.id,
-				],
-			);
-			const macroTabHandlersRef = useRef(new Map<string, object>());
-			const syncRunningMacroTabs = useCallback(() => {
-				const api = dockviewApiRef.current;
-				if (!api) {
-					return;
-				}
-				const projectsForMove = getProjectsForTerminalMove();
-
-				for (const [
-					panelId,
-					panelSessionId,
-				] of panelSessionMapRef.current.entries()) {
-					const panel = api.getPanel(panelId);
-					if (!panel) {
-						continue;
-					}
-
-					// Dockview renders a panel and its tab again for every parameter
-					// update, changed or not, and this runs for every terminal each
-					// time any of its inputs is replaced: only what differs is handed
-					// over, and a terminal nothing changed for is left alone.
-					const next: Record<string, unknown> = {};
-					const macroRuns =
-						runningMacroRunsBySession[panelSessionId] ?? NO_MACRO_RUNS;
-					if (panel.params?.macroRuns !== macroRuns) next.macroRuns = macroRuns;
-					if (!sameJsonValue(panel.params?.projectsForMove, projectsForMove))
-						next.projectsForMove = projectsForMove;
-					if (macroTabHandlersRef.current.get(panelId) !== macroTabHandlers) {
-						macroTabHandlersRef.current.set(panelId, macroTabHandlers);
-						next.onClearFinishedMacroRuns = () =>
-							clearFinishedMacroRunsForSession(panelSessionId);
-						next.onClearMacroRun = (runId: string) =>
-							clearMacroRunForSession(panelSessionId, runId);
-						next.onCancelMacroRun = cancelMacroRun;
-						next.onMoveToProject = (targetProjectId: string) =>
-							onMoveTerminalToProject(project.id, panelId, targetProjectId);
-					}
-					if (Object.keys(next).length > 0) panel.api.updateParameters(next);
-				}
-				for (const panelId of macroTabHandlersRef.current.keys())
-					if (!panelSessionMapRef.current.has(panelId))
-						macroTabHandlersRef.current.delete(panelId);
-			}, [
-				cancelMacroRun,
-				clearFinishedMacroRunsForSession,
-				clearMacroRunForSession,
-				getProjectsForTerminalMove,
-				macroTabHandlers,
-				onMoveTerminalToProject,
-				project.id,
-				runningMacroRunsBySession,
-			]);
-
-			useEffect(() => {
-				const api = dockviewApiRef.current;
-
-				for (const group of api?.groups ?? []) {
-					for (const panel of group.panels) {
-						const params = panel.params as PanelTabAppearance | undefined;
-						if (!params || !('inheritsProjectColor' in params)) {
-							continue;
-						}
-
-						const inheritsProjectColor = params.inheritsProjectColor === true;
-						panel.api.updateParameters({
-							projectColor: project.color,
-							...(inheritsProjectColor ? { color: project.color } : {}),
-						});
-					}
-				}
-
-				requestFrameOrTimeout(publishWorkspaceInventory);
-			}, [
-				project.id,
-				project.title,
-				project.emoji,
-				project.color,
-				publishWorkspaceInventory,
-			]);
-
-			useEffect(() => {
-				const api = dockviewApiRef.current;
-				if (!api) {
-					return;
-				}
-
-				for (const [panelId] of panelSessionMapRef.current.entries()) {
-					const panel = api.getPanel(panelId);
-					if (!panel) {
-						continue;
-					}
-
-					panel.api.updateParameters({
-						showActiveTabActivityIndicator:
-							settings.activityIndicators.showActiveTabs,
-						showFinishedTabActivityIndicator:
-							settings.activityIndicators.showFinishedTabs,
-					});
-				}
-
-				requestFrameOrTimeout(publishWorkspaceInventory);
-			}, [
-				publishWorkspaceInventory,
-				settings.activityIndicators.showActiveTabs,
-				settings.activityIndicators.showFinishedTabs,
-			]);
-
-			const renameTerminal = useCallback(
-				(panelId: string, title: string) => {
-					// The server's panel record is the title. A terminal in a folder
-					// that is not on screen has no tab here to follow it.
-					terminalClientContext?.workspaceSnapshotStore
-						?.updatePanel({ panelId, patch: { title } })
-						.catch((error: unknown) =>
-							setErrorText(
-								`Unable to rename the terminal: ${error instanceof Error ? error.message : String(error)}`,
-							),
-						);
-					const panel = dockviewApiRef.current?.getPanel(panelId);
-					if (!panel) return;
-					panel.api.setTitle(title);
-					requestFrameOrTimeout(publishWorkspaceInventory);
-				},
-				[publishWorkspaceInventory, terminalClientContext],
-			);
-
-			const openTerminalEditWindow = useCallback(
-				async (panelId: string) => {
-					const api = dockviewApiRef.current;
-					if (!api) {
-						return;
-					}
-
-					const panel = api.getPanel(panelId);
-					if (!panel) {
-						return;
-					}
-
-					const sessionId = panel.params?.sessionId ?? null;
-					const titleDraft = terminalTitleDraft(
-						terminalClientContext?.workspaceSnapshotStore?.snapshot?.panels[
-							panelId
-						],
-						panel.title ?? 'Tab',
-					);
-
-					try {
-						const result = await auxiliaryRoutes.editTerminalTab({
-							kind: 'terminal',
-							draft: {
-								activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
-									panel.params,
-								),
-								color: getEffectiveTerminalTabColor(
-									panel.params,
-									project.color,
-								),
-								emoji: panel.params?.emoji ?? '',
-								inheritsProjectColor:
-									panel.params?.inheritsProjectColor ??
-									panel.params?.color === project.color,
-								projectColor: project.color,
-								...titleDraft,
-							},
-						});
-						if (!result) {
-							return;
-						}
-
-						// An empty name returns the tab to its automatic title.
-						const { patchTitle, shownTitle: nextTitle } =
-							terminalTitleSubmission(
-								titleDraft,
-								result.title,
-								panel.title ?? 'Tab',
-							);
-						const nextEmoji = result.emoji.trim();
-						const nextColor = result.color;
-						const workspaceStore =
-							terminalClientContext?.workspaceSnapshotStore;
-						if (workspaceStore !== undefined) {
-							await workspaceStore.updatePanel({
-								panelId,
-								patch: {
-									title: patchTitle,
-									emoji: nextEmoji,
-									color: nextColor,
-									inheritsProjectColor: result.inheritsProjectColor,
-									activityIndicatorsEnabled: result.activityIndicatorsEnabled,
-								},
-							});
-						}
-
-						// The title stream may already have delivered the resolved title
-						// while updatePanel was in flight. Only older servers without
-						// title sources need the editor's local display fallback.
-						if (nextTitle !== undefined) panel.api.setTitle(nextTitle);
-						panel.api.updateParameters({
-							activityIndicatorsEnabled: result.activityIndicatorsEnabled,
-							emoji: nextEmoji,
-							color: nextColor,
-							inheritsProjectColor: result.inheritsProjectColor,
-							projectColor: project.color,
-						});
-
-						requestFrameOrTimeout(publishWorkspaceInventory);
-					} finally {
-						// Closing the editor returns the person to their terminal; it
-						// must not dismiss an error that arrived while it was open.
-						window.requestAnimationFrame(() => {
-							if (sessionId) {
-								activateTerminal(panelId, sessionId, { keepError: true });
-								return;
-							}
-
-							focusActiveTerminal();
-						});
-					}
-				},
-				[
-					activateTerminal,
-					auxiliaryRoutes,
-					focusActiveTerminal,
-					project.color,
-					project.id,
-					project.title,
-					project.emoji,
-					publishWorkspaceInventory,
-					terminalClientContext?.workspaceSnapshotStore,
-				],
-			);
-
-			const clearActiveTerminal = useCallback(() => {
-				const sessionId = getActiveSessionId();
-				if (!sessionId) {
-					setErrorText('Open a terminal before clearing it.');
-					return;
-				}
-
-				setErrorText(null);
-				window.dispatchEvent(
-					new CustomEvent('terminay-clear-terminal', {
-						detail: { sessionId },
-					}),
-				);
-				setIsMacroLauncherOpen(false);
-				setMacroQuery('');
-			}, [getActiveSessionId]);
-
-			const copyActiveTerminalSelection = useCallback(() => {
-				const sessionId = getActiveSessionId();
-				if (!sessionId) {
-					document.execCommand('copy');
-					return;
-				}
-
-				window.dispatchEvent(
-					new CustomEvent('terminay-copy-terminal', {
-						detail: { sessionId },
-					}),
-				);
-			}, [getActiveSessionId]);
-
-			const openActiveTerminalSettings = useCallback(() => {
-				const activePanel = dockviewApiRef.current?.activePanel;
-				if (!activePanel) {
-					setErrorText('Open a tab before editing its settings.');
-					return;
-				}
-
-				setErrorText(null);
-				setIsMacroLauncherOpen(false);
-				setMacroQuery('');
-				void openTerminalEditWindow(activePanel.id);
-			}, [openTerminalEditWindow]);
-
-			const openProjectSettings = useCallback(() => {
-				setErrorText(null);
-				setIsMacroLauncherOpen(false);
-				setMacroQuery('');
-				void onEditProject(project.id);
-			}, [onEditProject, project.id]);
-
-			const runAiTabMetadata = useCallback(
-				async (target: AiTabMetadataTarget, targetPanelId?: string) => {
-					setIsMacroLauncherOpen(false);
-					setMacroQuery('');
-
-					const api = dockviewApiRef.current;
-					const activePanel = targetPanelId
-						? api?.getPanel(targetPanelId)
-						: api?.activePanel;
-					const sessionId = activePanel?.params?.sessionId;
-					if (!activePanel || !sessionId) {
-						setErrorText('Open a terminal before generating tab metadata.');
-						return;
-					}
-
-					const targetSettings = settings.aiTabMetadata[target];
-					if (targetSettings.provider === 'disabled') {
-						setErrorText(
-							`Enable an AI provider for tab ${target === 'title' ? 'titles' : 'notes'} in Settings first.`,
-						);
-						return;
-					}
-
-					const provider = targetSettings.provider;
-					const providerLabel = provider === 'codex' ? 'Codex' : 'Claude Code';
-					const model =
-						provider === 'codex'
-							? targetSettings.codexModel
-							: targetSettings.claudeCodeModel;
-					if (!model.trim()) {
-						setErrorText(
-							`Choose a ${providerLabel} model in Settings before generating tab metadata.`,
-						);
-						return;
-					}
-
-					const inFlightKey = `${sessionId}:${target}`;
-					if (aiGenerationInFlightRef.current.has(inFlightKey)) {
-						setErrorText(
-							`Already generating a tab ${target} for this terminal.`,
-						);
-						return;
-					}
-
-					aiGenerationInFlightRef.current.add(inFlightKey);
-					setErrorText(null);
-					// The title itself is the server's. Show progress beside it rather
-					// than writing a placeholder a reconcile would replace.
-					if (target === 'title')
-						activePanel.api.updateParameters({ aiTitlePending: true });
-
-					try {
-						if (
-							serverAiClient === undefined ||
-							terminalClientContext === undefined
-						)
-							throw new Error(
-								'AI metadata is unavailable on the selected server.',
-							);
-						// A note still being typed must reach the server first, so the
-						// revision this generation is checked against includes it.
-						if (target === 'note') await terminalNoteSync.flush(activePanel.id);
-						// The server applies the result to the panel; it arrives here as
-						// workspace state, like a title or note set anywhere else.
-						await serverAiClient.generateMetadata({
-							model,
-							provider: provider === 'claudeCode' ? 'claude-code' : provider,
-							requestId: crypto.randomUUID(),
-							target: {
-								panelId: activePanel.id,
-								projectId: project.id,
-								serverId: terminalClientContext.serverId,
-								sessionId,
-							},
-							targetType: target === 'title' ? 'title' : 'note',
-						});
-						setErrorText(null);
-					} catch (error) {
-						const cause =
-							error instanceof Error &&
-							typeof error.cause === 'object' &&
-							error.cause !== null
-								? (error.cause as { code?: unknown })
-								: null;
-						if (cause?.code === 'conflict') {
-							setErrorText(
-								`The tab ${target} was changed while AI was generating, so your edit was kept. Run the command again to generate a new ${target}.`,
-							);
-						} else {
-							const message =
-								error instanceof Error ? error.message : String(error);
-							setErrorText(`Unable to generate tab ${target}: ${message}`);
-						}
-					} finally {
-						if (target === 'title')
-							activePanel.api.updateParameters({ aiTitlePending: false });
-						aiGenerationInFlightRef.current.delete(inFlightKey);
-					}
-				},
-				[
-					project.id,
-					serverAiClient,
-					settings.aiTabMetadata,
-					terminalClientContext,
-					terminalNoteSync,
-				],
-			);
-
-			const runAiTabMetadataRef = useRef(runAiTabMetadata);
-			runAiTabMetadataRef.current = runAiTabMetadata;
-
-			const createProject = useCallback(async () => {
-				setErrorText(null);
-				setIsMacroLauncherOpen(false);
-				setMacroQuery('');
-				await onAddProject();
-			}, [onAddProject]);
-
-			const toggleFileExplorerSidebar = useCallback(() => {
-				setErrorText(null);
-				setIsMacroLauncherOpen(false);
-				setMacroQuery('');
-				onUpdateProject(project.id, {
-					isFileExplorerOpen: !project.isFileExplorerOpen,
-				});
-			}, [onUpdateProject, project.id, project.isFileExplorerOpen]);
-
-			const addTerminal = useTerminalCreationController({
-				apiRef: dockviewApiRef,
-				createSession:
-					terminalPanelClientContext === null
-						? null
-						: async (request) => {
-								const session =
-									await terminalPanelClientContext.client.create(request);
-								// Admit the immutable server session before the creation command
-								// resolves. Journal records may arrive as soon as the server creates
-								// the PTY, before a focus-driven React effect observes its panel.
-								serverAgentStatusClient?.mergeSessionScope([session.sessionId]);
-								return session;
-							},
-				...(projectedFolderId === undefined
-					? {}
-					: { folderId: projectedFolderId }),
-				hydrateRecording: hydrateRecordingStateForSession,
-				onError: setErrorText,
-				projectId: project.id,
-				recordNewTerminals: settings.recording.recordNewTerminals,
-				sendInput: sendTerminalPanelInput,
-				startRecording: startRecordingForSession,
-				splitPanel:
-					terminalPanelClientContext?.workspaceSnapshotStore === undefined
-						? undefined
-						: (request) =>
-								terminalPanelClientContext.workspaceSnapshotStore!.splitPanel(
-									request,
-								),
-				suppressInitialActivity: suppressInitialTerminalActivity,
-				waitForCreatedTerminal:
-					terminalPanelClientContext === null
-						? undefined
-						: async (sessionId) =>
-								(await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-									(snapshot) => hasTerminalPresentation(snapshot, sessionId),
-								)) !== null,
-			});
-
-			const runGitPushAgent = useCallback(
-				(action: GitPushAgentAction, target: GitPushMenuTarget) => {
-					const config = settings.gitPushAgent;
-					if (config.provider === 'disabled') return;
-
-					const actionMeta = GIT_PUSH_AGENT_ACTIONS.find(
-						(entry) => entry.action === action,
-					);
-					if (!actionMeta) {
-						return;
-					}
-
-					const task =
-						actionMeta.action === 'default'
-							? `Commit all of my current changes onto the default branch "${formatGitPushBranchLabel(target.defaultBranch ?? 'main')}" and push it. If that branch is already checked out in another worktree, make the commit from that worktree instead of checking it out here.`
-							: actionMeta.task;
-					const model =
-						config.provider === 'claudeCode'
-							? config.claudeCodeModel
-							: config.codexModel;
-					const prompt = buildGitPushAgentPrompt(
-						config.prompt,
-						task,
-						target.branch,
-						target.defaultBranch,
-					);
-					const command = buildGitPushAgentCommand(
-						config.provider,
-						model,
-						prompt,
-					);
-
-					void addTerminal({
-						cwd: target.cwd,
-						title: 'Push agent',
-						initialInput: command,
-					});
-				},
-				[addTerminal, settings.gitPushAgent],
-			);
-
-			const {
-				closeGitPushMenu,
-				gitPushMenuPosition,
-				handleOpenWorktreePushMenu,
-				launchGitPushAgent,
-			} = useGitPushMenuController({
-				defaultBranch: worktreePanelStatus?.defaultBranch,
-				isAgentEnabled: settings.gitPushAgent.provider !== 'disabled',
-				onDisabled: () => {
-					setErrorText(
-						'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
-					);
-					void auxiliaryRoutes.openSettings('git-push-agent');
-				},
-				onLaunchAgent: runGitPushAgent,
-			});
-
-			const exportTerminalForMove = useCallback(
-				(panelId: string): MovedTerminalTab | null =>
-					exportTerminalPresentationForMove({
-						api: dockviewApiRef.current,
-						context: {
-							defaultServerProjectId: terminalPanelClientContext?.projectId,
-							runningMacroRunsBySession,
-						},
-						movingSessionIds: movingTerminalSessionIdsRef.current,
-						panelId,
-					}),
-				[runningMacroRunsBySession, terminalPanelClientContext?.projectId],
-			);
-
-			const exportProjectForMove = useCallback(
-				(): MovedProject | null =>
-					exportProjectPresentationsForMove({
-						api: dockviewApiRef.current,
-						context: {
-							defaultServerProjectId: terminalPanelClientContext?.projectId,
-							runningMacroRunsBySession,
-						},
-						movingSessionIds: movingTerminalSessionIdsRef.current,
-					}),
-				[runningMacroRunsBySession, terminalPanelClientContext?.projectId],
-			);
-
-			const folderSessionMemoryKey = activeSessionMemoryKey(project.id, folder);
-			const { acceptMovedTerminal, acceptServerTerminal } =
-				useTerminalAdoptionController({
-					activeSessionMemoryKey: folderSessionMemoryKey,
-					apiRef: dockviewApiRef,
-					cancelMacroRun,
-					clearFinishedMacroRuns: clearFinishedMacroRunsForSession,
-					clearMacroRun: clearMacroRunForSession,
-					getProjectsForMove: getProjectsForTerminalMove,
-					hydrateRecording: hydrateRecordingStateForSession,
-					onError: setErrorText,
-					onMoveToProject: onMoveTerminalToProject,
-					onUpdateNote: terminalNoteSync.edit,
-					panelSessionsRef: panelSessionMapRef,
-					project,
-					publishWorkspaceInventory,
-					registerTerminalContextReader,
-					replaceMacroRuns: replaceMacroRunsForSession,
-					revealRecording,
-					setFocusedSessionId,
-					showActiveTabActivityIndicator:
-						settings.activityIndicators.showActiveTabs,
-					showFinishedTabActivityIndicator:
-						settings.activityIndicators.showFinishedTabs,
-					startRecording: startRecordingForSession,
-					stopRecording: stopRecordingForSession,
-					syncPanelFocusState,
-					terminalCounterRef,
-					terminalServerIdentity: terminalPanelClientContext,
-				});
-
-			const reconcileServerPanels = useCallback(
-				(
-					panels: readonly ServerWorkspacePanel[],
-					canHandOver?: (panel: ServerWorkspacePanel) => boolean,
-				) => {
-					const api = dockviewApiRef.current;
-					if (!api) return;
-					const canonicalById = new Map(
-						panels.map((panel) => [panel.id, panel]),
-					);
-					const canonicalBySessionId = new Map(
-						panels.flatMap((panel) =>
-							panel.sessionId === undefined
-								? []
-								: [[panel.sessionId, panel] as const],
-						),
-					);
-					for (const [panelId, sessionId] of panelSessionMapRef.current) {
-						const canonical =
-							canonicalById.get(panelId) ?? canonicalBySessionId.get(sessionId);
-						const panel = api.getPanel(panelId);
-						if (canonical === undefined) {
-							terminalNoteSync.forget(panelId);
-							if (panel) api.removePanel(panel);
-							continue;
-						}
-						if (!panel) continue;
-						// The server moved this terminal to another project, which now
-						// presents it. Letting go of it here closes nothing: the panel
-						// and its session stay live under the project that owns them.
-						if (canonical.projectId !== project.id) {
-							movingTerminalSessionIdsRef.current.add(sessionId);
-							api.removePanel(panel);
-							continue;
-						}
-						// Likewise for another folder of this project, which changes
-						// nothing about the terminal but where it is shown. It is kept
-						// here until that folder's workspace can show it, so it is never
-						// shown by neither.
-						if (
-							projectedFolderId !== undefined &&
-							canonical.folderId !== projectedFolderId
-						) {
-							if (canHandOver?.(canonical) === false) continue;
-							movingTerminalSessionIdsRef.current.add(sessionId);
-							api.removePanel(panel);
-							continue;
-						}
-						// What the tab displays is the title the server published for
-						// the terminal, when it publishes one; the workspace's own title
-						// (its name, else its default) otherwise.
-						const displayed =
-							terminalClientContext?.terminalTitleStore?.title(panelId) ??
-							canonical.title;
-						if (displayed !== undefined && panel.title !== displayed) {
-							panel.api.setTitle(displayed);
-							requestFrameOrTimeout(publishWorkspaceInventory);
-						}
-						const localNote = panel.params?.terminalNote;
-						const noteAction = decideTerminalNoteReconcile({
-							canonicalNote: canonical.note,
-							localNote,
-							firstSeen: terminalNoteSync.markSeen(panelId),
-							hasPendingEdit: terminalNoteSync.hasPendingEdit(panelId),
-						});
-						if (noteAction === 'adopt')
-							terminalNoteSync.edit(panelId, localNote);
-						else if (noteAction === 'apply')
-							panel.api.updateParameters({ terminalNote: canonical.note });
-						// Dockview re-renders a panel and its tab on every parameter
-						// update, changed or not, and this runs for every panel at every
-						// workspace revision: only what differs is handed over.
-						const appearance = changedTerminalAppearance(
-							panel.params,
-							canonical,
-						);
-						if (Object.keys(appearance).length > 0)
-							panel.api.updateParameters(appearance);
-					}
-				},
-				[
-					project.id,
-					projectedFolderId,
-					publishWorkspaceInventory,
-					terminalClientContext?.terminalTitleStore,
-					terminalNoteSync,
-				],
-			);
-
-			// The active terminal's server's workflow templates, and Resume.
-			const workflowServers = useContext(WorkflowsContext);
-			const reportWorkflowError = useCallback(
-				(message: string) => setErrorText(message),
-				[],
-			);
-			const workflowCommands = useWorkflowCommands({
-				servers: workflowServers,
-				serverId: terminalPanelClientContext?.serverId,
-				projectId: project.id,
-				isOpen: isMacroLauncherOpen,
-				getActiveSessionId,
-				close: closeMacroLauncher,
-				focusTerminal: focusActiveTerminal,
-				onError: reportWorkflowError,
-			});
-
-			const isDesktopHost = useIsDesktopHost();
-			const filteredMacros = useMemo(() => {
-				const commandItems: CommandBarItem[] = [
-					{
-						group: 'Terminal',
-						icon: <Terminal size={18} strokeWidth={2.1} />,
-						id: 'create-terminal-tab',
-						title: 'New Terminal Tab',
-						description: 'Open a fresh terminal tab in the current project.',
-						searchText: `create new terminal tab open fresh terminal ${getCommandShortcut(settings.keyboardShortcuts, 'new-terminal')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'new-terminal',
-							isMac,
-						),
-						onSelect: () => {
-							setErrorText(null);
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							void addTerminal({});
-						},
-					},
-					{
-						group: 'Terminal',
-						icon: <Terminal size={18} strokeWidth={2.1} />,
-						id: 'create-terminal-with-profile',
-						title: 'New Terminal with Profile…',
-						description:
-							'Choose one shell profile for this terminal without changing defaults.',
-						searchText: 'new terminal shell profile one time choose discovered',
-						onSelect: () => {
-							void openProfileChooser();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <Plug size={18} strokeWidth={2.1} />,
-						id: 'install-terminay-mcp',
-						title: 'Install Terminay MCP',
-						description:
-							'Let Claude Code, Codex, Cursor CLI, Gemini CLI, Grok, or OpenCode control sibling terminals in this project.',
-						searchText:
-							'install terminay mcp model context protocol claude codex cursor gemini grok opencode terminal control',
-						onSelect: () => {
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							setIsMcpInstallModalOpen(true);
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <FolderPlus size={18} strokeWidth={2.1} />,
-						id: 'create-project',
-						title: 'New Project',
-						description: 'Add a new project tab and switch to it.',
-						searchText: `create new project add project tab ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'new-project',
-							isMac,
-						),
-						onSelect: () => {
-							void createProject();
-						},
-					},
-					{
-						group: 'Terminal',
-						icon: <Eraser size={18} strokeWidth={2.1} />,
-						id: 'clear-terminal',
-						title: 'Clear terminal',
-						description: 'Clear the active terminal viewport and scrollback.',
-						searchText: `clear terminal scrollback screen reset ${getCommandShortcut(settings.keyboardShortcuts, 'clear-terminal')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'clear-terminal',
-							isMac,
-						),
-						onSelect: () => {
-							clearActiveTerminal();
-						},
-					},
-					{
-						group: 'Terminal',
-						icon: <Mic size={18} strokeWidth={2.1} />,
-						id: 'start-dictation',
-						title: 'Start dictation',
-						description:
-							'Record speech and type the transcript into the active terminal.',
-						searchText: `start dictation voice speech microphone audio transcribe terminal input ${getCommandShortcut(settings.keyboardShortcuts, 'start-dictation')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'start-dictation',
-							isMac,
-						),
-						onSelect: () => {
-							void startDictation();
-						},
-					},
-					{
-						group: 'Terminal',
-						icon: <Sparkles size={18} strokeWidth={2.1} />,
-						id: 'set-tab-title-with-ai',
-						title: 'Set tab title with AI',
-						description:
-							'Generate a concise title for the active terminal tab.',
-						searchText:
-							'set tab title with ai codex rename generate terminal metadata',
-						onSelect: () => {
-							void runAiTabMetadata('title');
-						},
-					},
-					{
-						group: 'Terminal',
-						icon: <Sparkles size={18} strokeWidth={2.1} />,
-						id: 'set-tab-note-with-ai',
-						title: 'Set tab note with AI',
-						description: 'Generate a short note for the active terminal tab.',
-						searchText:
-							'set tab note with ai codex generate terminal note metadata',
-						onSelect: () => {
-							void runAiTabMetadata('note');
-						},
-					},
-					{
-						group: 'Terminal',
-						icon: <Settings size={18} strokeWidth={2.1} />,
-						id: 'edit-tab-settings',
-						title: 'Edit tab settings',
-						description: 'Open settings for the active tab.',
-						searchText: `edit tab settings rename emoji color file folder terminal ${getCommandShortcut(settings.keyboardShortcuts, 'edit-active-tab')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'edit-active-tab',
-							isMac,
-						),
-						onSelect: () => {
-							openActiveTerminalSettings();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <History size={18} strokeWidth={2.1} />,
-						id: 'open-recordings',
-						title: 'Recordings',
-						description: 'Browse and replay saved terminal recordings in Home.',
-						searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'open-recordings',
-							isMac,
-						),
-						onSelect: () => {
-							// The project stays mounted behind Home, so its Command Bar
-							// has to close rather than wait to be seen again.
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							onShowRecordings();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <Settings size={18} strokeWidth={2.1} />,
-						id: 'open-settings',
-						title: 'Settings',
-						description: 'Configure Terminay and the selected server.',
-						searchText: `open settings preferences configuration ${getCommandShortcut(settings.keyboardShortcuts, 'open-settings')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'open-settings',
-							isMac,
-						),
-						onSelect: () => {
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							void auxiliaryRoutes.openSettings();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <Radio size={18} strokeWidth={2.1} />,
-						id: 'open-remote-control',
-						title: 'Remote Access',
-						description: 'Expose this server and manage saved servers.',
-						searchText: `remote access control connections pairing servers expose trusted devices ${getCommandShortcut(settings.keyboardShortcuts, 'open-remote-control')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'open-remote-control',
-							isMac,
-						),
-						onSelect: () => {
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							void auxiliaryRoutes.openSettings('remote');
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <Workflow size={18} strokeWidth={2.1} />,
-						id: 'open-macros',
-						title: 'Macros',
-						description: 'Manage reusable terminal macros.',
-						searchText: `macros commands snippets automation ${getCommandShortcut(settings.keyboardShortcuts, 'open-macros')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'open-macros',
-							isMac,
-						),
-						onSelect: () => {
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							void auxiliaryRoutes.openSettings('macros');
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <Plug size={18} strokeWidth={2.1} />,
-						id: 'open-extensions',
-						title: 'Extensions',
-						description: 'Manage extensions on the selected server.',
-						searchText: `extensions plugins npm providers ${getCommandShortcut(settings.keyboardShortcuts, 'open-extensions')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'open-extensions',
-							isMac,
-						),
-						onSelect: () => {
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							void auxiliaryRoutes.openSettings('extensions');
-						},
-					},
-					...(isDesktopHost
-						? [
-								{
-									group: 'Workspace',
-									icon: <ArrowLeftRight size={18} strokeWidth={2.1} />,
-									id: 'open-import-export',
-									title: 'Import & Export',
-									description:
-										'Copy macros, workflows, profiles, automations, and settings between servers.',
-									searchText: `import export copy sync servers remotes bundle ${getCommandShortcut(settings.keyboardShortcuts, 'open-import-export')}`,
-									shortcutLabel: getCommandShortcutLabel(
-										settings.keyboardShortcuts,
-										'open-import-export',
-										isMac,
-									),
-									onSelect: () => {
-										setIsMacroLauncherOpen(false);
-										setMacroQuery('');
-										void auxiliaryRoutes.openSettings('import-export');
-									},
-								} satisfies CommandBarItem,
-							]
-						: []),
-					{
-						group: 'Workspace',
-						icon: <Settings size={18} strokeWidth={2.1} />,
-						id: 'edit-project-settings',
-						title: 'Edit project settings',
-						description: 'Open settings for the current project tab.',
-						searchText: `edit project settings project tab root folder emoji color ${getCommandShortcut(settings.keyboardShortcuts, 'edit-active-project')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'edit-active-project',
-							isMac,
-						),
-						onSelect: () => {
-							openProjectSettings();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <LayoutDashboard size={18} strokeWidth={2.1} />,
-						id: 'show-dashboard',
-						title: 'Show dashboard',
-						description:
-							'See every project and tab in this workspace at a glance.',
-						searchText: `show dashboard home overview projects tabs status at a glance ${getCommandShortcut(settings.keyboardShortcuts, 'show-dashboard')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'show-dashboard',
-							isMac,
-						),
-						onSelect: () => {
-							onShowDashboard();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <ListChecks size={18} strokeWidth={2.1} />,
-						id: 'show-workflows',
-						title: 'Show workflows',
-						description: 'See every workflow and what needs you, in Home.',
-						searchText:
-							'show workflows home checklist steps progress needs you',
-						onSelect: () => {
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							onShowWorkflows();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <PanelBottom size={18} strokeWidth={2.1} />,
-						id: 'toggle-status-bar',
-						title: isStatusBarVisible ? 'Hide status bar' : 'Show status bar',
-						description: isStatusBarVisible
-							? 'Hide the status bar along the bottom of the window.'
-							: 'Show the status bar along the bottom of the window.',
-						searchText: `toggle show hide status bar footer working directory branch devices ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-status-bar')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'toggle-status-bar',
-							isMac,
-						),
-						onSelect: () => {
-							onToggleStatusBar();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <Sidebar size={18} strokeWidth={2.1} />,
-						id: 'toggle-file-explorer-sidebar',
-						title: project.isFileExplorerOpen
-							? 'Hide file explorer sidebar'
-							: 'Show file explorer sidebar',
-						description: project.isFileExplorerOpen
-							? 'Hide the file explorer sidebar for this project.'
-							: 'Show the file explorer sidebar for this project.',
-						searchText: `toggle file explorer sidebar show hide explorer sidebar project ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-file-explorer-sidebar')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'toggle-file-explorer-sidebar',
-							isMac,
-						),
-						onSelect: () => {
-							toggleFileExplorerSidebar();
-						},
-					},
-					{
-						group: 'Workspace',
-						icon: <FolderSync size={18} strokeWidth={2.1} />,
-						id: 'set-project-root-folder-to-working-directory',
-						title: 'Set project root folder to working directory',
-						description:
-							'Use the active terminal working directory as this project root folder.',
-						searchText: `set project root folder working directory cwd active terminal root folder ${getCommandShortcut(settings.keyboardShortcuts, 'set-project-root-folder-to-working-directory')}`,
-						shortcutLabel: getCommandShortcutLabel(
-							settings.keyboardShortcuts,
-							'set-project-root-folder-to-working-directory',
-							isMac,
-						),
-						onSelect: () => {
-							void setProjectRootFolderToWorkingDirectory();
-						},
-					},
-					...orderMacrosByCategory(macros, macroCategories).map(
-						(macro): CommandBarItem => ({
-							...macroCommandGroup(macro.category, macroCategories),
-							icon: <Play size={18} strokeWidth={2.1} />,
-							id: macro.id,
-							title: macro.title,
-							description:
-								macro.description ||
-								(macro.steps[0]?.type === 'type'
-									? macro.steps[0].content
-									: 'Multi-step macro'),
-							searchText: [
-								macro.title,
-								macro.description,
-								...macro.fields.map((field) => `${field.label} ${field.name}`),
-								...macro.steps.map((step) =>
-									step.type === 'type' ? step.content : '',
-								),
-							]
-								.join(' ')
-								.toLowerCase(),
-							shortcutLabel: '',
-							onSelect: () => runMacro(macro),
-						}),
-					),
-					...workflowCommands.items,
-				];
-
-				// Places come after commands and macros, and only once something is
-				// typed. Choosing one leaves the Command Bar.
-				return [
-					...filterCommandBarItems(commandItems, macroQuery),
-					...searchPlaces(macroQuery).map((place) => ({
-						...place,
-						onSelect: () => {
-							setIsMacroLauncherOpen(false);
-							setMacroQuery('');
-							place.onSelect();
-						},
-					})),
-				];
-			}, [
-				addTerminal,
-				auxiliaryRoutes,
-				clearActiveTerminal,
-				createProject,
-				isMac,
-				macroQuery,
-				macros,
-				macroCategories,
-				openActiveTerminalSettings,
-				openProjectSettings,
-				project.isFileExplorerOpen,
-				runAiTabMetadata,
-				runMacro,
-				settings.keyboardShortcuts,
-				setProjectRootFolderToWorkingDirectory,
-				onShowDashboard,
-				onShowRecordings,
-				onShowWorkflows,
-				onToggleStatusBar,
-				isStatusBarVisible,
-				openProfileChooser,
-				searchPlaces,
-				startDictation,
-				toggleFileExplorerSidebar,
-				workflowCommands.items,
-				isDesktopHost,
-			]);
-			const requestClosePanel = useCallback(
-				async (panelId: string, options?: { confirmed?: boolean }) => {
-					window.terminayTest?.reportAppCommandStage(
-						`close:${panelId}:started`,
-					);
-					const api = dockviewApiRef.current;
-					const panel = api?.getPanel(panelId);
-					if (!api || !panel) return;
-					const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
-					const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
-					const registration = filePanelSaveHandlersRef.current.get(panelId);
-					// An autosaving view puts its pending edits on disk before it goes.
-					if (registration?.autosaves === true) {
-						try {
-							await registration.save();
-						} catch (error) {
-							setErrorText(
-								error instanceof Error ? error.message : String(error),
-							);
-							return;
-						}
-					}
-					const sessionId = panelSessionMapRef.current.get(panelId);
-					if (sessionId !== undefined && options?.confirmed !== true) {
-						const preflight = await observeTerminalClosePreflight(
-							serverActivityClient,
-							{ projectId: project.id, sessionId },
-						);
-						if (!(await confirmTerminalClose('terminal', preflight))) {
-							return;
-						}
-					}
-					if (
-						workspaceStore !== undefined &&
-						canonicalPanel?.projectId === project.id
-					) {
-						window.terminayTest?.reportAppCommandStage(
-							`close:${panelId}:command-started`,
-						);
-						await workspaceStore.closePanel(panelId);
-						window.terminayTest?.reportAppCommandStage(
-							`close:${panelId}:command-completed`,
-						);
-						const reconciled = await workspaceStore.waitForSnapshot(
-							(snapshot) => snapshot.panels[panelId] === undefined,
-							{ timeoutMs: 10_000 },
-						);
-						window.terminayTest?.reportAppCommandStage(
-							`close:${panelId}:snapshot-completed`,
-						);
-						if (reconciled === null) {
-							const reconciliationError = workspaceStore.status.error;
-							throw new Error(
-								reconciliationError === undefined
-									? 'Timed out waiting for the closed panel to reconcile.'
-									: `Unable to reconcile the closed panel. ${reconciliationError.message}`,
-							);
-						}
-						return;
-					}
-					panel.api.close();
-				},
-				[
-					project.id,
-					serverActivityClient,
-					terminalClientContext?.workspaceSnapshotStore,
-				],
-			);
-
-			useEffect(() => {
-				const listener = (event: Event) => {
-					const detail = (event as CustomEvent).detail as
-						| { panelId?: unknown; sessionId?: unknown }
-						| undefined;
-					if (
-						typeof detail?.panelId !== 'string' ||
-						typeof detail.sessionId !== 'string'
-					)
-						return;
-					const api = dockviewApiRef.current;
-					const panel = api?.getPanel(detail.panelId);
-					const mappedSessionId = panelSessionMapRef.current.get(
-						detail.panelId,
-					);
-					const liveSessionId =
-						typeof panel?.params?.sessionId === 'string'
-							? panel.params.sessionId
-							: mappedSessionId;
-					if (liveSessionId !== detail.sessionId) return;
-					void requestClosePanel(detail.panelId);
-				};
-				window.addEventListener('terminay-request-close-terminal', listener);
-				return () =>
-					window.removeEventListener(
-						'terminay-request-close-terminal',
-						listener,
-					);
-			}, [requestClosePanel]);
-
-			useEffect(() => {
-				const listener = (event: Event) => {
-					const panelId = (event as CustomEvent<{ panelId?: unknown }>).detail
-						?.panelId;
-					if (typeof panelId === 'string') void requestClosePanel(panelId);
-				};
-				window.addEventListener('terminay-request-close-file', listener);
-				return () =>
-					window.removeEventListener('terminay-request-close-file', listener);
-			}, [requestClosePanel]);
-
-			const closeActivePanel = useCallback(async () => {
-				const panelId = dockviewApiRef.current?.activePanel?.id;
-				if (panelId === undefined) {
-					onCloseActiveWithNoPanel(project.id);
-					return;
-				}
-				await requestClosePanel(panelId);
-			}, [onCloseActiveWithNoPanel, project.id, requestClosePanel]);
-
-			const saveActivePanel = useCallback(async () => {
-				const activePanel = dockviewApiRef.current?.activePanel;
-				const registeredSave =
-					activePanel === undefined
-						? undefined
-						: filePanelSaveHandlersRef.current.get(activePanel.id)?.save;
-				if (registeredSave !== undefined) {
-					try {
-						await registeredSave();
-					} catch (error) {
-						setErrorText(
-							error instanceof Error ? error.message : String(error),
-						);
-					}
-					return;
-				}
-				await saveActiveDockviewPanel({
-					api: dockviewApiRef.current,
-					onError: setErrorText,
-					onSaved: () => undefined,
-				});
-			}, []);
-
-			const popoutActivePanel = useCallback(
-				() => onPopoutProject(project.id),
-				[onPopoutProject, project.id],
-			);
-
-			const executeAppCommand = useCallback(
-				async (command: AppCommand): Promise<void> => {
-					switch (command) {
-						case 'new-terminal':
-							await addTerminal({});
-							break;
-						case 'new-project':
-							await onAddProject();
-							break;
-						case 'split-horizontal':
-							await addTerminal({ direction: 'below' });
-							break;
-						case 'split-vertical':
-							await addTerminal({ direction: 'right' });
-							break;
-						case 'save-active':
-							await saveActivePanel();
-							break;
-						case 'popout-active':
-							await popoutActivePanel();
-							break;
-						case 'close-active':
-							await closeActivePanel();
-							break;
-						case 'clear-terminal':
-							clearActiveTerminal();
-							break;
-						case 'edit-active-tab':
-							openActiveTerminalSettings();
-							break;
-						case 'edit-active-project':
-							openProjectSettings();
-							break;
-						case 'open-command-bar':
-							setMacroQuery('');
-							setSelectedMacroIndex(0);
-							setIsMacroLauncherOpen(true);
-							setMacroToRun(null);
-							setMacroFieldValues({});
-							break;
-						case 'start-dictation':
-							await startDictation();
-							break;
-						case 'open-recordings':
-							onShowRecordings();
-							break;
-						// Management lives in Settings; a key bound to one of its
-						// categories opens it there, as the Command Bar does.
-						case 'open-settings':
-							await auxiliaryRoutes.openSettings();
-							break;
-						case 'open-macros':
-							await auxiliaryRoutes.openSettings('macros');
-							break;
-						case 'open-remote-control':
-							await auxiliaryRoutes.openSettings('remote');
-							break;
-						case 'open-extensions':
-							await auxiliaryRoutes.openSettings('extensions');
-							break;
-						case 'open-import-export':
-							await auxiliaryRoutes.openSettings('import-export');
-							break;
-						case 'toggle-file-explorer-sidebar':
-							toggleFileExplorerSidebar();
-							break;
-						case 'set-project-root-folder-to-working-directory':
-							await setProjectRootFolderToWorkingDirectory();
-							break;
-						// The dashboard is a view of the whole workspace, so a project
-						// hands this one back up rather than answering it itself.
-						case 'show-dashboard':
-							onShowDashboard();
-							break;
-						// The status bar belongs to the window, so it is handed back up too.
-						case 'toggle-status-bar':
-							onToggleStatusBar();
-							break;
-						default:
-							break;
-					}
-				},
-				[
-					addTerminal,
-					auxiliaryRoutes,
-					clearActiveTerminal,
-					closeActivePanel,
-					onAddProject,
-					onShowDashboard,
-					onShowRecordings,
-					onToggleStatusBar,
-					openActiveTerminalSettings,
-					openProjectSettings,
-					popoutActivePanel,
-					saveActivePanel,
-					setProjectRootFolderToWorkingDirectory,
-					startDictation,
-					toggleFileExplorerSidebar,
-				],
-			);
-
-			useEffect(() => {
-				if (!isActive) {
-					return;
-				}
-
-				const onCopyRequest = () => copyActiveTerminalSelection();
-				document.addEventListener('copy', onCopyRequest);
-
-				return () => {
-					document.removeEventListener('copy', onCopyRequest);
-				};
-			}, [copyActiveTerminalSelection, isActive]);
-
-			useEffect(() => {
-				if (!isActive) {
-					return;
-				}
-
-				const onKeyDown = (event: KeyboardEvent) => {
-					if (event.defaultPrevented) {
-						return;
-					}
-
-					const command = findCommandForKeyboardEvent(
-						event,
-						settings.keyboardShortcuts,
-						isMac,
-					);
-					if (!command) {
-						return;
-					}
-
-					event.preventDefault();
-					event.stopPropagation();
-
-					if (!event.repeat) {
-						void executeAppCommand(command);
-					}
-				};
-
-				window.addEventListener('keydown', onKeyDown, true);
-				return () => {
-					window.removeEventListener('keydown', onKeyDown, true);
-				};
-			}, [executeAppCommand, isActive, isMac, settings.keyboardShortcuts]);
-
-			const ownsControlSession = useCallback(
-				(sessionId: string) =>
-					dockviewApiRef.current?.panels.some(
-						(panel) =>
-							(panel.params as { sessionId?: unknown } | undefined)
-								?.sessionId === sessionId,
-					) ?? false,
-				[],
-			);
-			const openFileTab = useCallback(
-				async (path: string): Promise<string | undefined> => {
-					if (folderRootPath === undefined || folderRootPath === null)
-						return undefined;
-					const resolved = pathInsideRoot(folderRootPath, path);
-					if (resolved === undefined) return undefined;
-					await openFile(resolved);
-					return filePathPanelMapRef.current.get(resolved);
-				},
-				[folderRootPath, openFile],
-			);
-			// Assigned once the folder menu controller below has run.
-			const describeFolderMenuRef = useRef<
-				ProjectWorkspaceHandle['folderMenu'] | null
-			>(null);
-			useImperativeHandle(
-				ref,
-				() => ({
-					folderMenu: (folderId: string) =>
-						describeFolderMenuRef.current?.(folderId),
-					acceptMovedTerminal,
-					acceptServerTerminal,
-					reconcileServerPanels,
-					activatePanel,
-					activateTerminal,
-					acknowledgeTerminal: markTerminalActivityViewed,
-					executeCommand(command: AppCommand) {
-						return executeAppCommand(command);
-					},
-					exportTerminalForMove,
-					exportProjectForMove,
-					focusActiveTerminal,
-					isReady: () => dockviewApiRef.current !== null,
-					ownsControlSession,
-					terminalSessionForPanel: (panelId: string) =>
-						panelSessionMapRef.current.get(panelId),
-					terminalPanelForSession: (sessionId: string) =>
-						[...panelSessionMapRef.current].find(
-							([, mapped]) => mapped === sessionId,
-						)?.[0],
-					reportError: setErrorText,
-					requestClosePanel,
-					openShellAtFolderRoot: async () => {
-						setErrorText(null);
-						await addTerminal({ atFolderRoot: true });
-					},
-					launchTerminal: async (launcherId: string) => {
-						setErrorText(null);
-						await addTerminal({ launcherId });
-					},
-					startForgeTerminal: async (launcher) => {
-						setErrorText(null);
-						const created = await addTerminal(
-							launcher === undefined
-								? { atFolderRoot: true }
-								: {
-										atFolderRoot: true,
-										launcherId: launcher.launcherId,
-										prompt: launcher.prompt,
-									},
-						);
-						return created !== null;
-					},
-					worktreeStatus: () => worktreePanelStatusRef.current,
-					viewApi: () => dockviewApiRef.current,
-					openFileTab,
-				}),
-				[
-					addTerminal,
-					requestClosePanel,
-					acceptMovedTerminal,
-					acceptServerTerminal,
-					reconcileServerPanels,
-					activatePanel,
-					activateTerminal,
-					markTerminalActivityViewed,
-					executeAppCommand,
-					exportTerminalForMove,
-					exportProjectForMove,
-					focusActiveTerminal,
-					ownsControlSession,
-					openFileTab,
-				],
-			);
-
-			useEffect(() => {
-				publishWorkspaceInventory();
-			}, [publishWorkspaceInventory]);
-
-			// A tab shows the title the server publishes for its terminal
-			// (ADR-0058). That title changes as often as a program rewrites it, so
-			// it is handed straight to the one tab it belongs to: nothing here is
-			// rendered for it, and no list is rebuilt. The lists that name terminals
-			// read the same title themselves, each for its own row.
-			const terminalTitleStore = terminalClientContext?.terminalTitleStore;
-			useEffect(() => {
-				if (terminalTitleStore === undefined) return;
-				return terminalTitleStore.subscribeChanges((panelId) => {
-					const panel = dockviewApiRef.current?.getPanel(panelId);
-					if (panel === undefined || !panelSessionMapRef.current.has(panelId))
-						return;
-					const title = terminalTitleStore.title(panelId);
-					if (title !== undefined && panel.title !== title)
-						panel.api.setTitle(title);
-				});
-			}, [terminalTitleStore]);
-
-			useEffect(() => {
-				focusedSessionIdRef.current = focusedSessionId;
-				for (const sessionId of panelSessionMapRef.current.values()) {
-					evaluateTerminalActivityState(sessionId);
-				}
-			}, [evaluateTerminalActivityState, focusedSessionId]);
-
-			useEffect(() => {
-				syncFocusedTerminalTabs(focusedSessionId);
-				// The panel in front is what the compact breadcrumb names, so a focus
-				// change has to reach the published inventory too.
-				publishWorkspaceInventory();
-			}, [
-				focusedSessionId,
-				publishWorkspaceInventory,
-				syncFocusedTerminalTabs,
-			]);
-
-			useEffect(() => {
-				syncRunningMacroTabs();
-			}, [syncRunningMacroTabs]);
-
-			const closeServerPanel = useCallback(
-				(panelId: string) => {
-					const store = terminalClientContext?.workspaceSnapshotStore;
-					const panel = store?.snapshot?.panels[panelId];
-					if (store === undefined || panel?.projectId !== project.id) return;
-					// A panel the server has placed in another folder is that folder's.
-					// Whatever removed it from this layout, it is not being closed.
-					if (panel.folderId !== projectedFolderId) return;
-					void store.closePanel(panelId).catch((error: unknown) => {
-						const message =
-							error instanceof Error
-								? error.message
-								: 'Unable to close this panel on the server.';
-						setErrorText(message);
-					});
-				},
-				[
-					project.id,
-					projectedFolderId,
-					terminalClientContext?.workspaceSnapshotStore,
-				],
-			);
-
-			const commitServerPanelOrder = useCallback(
-				(panelIds: readonly string[]) => {
-					const store = terminalClientContext?.workspaceSnapshotStore;
-					// A reorder is of this folder's own panels and of no other's.
-					const canonicalIds =
-						projectedFolderId === undefined
-							? undefined
-							: store?.snapshot?.folders[projectedFolderId]?.panelIds;
-					if (
-						store === undefined ||
-						canonicalIds === undefined ||
-						panelIds.length !== canonicalIds.length ||
-						panelIds.some((panelId) => !canonicalIds.includes(panelId)) ||
-						panelIds.every((panelId, index) => panelId === canonicalIds[index])
-					)
-						return;
-					void store
-						.reorderPanels({
+					const sessionId = (
+						await terminalPanelClientContext.client.create({
+							cwd,
 							projectId: project.id,
 							...(projectedFolderId === undefined
 								? {}
 								: { folderId: projectedFolderId }),
-							panelIds,
 						})
-						.catch((error: unknown) => {
-							setErrorText(
-								error instanceof Error
-									? error.message
-									: 'Unable to reorder these tabs on the server.',
-							);
-						});
-				},
-				[
-					project.id,
-					projectedFolderId,
-					terminalClientContext?.workspaceSnapshotStore,
-				],
-			);
-
-			const handleDockviewReady = useDockviewPanelLifecycle({
-				apiRef: dockviewApiRef,
-				cancelMacroRunsForSession,
-				clearActivitySession: (sessionId) =>
-					terminalActivityStoreRef.current.deleteSession(sessionId),
-				clearMacroRunsForSession,
-				closeServerPanel,
-				commitPanelOrder: commitServerPanelOrder,
-				filePathPanelMapRef,
-				focusedSessionIdRef,
-				folderPathPanelMapRef,
-				markTerminalActivityViewed,
-				movingTerminalSessionIdsRef,
-				panelSessionMapRef,
-				activeSessionMemoryKey: folderSessionMemoryKey,
-				publishWorkspaceInventory,
-				setFocusedSessionId,
-				setIsDockviewReady,
-				syncPanelFocusState,
-				terminalActivityTimersRef,
-			});
-
-			useEffect(() => {
-				// As with a documentation link: opened in the folder on screen.
-				if (!isActive) return;
-				const onOpenFileEvent = (event: Event) => {
-					const customEvent = event as CustomEvent<{
-						initialMode?: FileViewerMode;
-						path?: string;
-					}>;
-					const filePath = customEvent.detail?.path;
-					if (!filePath) {
-						return;
+					).sessionId;
+					suppressInitialTerminalActivity(sessionId);
+					if (settings.recording.recordNewTerminals) {
+						void startRecordingForSession(sessionId);
+					} else {
+						hydrateRecordingStateForSession(sessionId);
 					}
-					void openFile(filePath, {
-						initialMode: customEvent.detail.initialMode,
+					const synchronized =
+						await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
+							(snapshot) => hasTerminalPresentation(snapshot, sessionId),
+						);
+					if (synchronized === null) {
+						throw new Error(
+							'Server did not publish a terminal panel for the created session.',
+						);
+					}
+					const startedAt = performance.now();
+					await new Promise<void>((resolve) => {
+						const activateServerPanel = () => {
+							const reconciledPanel = getPanelForSession(sessionId);
+							if (reconciledPanel !== null) {
+								reconciledPanel.api.setActive();
+								setFocusedSessionId(sessionId);
+								scheduleCreatedTerminalFocus(sessionId);
+								requestFrameOrTimeout(publishWorkspaceInventory);
+								resolve();
+								return;
+							}
+							if (performance.now() - startedAt >= 2_000) {
+								resolve();
+								return;
+							}
+							window.requestAnimationFrame(activateServerPanel);
+						};
+						activateServerPanel();
 					});
-				};
+				} catch (error) {
+					setErrorText(`Failed to open terminal: ${String(error)}`);
+				}
+			},
+			[
+				fileClientPath,
+				fileClientProjectId,
+				fileViewerClient,
+				getPanelForSession,
+				project.id,
+				projectedFolderId,
+				publishWorkspaceInventory,
+				hydrateRecordingStateForSession,
+				settings.recording.recordNewTerminals,
+				startRecordingForSession,
+				terminalPanelClientContext,
+				suppressInitialTerminalActivity,
+			],
+		);
 
-				window.addEventListener('terminay-open-file', onOpenFileEvent);
-				return () => {
-					window.removeEventListener('terminay-open-file', onOpenFileEvent);
-				};
-			}, [isActive, openFile]);
+		const {
+			cancelFileExplorerNameDialog,
+			cleanWorktreeDeleteCount,
+			deletingWorktreePaths,
+			directoryChildren,
+			directoryErrors,
+			expandedPaths,
+			fileExplorerNameDialog,
+			gitStatuses,
+			handleCopyPath,
+			handleCopyRelativePath,
+			handleDelete,
+			handleDeleteCleanWorktrees,
+			handleDeleteWorktree,
+			handleRespondWorktreeSignIn,
+			handleNewFile,
+			handleNewFolder,
+			handleOpenGitEntry,
+			handlePullWorktreeFromOrigin,
+			handleRename,
+			handleRenameWorktree,
+			handleLoadWorktreeChecks,
+			handleRevealFolder,
+			loadingPaths,
+			pullingWorktreePaths,
+			refreshFileExplorerTree,
+			refreshGitStatusesForRoot,
+			submitFileExplorerNameDialog,
+			toggleDirectory,
+			worktreePanelStatus,
+		} = useFileExplorerController({
+			fileObservationClient: explorerFileObservationClient,
+			fileViewerClient,
+			gitClient: rootScopedAuthority?.gitClient,
+			isServerFileViewer: true,
+			onOpenFile: openFile,
+			onOperationError: reportFeatureFailure,
+			onOperationSucceeded: clearFeatureFailure,
+			onSetError: setErrorText,
+			project: explorerProject,
+			listingMemory: gitListingMemory,
+			...(project.rootFolder ? { listingRoot: project.rootFolder } : {}),
+		});
+		const worktreePanelStatusRef = useRef(worktreePanelStatus);
+		worktreePanelStatusRef.current = worktreePanelStatus;
+		useEffect(() => {
+			onWorktreeStatusChange?.();
+		}, [onWorktreeStatusChange, worktreePanelStatus]);
+		// The one worktree this folder stands for: what Changes reports.
+		const changes = useMemo(
+			() => folderChanges(folder, project.rootFolder, worktreePanelStatus),
+			[folder, project.rootFolder, worktreePanelStatus],
+		);
+		// The dashboard shows a folder's pull request and checks on each of its
+		// panels, so a change to them is published with the inventory. Keyed by
+		// value: a fresh listing with the same facts publishes nothing.
+		const folderWorktreeFacts =
+			changes.kind === 'worktree'
+				? worktreeFactsFromProperties(changes.worktree.properties)
+				: undefined;
+		const folderWorktreeFactsKey =
+			folderWorktreeFacts === undefined
+				? ''
+				: JSON.stringify(folderWorktreeFacts);
+		folderWorktreeFactsRef.current = folderWorktreeFacts;
+		const publishedWorktreeFactsKeyRef = useRef('');
+		useEffect(() => {
+			if (publishedWorktreeFactsKeyRef.current === folderWorktreeFactsKey)
+				return;
+			publishedWorktreeFactsKeyRef.current = folderWorktreeFactsKey;
+			publishWorkspaceInventory();
+		}, [folderWorktreeFactsKey, publishWorkspaceInventory]);
+		const isWorktreeMissing =
+			changes.kind === 'worktree' && changes.worktree.isPrunable === true;
+		worktreeMissingRef.current = isWorktreeMissing;
+		// The directory can vanish, and a listing fail for it, before Git has
+		// reported the worktree missing. That failure is the same news the Files
+		// pane now gives, so it is withdrawn rather than left standing beside it.
+		useEffect(() => {
+			if (!isWorktreeMissing) return;
+			const failure = featureFailureRef.current;
+			if (failure?.feature !== 'Explorer') return;
+			setErrorText((current) => {
+				if (current !== failure.message) return current;
+				featureFailureRef.current = null;
+				return null;
+			});
+		}, [isWorktreeMissing]);
+		const isRenderingStatusBar =
+			isActive && isStatusBarVisible && statusBarSlot !== null;
+		const focusedTerminalStatus = useFocusedTerminalStatus({
+			apiRef: dockviewApiRef,
+			focusedSessionId,
+			getCwd: getServerTerminalCwd,
+			isActive: isRenderingStatusBar,
+			isDockviewReady,
+		});
+		const focusedFileStatus = useFocusedFileStatus({
+			apiRef: dockviewApiRef,
+			isActive: isRenderingStatusBar,
+			isDockviewReady,
+		});
+		// The Folders column's own menu: what is done to the folders as a list.
+		const [foldersMenuPosition, setFoldersMenuPosition] = useState<{
+			x: number;
+			y: number;
+		} | null>(null);
+		const openFolder = useCallback(
+			(folderPath: string) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return;
+				}
 
-			useEffect(() => {
-				const handlePointerDown = (event: PointerEvent) => {
-					const target = event.target;
-					const workspace = workspaceRef.current;
-					if (
-						!(target instanceof Element) ||
-						!workspace?.contains(target) ||
-						!target.closest('.dv-sash') ||
-						isDockviewSashDraggingRef.current
-					) {
+				const existingPanelId = folderPathPanelMapRef.current.get(folderPath);
+				if (existingPanelId) {
+					const existingPanel = api.getPanel(existingPanelId);
+					if (existingPanel) {
+						existingPanel.api.setActive();
+						syncPanelFocusState();
+						return;
+					}
+				}
+
+				folderPanelCounterRef.current += 1;
+				const panelId = `folder-${folderPanelCounterRef.current}`;
+				const title =
+					folderPath.split(/[/\\]/).filter(Boolean).pop() || folderPath;
+
+				const panel = api.addPanel<
+					FolderPanelInstanceParams & {
+						onRename?: (path: string) => void;
+						onDelete?: (path: string) => void;
+						onNewFile?: (dirPath: string) => void;
+						onNewFolder?: (dirPath: string) => void;
+						onOpenTerminal?: (path: string) => void;
+						onCopyPath?: (path: string) => void;
+						onCopyRelativePath?: (path: string) => void;
+						projectRootPath?: string;
+					}
+				>({
+					component: 'folder',
+					id: panelId,
+					params: {
+						color: project.color,
+						folderPath,
+						inheritsProjectColor: true,
+						isFocused: false,
+						onRename: handleRename,
+						onDelete: handleDelete,
+						onNewFile: handleNewFile,
+						onNewFolder: handleNewFolder,
+						onOpenTerminal: handleOpenTerminalAt,
+						onCopyPath: handleCopyPath,
+						onCopyRelativePath: handleCopyRelativePath,
+						projectColor: project.color,
+						projectId: project.id,
+						projectRootPath: folderRootPath,
+					},
+					position: api.activePanel
+						? {
+								direction: 'within',
+								referenceGroup: api.activePanel.group.id,
+							}
+						: undefined,
+					tabComponent: 'folderTab',
+					title,
+				});
+
+				folderPathPanelMapRef.current.set(folderPath, panel.id);
+				panel.api.setActive();
+				syncPanelFocusState();
+			},
+			[
+				handleDelete,
+				handleCopyPath,
+				handleCopyRelativePath,
+				handleNewFile,
+				handleNewFolder,
+				handleOpenTerminalAt,
+				handleRename,
+				folderRootPath,
+				project.color,
+				project.id,
+				syncPanelFocusState,
+			],
+		);
+		const setProjectRootFolderToWorkingDirectory = useCallback(async () => {
+			const sessionId = getActiveSessionId();
+			if (!sessionId) {
+				setErrorText(
+					'Open a terminal before setting the project root to its working directory.',
+				);
+				return;
+			}
+
+			try {
+				const cwd = await getServerTerminalCwd(sessionId);
+				if (!cwd) {
+					setErrorText(
+						'The active terminal does not have a working directory yet.',
+					);
+					return;
+				}
+
+				const nextRootFolder = cwd.trim();
+
+				if (!nextRootFolder) {
+					setErrorText(
+						'The active terminal does not have a working directory yet.',
+					);
+					return;
+				}
+
+				const workspaceSnapshotStore =
+					terminalPanelClientContext?.workspaceSnapshotStore;
+				if (workspaceSnapshotStore === undefined) {
+					onUpdateProject(project.id, { rootFolder: nextRootFolder });
+					void refreshGitStatusesForRoot(nextRootFolder, true, undefined, 'root');
+				} else {
+					const committed = await workspaceSnapshotStore.setProjectRoot({
+						projectId: project.id,
+						root: nextRootFolder,
+					});
+					void refreshGitStatusesForRoot(committed.root, true, undefined, 'root');
+				}
+				setErrorText(null);
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setErrorText(`Unable to set the project root folder: ${message}`);
+			}
+		}, [
+			getActiveSessionId,
+			getServerTerminalCwd,
+			onUpdateProject,
+			project.id,
+			refreshGitStatusesForRoot,
+			terminalPanelClientContext?.workspaceSnapshotStore,
+		]);
+
+		const executeMacro = useCallback(
+			async (
+				macro: MacroDefinition,
+				values: Record<string, MacroFieldValue>,
+			) => {
+				setMacroToRun(null);
+				setMacroFieldValues({});
+				setMacroFileSearchRootPath('');
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+				setSelectedMacroIndex(0);
+				await executeMacroRun(macro, values);
+			},
+			[executeMacroRun],
+		);
+
+		const {
+			closeMacroLauncher,
+			closeMacroParameterModal,
+			firstMacroFieldRef,
+			isMacroLauncherOpen,
+			macroFieldValues,
+			macroFileSearchRootPath,
+			macroLauncherInputRef,
+			macroLauncherItemRefs,
+			macroLauncherListRef,
+			macroQuery,
+			macroToRun,
+			runMacro,
+			selectedMacroIndex,
+			setIsMacroLauncherOpen,
+			setMacroFieldValues,
+			setMacroFileSearchRootPath,
+			setMacroQuery,
+			setMacroToRun,
+			setSelectedMacroIndex,
+			validateMacroValues,
+		} = useMacroLauncherController({
+			executeMacro,
+			focusActiveTerminal,
+			getActiveSessionId,
+			getServerTerminalCwd,
+			projectRoot: project.rootFolder,
+			setErrorText,
+		});
+		const shellProfilesClient = useMemo(
+			() =>
+				terminalPanelClientContext?.applicationClient === undefined
+					? null
+					: new ShellProfilesClient(
+							new TerminayClientFacade(
+								terminalPanelClientContext.applicationClient,
+							),
+						),
+			[terminalPanelClientContext?.applicationClient],
+		);
+		const [profileChooserEntries, setProfileChooserEntries] = useState<
+			readonly ShellProfileCatalogueEntry[] | null
+		>(null);
+		const [profileChooserQuery, setProfileChooserQuery] = useState('');
+		const profileChooserRef = useRef<HTMLDivElement>(null);
+		const profileChooserSearchRef = useRef<HTMLInputElement>(null);
+		const profileChooserReturnFocusRef = useRef<HTMLElement | null>(null);
+		const openProfileChooser = useCallback(async () => {
+			if (!shellProfilesClient) {
+				setErrorText('Shell profiles are unavailable on this server.');
+				return;
+			}
+			profileChooserReturnFocusRef.current =
+				document.activeElement instanceof HTMLElement
+					? document.activeElement
+					: null;
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			try {
+				const catalogue = await shellProfilesClient.catalogue();
+				setProfileChooserEntries(
+					catalogue.entries.filter((entry) => entry.availability.available),
+				);
+				setProfileChooserQuery('');
+				setErrorText(null);
+			} catch (error) {
+				setErrorText(
+					`Unable to load shell profiles: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		}, [setIsMacroLauncherOpen, setMacroQuery, shellProfilesClient]);
+		const filteredProfileChooserEntries = useMemo(() => {
+			const normalized = profileChooserQuery.trim().toLocaleLowerCase();
+			return (profileChooserEntries ?? []).filter(
+				(entry) =>
+					!normalized ||
+					`${entry.name} ${entry.source}`
+						.toLocaleLowerCase()
+						.includes(normalized),
+			);
+		}, [profileChooserEntries, profileChooserQuery]);
+		useEffect(() => {
+			if (profileChooserEntries === null) return;
+			const focusFrame = window.requestAnimationFrame(() => {
+				profileChooserSearchRef.current?.focus();
+			});
+			const onKeyDown = (event: KeyboardEvent) => {
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					setProfileChooserEntries(null);
+					return;
+				}
+				if (event.key !== 'Tab') return;
+				const focusable = [
+					...(profileChooserRef.current?.querySelectorAll<HTMLElement>(
+						'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+					) ?? []),
+				].filter((element) => element.offsetParent !== null);
+				if (focusable.length === 0) return;
+				const first = focusable[0]!;
+				const last = focusable[focusable.length - 1]!;
+				if (event.shiftKey && document.activeElement === first) {
+					event.preventDefault();
+					last.focus();
+				} else if (!event.shiftKey && document.activeElement === last) {
+					event.preventDefault();
+					first.focus();
+				}
+			};
+			window.addEventListener('keydown', onKeyDown);
+			return () => {
+				window.cancelAnimationFrame(focusFrame);
+				window.removeEventListener('keydown', onKeyDown);
+				const target = profileChooserReturnFocusRef.current;
+				profileChooserReturnFocusRef.current = null;
+				window.requestAnimationFrame(() =>
+					target?.isConnected &&
+					target.offsetParent !== null &&
+					target.closest(
+						'[aria-hidden="true"], [inert], .macro-launcher-overlay',
+					) === null
+						? target.focus()
+						: focusActiveTerminal(),
+				);
+			};
+		}, [focusActiveTerminal, profileChooserEntries]);
+		const {
+			isOpen: isTerminalSwitcherOpen,
+			items: terminalSwitcherItems,
+			select: selectTerminalSwitcherItem,
+			selectAndCommit: selectAndCommitTerminalSwitcherItem,
+			selectedIndex: terminalSwitcherIndex,
+		} = useTerminalSwitcherController({
+			apiRef: dockviewApiRef,
+			blocked: isMacroLauncherOpen || macroToRun !== null,
+			isActive,
+			onClearError: () => setErrorText(null),
+		});
+		const macroParameterModal = useDraggableModal(macroToRun !== null);
+		const fileExplorerNameModal = useDraggableModal(
+			fileExplorerNameDialog !== null,
+		);
+
+		const syncFocusedTerminalTabs = useCallback((sessionId: string | null) => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return;
+			}
+
+			for (const [
+				panelId,
+				panelSessionId,
+			] of panelSessionMapRef.current.entries()) {
+				const panel = api.getPanel(panelId);
+				if (!panel) {
+					continue;
+				}
+
+				const isFocused = panelSessionId === sessionId;
+				if (panel.params?.isFocused === isFocused) {
+					continue;
+				}
+
+				panel.api.updateParameters({ isFocused });
+			}
+		}, []);
+
+		// The handlers a terminal's tab is given close over these. A new token
+		// means every terminal needs them again; the same token means a
+		// terminal that already has them keeps them.
+		const macroTabHandlers = useMemo(
+			() => ({}),
+			[
+				cancelMacroRun,
+				clearFinishedMacroRunsForSession,
+				clearMacroRunForSession,
+				onMoveTerminalToProject,
+				project.id,
+			],
+		);
+		const macroTabHandlersRef = useRef(new Map<string, object>());
+		const syncRunningMacroTabs = useCallback(() => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return;
+			}
+			const projectsForMove = getProjectsForTerminalMove();
+
+			for (const [
+				panelId,
+				panelSessionId,
+			] of panelSessionMapRef.current.entries()) {
+				const panel = api.getPanel(panelId);
+				if (!panel) {
+					continue;
+				}
+
+				// Dockview renders a panel and its tab again for every parameter
+				// update, changed or not, and this runs for every terminal each
+				// time any of its inputs is replaced: only what differs is handed
+				// over, and a terminal nothing changed for is left alone.
+				const next: Record<string, unknown> = {};
+				const macroRuns =
+					runningMacroRunsBySession[panelSessionId] ?? NO_MACRO_RUNS;
+				if (panel.params?.macroRuns !== macroRuns) next.macroRuns = macroRuns;
+				if (!sameJsonValue(panel.params?.projectsForMove, projectsForMove))
+					next.projectsForMove = projectsForMove;
+				if (macroTabHandlersRef.current.get(panelId) !== macroTabHandlers) {
+					macroTabHandlersRef.current.set(panelId, macroTabHandlers);
+					next.onClearFinishedMacroRuns = () =>
+						clearFinishedMacroRunsForSession(panelSessionId);
+					next.onClearMacroRun = (runId: string) =>
+						clearMacroRunForSession(panelSessionId, runId);
+					next.onCancelMacroRun = cancelMacroRun;
+					next.onMoveToProject = (targetProjectId: string) =>
+						onMoveTerminalToProject(project.id, panelId, targetProjectId);
+				}
+				if (Object.keys(next).length > 0) panel.api.updateParameters(next);
+			}
+			for (const panelId of macroTabHandlersRef.current.keys())
+				if (!panelSessionMapRef.current.has(panelId))
+					macroTabHandlersRef.current.delete(panelId);
+		}, [
+			cancelMacroRun,
+			clearFinishedMacroRunsForSession,
+			clearMacroRunForSession,
+			getProjectsForTerminalMove,
+			macroTabHandlers,
+			onMoveTerminalToProject,
+			project.id,
+			runningMacroRunsBySession,
+		]);
+
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+
+			for (const group of api?.groups ?? []) {
+				for (const panel of group.panels) {
+					const params = panel.params as PanelTabAppearance | undefined;
+					if (!params || !('inheritsProjectColor' in params)) {
+						continue;
+					}
+
+					const inheritsProjectColor = params.inheritsProjectColor === true;
+					panel.api.updateParameters({
+						projectColor: project.color,
+						...(inheritsProjectColor ? { color: project.color } : {}),
+					});
+				}
+			}
+
+			requestFrameOrTimeout(publishWorkspaceInventory);
+		}, [
+			project.id,
+			project.title,
+			project.emoji,
+			project.color,
+			publishWorkspaceInventory,
+		]);
+
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return;
+			}
+
+			for (const [panelId] of panelSessionMapRef.current.entries()) {
+				const panel = api.getPanel(panelId);
+				if (!panel) {
+					continue;
+				}
+
+				panel.api.updateParameters({
+					showActiveTabActivityIndicator:
+						settings.activityIndicators.showActiveTabs,
+					showFinishedTabActivityIndicator:
+						settings.activityIndicators.showFinishedTabs,
+				});
+			}
+
+			requestFrameOrTimeout(publishWorkspaceInventory);
+		}, [
+			publishWorkspaceInventory,
+			settings.activityIndicators.showActiveTabs,
+			settings.activityIndicators.showFinishedTabs,
+		]);
+
+		const renameTerminal = useCallback(
+			(panelId: string, title: string) => {
+				// The server's panel record is the title. A terminal in a folder
+				// that is not on screen has no tab here to follow it.
+				terminalClientContext?.workspaceSnapshotStore
+					?.updatePanel({ panelId, patch: { title } })
+					.catch((error: unknown) =>
+						setErrorText(
+							`Unable to rename the terminal: ${error instanceof Error ? error.message : String(error)}`,
+						),
+					);
+				const panel = dockviewApiRef.current?.getPanel(panelId);
+				if (!panel) return;
+				panel.api.setTitle(title);
+				requestFrameOrTimeout(publishWorkspaceInventory);
+			},
+			[publishWorkspaceInventory, terminalClientContext],
+		);
+
+		const openTerminalEditWindow = useCallback(
+			async (panelId: string) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return;
+				}
+
+				const panel = api.getPanel(panelId);
+				if (!panel) {
+					return;
+				}
+
+				const sessionId = panel.params?.sessionId ?? null;
+				const titleDraft = terminalTitleDraft(
+					terminalClientContext?.workspaceSnapshotStore?.snapshot?.panels[
+						panelId
+					],
+					panel.title ?? 'Tab',
+				);
+
+				try {
+					const result = await auxiliaryRoutes.editTerminalTab({
+						kind: 'terminal',
+						draft: {
+							activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
+								panel.params,
+							),
+							color: getEffectiveTerminalTabColor(panel.params, project.color),
+							emoji: panel.params?.emoji ?? '',
+							inheritsProjectColor:
+								panel.params?.inheritsProjectColor ??
+								panel.params?.color === project.color,
+							projectColor: project.color,
+							...titleDraft,
+						},
+					});
+					if (!result) {
 						return;
 					}
 
-					isDockviewSashDraggingRef.current = true;
-					clearDeferredTerminalActivityFlushTimer();
+					// An empty name returns the tab to its automatic title.
+					const { patchTitle, shownTitle: nextTitle } =
+						terminalTitleSubmission(
+							titleDraft,
+							result.title,
+							panel.title ?? 'Tab',
+						);
+					const nextEmoji = result.emoji.trim();
+					const nextColor = result.color;
+					const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
+					if (workspaceStore !== undefined) {
+						await workspaceStore.updatePanel({
+							panelId,
+							patch: {
+								title: patchTitle,
+								emoji: nextEmoji,
+								color: nextColor,
+								inheritsProjectColor: result.inheritsProjectColor,
+								activityIndicatorsEnabled: result.activityIndicatorsEnabled,
+							},
+						});
+					}
 
-					const ownerWindow = target.ownerDocument.defaultView ?? window;
-					const ownerDocument = target.ownerDocument;
-					let didEnd = false;
+					// The title stream may already have delivered the resolved title
+					// while updatePanel was in flight. Only older servers without
+					// title sources need the editor's local display fallback.
+					if (nextTitle !== undefined) panel.api.setTitle(nextTitle);
+					panel.api.updateParameters({
+						activityIndicatorsEnabled: result.activityIndicatorsEnabled,
+						emoji: nextEmoji,
+						color: nextColor,
+						inheritsProjectColor: result.inheritsProjectColor,
+						projectColor: project.color,
+					});
 
-					const endSashDrag = () => {
-						if (didEnd) {
+					requestFrameOrTimeout(publishWorkspaceInventory);
+				} finally {
+					// Closing the editor returns the person to their terminal; it
+					// must not dismiss an error that arrived while it was open.
+					window.requestAnimationFrame(() => {
+						if (sessionId) {
+							activateTerminal(panelId, sessionId, { keepError: true });
 							return;
 						}
 
-						didEnd = true;
-						isDockviewSashDraggingRef.current = false;
-						ownerDocument.removeEventListener('pointerup', endSashDrag, true);
-						ownerDocument.removeEventListener(
-							'pointercancel',
-							endSashDrag,
-							true,
-						);
-						ownerDocument.removeEventListener('contextmenu', endSashDrag, true);
-						ownerWindow.removeEventListener('blur', endSashDrag);
-						scheduleDeferredTerminalActivityFlush();
-					};
-
-					ownerDocument.addEventListener('pointerup', endSashDrag, true);
-					ownerDocument.addEventListener('pointercancel', endSashDrag, true);
-					ownerDocument.addEventListener('contextmenu', endSashDrag, true);
-					ownerWindow.addEventListener('blur', endSashDrag);
-				};
-
-				window.addEventListener('pointerdown', handlePointerDown, true);
-				return () => {
-					window.removeEventListener('pointerdown', handlePointerDown, true);
-					isDockviewSashDraggingRef.current = false;
-					clearDeferredTerminalActivityFlushTimer();
-					deferredTerminalActivitySessionIdsRef.current.clear();
-				};
-			}, [
-				clearDeferredTerminalActivityFlushTimer,
-				scheduleDeferredTerminalActivityFlush,
-			]);
-
-			useEffect(() => {
-				const onTerminalFocused = (event: Event) => {
-					if (!isActive) {
-						return;
-					}
-					const customEvent = event as CustomEvent<{ sessionId?: string }>;
-					const sessionId = customEvent.detail?.sessionId ?? null;
-					if (sessionId !== null && !getPanelForSession(sessionId)) {
-						return;
-					}
-					const previousSessionId = focusedSessionIdRef.current;
-					if (
-						serverActivityClient === undefined &&
-						previousSessionId &&
-						previousSessionId !== sessionId &&
-						getPanelForSession(previousSessionId)
-					) {
-						applyTerminalActivityEvaluation(
-							previousSessionId,
-							terminalActivityStoreRef.current.suppressTerminalActivity(
-								previousSessionId,
-							),
-						);
-					}
-					// Focus moving to another terminal ends the interaction with the one
-					// the user was typing in; its later activity is news again.
-					if (interactedSessionIdRef.current !== sessionId) {
-						interactedSessionIdRef.current = null;
-					}
-					focusedSessionIdRef.current = sessionId;
-					setFocusedSessionId(sessionId);
-				};
-
-				window.addEventListener('terminay-terminal-focused', onTerminalFocused);
-				return () => {
-					window.removeEventListener(
-						'terminay-terminal-focused',
-						onTerminalFocused,
-					);
-				};
-			}, [
-				applyTerminalActivityEvaluation,
-				getPanelForSession,
-				isActive,
-				serverActivityClient,
-			]);
-
-			useEffect(() => {
-				if (serverActivityClient !== undefined) {
-					return;
+						focusActiveTerminal();
+					});
 				}
-				const onTerminalOutput = (event: Event) => {
-					const sessionId = (event as CustomEvent<{ sessionId?: string }>)
-						.detail?.sessionId;
-					if (!sessionId || !getPanelForSession(sessionId)) {
-						return;
-					}
-
-					const now = Date.now();
-					terminalActivityStoreRef.current.recordTerminalActivity(
-						sessionId,
-						now,
-					);
-					if (
-						isDockviewSashDraggingRef.current ||
-						deferredTerminalActivityFlushTimerRef.current !== null
-					) {
-						deferredTerminalActivitySessionIdsRef.current.add(sessionId);
-						scheduleDeferredTerminalActivityFlush();
-						return;
-					}
-
-					applyTerminalActivityEvaluation(
-						sessionId,
-						terminalActivityStoreRef.current.evaluate(sessionId, now),
-					);
-				};
-				window.addEventListener(TERMINAL_PANEL_OUTPUT_EVENT, onTerminalOutput);
-				return () =>
-					window.removeEventListener(
-						TERMINAL_PANEL_OUTPUT_EVENT,
-						onTerminalOutput,
-					);
-			}, [
-				applyTerminalActivityEvaluation,
-				getPanelForSession,
-				scheduleDeferredTerminalActivityFlush,
-				serverActivityClient,
-			]);
-
-			useEffect(() => {
-				if (serverActivityClient !== undefined) {
-					return;
-				}
-				// Server activity is required by the connected workspace. There is no
-				// renderer subscription to a host terminal-activity IPC fallback.
-				return;
-			}, [
-				applyTerminalActivityEvaluation,
-				getPanelForSession,
-				serverActivityClient,
-			]);
-
-			useEffect(() => {
-				const onTerminalUserInput = (event: Event) => {
-					const customEvent = event as CustomEvent<{ sessionId?: string }>;
-					const sessionId = customEvent.detail?.sessionId;
-					if (!sessionId || !getPanelForSession(sessionId)) {
-						return;
-					}
-
-					interactedSessionIdRef.current = sessionId;
-					markTerminalActivityViewed(sessionId);
-				};
-
-				window.addEventListener(
-					'terminay-terminal-user-input',
-					onTerminalUserInput,
-				);
-				return () => {
-					window.removeEventListener(
-						'terminay-terminal-user-input',
-						onTerminalUserInput,
-					);
-				};
-			}, [getPanelForSession, markTerminalActivityViewed]);
-
-			useEffect(() => {
-				return () => {
-					onWorkspaceInventoryChange(project.id, folder.id, []);
-					for (const timer of terminalActivityTimersRef.current.values()) {
-						window.clearTimeout(timer);
-					}
-					terminalActivityTimersRef.current.clear();
-					terminalActivityStoreRef.current.clear();
-				};
-			}, [folder.id, onWorkspaceInventoryChange, project.id]);
-
-			useEffect(() => {
-				const onTerminalExit = (event: Event) => {
-					const detail = (
-						event as CustomEvent<{
-							autoCloseOnSuccessfulExit?: boolean;
-							exitCode?: number;
-							sessionId?: string;
-							signal?: number | null;
-						}>
-					).detail;
-					if (!detail?.sessionId || typeof detail.exitCode !== 'number') return;
-					cancelMacroRunsForSession(detail.sessionId);
-
-					const panel = getPanelForSession(detail.sessionId);
-					panel?.api.updateParameters({ terminalSessionStatus: 'exited' });
-
-					if (
-						detail.autoCloseOnSuccessfulExit === true &&
-						detail.exitCode === 0 &&
-						detail.signal == null
-					) {
-						if (panel !== null && panel !== undefined) {
-							// The session has already exited, so this is not a destructive user
-							// close and must not wait for the activity/confirmation path.  Persist
-							// the canonical panel removal directly; a Dockview-only close would
-							// immediately be restored by workspace reconciliation.
-							const store = terminalClientContext?.workspaceSnapshotStore;
-							const canonicalPanel = store?.snapshot?.panels[panel.id];
-							if (
-								store !== undefined &&
-								canonicalPanel?.projectId === project.id
-							) {
-								void store
-									.closePanel(panel.id)
-									.catch((error: unknown) =>
-										setErrorText(
-											error instanceof Error
-												? error.message
-												: 'Unable to close the completed terminal tab.',
-										),
-									);
-							} else {
-								panel.api.close();
-							}
-						}
-					}
-				};
-				window.addEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
-				return () =>
-					window.removeEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
-			}, [
-				cancelMacroRunsForSession,
-				getPanelForSession,
+			},
+			[
+				activateTerminal,
+				auxiliaryRoutes,
+				focusActiveTerminal,
+				project.color,
 				project.id,
+				project.title,
+				project.emoji,
+				publishWorkspaceInventory,
 				terminalClientContext?.workspaceSnapshotStore,
-			]);
+			],
+		);
 
-			const reportTerminalTabDrag = useCallback(
-				(drag: TerminalTabDrag | null) => onTerminalTabDrag?.(project.id, drag),
-				[onTerminalTabDrag, project.id],
+		const clearActiveTerminal = useCallback(() => {
+			const sessionId = getActiveSessionId();
+			if (!sessionId) {
+				setErrorText('Open a terminal before clearing it.');
+				return;
+			}
+
+			setErrorText(null);
+			window.dispatchEvent(
+				new CustomEvent('terminay-clear-terminal', {
+					detail: { sessionId },
+				}),
 			);
-			useTerminalDockviewWindowController({
-				addTerminal,
-				apiRef: dockviewApiRef,
-				draggingTransferRef,
-				isActive,
-				onTerminalTabDrag: reportTerminalTabDrag,
-				openTerminalEditWindow,
-				openProfileChooser,
-				popoutUrl,
-				runAiTabMetadataRef,
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+		}, [getActiveSessionId]);
+
+		const copyActiveTerminalSelection = useCallback(() => {
+			const sessionId = getActiveSessionId();
+			if (!sessionId) {
+				document.execCommand('copy');
+				return;
+			}
+
+			window.dispatchEvent(
+				new CustomEvent('terminay-copy-terminal', {
+					detail: { sessionId },
+				}),
+			);
+		}, [getActiveSessionId]);
+
+		const openActiveTerminalSettings = useCallback(() => {
+			const activePanel = dockviewApiRef.current?.activePanel;
+			if (!activePanel) {
+				setErrorText('Open a tab before editing its settings.');
+				return;
+			}
+
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			void openTerminalEditWindow(activePanel.id);
+		}, [openTerminalEditWindow]);
+
+		const openProjectSettings = useCallback(() => {
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			void onEditProject(project.id);
+		}, [onEditProject, project.id]);
+
+		const runAiTabMetadata = useCallback(
+			async (target: AiTabMetadataTarget, targetPanelId?: string) => {
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+
+				const api = dockviewApiRef.current;
+				const activePanel = targetPanelId
+					? api?.getPanel(targetPanelId)
+					: api?.activePanel;
+				const sessionId = activePanel?.params?.sessionId;
+				if (!activePanel || !sessionId) {
+					setErrorText('Open a terminal before generating tab metadata.');
+					return;
+				}
+
+				const targetSettings = settings.aiTabMetadata[target];
+				if (targetSettings.provider === 'disabled') {
+					setErrorText(
+						`Enable an AI provider for tab ${target === 'title' ? 'titles' : 'notes'} in Settings first.`,
+					);
+					return;
+				}
+
+				const provider = targetSettings.provider;
+				const providerLabel = provider === 'codex' ? 'Codex' : 'Claude Code';
+				const model =
+					provider === 'codex'
+						? targetSettings.codexModel
+						: targetSettings.claudeCodeModel;
+				if (!model.trim()) {
+					setErrorText(
+						`Choose a ${providerLabel} model in Settings before generating tab metadata.`,
+					);
+					return;
+				}
+
+				const inFlightKey = `${sessionId}:${target}`;
+				if (aiGenerationInFlightRef.current.has(inFlightKey)) {
+					setErrorText(`Already generating a tab ${target} for this terminal.`);
+					return;
+				}
+
+				aiGenerationInFlightRef.current.add(inFlightKey);
+				setErrorText(null);
+				// The title itself is the server's. Show progress beside it rather
+				// than writing a placeholder a reconcile would replace.
+				if (target === 'title')
+					activePanel.api.updateParameters({ aiTitlePending: true });
+
+				try {
+					if (
+						serverAiClient === undefined ||
+						terminalClientContext === undefined
+					)
+						throw new Error(
+							'AI metadata is unavailable on the selected server.',
+						);
+					// A note still being typed must reach the server first, so the
+					// revision this generation is checked against includes it.
+					if (target === 'note')
+						await terminalNoteSync.flush(activePanel.id);
+					// The server applies the result to the panel; it arrives here as
+					// workspace state, like a title or note set anywhere else.
+					await serverAiClient.generateMetadata({
+						model,
+						provider: provider === 'claudeCode' ? 'claude-code' : provider,
+						requestId: crypto.randomUUID(),
+						target: {
+							panelId: activePanel.id,
+							projectId: project.id,
+							serverId: terminalClientContext.serverId,
+							sessionId,
+						},
+						targetType: target === 'title' ? 'title' : 'note',
+					});
+					setErrorText(null);
+				} catch (error) {
+					const cause =
+						error instanceof Error &&
+						typeof error.cause === 'object' &&
+						error.cause !== null
+							? (error.cause as { code?: unknown })
+							: null;
+					if (cause?.code === 'conflict') {
+						setErrorText(
+							`The tab ${target} was changed while AI was generating, so your edit was kept. Run the command again to generate a new ${target}.`,
+						);
+					} else {
+						const message =
+							error instanceof Error ? error.message : String(error);
+						setErrorText(`Unable to generate tab ${target}: ${message}`);
+					}
+				} finally {
+					if (target === 'title')
+						activePanel.api.updateParameters({ aiTitlePending: false });
+					aiGenerationInFlightRef.current.delete(inFlightKey);
+				}
+			},
+			[
+				project.id,
+				serverAiClient,
+				settings.aiTabMetadata,
+				terminalClientContext,
+				terminalNoteSync,
+			],
+		);
+
+		const runAiTabMetadataRef = useRef(runAiTabMetadata);
+		runAiTabMetadataRef.current = runAiTabMetadata;
+
+		const createProject = useCallback(async () => {
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			await onAddProject();
+		}, [onAddProject]);
+
+		const toggleFileExplorerSidebar = useCallback(() => {
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			onUpdateProject(project.id, {
+				isFileExplorerOpen: !project.isFileExplorerOpen,
 			});
-			useEffect(() => {
+		}, [onUpdateProject, project.id, project.isFileExplorerOpen]);
+
+		const addTerminal = useTerminalCreationController({
+			apiRef: dockviewApiRef,
+			createSession:
+				terminalPanelClientContext === null
+					? null
+					: async (request) => {
+							const session =
+								await terminalPanelClientContext.client.create(request);
+							// Admit the immutable server session before the creation command
+							// resolves. Journal records may arrive as soon as the server creates
+							// the PTY, before a focus-driven React effect observes its panel.
+							serverAgentStatusClient?.mergeSessionScope([session.sessionId]);
+							return session;
+						},
+			...(projectedFolderId === undefined
+				? {}
+				: { folderId: projectedFolderId }),
+			hydrateRecording: hydrateRecordingStateForSession,
+			onError: setErrorText,
+			projectId: project.id,
+			recordNewTerminals: settings.recording.recordNewTerminals,
+			sendInput: sendTerminalPanelInput,
+			startRecording: startRecordingForSession,
+			splitPanel:
+				terminalPanelClientContext?.workspaceSnapshotStore === undefined
+					? undefined
+					: (request) =>
+							terminalPanelClientContext.workspaceSnapshotStore!.splitPanel(
+								request,
+							),
+			suppressInitialActivity: suppressInitialTerminalActivity,
+			waitForCreatedTerminal:
+				terminalPanelClientContext === null
+					? undefined
+					: async (sessionId) =>
+							(await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
+								(snapshot) => hasTerminalPresentation(snapshot, sessionId),
+							)) !== null,
+		});
+
+		const runGitPushAgent = useCallback(
+			(action: GitPushAgentAction, target: GitPushMenuTarget) => {
+				const config = settings.gitPushAgent;
+				if (config.provider === 'disabled') return;
+
+				const actionMeta = GIT_PUSH_AGENT_ACTIONS.find(
+					(entry) => entry.action === action,
+				);
+				if (!actionMeta) {
+					return;
+				}
+
+				const task =
+					actionMeta.action === 'default'
+						? `Commit all of my current changes onto the default branch "${formatGitPushBranchLabel(target.defaultBranch ?? 'main')}" and push it. If that branch is already checked out in another worktree, make the commit from that worktree instead of checking it out here.`
+						: actionMeta.task;
+				const model =
+					config.provider === 'claudeCode'
+						? config.claudeCodeModel
+						: config.codexModel;
+				const prompt = buildGitPushAgentPrompt(
+					config.prompt,
+					task,
+					target.branch,
+					target.defaultBranch,
+				);
+				const command = buildGitPushAgentCommand(
+					config.provider,
+					model,
+					prompt,
+				);
+
+				void addTerminal({
+					cwd: target.cwd,
+					title: 'Push agent',
+					initialInput: command,
+				});
+			},
+			[addTerminal, settings.gitPushAgent],
+		);
+
+		const {
+			closeGitPushMenu,
+			gitPushMenuPosition,
+			handleOpenWorktreePushMenu,
+			launchGitPushAgent,
+		} = useGitPushMenuController({
+			defaultBranch: worktreePanelStatus?.defaultBranch,
+			isAgentEnabled: settings.gitPushAgent.provider !== 'disabled',
+			onDisabled: () => {
+				setErrorText(
+					'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
+				);
+				void auxiliaryRoutes.openSettings('git-push-agent');
+			},
+			onLaunchAgent: runGitPushAgent,
+		});
+
+		const exportTerminalForMove = useCallback(
+			(panelId: string): MovedTerminalTab | null =>
+				exportTerminalPresentationForMove({
+					api: dockviewApiRef.current,
+					context: {
+						defaultServerProjectId: terminalPanelClientContext?.projectId,
+						runningMacroRunsBySession,
+					},
+					movingSessionIds: movingTerminalSessionIdsRef.current,
+					panelId,
+				}),
+			[runningMacroRunsBySession, terminalPanelClientContext?.projectId],
+		);
+
+		const exportProjectForMove = useCallback(
+			(): MovedProject | null =>
+				exportProjectPresentationsForMove({
+					api: dockviewApiRef.current,
+					context: {
+						defaultServerProjectId: terminalPanelClientContext?.projectId,
+						runningMacroRunsBySession,
+					},
+					movingSessionIds: movingTerminalSessionIdsRef.current,
+				}),
+			[runningMacroRunsBySession, terminalPanelClientContext?.projectId],
+		);
+
+		const folderSessionMemoryKey = activeSessionMemoryKey(project.id, folder);
+		const { acceptMovedTerminal, acceptServerTerminal } =
+			useTerminalAdoptionController({
+				activeSessionMemoryKey: folderSessionMemoryKey,
+				apiRef: dockviewApiRef,
+				cancelMacroRun,
+				clearFinishedMacroRuns: clearFinishedMacroRunsForSession,
+				clearMacroRun: clearMacroRunForSession,
+				getProjectsForMove: getProjectsForTerminalMove,
+				hydrateRecording: hydrateRecordingStateForSession,
+				onError: setErrorText,
+				onMoveToProject: onMoveTerminalToProject,
+				onUpdateNote: terminalNoteSync.edit,
+				panelSessionsRef: panelSessionMapRef,
+				project,
+				publishWorkspaceInventory,
+				registerTerminalContextReader,
+				replaceMacroRuns: replaceMacroRunsForSession,
+				revealRecording,
+				setFocusedSessionId,
+				showActiveTabActivityIndicator:
+					settings.activityIndicators.showActiveTabs,
+				showFinishedTabActivityIndicator:
+					settings.activityIndicators.showFinishedTabs,
+				startRecording: startRecordingForSession,
+				stopRecording: stopRecordingForSession,
+				syncPanelFocusState,
+				terminalCounterRef,
+				terminalServerIdentity: terminalPanelClientContext,
+			});
+
+		const reconcileServerPanels = useCallback(
+			(
+				panels: readonly ServerWorkspacePanel[],
+				canHandOver?: (panel: ServerWorkspacePanel) => boolean,
+			) => {
+				const api = dockviewApiRef.current;
+				if (!api) return;
+				const canonicalById = new Map(panels.map((panel) => [panel.id, panel]));
+				const canonicalBySessionId = new Map(
+					panels.flatMap((panel) =>
+						panel.sessionId === undefined
+							? []
+							: [[panel.sessionId, panel] as const],
+					),
+				);
+				for (const [panelId, sessionId] of panelSessionMapRef.current) {
+					const canonical =
+						canonicalById.get(panelId) ?? canonicalBySessionId.get(sessionId);
+					const panel = api.getPanel(panelId);
+					if (canonical === undefined) {
+						terminalNoteSync.forget(panelId);
+						if (panel) api.removePanel(panel);
+						continue;
+					}
+					if (!panel) continue;
+					// The server moved this terminal to another project, which now
+					// presents it. Letting go of it here closes nothing: the panel
+					// and its session stay live under the project that owns them.
+					if (canonical.projectId !== project.id) {
+						movingTerminalSessionIdsRef.current.add(sessionId);
+						api.removePanel(panel);
+						continue;
+					}
+					// Likewise for another folder of this project, which changes
+					// nothing about the terminal but where it is shown. It is kept
+					// here until that folder's workspace can show it, so it is never
+					// shown by neither.
+					if (
+						projectedFolderId !== undefined &&
+						canonical.folderId !== projectedFolderId
+					) {
+						if (canHandOver?.(canonical) === false) continue;
+						movingTerminalSessionIdsRef.current.add(sessionId);
+						api.removePanel(panel);
+						continue;
+					}
+					// What the tab displays is the title the server published for
+					// the terminal, when it publishes one; the workspace's own title
+					// (its name, else its default) otherwise.
+					const displayed =
+						terminalClientContext?.terminalTitleStore?.title(panelId) ??
+						canonical.title;
+					if (displayed !== undefined && panel.title !== displayed) {
+						panel.api.setTitle(displayed);
+						requestFrameOrTimeout(publishWorkspaceInventory);
+					}
+					const localNote = panel.params?.terminalNote;
+					const noteAction = decideTerminalNoteReconcile({
+						canonicalNote: canonical.note,
+						localNote,
+						firstSeen: terminalNoteSync.markSeen(panelId),
+						hasPendingEdit: terminalNoteSync.hasPendingEdit(panelId),
+					});
+					if (noteAction === 'adopt') terminalNoteSync.edit(panelId, localNote);
+					else if (noteAction === 'apply')
+						panel.api.updateParameters({ terminalNote: canonical.note });
+					// Dockview re-renders a panel and its tab on every parameter
+					// update, changed or not, and this runs for every panel at every
+					// workspace revision: only what differs is handed over.
+					const appearance = changedTerminalAppearance(panel.params, canonical);
+					if (Object.keys(appearance).length > 0)
+						panel.api.updateParameters(appearance);
+				}
+			},
+			[
+				project.id,
+				projectedFolderId,
+				publishWorkspaceInventory,
+				terminalClientContext?.terminalTitleStore,
+				terminalNoteSync,
+			],
+		);
+
+		// The active terminal's server's workflow templates, and Resume.
+		const workflowServers = useContext(WorkflowsContext);
+		const reportWorkflowError = useCallback(
+			(message: string) => setErrorText(message),
+			[],
+		);
+		const workflowCommands = useWorkflowCommands({
+			servers: workflowServers,
+			serverId: terminalPanelClientContext?.serverId,
+			projectId: project.id,
+			isOpen: isMacroLauncherOpen,
+			getActiveSessionId,
+			close: closeMacroLauncher,
+			focusTerminal: focusActiveTerminal,
+			onError: reportWorkflowError,
+		});
+
+		const isDesktopHost = useIsDesktopHost();
+		const filteredMacros = useMemo(() => {
+			const commandItems: CommandBarItem[] = [
+				{
+					group: 'Terminal',
+					icon: <Terminal size={18} strokeWidth={2.1} />,
+					id: 'create-terminal-tab',
+					title: 'New Terminal Tab',
+					description: 'Open a fresh terminal tab in the current project.',
+					searchText: `create new terminal tab open fresh terminal ${getCommandShortcut(settings.keyboardShortcuts, 'new-terminal')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'new-terminal',
+						isMac,
+					),
+					onSelect: () => {
+						setErrorText(null);
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void addTerminal({});
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Terminal size={18} strokeWidth={2.1} />,
+					id: 'create-terminal-with-profile',
+					title: 'New Terminal with Profile…',
+					description:
+						'Choose one shell profile for this terminal without changing defaults.',
+					searchText: 'new terminal shell profile one time choose discovered',
+					onSelect: () => {
+						void openProfileChooser();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Plug size={18} strokeWidth={2.1} />,
+					id: 'install-terminay-mcp',
+					title: 'Install Terminay MCP',
+					description:
+						'Let Claude Code, Codex, Cursor CLI, Gemini CLI, Grok, or OpenCode control sibling terminals in this project.',
+					searchText:
+						'install terminay mcp model context protocol claude codex cursor gemini grok opencode terminal control',
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						setIsMcpInstallModalOpen(true);
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <FolderPlus size={18} strokeWidth={2.1} />,
+					id: 'create-project',
+					title: 'New Project',
+					description: 'Add a new project tab and switch to it.',
+					searchText: `create new project add project tab ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'new-project',
+						isMac,
+					),
+					onSelect: () => {
+						void createProject();
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Eraser size={18} strokeWidth={2.1} />,
+					id: 'clear-terminal',
+					title: 'Clear terminal',
+					description: 'Clear the active terminal viewport and scrollback.',
+					searchText: `clear terminal scrollback screen reset ${getCommandShortcut(settings.keyboardShortcuts, 'clear-terminal')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'clear-terminal',
+						isMac,
+					),
+					onSelect: () => {
+						clearActiveTerminal();
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Mic size={18} strokeWidth={2.1} />,
+					id: 'start-dictation',
+					title: 'Start dictation',
+					description:
+						'Record speech and type the transcript into the active terminal.',
+					searchText: `start dictation voice speech microphone audio transcribe terminal input ${getCommandShortcut(settings.keyboardShortcuts, 'start-dictation')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'start-dictation',
+						isMac,
+					),
+					onSelect: () => {
+						void startDictation();
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Sparkles size={18} strokeWidth={2.1} />,
+					id: 'set-tab-title-with-ai',
+					title: 'Set tab title with AI',
+					description: 'Generate a concise title for the active terminal tab.',
+					searchText:
+						'set tab title with ai codex rename generate terminal metadata',
+					onSelect: () => {
+						void runAiTabMetadata('title');
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Sparkles size={18} strokeWidth={2.1} />,
+					id: 'set-tab-note-with-ai',
+					title: 'Set tab note with AI',
+					description: 'Generate a short note for the active terminal tab.',
+					searchText:
+						'set tab note with ai codex generate terminal note metadata',
+					onSelect: () => {
+						void runAiTabMetadata('note');
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Settings size={18} strokeWidth={2.1} />,
+					id: 'edit-tab-settings',
+					title: 'Edit tab settings',
+					description: 'Open settings for the active tab.',
+					searchText: `edit tab settings rename emoji color file folder terminal ${getCommandShortcut(settings.keyboardShortcuts, 'edit-active-tab')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'edit-active-tab',
+						isMac,
+					),
+					onSelect: () => {
+						openActiveTerminalSettings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <History size={18} strokeWidth={2.1} />,
+					id: 'open-recordings',
+					title: 'Recordings',
+					description: 'Browse and replay saved terminal recordings in Home.',
+					searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-recordings',
+						isMac,
+					),
+					onSelect: () => {
+						// The project stays mounted behind Home, so its Command Bar
+						// has to close rather than wait to be seen again.
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						onShowRecordings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Settings size={18} strokeWidth={2.1} />,
+					id: 'open-settings',
+					title: 'Settings',
+					description: 'Configure Terminay and the selected server.',
+					searchText: `open settings preferences configuration ${getCommandShortcut(settings.keyboardShortcuts, 'open-settings')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-settings',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Radio size={18} strokeWidth={2.1} />,
+					id: 'open-remote-control',
+					title: 'Remote Access',
+					description: 'Expose this server and manage saved servers.',
+					searchText: `remote access control connections pairing servers expose trusted devices ${getCommandShortcut(settings.keyboardShortcuts, 'open-remote-control')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-remote-control',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('remote');
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Workflow size={18} strokeWidth={2.1} />,
+					id: 'open-macros',
+					title: 'Macros',
+					description: 'Manage reusable terminal macros.',
+					searchText: `macros commands snippets automation ${getCommandShortcut(settings.keyboardShortcuts, 'open-macros')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-macros',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('macros');
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Plug size={18} strokeWidth={2.1} />,
+					id: 'open-extensions',
+					title: 'Extensions',
+					description: 'Manage extensions on the selected server.',
+					searchText: `extensions plugins npm providers ${getCommandShortcut(settings.keyboardShortcuts, 'open-extensions')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-extensions',
+						isMac,
+					),
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void auxiliaryRoutes.openSettings('extensions');
+					},
+				},
+				...(isDesktopHost
+					? [
+							{
+								group: 'Workspace',
+								icon: <ArrowLeftRight size={18} strokeWidth={2.1} />,
+								id: 'open-import-export',
+								title: 'Import & Export',
+								description:
+									'Copy macros, workflows, profiles, automations, and settings between servers.',
+								searchText: `import export copy sync servers remotes bundle ${getCommandShortcut(settings.keyboardShortcuts, 'open-import-export')}`,
+								shortcutLabel: getCommandShortcutLabel(
+									settings.keyboardShortcuts,
+									'open-import-export',
+									isMac,
+								),
+								onSelect: () => {
+									setIsMacroLauncherOpen(false);
+									setMacroQuery('');
+									void auxiliaryRoutes.openSettings('import-export');
+								},
+							} satisfies CommandBarItem,
+						]
+					: []),
+				{
+					group: 'Workspace',
+					icon: <Settings size={18} strokeWidth={2.1} />,
+					id: 'edit-project-settings',
+					title: 'Edit project settings',
+					description: 'Open settings for the current project tab.',
+					searchText: `edit project settings project tab root folder emoji color ${getCommandShortcut(settings.keyboardShortcuts, 'edit-active-project')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'edit-active-project',
+						isMac,
+					),
+					onSelect: () => {
+						openProjectSettings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <LayoutDashboard size={18} strokeWidth={2.1} />,
+					id: 'show-dashboard',
+					title: 'Show dashboard',
+					description:
+						'See every project and tab in this workspace at a glance.',
+					searchText: `show dashboard home overview projects tabs status at a glance ${getCommandShortcut(settings.keyboardShortcuts, 'show-dashboard')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'show-dashboard',
+						isMac,
+					),
+					onSelect: () => {
+						onShowDashboard();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <ListChecks size={18} strokeWidth={2.1} />,
+					id: 'show-workflows',
+					title: 'Show workflows',
+					description: 'See every workflow and what needs you, in Home.',
+					searchText: 'show workflows home checklist steps progress needs you',
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						onShowWorkflows();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <PanelBottom size={18} strokeWidth={2.1} />,
+					id: 'toggle-status-bar',
+					title: isStatusBarVisible ? 'Hide status bar' : 'Show status bar',
+					description: isStatusBarVisible
+						? 'Hide the status bar along the bottom of the window.'
+						: 'Show the status bar along the bottom of the window.',
+					searchText: `toggle show hide status bar footer working directory branch devices ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-status-bar')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'toggle-status-bar',
+						isMac,
+					),
+					onSelect: () => {
+						onToggleStatusBar();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Sidebar size={18} strokeWidth={2.1} />,
+					id: 'toggle-file-explorer-sidebar',
+					title: project.isFileExplorerOpen
+						? 'Hide file explorer sidebar'
+						: 'Show file explorer sidebar',
+					description: project.isFileExplorerOpen
+						? 'Hide the file explorer sidebar for this project.'
+						: 'Show the file explorer sidebar for this project.',
+					searchText: `toggle file explorer sidebar show hide explorer sidebar project ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-file-explorer-sidebar')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'toggle-file-explorer-sidebar',
+						isMac,
+					),
+					onSelect: () => {
+						toggleFileExplorerSidebar();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <FolderSync size={18} strokeWidth={2.1} />,
+					id: 'set-project-root-folder-to-working-directory',
+					title: 'Set project root folder to working directory',
+					description:
+						'Use the active terminal working directory as this project root folder.',
+					searchText: `set project root folder working directory cwd active terminal root folder ${getCommandShortcut(settings.keyboardShortcuts, 'set-project-root-folder-to-working-directory')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'set-project-root-folder-to-working-directory',
+						isMac,
+					),
+					onSelect: () => {
+						void setProjectRootFolderToWorkingDirectory();
+					},
+				},
+				...orderMacrosByCategory(macros, macroCategories).map(
+					(macro): CommandBarItem => ({
+						...macroCommandGroup(macro.category, macroCategories),
+						icon: <Play size={18} strokeWidth={2.1} />,
+						id: macro.id,
+						title: macro.title,
+						description:
+							macro.description ||
+							(macro.steps[0]?.type === 'type'
+								? macro.steps[0].content
+								: 'Multi-step macro'),
+						searchText: [
+							macro.title,
+							macro.description,
+							...macro.fields.map((field) => `${field.label} ${field.name}`),
+							...macro.steps.map((step) =>
+								step.type === 'type' ? step.content : '',
+							),
+						]
+							.join(' ')
+							.toLowerCase(),
+						shortcutLabel: '',
+						onSelect: () => runMacro(macro),
+					}),
+				),
+				...workflowCommands.items,
+			];
+
+			// Places come after commands and macros, and only once something is
+			// typed. Choosing one leaves the Command Bar.
+			return [
+				...filterCommandBarItems(commandItems, macroQuery),
+				...searchPlaces(macroQuery).map((place) => ({
+					...place,
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						place.onSelect();
+					},
+				})),
+			];
+		}, [
+			addTerminal,
+			auxiliaryRoutes,
+			clearActiveTerminal,
+			createProject,
+			isMac,
+			macroQuery,
+			macros,
+			macroCategories,
+			openActiveTerminalSettings,
+			openProjectSettings,
+			project.isFileExplorerOpen,
+			runAiTabMetadata,
+			runMacro,
+			settings.keyboardShortcuts,
+			setProjectRootFolderToWorkingDirectory,
+			onShowDashboard,
+			onShowRecordings,
+			onShowWorkflows,
+			onToggleStatusBar,
+			isStatusBarVisible,
+			openProfileChooser,
+			searchPlaces,
+			startDictation,
+			toggleFileExplorerSidebar,
+			workflowCommands.items,
+			isDesktopHost,
+		]);
+		const requestClosePanel = useCallback(
+			async (panelId: string, options?: { confirmed?: boolean }) => {
+				window.terminayTest?.reportAppCommandStage(`close:${panelId}:started`);
+				const api = dockviewApiRef.current;
+				const panel = api?.getPanel(panelId);
+				if (!api || !panel) return;
+				const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
+				const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
+				const registration = filePanelSaveHandlersRef.current.get(panelId);
+				// An autosaving view puts its pending edits on disk before it goes.
+				if (registration?.autosaves === true) {
+					try {
+						await registration.save();
+					} catch (error) {
+						setErrorText(
+							error instanceof Error ? error.message : String(error),
+						);
+						return;
+					}
+				}
+				const sessionId = panelSessionMapRef.current.get(panelId);
+				if (sessionId !== undefined && options?.confirmed !== true) {
+					const preflight = await observeTerminalClosePreflight(
+						serverActivityClient,
+						{ projectId: project.id, sessionId },
+					);
+					if (!(await confirmTerminalClose('terminal', preflight))) {
+						return;
+					}
+				}
+				if (
+					workspaceStore !== undefined &&
+					canonicalPanel?.projectId === project.id
+				) {
+					window.terminayTest?.reportAppCommandStage(
+						`close:${panelId}:command-started`,
+					);
+					await workspaceStore.closePanel(panelId);
+					window.terminayTest?.reportAppCommandStage(
+						`close:${panelId}:command-completed`,
+					);
+					const reconciled = await workspaceStore.waitForSnapshot(
+						(snapshot) => snapshot.panels[panelId] === undefined,
+						{ timeoutMs: 10_000 },
+					);
+					window.terminayTest?.reportAppCommandStage(
+						`close:${panelId}:snapshot-completed`,
+					);
+					if (reconciled === null) {
+						const reconciliationError = workspaceStore.status.error;
+						throw new Error(
+							reconciliationError === undefined
+								? 'Timed out waiting for the closed panel to reconcile.'
+								: `Unable to reconcile the closed panel. ${reconciliationError.message}`,
+						);
+					}
+					return;
+				}
+				panel.api.close();
+			},
+			[
+				project.id,
+				serverActivityClient,
+				terminalClientContext?.workspaceSnapshotStore,
+			],
+		);
+
+		useEffect(() => {
+			const listener = (event: Event) => {
+				const detail = (event as CustomEvent).detail as
+					| { panelId?: unknown; sessionId?: unknown }
+					| undefined;
+				if (
+					typeof detail?.panelId !== 'string' ||
+					typeof detail.sessionId !== 'string'
+				)
+					return;
+				const api = dockviewApiRef.current;
+				const panel = api?.getPanel(detail.panelId);
+				const mappedSessionId = panelSessionMapRef.current.get(detail.panelId);
+				const liveSessionId =
+					typeof panel?.params?.sessionId === 'string'
+						? panel.params.sessionId
+						: mappedSessionId;
+				if (liveSessionId !== detail.sessionId) return;
+				void requestClosePanel(detail.panelId);
+			};
+			window.addEventListener('terminay-request-close-terminal', listener);
+			return () =>
+				window.removeEventListener('terminay-request-close-terminal', listener);
+		}, [requestClosePanel]);
+
+		useEffect(() => {
+			const listener = (event: Event) => {
+				const panelId = (event as CustomEvent<{ panelId?: unknown }>).detail
+					?.panelId;
+				if (typeof panelId === 'string') void requestClosePanel(panelId);
+			};
+			window.addEventListener('terminay-request-close-file', listener);
+			return () =>
+				window.removeEventListener('terminay-request-close-file', listener);
+		}, [requestClosePanel]);
+
+		const closeActivePanel = useCallback(async () => {
+			const panelId = dockviewApiRef.current?.activePanel?.id;
+			if (panelId === undefined) {
+				onCloseActiveWithNoPanel(project.id);
+				return;
+			}
+			await requestClosePanel(panelId);
+		}, [onCloseActiveWithNoPanel, project.id, requestClosePanel]);
+
+		const saveActivePanel = useCallback(async () => {
+			const activePanel = dockviewApiRef.current?.activePanel;
+			const registeredSave =
+				activePanel === undefined
+					? undefined
+					: filePanelSaveHandlersRef.current.get(activePanel.id)?.save;
+			if (registeredSave !== undefined) {
+				try {
+					await registeredSave();
+				} catch (error) {
+					setErrorText(error instanceof Error ? error.message : String(error));
+				}
+				return;
+			}
+			await saveActiveDockviewPanel({
+				api: dockviewApiRef.current,
+				onError: setErrorText,
+				onSaved: () => undefined,
+			});
+		}, []);
+
+		const popoutActivePanel = useCallback(
+			() => onPopoutProject(project.id),
+			[onPopoutProject, project.id],
+		);
+
+		const executeAppCommand = useCallback(
+			async (command: AppCommand): Promise<void> => {
+				switch (command) {
+					case 'new-terminal':
+						await addTerminal({});
+						break;
+					case 'new-project':
+						await onAddProject();
+						break;
+					case 'split-horizontal':
+						await addTerminal({ direction: 'below' });
+						break;
+					case 'split-vertical':
+						await addTerminal({ direction: 'right' });
+						break;
+					case 'save-active':
+						await saveActivePanel();
+						break;
+					case 'popout-active':
+						await popoutActivePanel();
+						break;
+					case 'close-active':
+						await closeActivePanel();
+						break;
+					case 'clear-terminal':
+						clearActiveTerminal();
+						break;
+					case 'edit-active-tab':
+						openActiveTerminalSettings();
+						break;
+					case 'edit-active-project':
+						openProjectSettings();
+						break;
+					case 'open-command-bar':
+						setMacroQuery('');
+						setSelectedMacroIndex(0);
+						setIsMacroLauncherOpen(true);
+						setMacroToRun(null);
+						setMacroFieldValues({});
+						break;
+					case 'start-dictation':
+						await startDictation();
+						break;
+					case 'open-recordings':
+						onShowRecordings();
+						break;
+					// Management lives in Settings; a key bound to one of its
+					// categories opens it there, as the Command Bar does.
+					case 'open-settings':
+						await auxiliaryRoutes.openSettings();
+						break;
+					case 'open-macros':
+						await auxiliaryRoutes.openSettings('macros');
+						break;
+					case 'open-remote-control':
+						await auxiliaryRoutes.openSettings('remote');
+						break;
+					case 'open-extensions':
+						await auxiliaryRoutes.openSettings('extensions');
+						break;
+					case 'open-import-export':
+						await auxiliaryRoutes.openSettings('import-export');
+						break;
+					case 'toggle-file-explorer-sidebar':
+						toggleFileExplorerSidebar();
+						break;
+					case 'set-project-root-folder-to-working-directory':
+						await setProjectRootFolderToWorkingDirectory();
+						break;
+					// The dashboard is a view of the whole workspace, so a project
+					// hands this one back up rather than answering it itself.
+					case 'show-dashboard':
+						onShowDashboard();
+						break;
+					// The status bar belongs to the window, so it is handed back up too.
+					case 'toggle-status-bar':
+						onToggleStatusBar();
+						break;
+					default:
+						break;
+				}
+			},
+			[
+				addTerminal,
+				auxiliaryRoutes,
+				clearActiveTerminal,
+				closeActivePanel,
+				onAddProject,
+				onShowDashboard,
+				onShowRecordings,
+				onToggleStatusBar,
+				openActiveTerminalSettings,
+				openProjectSettings,
+				popoutActivePanel,
+				saveActivePanel,
+				setProjectRootFolderToWorkingDirectory,
+				startDictation,
+				toggleFileExplorerSidebar,
+			],
+		);
+
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const onCopyRequest = () => copyActiveTerminalSelection();
+			document.addEventListener('copy', onCopyRequest);
+
+			return () => {
+				document.removeEventListener('copy', onCopyRequest);
+			};
+		}, [copyActiveTerminalSelection, isActive]);
+
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const onKeyDown = (event: KeyboardEvent) => {
+				if (event.defaultPrevented) {
+					return;
+				}
+
+				const command = findCommandForKeyboardEvent(
+					event,
+					settings.keyboardShortcuts,
+					isMac,
+				);
+				if (!command) {
+					return;
+				}
+
+				event.preventDefault();
+				event.stopPropagation();
+
+				if (!event.repeat) {
+					void executeAppCommand(command);
+				}
+			};
+
+			window.addEventListener('keydown', onKeyDown, true);
+			return () => {
+				window.removeEventListener('keydown', onKeyDown, true);
+			};
+		}, [executeAppCommand, isActive, isMac, settings.keyboardShortcuts]);
+
+		const ownsControlSession = useCallback(
+			(sessionId: string) =>
+				dockviewApiRef.current?.panels.some(
+					(panel) =>
+						(panel.params as { sessionId?: unknown } | undefined)
+							?.sessionId === sessionId,
+				) ?? false,
+			[],
+		);
+		const openFileTab = useCallback(
+			async (path: string): Promise<string | undefined> => {
+				if (folderRootPath === undefined || folderRootPath === null)
+					return undefined;
+				const resolved = pathInsideRoot(folderRootPath, path);
+				if (resolved === undefined) return undefined;
+				await openFile(resolved);
+				return filePathPanelMapRef.current.get(resolved);
+			},
+			[folderRootPath, openFile],
+		);
+		// Assigned once the folder menu controller below has run.
+		const describeFolderMenuRef = useRef<
+			ProjectWorkspaceHandle['folderMenu'] | null
+		>(null);
+		useImperativeHandle(
+			ref,
+			() => ({
+				folderMenu: (folderId: string) =>
+					describeFolderMenuRef.current?.(folderId),
+				acceptMovedTerminal,
+				acceptServerTerminal,
+				reconcileServerPanels,
+				activatePanel,
+				activateTerminal,
+				acknowledgeTerminal: markTerminalActivityViewed,
+				executeCommand(command: AppCommand) {
+					return executeAppCommand(command);
+				},
+				exportTerminalForMove,
+				exportProjectForMove,
+				focusActiveTerminal,
+				isReady: () => dockviewApiRef.current !== null,
+				ownsControlSession,
+				terminalSessionForPanel: (panelId: string) =>
+					panelSessionMapRef.current.get(panelId),
+				terminalPanelForSession: (sessionId: string) =>
+					[...panelSessionMapRef.current].find(
+						([, mapped]) => mapped === sessionId,
+					)?.[0],
+				reportError: setErrorText,
+				requestClosePanel,
+				openShellAtFolderRoot: async () => {
+					setErrorText(null);
+					await addTerminal({ atFolderRoot: true });
+				},
+				launchTerminal: async (launcherId: string) => {
+					setErrorText(null);
+					await addTerminal({ launcherId });
+				},
+				startForgeTerminal: async (launcher) => {
+					setErrorText(null);
+					const created = await addTerminal(
+						launcher === undefined
+							? { atFolderRoot: true }
+							: {
+									atFolderRoot: true,
+									launcherId: launcher.launcherId,
+									prompt: launcher.prompt,
+								},
+					);
+					return created !== null;
+				},
+				worktreeStatus: () => worktreePanelStatusRef.current,
+				viewApi: () => dockviewApiRef.current,
+				openFileTab,
+			}),
+			[
+				addTerminal,
+				requestClosePanel,
+				acceptMovedTerminal,
+				acceptServerTerminal,
+				reconcileServerPanels,
+				activatePanel,
+				activateTerminal,
+				markTerminalActivityViewed,
+				executeAppCommand,
+				exportTerminalForMove,
+				exportProjectForMove,
+				focusActiveTerminal,
+				ownsControlSession,
+				openFileTab,
+			],
+		);
+
+		useEffect(() => {
+			publishWorkspaceInventory();
+		}, [publishWorkspaceInventory]);
+
+		// A tab shows the title the server publishes for its terminal
+		// (ADR-0058). That title changes as often as a program rewrites it, so
+		// it is handed straight to the one tab it belongs to: nothing here is
+		// rendered for it, and no list is rebuilt. The lists that name terminals
+		// read the same title themselves, each for its own row.
+		const terminalTitleStore = terminalClientContext?.terminalTitleStore;
+		useEffect(() => {
+			if (terminalTitleStore === undefined) return;
+			return terminalTitleStore.subscribeChanges((panelId) => {
+				const panel = dockviewApiRef.current?.getPanel(panelId);
+				if (panel === undefined || !panelSessionMapRef.current.has(panelId))
+					return;
+				const title = terminalTitleStore.title(panelId);
+				if (title !== undefined && panel.title !== title)
+					panel.api.setTitle(title);
+			});
+		}, [terminalTitleStore]);
+
+		useEffect(() => {
+			focusedSessionIdRef.current = focusedSessionId;
+			for (const sessionId of panelSessionMapRef.current.values()) {
+				evaluateTerminalActivityState(sessionId);
+			}
+		}, [evaluateTerminalActivityState, focusedSessionId]);
+
+		useEffect(() => {
+			syncFocusedTerminalTabs(focusedSessionId);
+			// The panel in front is what the compact breadcrumb names, so a focus
+			// change has to reach the published inventory too.
+			publishWorkspaceInventory();
+		}, [focusedSessionId, publishWorkspaceInventory, syncFocusedTerminalTabs]);
+
+		useEffect(() => {
+			syncRunningMacroTabs();
+		}, [syncRunningMacroTabs]);
+
+		const closeServerPanel = useCallback(
+			(panelId: string) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				const panel = store?.snapshot?.panels[panelId];
+				if (store === undefined || panel?.projectId !== project.id) return;
+				// A panel the server has placed in another folder is that folder's.
+				// Whatever removed it from this layout, it is not being closed.
+				if (panel.folderId !== projectedFolderId) return;
+				void store.closePanel(panelId).catch((error: unknown) => {
+					const message =
+						error instanceof Error
+							? error.message
+							: 'Unable to close this panel on the server.';
+					setErrorText(message);
+				});
+			},
+			[
+				project.id,
+				projectedFolderId,
+				terminalClientContext?.workspaceSnapshotStore,
+			],
+		);
+
+		const commitServerPanelOrder = useCallback(
+			(panelIds: readonly string[]) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				// A reorder is of this folder's own panels and of no other's.
+				const canonicalIds =
+					projectedFolderId === undefined
+						? undefined
+						: store?.snapshot?.folders[projectedFolderId]?.panelIds;
+				if (
+					store === undefined ||
+					canonicalIds === undefined ||
+					panelIds.length !== canonicalIds.length ||
+					panelIds.some((panelId) => !canonicalIds.includes(panelId)) ||
+					panelIds.every((panelId, index) => panelId === canonicalIds[index])
+				)
+					return;
+				void store
+					.reorderPanels({
+						projectId: project.id,
+						...(projectedFolderId === undefined
+							? {}
+							: { folderId: projectedFolderId }),
+						panelIds,
+					})
+					.catch((error: unknown) => {
+						setErrorText(
+							error instanceof Error
+								? error.message
+								: 'Unable to reorder these tabs on the server.',
+						);
+					});
+			},
+			[
+				project.id,
+				projectedFolderId,
+				terminalClientContext?.workspaceSnapshotStore,
+			],
+		);
+
+		const handleDockviewReady = useDockviewPanelLifecycle({
+			apiRef: dockviewApiRef,
+			cancelMacroRunsForSession,
+			clearActivitySession: (sessionId) =>
+				terminalActivityStoreRef.current.deleteSession(sessionId),
+			clearMacroRunsForSession,
+			closeServerPanel,
+			commitPanelOrder: commitServerPanelOrder,
+			filePathPanelMapRef,
+			focusedSessionIdRef,
+			folderPathPanelMapRef,
+			markTerminalActivityViewed,
+			movingTerminalSessionIdsRef,
+			panelSessionMapRef,
+			activeSessionMemoryKey: folderSessionMemoryKey,
+			publishWorkspaceInventory,
+			setFocusedSessionId,
+			setIsDockviewReady,
+			syncPanelFocusState,
+			terminalActivityTimersRef,
+		});
+
+		useEffect(() => {
+			// As with a documentation link: opened in the folder on screen.
+			if (!isActive) return;
+			const onOpenFileEvent = (event: Event) => {
+				const customEvent = event as CustomEvent<{
+					initialMode?: FileViewerMode;
+					path?: string;
+				}>;
+				const filePath = customEvent.detail?.path;
+				if (!filePath) {
+					return;
+				}
+				void openFile(filePath, {
+					initialMode: customEvent.detail.initialMode,
+				});
+			};
+
+			window.addEventListener('terminay-open-file', onOpenFileEvent);
+			return () => {
+				window.removeEventListener('terminay-open-file', onOpenFileEvent);
+			};
+		}, [isActive, openFile]);
+
+		useEffect(() => {
+			const handlePointerDown = (event: PointerEvent) => {
+				const target = event.target;
+				const workspace = workspaceRef.current;
+				if (
+					!(target instanceof Element) ||
+					!workspace?.contains(target) ||
+					!target.closest('.dv-sash') ||
+					isDockviewSashDraggingRef.current
+				) {
+					return;
+				}
+
+				isDockviewSashDraggingRef.current = true;
+				clearDeferredTerminalActivityFlushTimer();
+
+				const ownerWindow = target.ownerDocument.defaultView ?? window;
+				const ownerDocument = target.ownerDocument;
+				let didEnd = false;
+
+				const endSashDrag = () => {
+					if (didEnd) {
+						return;
+					}
+
+					didEnd = true;
+					isDockviewSashDraggingRef.current = false;
+					ownerDocument.removeEventListener('pointerup', endSashDrag, true);
+					ownerDocument.removeEventListener('pointercancel', endSashDrag, true);
+					ownerDocument.removeEventListener('contextmenu', endSashDrag, true);
+					ownerWindow.removeEventListener('blur', endSashDrag);
+					scheduleDeferredTerminalActivityFlush();
+				};
+
+				ownerDocument.addEventListener('pointerup', endSashDrag, true);
+				ownerDocument.addEventListener('pointercancel', endSashDrag, true);
+				ownerDocument.addEventListener('contextmenu', endSashDrag, true);
+				ownerWindow.addEventListener('blur', endSashDrag);
+			};
+
+			window.addEventListener('pointerdown', handlePointerDown, true);
+			return () => {
+				window.removeEventListener('pointerdown', handlePointerDown, true);
+				isDockviewSashDraggingRef.current = false;
+				clearDeferredTerminalActivityFlushTimer();
+				deferredTerminalActivitySessionIdsRef.current.clear();
+			};
+		}, [
+			clearDeferredTerminalActivityFlushTimer,
+			scheduleDeferredTerminalActivityFlush,
+		]);
+
+		useEffect(() => {
+			const onTerminalFocused = (event: Event) => {
 				if (!isActive) {
 					return;
 				}
+				const customEvent = event as CustomEvent<{ sessionId?: string }>;
+				const sessionId = customEvent.detail?.sessionId ?? null;
+				if (sessionId !== null && !getPanelForSession(sessionId)) {
+					return;
+				}
+				const previousSessionId = focusedSessionIdRef.current;
+				if (
+					serverActivityClient === undefined &&
+					previousSessionId &&
+					previousSessionId !== sessionId &&
+					getPanelForSession(previousSessionId)
+				) {
+					applyTerminalActivityEvaluation(
+						previousSessionId,
+						terminalActivityStoreRef.current.suppressTerminalActivity(
+							previousSessionId,
+						),
+					);
+				}
+				// Focus moving to another terminal ends the interaction with the one
+				// the user was typing in; its later activity is news again.
+				if (interactedSessionIdRef.current !== sessionId) {
+					interactedSessionIdRef.current = null;
+				}
+				focusedSessionIdRef.current = sessionId;
+				setFocusedSessionId(sessionId);
+			};
 
+			window.addEventListener('terminay-terminal-focused', onTerminalFocused);
+			return () => {
+				window.removeEventListener(
+					'terminay-terminal-focused',
+					onTerminalFocused,
+				);
+			};
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			isActive,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			if (serverActivityClient !== undefined) {
+				return;
+			}
+			const onTerminalOutput = (event: Event) => {
+				const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail
+					?.sessionId;
+				if (!sessionId || !getPanelForSession(sessionId)) {
+					return;
+				}
+
+				const now = Date.now();
+				terminalActivityStoreRef.current.recordTerminalActivity(sessionId, now);
+				if (
+					isDockviewSashDraggingRef.current ||
+					deferredTerminalActivityFlushTimerRef.current !== null
+				) {
+					deferredTerminalActivitySessionIdsRef.current.add(sessionId);
+					scheduleDeferredTerminalActivityFlush();
+					return;
+				}
+
+				applyTerminalActivityEvaluation(
+					sessionId,
+					terminalActivityStoreRef.current.evaluate(sessionId, now),
+				);
+			};
+			window.addEventListener(TERMINAL_PANEL_OUTPUT_EVENT, onTerminalOutput);
+			return () =>
+				window.removeEventListener(
+					TERMINAL_PANEL_OUTPUT_EVENT,
+					onTerminalOutput,
+				);
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			scheduleDeferredTerminalActivityFlush,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			if (serverActivityClient !== undefined) {
+				return;
+			}
+			// Server activity is required by the connected workspace. There is no
+			// renderer subscription to a host terminal-activity IPC fallback.
+			return;
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			const onTerminalUserInput = (event: Event) => {
+				const customEvent = event as CustomEvent<{ sessionId?: string }>;
+				const sessionId = customEvent.detail?.sessionId;
+				if (!sessionId || !getPanelForSession(sessionId)) {
+					return;
+				}
+
+				interactedSessionIdRef.current = sessionId;
+				markTerminalActivityViewed(sessionId);
+			};
+
+			window.addEventListener(
+				'terminay-terminal-user-input',
+				onTerminalUserInput,
+			);
+			return () => {
+				window.removeEventListener(
+					'terminay-terminal-user-input',
+					onTerminalUserInput,
+				);
+			};
+		}, [getPanelForSession, markTerminalActivityViewed]);
+
+		useEffect(() => {
+			return () => {
+				onWorkspaceInventoryChange(project.id, folder.id, []);
+				for (const timer of terminalActivityTimersRef.current.values()) {
+					window.clearTimeout(timer);
+				}
+				terminalActivityTimersRef.current.clear();
+				terminalActivityStoreRef.current.clear();
+			};
+		}, [folder.id, onWorkspaceInventoryChange, project.id]);
+
+		useEffect(() => {
+			const onTerminalExit = (event: Event) => {
+				const detail = (
+					event as CustomEvent<{
+						autoCloseOnSuccessfulExit?: boolean;
+						exitCode?: number;
+						sessionId?: string;
+						signal?: number | null;
+					}>
+				).detail;
+				if (!detail?.sessionId || typeof detail.exitCode !== 'number') return;
+				cancelMacroRunsForSession(detail.sessionId);
+
+				const panel = getPanelForSession(detail.sessionId);
+				panel?.api.updateParameters({ terminalSessionStatus: 'exited' });
+
+				if (
+					detail.autoCloseOnSuccessfulExit === true &&
+					detail.exitCode === 0 &&
+					detail.signal == null
+				) {
+					if (panel !== null && panel !== undefined) {
+						// The session has already exited, so this is not a destructive user
+						// close and must not wait for the activity/confirmation path.  Persist
+						// the canonical panel removal directly; a Dockview-only close would
+						// immediately be restored by workspace reconciliation.
+						const store = terminalClientContext?.workspaceSnapshotStore;
+						const canonicalPanel = store?.snapshot?.panels[panel.id];
+						if (
+							store !== undefined &&
+							canonicalPanel?.projectId === project.id
+						) {
+							void store
+								.closePanel(panel.id)
+								.catch((error: unknown) =>
+									setErrorText(
+										error instanceof Error
+											? error.message
+											: 'Unable to close the completed terminal tab.',
+									),
+								);
+						} else {
+							panel.api.close();
+						}
+					}
+				}
+			};
+			window.addEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
+			return () =>
+				window.removeEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
+		}, [
+			cancelMacroRunsForSession,
+			getPanelForSession,
+			project.id,
+			terminalClientContext?.workspaceSnapshotStore,
+		]);
+
+		const reportTerminalTabDrag = useCallback(
+			(drag: TerminalTabDrag | null) => onTerminalTabDrag?.(project.id, drag),
+			[onTerminalTabDrag, project.id],
+		);
+		useTerminalDockviewWindowController({
+			addTerminal,
+			apiRef: dockviewApiRef,
+			draggingTransferRef,
+			isActive,
+			onTerminalTabDrag: reportTerminalTabDrag,
+			openTerminalEditWindow,
+			openProfileChooser,
+			popoutUrl,
+			runAiTabMetadataRef,
+		});
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const api = dockviewApiRef.current;
+			const workspace = workspaceRef.current;
+			if (!api || !workspace) {
+				return;
+			}
+
+			const { clientWidth, clientHeight } = workspace;
+			if (clientWidth > 0 && clientHeight > 0) {
+				api.layout(clientWidth, clientHeight);
+			}
+
+			if (isMacroLauncherOpen || macroToRun || isTerminalSwitcherOpen) {
+				return;
+			}
+
+			const frame = window.requestAnimationFrame(() => {
+				focusActiveTerminal();
+			});
+
+			return () => {
+				window.cancelAnimationFrame(frame);
+			};
+		}, [
+			focusActiveTerminal,
+			isActive,
+			isMacroLauncherOpen,
+			isTerminalSwitcherOpen,
+			macroToRun,
+		]);
+
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const frame = window.requestAnimationFrame(() => {
 				const api = dockviewApiRef.current;
 				const workspace = workspaceRef.current;
 				if (!api || !workspace) {
@@ -5525,333 +5493,294 @@ const ProjectWorkspace = memo(
 				if (clientWidth > 0 && clientHeight > 0) {
 					api.layout(clientWidth, clientHeight);
 				}
-
-				if (isMacroLauncherOpen || macroToRun || isTerminalSwitcherOpen) {
-					return;
-				}
-
-				const frame = window.requestAnimationFrame(() => {
-					focusActiveTerminal();
-				});
-
-				return () => {
-					window.cancelAnimationFrame(frame);
-				};
-			}, [
-				focusActiveTerminal,
-				isActive,
-				isMacroLauncherOpen,
-				isTerminalSwitcherOpen,
-				macroToRun,
-			]);
-
-			useEffect(() => {
-				if (!isActive) {
-					return;
-				}
-
-				const frame = window.requestAnimationFrame(() => {
-					const api = dockviewApiRef.current;
-					const workspace = workspaceRef.current;
-					if (!api || !workspace) {
-						return;
-					}
-
-					const { clientWidth, clientHeight } = workspace;
-					if (clientWidth > 0 && clientHeight > 0) {
-						api.layout(clientWidth, clientHeight);
-					}
-				});
-
-				return () => {
-					window.cancelAnimationFrame(frame);
-				};
-			}, [
-				foldersTreeWidth,
-				isActive,
-				isFoldersTreeOpen,
-				sidebarWidth,
-				project.isFileExplorerOpen,
-			]);
-
-			useCommandBarNavigation({
-				inputRef: macroLauncherInputRef,
-				isOpen: isMacroLauncherOpen,
-				itemRefs: macroLauncherItemRefs,
-				items: filteredMacros,
-				listRef: macroLauncherListRef,
-				onClose: closeMacroLauncher,
-				selectedIndex: selectedMacroIndex,
-				setSelectedIndex: setSelectedMacroIndex,
 			});
 
-			useEffect(() => {
-				if (!macroToRun) {
-					return;
+			return () => {
+				window.cancelAnimationFrame(frame);
+			};
+		}, [
+			foldersTreeWidth,
+			isActive,
+			isFoldersTreeOpen,
+			sidebarWidth,
+			project.isFileExplorerOpen,
+		]);
+
+		useCommandBarNavigation({
+			inputRef: macroLauncherInputRef,
+			isOpen: isMacroLauncherOpen,
+			itemRefs: macroLauncherItemRefs,
+			items: filteredMacros,
+			listRef: macroLauncherListRef,
+			onClose: closeMacroLauncher,
+			selectedIndex: selectedMacroIndex,
+			setSelectedIndex: setSelectedMacroIndex,
+		});
+
+		useEffect(() => {
+			if (!macroToRun) {
+				return;
+			}
+
+			window.requestAnimationFrame(() => {
+				firstMacroFieldRef.current?.focus();
+			});
+
+			const onKeyDown = (event: KeyboardEvent) => {
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					closeMacroParameterModal();
 				}
+			};
 
-				window.requestAnimationFrame(() => {
-					firstMacroFieldRef.current?.focus();
-				});
+			window.addEventListener('keydown', onKeyDown);
+			return () => {
+				window.removeEventListener('keydown', onKeyDown);
+			};
+		}, [closeMacroParameterModal, macroToRun]);
 
-				const onKeyDown = (event: KeyboardEvent) => {
-					if (event.key === 'Escape') {
-						event.preventDefault();
-						closeMacroParameterModal();
-					}
-				};
-
-				window.addEventListener('keydown', onKeyDown);
-				return () => {
-					window.removeEventListener('keydown', onKeyDown);
-				};
-			}, [closeMacroParameterModal, macroToRun]);
-
-			// The Folders tree is drawn by the workspace on screen. It reads the
-			// projection, the project's whole inventory, and the worktree listing
-			// the Changes pane already keeps; a workspace behind another builds nothing.
-			const folderTreeRows = useMemo(
-				() =>
-					!isActive || workspaceSnapshot === null
-						? []
-						: buildProjectFolderTree({
-								project: workspaceSnapshot.projects[project.id],
-								folders: workspaceSnapshot.folders,
-								panels: workspaceSnapshot.panels,
-								selectedFolderId: folder.id,
-								inventory: projectInventory,
-								worktreeStatus: worktreePanelStatus,
-								deletingWorktreePaths,
-								pullingWorktreePaths,
-							}),
-				[
-					deletingWorktreePaths,
-					pullingWorktreePaths,
-					folder.id,
-					isActive,
-					project.id,
-					projectInventory,
-					workspaceSnapshot,
-					worktreePanelStatus,
-				],
-			);
-			// A panel's menu offers the other folders of its project. They are named
-			// by a key, so a new projection with the same folders changes no tab.
-			const foldersForMoveKey = useMemo(() => {
-				const projected = workspaceSnapshot?.projects[project.id];
-				if (projected === undefined || workspaceSnapshot === null) return '[]';
-				return JSON.stringify(
-					projected.folderIds.flatMap((folderId) => {
-						const candidate = workspaceSnapshot.folders[folderId];
-						return candidate === undefined || folderId === folder.id
-							? []
-							: [
-									{
-										id: folderId,
-										name: folderNameFromStatus(candidate, worktreePanelStatus),
-									},
-								];
-					}),
-				);
-			}, [folder.id, project.id, workspaceSnapshot, worktreePanelStatus]);
-			useEffect(() => {
-				const api = dockviewApiRef.current;
-				if (api === null || !isDockviewReady) return;
-				const foldersForMove = JSON.parse(foldersForMoveKey) as {
-					id: string;
-					name: string;
-				}[];
-				const offer = (panel: IDockviewPanel) =>
-					panel.api.updateParameters({
-						foldersForMove,
-						onMoveToFolder: (targetFolderId: string) =>
-							onMoveTerminalToFolder(project.id, panel.id, targetFolderId),
-					});
-				for (const panel of api.panels) offer(panel);
-				// A panel that arrives later is offered the same folders.
-				const added = api.onDidAddPanel(offer);
-				return () => added.dispose();
-			}, [
-				foldersForMoveKey,
-				isDockviewReady,
-				onMoveTerminalToFolder,
-				project.id,
-			]);
-			const [newFolderDialog, setNewFolderDialog] =
-				useState<FileExplorerNameDialogState | null>(null);
-			const newFolderModal = useDraggableModal(newFolderDialog !== null);
-			const newFolderDialogIdRef = useRef(0);
-			const cancelNewFolderDialog = useCallback(
-				() => setNewFolderDialog(null),
-				[],
-			);
-			const requestNewFolder = useCallback(() => {
-				newFolderDialogIdRef.current += 1;
-				setNewFolderDialog({
-					id: newFolderDialogIdRef.current,
-					label: 'Folder name',
-					// The modal reports through its own submit and cancel handlers.
-					resolve: () => undefined,
-					submitLabel: 'Create',
-					title: 'New Folder',
-				});
-			}, []);
-			const submitNewFolderDialog = useCallback(
-				(name: string) => {
-					setNewFolderDialog(null);
-					const store = terminalClientContext?.workspaceSnapshotStore;
-					if (store === undefined) {
-						setErrorText('The selected server workspace is not ready.');
-						return;
-					}
-					// The folder is shown once the server has created it.
-					void store
-						.createFolder({ projectId: project.id, name })
-						.catch((error: unknown) => {
-							setErrorText(
-								`Unable to create the folder: ${error instanceof Error ? error.message : String(error)}`,
-							);
-						});
-				},
-				[project.id, terminalClientContext?.workspaceSnapshotStore],
-			);
-			// The folder menu runs each worktree action on the worktree of whichever
-			// folder was right-clicked, which need not be the one on screen.
-			const {
-				cancelFolderNameDialog,
-				describeFolderMenu,
-				folderMenuElement,
-				folderNameDialog,
-				openFolderMenu,
-				submitFolderNameDialog,
-			} = useFolderMenuController({
-				project: { id: project.id, rootFolder: project.rootFolder },
-				snapshot: workspaceSnapshot,
-				store: terminalClientContext?.workspaceSnapshotStore,
-				projectInventory,
-				worktreeStatus: worktreePanelStatus,
+		// The Folders tree is drawn by the workspace on screen. It reads the
+		// projection, the project's whole inventory, and the worktree listing
+		// the Changes pane already keeps; a workspace behind another builds nothing.
+		const folderTreeRows = useMemo(
+			() =>
+				!isActive || workspaceSnapshot === null
+					? []
+					: buildProjectFolderTree({
+							project: workspaceSnapshot.projects[project.id],
+							folders: workspaceSnapshot.folders,
+							panels: workspaceSnapshot.panels,
+							selectedFolderId: folder.id,
+							inventory: projectInventory,
+							worktreeStatus: worktreePanelStatus,
+							deletingWorktreePaths,
+							pullingWorktreePaths,
+						}),
+			[
 				deletingWorktreePaths,
 				pullingWorktreePaths,
-				onCommitAndPush: handleOpenWorktreePushMenu,
-				onPullFromOrigin: handlePullWorktreeFromOrigin,
-				onRenameWorktree: handleRenameWorktree,
-				onDeleteWorktree: handleDeleteWorktree,
-				onRevealFolder: handleRevealFolder,
-				onOpenShell: (folderId) => onOpenShellInFolder(project.id, folderId),
-				onClosePanel: (folderId, panelId) =>
-					onCloseFolderPanel(project.id, folderId, panelId, {
-						confirmed: true,
-					}),
-				onCountRunningTerminals: async (sessionIds) => {
-					const preflights = await Promise.all(
-						sessionIds.map((sessionId) =>
-							observeTerminalClosePreflight(serverActivityClient, {
-								projectId: project.id,
-								sessionId,
-							}),
-						),
-					);
-					return {
-						count: preflights.reduce(
-							(total, preflight) => total + preflight.runningSessionIds.length,
-							0,
-						),
-						limited: preflights.some(
-							(preflight) => preflight.observation === 'limited',
-						),
-					};
-				},
-				onError: setErrorText,
-			});
-			describeFolderMenuRef.current = describeFolderMenu;
-			const folderNameModal = useDraggableModal(folderNameDialog !== null);
-			// The order is the server's. The tree shows what it asked for until the
-			// server answers, and goes back to the server's order if it refuses.
-			const reorderFolders = useCallback(
-				async (folderIds: string[]) => {
-					const store = terminalClientContext?.workspaceSnapshotStore;
-					try {
-						if (store === undefined)
-							throw new Error('The selected server workspace is not ready.');
-						await store.reorderFolders({ projectId: project.id, folderIds });
-					} catch (error) {
-						setErrorText(
-							`Unable to reorder the folders: ${error instanceof Error ? error.message : String(error)}`,
-						);
-						throw error;
-					}
-				},
-				[project.id, terminalClientContext?.workspaceSnapshotStore],
-			);
-			// What the panel area says while this folder holds no panels.
-			const newTerminalShortcutLabel = getCommandShortcutLabel(
-				settings.keyboardShortcuts,
-				'new-terminal',
-				isMac,
-			);
-			const folderName = folderNameFromStatus(folder, worktreePanelStatus);
-			const emptyFolderDescription = useMemo<EmptyFolderDescription>(
-				() => ({
-					name: folderName,
-					...(linkedFolderRoot === undefined
-						? {}
-						: { worktreePath: linkedFolderRoot }),
-					onNewTerminal: () => {
-						setErrorText(null);
-						void addTerminal({});
-					},
-					...(newTerminalShortcutLabel ? { newTerminalShortcutLabel } : {}),
+				folder.id,
+				isActive,
+				project.id,
+				projectInventory,
+				workspaceSnapshot,
+				worktreePanelStatus,
+			],
+		);
+		// A panel's menu offers the other folders of its project. They are named
+		// by a key, so a new projection with the same folders changes no tab.
+		const foldersForMoveKey = useMemo(() => {
+			const projected = workspaceSnapshot?.projects[project.id];
+			if (projected === undefined || workspaceSnapshot === null) return '[]';
+			return JSON.stringify(
+				projected.folderIds.flatMap((folderId) => {
+					const candidate = workspaceSnapshot.folders[folderId];
+					return candidate === undefined || folderId === folder.id
+						? []
+						: [
+								{
+									id: folderId,
+									name: folderNameFromStatus(candidate, worktreePanelStatus),
+								},
+							];
 				}),
-				[addTerminal, folderName, linkedFolderRoot, newTerminalShortcutLabel],
+			);
+		}, [folder.id, project.id, workspaceSnapshot, worktreePanelStatus]);
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+			if (api === null || !isDockviewReady) return;
+			const foldersForMove = JSON.parse(foldersForMoveKey) as {
+				id: string;
+				name: string;
+			}[];
+			const offer = (panel: IDockviewPanel) =>
+				panel.api.updateParameters({
+					foldersForMove,
+					onMoveToFolder: (targetFolderId: string) =>
+						onMoveTerminalToFolder(project.id, panel.id, targetFolderId),
+				});
+			for (const panel of api.panels) offer(panel);
+			// A panel that arrives later is offered the same folders.
+			const added = api.onDidAddPanel(offer);
+			return () => added.dispose();
+		}, [foldersForMoveKey, isDockviewReady, onMoveTerminalToFolder, project.id]);
+		const [newFolderDialog, setNewFolderDialog] =
+			useState<FileExplorerNameDialogState | null>(null);
+		const newFolderModal = useDraggableModal(newFolderDialog !== null);
+		const newFolderDialogIdRef = useRef(0);
+		const cancelNewFolderDialog = useCallback(
+			() => setNewFolderDialog(null),
+			[],
+		);
+		const requestNewFolder = useCallback(() => {
+			newFolderDialogIdRef.current += 1;
+			setNewFolderDialog({
+				id: newFolderDialogIdRef.current,
+				label: 'Folder name',
+				// The modal reports through its own submit and cancel handlers.
+				resolve: () => undefined,
+				submitLabel: 'Create',
+				title: 'New Folder',
+			});
+		}, []);
+		const submitNewFolderDialog = useCallback(
+			(name: string) => {
+				setNewFolderDialog(null);
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				if (store === undefined) {
+					setErrorText('The selected server workspace is not ready.');
+					return;
+				}
+				// The folder is shown once the server has created it.
+				void store
+					.createFolder({ projectId: project.id, name })
+					.catch((error: unknown) => {
+						setErrorText(
+							`Unable to create the folder: ${error instanceof Error ? error.message : String(error)}`,
+						);
+					});
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
+		// The folder menu runs each worktree action on the worktree of whichever
+		// folder was right-clicked, which need not be the one on screen.
+		const {
+			cancelFolderNameDialog,
+			describeFolderMenu,
+			folderMenuElement,
+			folderNameDialog,
+			openFolderMenu,
+			submitFolderNameDialog,
+		} = useFolderMenuController({
+			project: { id: project.id, rootFolder: project.rootFolder },
+			snapshot: workspaceSnapshot,
+			store: terminalClientContext?.workspaceSnapshotStore,
+			projectInventory,
+			worktreeStatus: worktreePanelStatus,
+			deletingWorktreePaths,
+			pullingWorktreePaths,
+			onCommitAndPush: handleOpenWorktreePushMenu,
+			onPullFromOrigin: handlePullWorktreeFromOrigin,
+			onRenameWorktree: handleRenameWorktree,
+			onDeleteWorktree: handleDeleteWorktree,
+			onRevealFolder: handleRevealFolder,
+			onOpenShell: (folderId) => onOpenShellInFolder(project.id, folderId),
+			onClosePanel: (folderId, panelId) =>
+				onCloseFolderPanel(project.id, folderId, panelId, { confirmed: true }),
+			onCountRunningTerminals: async (sessionIds) => {
+				const preflights = await Promise.all(
+					sessionIds.map((sessionId) =>
+						observeTerminalClosePreflight(serverActivityClient, {
+							projectId: project.id,
+							sessionId,
+						}),
+					),
+				);
+				return {
+					count: preflights.reduce(
+						(total, preflight) => total + preflight.runningSessionIds.length,
+						0,
+					),
+					limited: preflights.some(
+						(preflight) => preflight.observation === 'limited',
+					),
+				};
+			},
+			onError: setErrorText,
+		});
+		describeFolderMenuRef.current = describeFolderMenu;
+		const folderNameModal = useDraggableModal(folderNameDialog !== null);
+		// The order is the server's. The tree shows what it asked for until the
+		// server answers, and goes back to the server's order if it refuses.
+		const reorderFolders = useCallback(
+			async (folderIds: string[]) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				try {
+					if (store === undefined)
+						throw new Error('The selected server workspace is not ready.');
+					await store.reorderFolders({ projectId: project.id, folderIds });
+				} catch (error) {
+					setErrorText(
+						`Unable to reorder the folders: ${error instanceof Error ? error.message : String(error)}`,
+					);
+					throw error;
+				}
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
+		// What the panel area says while this folder holds no panels.
+		const newTerminalShortcutLabel = getCommandShortcutLabel(
+			settings.keyboardShortcuts,
+			'new-terminal',
+			isMac,
+		);
+		const folderName = folderNameFromStatus(folder, worktreePanelStatus);
+		const emptyFolderDescription = useMemo<EmptyFolderDescription>(
+			() => ({
+				name: folderName,
+				...(linkedFolderRoot === undefined
+					? {}
+					: { worktreePath: linkedFolderRoot }),
+				onNewTerminal: () => {
+					setErrorText(null);
+					void addTerminal({});
+				},
+				...(newTerminalShortcutLabel
+					? { newTerminalShortcutLabel }
+					: {}),
+			}),
+			[addTerminal, folderName, linkedFolderRoot, newTerminalShortcutLabel],
+		);
+
+		// One Agents pane, drawn by the left column and, on a compact
+		// workspace, by the switcher, which also wants to hear of a press.
+		const renderAgentsPane = (onActivated?: () => void) =>
+			featureAvailability.state === 'unavailable' ? (
+				<FeatureUnavailableState reason={featureAvailability.reason} />
+			) : (
+				<AgentsSidebar
+					projectId={project.id}
+					agents={projectAgentItems}
+					expandedEntryIds={project.expandedAgentEntryIds}
+					onToggleEntryExpanded={(entryId) => {
+						const expanded =
+							project.expandedAgentEntryIds.includes(entryId);
+						onUpdateProject(project.id, {
+							expandedAgentEntryIds: expanded
+								? project.expandedAgentEntryIds.filter(
+										(candidate) => candidate !== entryId,
+									)
+								: [...project.expandedAgentEntryIds, entryId],
+						});
+					}}
+					onActivateTerminal={(terminalSessionId) => {
+						activateAgentTerminal(terminalSessionId);
+						onActivated?.();
+					}}
+					onAcknowledgeEntry={(entryId) => {
+						const entry = agentStatusSnapshot.entries[entryId];
+						if (
+							entry !== undefined &&
+							!entry.external &&
+							entry.activationTerminalSessionId !== null
+						) {
+							void serverAgentStatusClient
+								?.acknowledge({
+									projectId: project.id,
+									sessionId: entry.activationTerminalSessionId,
+									entryId,
+								})
+								.catch((error) => reportFeatureFailure('Agents', error));
+						}
+					}}
+				/>
 			);
 
-			// One Agents pane, drawn by the left column and, on a compact
-			// workspace, by the switcher, which also wants to hear of a press.
-			const renderAgentsPane = (onActivated?: () => void) =>
-				featureAvailability.state === 'unavailable' ? (
-					<FeatureUnavailableState reason={featureAvailability.reason} />
-				) : (
-					<AgentsSidebar
-						projectId={project.id}
-						agents={projectAgentItems}
-						expandedEntryIds={project.expandedAgentEntryIds}
-						onToggleEntryExpanded={(entryId) => {
-							const expanded = project.expandedAgentEntryIds.includes(entryId);
-							onUpdateProject(project.id, {
-								expandedAgentEntryIds: expanded
-									? project.expandedAgentEntryIds.filter(
-											(candidate) => candidate !== entryId,
-										)
-									: [...project.expandedAgentEntryIds, entryId],
-							});
-						}}
-						onActivateTerminal={(terminalSessionId) => {
-							activateAgentTerminal(terminalSessionId);
-							onActivated?.();
-						}}
-						onAcknowledgeEntry={(entryId) => {
-							const entry = agentStatusSnapshot.entries[entryId];
-							if (
-								entry !== undefined &&
-								!entry.external &&
-								entry.activationTerminalSessionId !== null
-							) {
-								void serverAgentStatusClient
-									?.acknowledge({
-										projectId: project.id,
-										sessionId: entry.activationTerminalSessionId,
-										entryId,
-									})
-									.catch((error) => reportFeatureFailure('Agents', error));
-							}
-						}}
-					/>
-				);
-
-			const sidebarPanelItemsById: Record<
-				Exclude<SidebarPanelId, 'agents'>,
-				SidebarPanelStackItem
-			> = {
+		const sidebarPanelItemsById: Record<
+			Exclude<SidebarPanelId, 'agents'>,
+			SidebarPanelStackItem
+		> =
+			{
 				explorer: {
 					id: 'explorer',
 					// Named when the root shown is a folder's worktree, not the project's.
@@ -6031,675 +5960,664 @@ const ProjectWorkspace = memo(
 					),
 				},
 			};
-			// The Agents pane is a tab of the left column; workspace state still
-			// names it in the order, and no sidebar group draws it.
-			const groupedSidebarPanelIds = panelsInSidebarGroup(
-				activeSidebarGroup,
-				project.sidebarPanelOrder,
-			).filter(
-				(id): id is Exclude<SidebarPanelId, 'agents'> => id !== 'agents',
-			);
-			const sidebarPanelItems = groupedSidebarPanelIds.map(
-				(id) => sidebarPanelItemsById[id],
-			);
-			const commitSidebarHeights = (
-				heights: Readonly<Record<string, number>>,
-			): Promise<void> => {
-				const patch: Partial<
-					Pick<
-						ProjectTab,
-						| 'sidebarExplorerHeight'
-						| 'sidebarAgentsHeight'
-						| 'sidebarGitHeight'
-						| 'sidebarDocumentationHeight'
-					>
-				> = {};
-				for (const [id, height] of Object.entries(heights)) {
-					const persistedHeight = Math.min(
-						2_000,
-						Math.max(30, Math.round(height)),
-					);
-					if (id === 'explorer') patch.sidebarExplorerHeight = persistedHeight;
-					else if (id === 'agents') patch.sidebarAgentsHeight = persistedHeight;
-					else if (id === 'git') patch.sidebarGitHeight = persistedHeight;
-					else if (id === 'documentation')
-						patch.sidebarDocumentationHeight = persistedHeight;
-				}
-				if (Object.keys(patch).length === 0) return Promise.resolve();
-				return onCommitProjectSidebar(project.id, patch).catch((error) => {
-					setErrorText(
-						`Unable to save sidebar size: ${
-							error instanceof Error ? error.message : String(error)
-						}`,
-					);
-					throw error;
-				});
-			};
-
-			return (
-				<section
-					className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
-					data-terminay-project-id={project.id}
-					data-terminay-folder-id={folder.id}
-					data-terminay-folder-kind={folder.kind}
-					data-terminay-git-client={
-						featureAuthority?.gitClient === undefined ? 'unavailable' : 'server'
-					}
-					data-terminay-project-root={project.rootFolder}
-					data-new-terminal-shortcut={getCommandShortcut(
-						settings.keyboardShortcuts,
-						'new-terminal',
-					)}
-					style={{ '--project-color': project.color } as CSSProperties}
+		// The Agents pane is a tab of the left column; workspace state still
+		// names it in the order, and no sidebar group draws it.
+		const groupedSidebarPanelIds = panelsInSidebarGroup(
+			activeSidebarGroup,
+			project.sidebarPanelOrder,
+		).filter(
+			(id): id is Exclude<SidebarPanelId, 'agents'> => id !== 'agents',
+		);
+		const sidebarPanelItems = groupedSidebarPanelIds.map(
+			(id) => sidebarPanelItemsById[id],
+		);
+		const commitSidebarHeights = (
+			heights: Readonly<Record<string, number>>,
+		): Promise<void> => {
+			const patch: Partial<
+				Pick<
+					ProjectTab,
+					| 'sidebarExplorerHeight'
+					| 'sidebarAgentsHeight'
+					| 'sidebarGitHeight'
+					| 'sidebarDocumentationHeight'
 				>
-					{errorText ? (
-						<ErrorBanner onDismiss={dismissError}>
-							Operation failed: {errorText}
-						</ErrorBanner>
-					) : null}
-					{isActive && compactAgentsHost != null
+			> = {};
+			for (const [id, height] of Object.entries(heights)) {
+				const persistedHeight = Math.min(
+					2_000,
+					Math.max(30, Math.round(height)),
+				);
+				if (id === 'explorer') patch.sidebarExplorerHeight = persistedHeight;
+				else if (id === 'agents') patch.sidebarAgentsHeight = persistedHeight;
+				else if (id === 'git') patch.sidebarGitHeight = persistedHeight;
+				else if (id === 'documentation')
+					patch.sidebarDocumentationHeight = persistedHeight;
+			}
+			if (Object.keys(patch).length === 0) return Promise.resolve();
+			return onCommitProjectSidebar(project.id, patch).catch((error) => {
+				setErrorText(
+					`Unable to save sidebar size: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+				throw error;
+			});
+		};
+
+		return (
+			<section
+				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
+				data-terminay-project-id={project.id}
+				data-terminay-folder-id={folder.id}
+				data-terminay-folder-kind={folder.kind}
+				data-terminay-git-client={
+					featureAuthority?.gitClient === undefined ? 'unavailable' : 'server'
+				}
+				data-terminay-project-root={project.rootFolder}
+				data-new-terminal-shortcut={getCommandShortcut(
+					settings.keyboardShortcuts,
+					'new-terminal',
+				)}
+				style={{ '--project-color': project.color } as CSSProperties}
+			>
+				{errorText ? (
+					<ErrorBanner onDismiss={dismissError}>
+						Operation failed: {errorText}
+					</ErrorBanner>
+				) : null}
+				{isActive && compactAgentsHost != null
+					? createPortal(
+							renderAgentsPane(onCompactAgentActivated),
+							compactAgentsHost,
+						)
+					: null}
+				{isRenderingStatusBar && focusedFileStatus !== null
+					? createPortal(
+							<FocusedFileSummary
+								status={focusedFileStatus}
+								worktrees={worktreePanelStatus?.worktrees ?? []}
+							/>,
+							statusBarSlot,
+						)
+					: isRenderingStatusBar && focusedTerminalStatus !== null
 						? createPortal(
-								renderAgentsPane(onCompactAgentActivated),
-								compactAgentsHost,
-							)
-						: null}
-					{isRenderingStatusBar && focusedFileStatus !== null
-						? createPortal(
-								<FocusedFileSummary
-									status={focusedFileStatus}
+								<FocusedTerminalSummary
+									status={focusedTerminalStatus}
 									worktrees={worktreePanelStatus?.worktrees ?? []}
 								/>,
 								statusBarSlot,
 							)
-						: isRenderingStatusBar && focusedTerminalStatus !== null
-							? createPortal(
-									<FocusedTerminalSummary
-										status={focusedTerminalStatus}
-										worktrees={worktreePanelStatus?.worktrees ?? []}
-									/>,
-									statusBarSlot,
-								)
-							: null}
+						: null}
 
-					<WorkspaceSplitLayout
-						className="project-workspace-body"
-						navigationSide="trailing"
-						isFoldersVisible={isFoldersTreeOpen}
-						foldersWidth={foldersTreeWidth}
-						onFoldersWidthCommit={onFoldersTreeWidthCommit}
-						// A workspace behind another keeps the column's width without
-						// drawing the tree, so its terminals are not resized when it
-						// comes to the front.
-						folders={
-							isActive ? (
-								<FoldersColumn
-									folders={folderTreeRows}
-									{...(terminalClientContext?.serverId === undefined
-										? {}
-										: { serverId: terminalClientContext.serverId })}
-									idPrefix={`folders-column-${project.id}`}
-									collapsedFolderIds={collapsedFolderIds}
-									onToggleFolderCollapsed={(folderId) =>
-										onToggleFolderCollapsed(project.id, folderId)
-									}
-									selectedTab={foldersColumnTab}
-									onSelectTab={(tabId) =>
-										onFoldersColumnTabChange(project.id, tabId)
-									}
-									agents={
-										settings.agentIntegration.enabled
-											? renderAgentsPane()
-											: undefined
-									}
-									{...(forgeGitTab === undefined ? {} : { git: forgeGitTab })}
-									acceptsTerminalDrop={acceptsFolderTerminalDrop}
-									isMenuOpen={foldersMenuPosition !== null}
-									onOpenMenu={setFoldersMenuPosition}
-									onOpenLink={(url) => void openExternalUrl(url)}
-									onLoadChecks={handleLoadWorktreeChecks}
-									onAnswerOffer={(folderId, answer) =>
-										onAnswerFolderOffer(project.id, folderId, answer)
-									}
-									onCreateFolder={requestNewFolder}
-									onNewTerminal={(folderId) =>
-										onNewTerminalInFolder(project.id, folderId)
-									}
-									launchers={terminalLaunchers}
-									onLaunchTerminal={(folderId, launcherId) =>
-										onLaunchTerminalInFolder(project.id, folderId, launcherId)
-									}
-									onReorderFolders={reorderFolders}
-									onFolderMenu={openFolderMenu}
-									onDropTerminal={(folderId) =>
-										onDropTerminalOnFolder(project.id, folderId)
-									}
-									onSelectFolder={(folderId) =>
-										onSelectFolder(project.id, folderId)
-									}
-									onSelectPanel={(folderId, panelId) =>
-										onActivateFolderPanel(project.id, folderId, panelId)
-									}
-									onTerminalMenu={(folderId, panelId, anchor) =>
-										openTerminalTabMenuOnceDrawn(panelId, anchor, () =>
-											onActivateFolderPanel(project.id, folderId, panelId),
-										)
-									}
-									onRenameTerminal={(_folderId, panelId, title) =>
-										renameTerminal(panelId, title)
-									}
-									onTerminalDrag={(drag) =>
-										reportTerminalTabDrag(
-											drag === null ? null : { panelId: drag.panelId },
-										)
+				<WorkspaceSplitLayout
+					className="project-workspace-body"
+					navigationSide="trailing"
+					isFoldersVisible={isFoldersTreeOpen}
+					foldersWidth={foldersTreeWidth}
+					onFoldersWidthCommit={onFoldersTreeWidthCommit}
+					// A workspace behind another keeps the column's width without
+					// drawing the tree, so its terminals are not resized when it
+					// comes to the front.
+					folders={
+						isActive ? (
+							<FoldersColumn
+								folders={folderTreeRows}
+								{...(terminalClientContext?.serverId === undefined
+									? {}
+									: { serverId: terminalClientContext.serverId })}
+								idPrefix={`folders-column-${project.id}`}
+								collapsedFolderIds={collapsedFolderIds}
+								onToggleFolderCollapsed={(folderId) =>
+									onToggleFolderCollapsed(project.id, folderId)
+								}
+								selectedTab={foldersColumnTab}
+								onSelectTab={(tabId) =>
+									onFoldersColumnTabChange(project.id, tabId)
+								}
+								agents={
+									settings.agentIntegration.enabled
+										? renderAgentsPane()
+										: undefined
+								}
+								{...(forgeGitTab === undefined ? {} : { git: forgeGitTab })}
+								acceptsTerminalDrop={acceptsFolderTerminalDrop}
+								isMenuOpen={foldersMenuPosition !== null}
+								onOpenMenu={setFoldersMenuPosition}
+								onOpenLink={(url) => void openExternalUrl(url)}
+								onLoadChecks={handleLoadWorktreeChecks}
+								onAnswerOffer={(folderId, answer) =>
+									onAnswerFolderOffer(project.id, folderId, answer)
+								}
+								onCreateFolder={requestNewFolder}
+								onNewTerminal={(folderId) =>
+									onNewTerminalInFolder(project.id, folderId)
+								}
+								launchers={terminalLaunchers}
+								onLaunchTerminal={(folderId, launcherId) =>
+									onLaunchTerminalInFolder(project.id, folderId, launcherId)
+								}
+								onReorderFolders={reorderFolders}
+								onFolderMenu={openFolderMenu}
+								onDropTerminal={(folderId) =>
+									onDropTerminalOnFolder(project.id, folderId)
+								}
+								onSelectFolder={(folderId) =>
+									onSelectFolder(project.id, folderId)
+								}
+								onSelectPanel={(folderId, panelId) =>
+									onActivateFolderPanel(project.id, folderId, panelId)
+								}
+								onTerminalMenu={(folderId, panelId, anchor) =>
+									openTerminalTabMenuOnceDrawn(panelId, anchor, () =>
+										onActivateFolderPanel(project.id, folderId, panelId),
+									)
+								}
+								onRenameTerminal={(_folderId, panelId, title) =>
+									renameTerminal(panelId, title)
+								}
+								onTerminalDrag={(drag) =>
+									reportTerminalTabDrag(
+										drag === null ? null : { panelId: drag.panelId },
+									)
+								}
+							/>
+						) : (
+							<div className="folders-column" />
+						)
+					}
+					isNavigationVisible={project.isFileExplorerOpen}
+					onNavigationDismiss={() => {
+						onUpdateProject(project.id, { isFileExplorerOpen: false });
+					}}
+					navigationWidth={sidebarWidth}
+					onNavigationWidthCommit={onSidebarWidthCommit}
+					navigation={
+						project.isFileExplorerOpen ? (
+							<div className="file-explorer-sidebar">
+								<SidebarGroupTabs
+									activeTab={activeSidebarGroup}
+									tabs={SIDEBAR_GROUP_TABS}
+									idPrefix={`sidebar-group-${project.id}`}
+									label="Sidebar"
+									onSelect={(groupId) =>
+										onUpdateProject(project.id, {
+											sidebarActiveGroup: groupId,
+										})
 									}
 								/>
-							) : (
-								<div className="folders-column" />
-							)
-						}
-						isNavigationVisible={project.isFileExplorerOpen}
-						onNavigationDismiss={() => {
-							onUpdateProject(project.id, { isFileExplorerOpen: false });
-						}}
-						navigationWidth={sidebarWidth}
-						onNavigationWidthCommit={onSidebarWidthCommit}
-						navigation={
-							project.isFileExplorerOpen ? (
-								<div className="file-explorer-sidebar">
-									<SidebarGroupTabs
-										activeTab={activeSidebarGroup}
-										tabs={SIDEBAR_GROUP_TABS}
-										idPrefix={`sidebar-group-${project.id}`}
-										label="Sidebar"
-										onSelect={(groupId) =>
-											onUpdateProject(project.id, {
-												sidebarActiveGroup: groupId,
-											})
-										}
-									/>
-									<div
-										className="file-explorer-sidebar__group"
-										id={`sidebar-group-${project.id}-panel`}
-										role="tabpanel"
-										aria-labelledby={`sidebar-group-${project.id}-tab-${activeSidebarGroup}`}
-									>
-										<SidebarPanelStack
-											items={sidebarPanelItems}
-											onHeightsCommit={commitSidebarHeights}
-											onReorder={(orderedIds) => {
-												const reorderedVisibleIds = orderedIds.filter(
-													(id): id is SidebarPanelId =>
-														(
-															groupedSidebarPanelIds as readonly string[]
-														).includes(id),
-												);
-												closeGitPushMenu();
-												onUpdateProject(project.id, {
-													sidebarPanelOrder: applySidebarGroupReorder(
-														project.sidebarPanelOrder,
-														activeSidebarGroup,
-														reorderedVisibleIds,
-													),
-												});
-											}}
-										/>
-									</div>
-								</div>
-							) : null
-						}
-						content={
-							<div
-								ref={(element) => {
-									workspaceRef.current = element;
-								}}
-								className={`workspace dockview-theme-dark${isCompactChrome ? ' workspace--compact-chrome' : ''}`}
-							>
-								<TerminalPanelClientContext.Provider
-									value={terminalPanelClientContext}
+								<div
+									className="file-explorer-sidebar__group"
+									id={`sidebar-group-${project.id}-panel`}
+									role="tabpanel"
+									aria-labelledby={`sidebar-group-${project.id}-tab-${activeSidebarGroup}`}
 								>
-									<TerminalWorkspaceVisibleContext.Provider value={isActive}>
-										<FilePanelSaveRegistryProvider
-											registry={filePanelSaveRegistry}
-										>
-											<EmptyFolderContext.Provider
-												value={emptyFolderDescription}
-											>
-												<ForgeTabContext.Provider value={forgeTabContext}>
-													<DockviewReact
-														components={dockviewComponents}
-														tabComponents={dockviewTabComponents}
-														watermarkComponent={EmptyFolderPlaceholder}
-														popoutUrl={popoutUrl}
-														onReady={(event) => {
-															handleDockviewReady(event);
-															// App windows follow their pane; a layout change can
-															// move a pane without resizing it.
-															const notify = (): void => {
-																window.dispatchEvent(
-																	new Event(APP_WINDOW_LAYOUT_EVENT),
-																);
-															};
-															event.api.onDidLayoutChange(notify);
-															event.api.onDidActivePanelChange(notify);
-														}}
-														floatingGroupBounds="boundedWithinViewport"
-													/>
-												</ForgeTabContext.Provider>
-											</EmptyFolderContext.Provider>
-										</FilePanelSaveRegistryProvider>
-									</TerminalWorkspaceVisibleContext.Provider>
-								</TerminalPanelClientContext.Provider>
-							</div>
-						}
-					/>
-					<McpInstallModal
-						client={mcpInstallClient}
-						open={isMcpInstallModalOpen}
-						onClose={() => setIsMcpInstallModalOpen(false)}
-					/>
-					{profileChooserEntries ? (
-						<div
-							className="macro-launcher-overlay"
-							onClick={() => setProfileChooserEntries(null)}
-						>
-							<div
-								ref={profileChooserRef}
-								className="shell-profile-chooser"
-								role="dialog"
-								aria-modal="true"
-								aria-labelledby="shell-profile-chooser-title"
-								onClick={(event) => event.stopPropagation()}
-							>
-								<header>
-									<div>
-										<h2 id="shell-profile-chooser-title">
-											New Terminal with Profile
-										</h2>
-										<p>
-											This choice applies once and does not change the server or
-											project default.
-										</p>
-									</div>
-									<button
-										type="button"
-										aria-label="Close shell profile chooser"
-										onClick={() => setProfileChooserEntries(null)}
-									>
-										×
-									</button>
-								</header>
-								<label>
-									<span className="sr-only">Search shell profiles</span>
-									<input
-										ref={profileChooserSearchRef}
-										type="search"
-										autoFocus
-										value={profileChooserQuery}
-										onChange={(event) =>
-											setProfileChooserQuery(event.target.value)
-										}
-										placeholder="Search shell profiles"
+									<SidebarPanelStack
+										items={sidebarPanelItems}
+										onHeightsCommit={commitSidebarHeights}
+										onReorder={(orderedIds) => {
+											const reorderedVisibleIds = orderedIds.filter(
+												(id): id is SidebarPanelId =>
+													(groupedSidebarPanelIds as readonly string[]).includes(id),
+											);
+											closeGitPushMenu();
+											onUpdateProject(project.id, {
+												sidebarPanelOrder: applySidebarGroupReorder(
+													project.sidebarPanelOrder,
+													activeSidebarGroup,
+													reorderedVisibleIds,
+												),
+											});
+										}}
 									/>
-								</label>
-								<div className="shell-profile-chooser__list">
-									{filteredProfileChooserEntries.map((entry) => (
-										<button
-											type="button"
-											key={entry.id}
-											onClick={() => {
-												setProfileChooserEntries(null);
-												void addTerminal({ profileId: entry.id });
-											}}
-										>
-											<span aria-hidden="true">{entry.icon || '›_'}</span>
-											<span>
-												<strong>{entry.name}</strong>
-												<small>
-													{entry.kind === 'discovered'
-														? `Discovered · ${entry.source}`
-														: entry.kind === 'system'
-															? 'System default'
-															: 'Custom profile'}
-												</small>
-											</span>
-										</button>
-									))}
-									{filteredProfileChooserEntries.length === 0 ? (
-										<p>No available profiles match your search.</p>
-									) : null}
 								</div>
-							</div>
-						</div>
-					) : null}
-					<CommandBarDialog
-						inputRef={macroLauncherInputRef}
-						isOpen={isMacroLauncherOpen}
-						itemRefs={macroLauncherItemRefs}
-						items={filteredMacros}
-						listRef={macroLauncherListRef}
-						onClose={closeMacroLauncher}
-						onQueryChange={setMacroQuery}
-						onSelectIndex={setSelectedMacroIndex}
-						query={macroQuery}
-						selectedIndex={selectedMacroIndex}
-					/>
-					{workflowCommands.dialog}
 
-					{isTerminalSwitcherOpen ? (
+							</div>
+						) : null
+					}
+					content={
 						<div
-							className="terminal-switcher"
+							ref={(element) => {
+								workspaceRef.current = element;
+							}}
+							className={`workspace dockview-theme-dark${isCompactChrome ? ' workspace--compact-chrome' : ''}`}
+						>
+							<TerminalPanelClientContext.Provider
+								value={terminalPanelClientContext}
+							>
+								<TerminalWorkspaceVisibleContext.Provider value={isActive}>
+								<FilePanelSaveRegistryProvider registry={filePanelSaveRegistry}>
+									<EmptyFolderContext.Provider value={emptyFolderDescription}>
+									<ForgeTabContext.Provider value={forgeTabContext}>
+									<DockviewReact
+										components={dockviewComponents}
+										tabComponents={dockviewTabComponents}
+										watermarkComponent={EmptyFolderPlaceholder}
+										popoutUrl={popoutUrl}
+										onReady={(event) => {
+											handleDockviewReady(event);
+											// App windows follow their pane; a layout change can
+											// move a pane without resizing it.
+											const notify = (): void => {
+												window.dispatchEvent(new Event(APP_WINDOW_LAYOUT_EVENT));
+											};
+											event.api.onDidLayoutChange(notify);
+											event.api.onDidActivePanelChange(notify);
+										}}
+										floatingGroupBounds="boundedWithinViewport"
+									/>
+									</ForgeTabContext.Provider>
+									</EmptyFolderContext.Provider>
+								</FilePanelSaveRegistryProvider>
+								</TerminalWorkspaceVisibleContext.Provider>
+							</TerminalPanelClientContext.Provider>
+						</div>
+					}
+				/>
+				<McpInstallModal
+					client={mcpInstallClient}
+					open={isMcpInstallModalOpen}
+					onClose={() => setIsMcpInstallModalOpen(false)}
+				/>
+				{profileChooserEntries ? (
+					<div
+						className="macro-launcher-overlay"
+						onClick={() => setProfileChooserEntries(null)}
+					>
+						<div
+							ref={profileChooserRef}
+							className="shell-profile-chooser"
 							role="dialog"
 							aria-modal="true"
-							aria-label="Terminal switcher"
+							aria-labelledby="shell-profile-chooser-title"
+							onClick={(event) => event.stopPropagation()}
 						>
-							<div className="terminal-switcher-panel">
-								<div className="terminal-switcher-header">
-									<p className="terminal-switcher-kicker">
-										{terminalSwitcherHeading.chord}
+							<header>
+								<div>
+									<h2 id="shell-profile-chooser-title">
+										New Terminal with Profile
+									</h2>
+									<p>
+										This choice applies once and does not change the server or
+										project default.
 									</p>
-									<span className="terminal-switcher-hint">
-										{terminalSwitcherHeading.hint}
-									</span>
 								</div>
-								<div className="terminal-switcher-list">
-									{terminalSwitcherItems.map((item, index) => (
-										<button
-											key={item.panelId}
-											type="button"
-											className={`terminal-switcher-item${index === terminalSwitcherIndex ? ' terminal-switcher-item--active' : ''}`}
-											onMouseEnter={() => selectTerminalSwitcherItem(index)}
-											onClick={() => selectAndCommitTerminalSwitcherItem(index)}
-										>
-											<span
-												className="terminal-switcher-item-preview"
-												style={{ '--tab-color': item.color } as CSSProperties}
-											>
-												<span className="terminal-switcher-item-dot" />
-												<span
-													className="terminal-switcher-item-emoji"
-													aria-hidden="true"
-												>
-													{item.emoji || '>'}
-												</span>
-											</span>
-											<span className="terminal-switcher-item-title">
-												{item.title}
-											</span>
-										</button>
-									))}
-								</div>
+								<button
+									type="button"
+									aria-label="Close shell profile chooser"
+									onClick={() => setProfileChooserEntries(null)}
+								>
+									×
+								</button>
+							</header>
+							<label>
+								<span className="sr-only">Search shell profiles</span>
+								<input
+									ref={profileChooserSearchRef}
+									type="search"
+									autoFocus
+									value={profileChooserQuery}
+									onChange={(event) =>
+										setProfileChooserQuery(event.target.value)
+									}
+									placeholder="Search shell profiles"
+								/>
+							</label>
+							<div className="shell-profile-chooser__list">
+								{filteredProfileChooserEntries.map((entry) => (
+									<button
+										type="button"
+										key={entry.id}
+										onClick={() => {
+											setProfileChooserEntries(null);
+											void addTerminal({ profileId: entry.id });
+										}}
+									>
+										<span aria-hidden="true">{entry.icon || '›_'}</span>
+										<span>
+											<strong>{entry.name}</strong>
+											<small>
+												{entry.kind === 'discovered'
+													? `Discovered · ${entry.source}`
+													: entry.kind === 'system'
+														? 'System default'
+														: 'Custom profile'}
+											</small>
+										</span>
+									</button>
+								))}
+								{filteredProfileChooserEntries.length === 0 ? (
+									<p>No available profiles match your search.</p>
+								) : null}
 							</div>
 						</div>
-					) : null}
+					</div>
+				) : null}
+				<CommandBarDialog
+					inputRef={macroLauncherInputRef}
+					isOpen={isMacroLauncherOpen}
+					itemRefs={macroLauncherItemRefs}
+					items={filteredMacros}
+					listRef={macroLauncherListRef}
+					onClose={closeMacroLauncher}
+					onQueryChange={setMacroQuery}
+					onSelectIndex={setSelectedMacroIndex}
+					query={macroQuery}
+					selectedIndex={selectedMacroIndex}
+				/>
+				{workflowCommands.dialog}
 
-					{fileExplorerNameDialog ? (
-						<FileExplorerNameModal
-							dialog={fileExplorerNameDialog}
-							modal={fileExplorerNameModal}
-							onCancel={cancelFileExplorerNameDialog}
-							onSubmit={submitFileExplorerNameDialog}
-						/>
-					) : null}
+				{isTerminalSwitcherOpen ? (
+					<div
+						className="terminal-switcher"
+						role="dialog"
+						aria-modal="true"
+						aria-label="Terminal switcher"
+					>
+						<div className="terminal-switcher-panel">
+							<div className="terminal-switcher-header">
+								<p className="terminal-switcher-kicker">
+									{terminalSwitcherHeading.chord}
+								</p>
+								<span className="terminal-switcher-hint">
+									{terminalSwitcherHeading.hint}
+								</span>
+							</div>
+							<div className="terminal-switcher-list">
+								{terminalSwitcherItems.map((item, index) => (
+									<button
+										key={item.panelId}
+										type="button"
+										className={`terminal-switcher-item${index === terminalSwitcherIndex ? ' terminal-switcher-item--active' : ''}`}
+										onMouseEnter={() => selectTerminalSwitcherItem(index)}
+										onClick={() => selectAndCommitTerminalSwitcherItem(index)}
+									>
+										<span
+											className="terminal-switcher-item-preview"
+											style={{ '--tab-color': item.color } as CSSProperties}
+										>
+											<span className="terminal-switcher-item-dot" />
+											<span
+												className="terminal-switcher-item-emoji"
+												aria-hidden="true"
+											>
+												{item.emoji || '>'}
+											</span>
+										</span>
+										<span className="terminal-switcher-item-title">
+											{item.title}
+										</span>
+									</button>
+								))}
+							</div>
+						</div>
+					</div>
+				) : null}
 
-					{newFolderDialog ? (
-						<FileExplorerNameModal
-							dialog={newFolderDialog}
-							modal={newFolderModal}
-							onCancel={cancelNewFolderDialog}
-							onSubmit={submitNewFolderDialog}
-						/>
-					) : null}
+				{fileExplorerNameDialog ? (
+					<FileExplorerNameModal
+						dialog={fileExplorerNameDialog}
+						modal={fileExplorerNameModal}
+						onCancel={cancelFileExplorerNameDialog}
+						onSubmit={submitFileExplorerNameDialog}
+					/>
+				) : null}
 
-					{folderNameDialog ? (
-						<FileExplorerNameModal
-							dialog={folderNameDialog}
-							modal={folderNameModal}
-							onCancel={cancelFolderNameDialog}
-							onSubmit={submitFolderNameDialog}
-						/>
-					) : null}
-					{folderMenuElement}
-					{isRootFolderBrowserOpen ? (
-						<RootFolderBrowser
-							browse={browseRootFolders}
-							onCancel={() => setIsRootFolderBrowserOpen(false)}
-							onChoose={(root) => void chooseProjectRoot(root)}
-						/>
-					) : null}
-					{/* A forge an extension recognised asks to be signed in to. The
+				{newFolderDialog ? (
+					<FileExplorerNameModal
+						dialog={newFolderDialog}
+						modal={newFolderModal}
+						onCancel={cancelNewFolderDialog}
+						onSubmit={submitNewFolderDialog}
+					/>
+				) : null}
+
+				{folderNameDialog ? (
+					<FileExplorerNameModal
+						dialog={folderNameDialog}
+						modal={folderNameModal}
+						onCancel={cancelFolderNameDialog}
+						onSubmit={submitFolderNameDialog}
+					/>
+				) : null}
+				{folderMenuElement}
+				{isRootFolderBrowserOpen ? (
+					<RootFolderBrowser
+						browse={browseRootFolders}
+						onCancel={() => setIsRootFolderBrowserOpen(false)}
+						onChoose={(root) => void chooseProjectRoot(root)}
+					/>
+				) : null}
+				{/* A forge an extension recognised asks to be signed in to. The
 				    pull requests and checks it would bring are shown on the Folders
 				    tree, so the question does not wait for the sidebar to be open.
 				    One prompt for the window, asked by the workspace on screen;
 				    every folder of a project hears of the same one. */}
-					{isActive && worktreePanelStatus?.signIn !== undefined ? (
-						<WorktreeSignInDialog
-							key={worktreePanelStatus.signIn.origin}
-							prompt={worktreePanelStatus.signIn}
-							onRespond={handleRespondWorktreeSignIn}
-						/>
-					) : null}
-					{foldersMenuPosition ? (
-						<ContextMenu
-							x={foldersMenuPosition.x}
-							y={foldersMenuPosition.y}
-							onClose={() => setFoldersMenuPosition(null)}
-							items={[
-								{
-									label: 'New folder',
-									icon: <FolderPlus size={14} aria-hidden="true" />,
-									onClick: requestNewFolder,
-								},
-								// A project outside a repository has no worktrees to sweep.
-								...(isGitProject(worktreePanelStatus)
-									? [
-											{ separator: true, label: '', onClick: () => {} },
-											{
-												label: 'Delete all clean worktrees',
-												icon: <Trash2 size={14} aria-hidden="true" />,
-												danger: true,
-												disabled: cleanWorktreeDeleteCount === 0,
-												onClick: () => void handleDeleteCleanWorktrees(),
-											},
-										]
-									: []),
-							]}
-						/>
-					) : null}
-					{/* Opened from a folder's menu, so it is drawn whether or not the
+				{isActive && worktreePanelStatus?.signIn !== undefined ? (
+					<WorktreeSignInDialog
+						key={worktreePanelStatus.signIn.origin}
+						prompt={worktreePanelStatus.signIn}
+						onRespond={handleRespondWorktreeSignIn}
+					/>
+				) : null}
+				{foldersMenuPosition ? (
+					<ContextMenu
+						x={foldersMenuPosition.x}
+						y={foldersMenuPosition.y}
+						onClose={() => setFoldersMenuPosition(null)}
+						items={[
+							{
+								label: 'New folder',
+								icon: <FolderPlus size={14} aria-hidden="true" />,
+								onClick: requestNewFolder,
+							},
+							// A project outside a repository has no worktrees to sweep.
+							...(isGitProject(worktreePanelStatus)
+								? [
+										{ separator: true, label: '', onClick: () => {} },
+										{
+											label: 'Delete all clean worktrees',
+											icon: <Trash2 size={14} aria-hidden="true" />,
+											danger: true,
+											disabled: cleanWorktreeDeleteCount === 0,
+											onClick: () => void handleDeleteCleanWorktrees(),
+										},
+									]
+								: []),
+						]}
+					/>
+				) : null}
+				{/* Opened from a folder's menu, so it is drawn whether or not the
 				    sidebar is. */}
-					{gitPushMenuPosition ? (
-						<ContextMenu
-							x={gitPushMenuPosition.x}
-							y={gitPushMenuPosition.y}
-							onClose={closeGitPushMenu}
-							items={buildGitPushMenuItems({
-								target: gitPushMenuPosition.target,
-								onLaunchAgent: launchGitPushAgent,
-							})}
-						/>
-					) : null}
+				{gitPushMenuPosition ? (
+					<ContextMenu
+						x={gitPushMenuPosition.x}
+						y={gitPushMenuPosition.y}
+						onClose={closeGitPushMenu}
+						items={buildGitPushMenuItems({
+							target: gitPushMenuPosition.target,
+							onLaunchAgent: launchGitPushAgent,
+						})}
+					/>
+				) : null}
 
-					{macroToRun ? (
-						<ModalBackdrop onClose={closeMacroParameterModal}>
-							<form
-								className="project-edit-modal project-edit-modal--wide macro-parameter-modal"
-								ref={(element) => {
-									macroParameterModal.modalRef.current = element;
-								}}
-								style={macroParameterModal.modalStyle}
-								onSubmit={(event) => {
-									event.preventDefault();
-									if (!validateMacroValues(macroToRun, macroFieldValues)) {
-										return;
-									}
-									executeMacro(macroToRun, macroFieldValues);
-								}}
-								onClick={(event) => event.stopPropagation()}
-								role="dialog"
-								aria-modal="true"
-								aria-labelledby="macro-parameter-modal-title"
-							>
-								<ModalTitlebar
-									title={macroToRun.title}
-									titleId="macro-parameter-modal-title"
-									onClose={closeMacroParameterModal}
-									onMouseDown={macroParameterModal.handleTitlebarPointerDown}
-								/>
-								<div className="macro-parameter-content">
-									{macroToRun.description ? (
-										<p className="macro-parameter-description">
-											{macroToRun.description}
-										</p>
-									) : null}
+				{macroToRun ? (
+					<ModalBackdrop onClose={closeMacroParameterModal}>
+						<form
+							className="project-edit-modal project-edit-modal--wide macro-parameter-modal"
+							ref={(element) => {
+								macroParameterModal.modalRef.current = element;
+							}}
+							style={macroParameterModal.modalStyle}
+							onSubmit={(event) => {
+								event.preventDefault();
+								if (!validateMacroValues(macroToRun, macroFieldValues)) {
+									return;
+								}
+								executeMacro(macroToRun, macroFieldValues);
+							}}
+							onClick={(event) => event.stopPropagation()}
+							role="dialog"
+							aria-modal="true"
+							aria-labelledby="macro-parameter-modal-title"
+						>
+							<ModalTitlebar
+								title={macroToRun.title}
+								titleId="macro-parameter-modal-title"
+								onClose={closeMacroParameterModal}
+								onMouseDown={macroParameterModal.handleTitlebarPointerDown}
+							/>
+							<div className="macro-parameter-content">
+								{macroToRun.description ? (
+									<p className="macro-parameter-description">
+										{macroToRun.description}
+									</p>
+								) : null}
 
-									<div className="macro-parameter-fields">
-										{macroToRun.fields.map((field, index) => {
-											const value = macroFieldValues[field.name];
-											const fieldInputId = `macro-field-input-${field.id}`;
-											const firstFieldRef =
-												index === 0
-													? (
-															element:
-																| HTMLInputElement
-																| HTMLTextAreaElement
-																| HTMLSelectElement
-																| null,
-														) => {
-															firstMacroFieldRef.current = element;
+								<div className="macro-parameter-fields">
+									{macroToRun.fields.map((field, index) => {
+										const value = macroFieldValues[field.name];
+										const fieldInputId = `macro-field-input-${field.id}`;
+										const firstFieldRef =
+											index === 0
+												? (
+														element:
+															| HTMLInputElement
+															| HTMLTextAreaElement
+															| HTMLSelectElement
+															| null,
+													) => {
+														firstMacroFieldRef.current = element;
+													}
+												: undefined;
+										return (
+											<div key={field.id} className="macro-parameter-field">
+												<label
+													className="macro-parameter-field__label"
+													htmlFor={fieldInputId}
+												>
+													{field.label}
+												</label>
+												{field.type === 'textarea' ? (
+													<textarea
+														id={fieldInputId}
+														ref={firstFieldRef}
+														className="project-edit-textarea"
+														value={String(value ?? '')}
+														placeholder={field.placeholder}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: event.target.value,
+															}))
 														}
-													: undefined;
-											return (
-												<div key={field.id} className="macro-parameter-field">
-													<label
-														className="macro-parameter-field__label"
-														htmlFor={fieldInputId}
+														rows={4}
+													/>
+												) : field.type === 'select' ? (
+													<select
+														id={fieldInputId}
+														ref={firstFieldRef}
+														className="project-edit-select"
+														value={String(value ?? '')}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: event.target.value,
+															}))
+														}
 													>
-														{field.label}
-													</label>
-													{field.type === 'textarea' ? (
-														<textarea
-															id={fieldInputId}
-															ref={firstFieldRef}
-															className="project-edit-textarea"
-															value={String(value ?? '')}
-															placeholder={field.placeholder}
-															onChange={(event) =>
-																setMacroFieldValues((current) => ({
-																	...current,
-																	[field.name]: event.target.value,
-																}))
-															}
-															rows={4}
-														/>
-													) : field.type === 'select' ? (
-														<select
-															id={fieldInputId}
-															ref={firstFieldRef}
-															className="project-edit-select"
-															value={String(value ?? '')}
-															onChange={(event) =>
-																setMacroFieldValues((current) => ({
-																	...current,
-																	[field.name]: event.target.value,
-																}))
-															}
-														>
-															{field.options.map((option) => (
-																<option
-																	key={`${field.id}-${option.value}`}
-																	value={option.value}
-																>
-																	{option.label}
-																</option>
-															))}
-														</select>
-													) : field.type === 'file' ? (
-														<MacroFileFieldInput
-															fileViewerClient={projectFileViewerClient}
-															id={fieldInputId}
-															projectId={project.id}
-															projectRoot={project.rootFolder}
-															ref={firstFieldRef}
-															rootPath={
-																isNoRootProject
-																	? ''
-																	: macroFileSearchRootPath ||
-																		project.rootFolder
-															}
-															value={String(value ?? '')}
-															placeholder={field.placeholder}
-															onChange={(nextValue) =>
-																setMacroFieldValues((current) => ({
-																	...current,
-																	[field.name]: nextValue,
-																}))
-															}
-														/>
-													) : field.type === 'checkbox' ? (
-														<input
-															id={fieldInputId}
-															ref={firstFieldRef}
-															type="checkbox"
-															checked={Boolean(value)}
-															onChange={(event) =>
-																setMacroFieldValues((current) => ({
-																	...current,
-																	[field.name]: event.target.checked,
-																}))
-															}
-														/>
-													) : (
-														<input
-															id={fieldInputId}
-															ref={firstFieldRef}
-															type={field.type === 'number' ? 'number' : 'text'}
-															value={String(value ?? '')}
-															placeholder={field.placeholder}
-															onChange={(event) =>
-																setMacroFieldValues((current) => ({
-																	...current,
-																	[field.name]:
-																		field.type === 'number'
-																			? Number(event.target.value || 0)
-																			: event.target.value,
-																}))
-															}
-														/>
-													)}
-												</div>
-											);
-										})}
-									</div>
-
-									<div className="macro-parameter-preview">
-										<div className="macro-parameter-preview__label">
-											Preview
-										</div>
-										<div className="project-edit-preview project-edit-preview--multiline">
-											<pre>
-												{tryRenderMacroTemplate(
-													macroToRun.template,
-													macroFieldValues,
+														{field.options.map((option) => (
+															<option
+																key={`${field.id}-${option.value}`}
+																value={option.value}
+															>
+																{option.label}
+															</option>
+														))}
+													</select>
+												) : field.type === 'file' ? (
+													<MacroFileFieldInput
+														fileViewerClient={projectFileViewerClient}
+														id={fieldInputId}
+														projectId={project.id}
+														projectRoot={project.rootFolder}
+														ref={firstFieldRef}
+														rootPath={
+															isNoRootProject
+																? ''
+																: macroFileSearchRootPath || project.rootFolder
+														}
+														value={String(value ?? '')}
+														placeholder={field.placeholder}
+														onChange={(nextValue) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: nextValue,
+															}))
+														}
+													/>
+												) : field.type === 'checkbox' ? (
+													<input
+														id={fieldInputId}
+														ref={firstFieldRef}
+														type="checkbox"
+														checked={Boolean(value)}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: event.target.checked,
+															}))
+														}
+													/>
+												) : (
+													<input
+														id={fieldInputId}
+														ref={firstFieldRef}
+														type={field.type === 'number' ? 'number' : 'text'}
+														value={String(value ?? '')}
+														placeholder={field.placeholder}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]:
+																	field.type === 'number'
+																		? Number(event.target.value || 0)
+																		: event.target.value,
+															}))
+														}
+													/>
 												)}
-											</pre>
-										</div>
-									</div>
+											</div>
+										);
+									})}
 								</div>
 
-								<div className="project-edit-actions">
-									<button type="button" onClick={closeMacroParameterModal}>
-										Cancel
-									</button>
-									<button type="submit">Type Macro</button>
+								<div className="macro-parameter-preview">
+									<div className="macro-parameter-preview__label">Preview</div>
+									<div className="project-edit-preview project-edit-preview--multiline">
+										<pre>
+											{tryRenderMacroTemplate(
+												macroToRun.template,
+												macroFieldValues,
+											)}
+										</pre>
+									</div>
 								</div>
-							</form>
-						</ModalBackdrop>
-					) : null}
-				</section>
-			);
-		},
-	),
-);
+							</div>
+
+							<div className="project-edit-actions">
+								<button type="button" onClick={closeMacroParameterModal}>
+									Cancel
+								</button>
+								<button type="submit">Type Macro</button>
+							</div>
+						</form>
+					</ModalBackdrop>
+				) : null}
+			</section>
+		);
+	},
+));
 
 ProjectWorkspace.displayName = 'ProjectWorkspace';
 
@@ -6853,7 +6771,9 @@ function App({
 	// The registry's context is the raw client context; the workspace also needs
 	// the connection's label and retry so the header and terminal banners name
 	// the server the active tab belongs to instead of a generic remote.
-	const terminalClientContext = useMemo<typeof primaryClientContext>(() => {
+	const terminalClientContext = useMemo<
+		typeof primaryClientContext
+	>(() => {
 		if (activeConnection?.context === undefined) return primaryClientContext;
 		if (activeConnection === primary && primaryClientContext !== undefined)
 			return primaryClientContext;
@@ -6864,8 +6784,7 @@ function App({
 			canRetryConnection: () => true,
 		});
 	}, [activeConnection, primary, primaryClientContext]);
-	const activeServerId =
-		activeConnection?.serverId ?? terminalClientContext?.serverId;
+	const activeServerId = activeConnection?.serverId ?? terminalClientContext?.serverId;
 	// Each attached server's own upgrade, never Local's. The header warns for
 	// the active tab's server; the menu lists every server that has one.
 	const serverUpgrades = useServerUpgrades({
@@ -6927,7 +6846,9 @@ function App({
 		macros,
 		categories: macroCategories,
 		error: macroSettingsError,
-	} = useMacroSettings(serverMacroSettingsClient);
+	} = useMacroSettings(
+		serverMacroSettingsClient,
+	);
 	const serverSettingsClient = useMemo(() => {
 		if (terminalClientContext?.applicationClient === undefined)
 			throw new Error('The selected server settings client is unavailable.');
@@ -7116,7 +7037,12 @@ function App({
 				tab: { ...current.tab, [key]: tabId },
 			}));
 			persistFoldersTree((sidebar) =>
-				withProjectFoldersColumnTab(sidebar, currentServerId, projectId, tabId),
+				withProjectFoldersColumnTab(
+					sidebar,
+					currentServerId,
+					projectId,
+					tabId,
+				),
 			);
 		},
 		[currentServerId, persistFoldersTree],
@@ -7421,15 +7347,14 @@ function App({
 		pendingServerActivationRef.current = null;
 		activateProject(pending.projectId);
 	}, [activateProject, currentServerId, projects]);
-	const ownProjects = (
-		pendingProjectCreation
-			? [
-					...projects.filter(
-						(project) => project.id !== pendingProjectCreation.projectId,
-					),
-					pendingProjectCreation.tab,
-				]
-			: projects
+	const ownProjects = (pendingProjectCreation
+		? [
+				...projects.filter(
+					(project) => project.id !== pendingProjectCreation.projectId,
+				),
+				pendingProjectCreation.tab,
+			]
+		: projects
 	).map((project) => {
 		return { ...project, hydrating: false, serverId: currentServerId };
 	});
@@ -7462,10 +7387,9 @@ function App({
 	// default is the active tab's server; choosing another one goes there
 	// first, because a project is created in the workspace of its own server.
 	const pendingServerCreationRef = useRef<string | null>(null);
-	const [projectServerMenu, setProjectServerMenu] = useState<Readonly<{
-		x: number;
-		y: number;
-	}> | null>(null);
+	const [projectServerMenu, setProjectServerMenu] = useState<
+		Readonly<{ x: number; y: number }> | null
+	>(null);
 	const createProjectOnServer = useCallback(
 		(serverId: string) => {
 			setProjectServerMenu(null);
@@ -7664,12 +7588,7 @@ function App({
 				isExposed: Boolean(remoteStatus?.isRunning),
 				connections: remoteStatus?.connections ?? [],
 			}),
-		[
-			connectionProfiles,
-			currentServerId,
-			hasNativeWindowControls,
-			remoteStatus,
-		],
+		[connectionProfiles, currentServerId, hasNativeWindowControls, remoteStatus],
 	);
 	// Every mounted terminal panel in this window registers its buffer reader
 	// here. The switcher reads it; nothing leaves the window.
@@ -7829,9 +7748,7 @@ function App({
 		},
 		[],
 	);
-	const createServerProjectRef = useRef<() => Promise<void>>(
-		async () => undefined,
-	);
+	const createServerProjectRef = useRef<() => Promise<void>>(async () => undefined);
 	const createServerProject = useCallback(async () => {
 		const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
 		if (workspaceStore === undefined || boundWorkspaceViewId === null) {
@@ -7951,7 +7868,8 @@ function App({
 				...(current ?? pending),
 				tab: {
 					...(current?.tab ?? pendingTab),
-					creationError: error instanceof Error ? error.message : String(error),
+					creationError:
+						error instanceof Error ? error.message : String(error),
 					creationStatus: 'failed',
 				},
 			}));
@@ -8043,7 +7961,11 @@ function App({
 	const inventoryByProject = useMemo(() => {
 		const folderOrder = new Map(
 			(
-				JSON.parse(folderOrderKey) as [string, string[] | null, string | null][]
+				JSON.parse(folderOrderKey) as [
+					string,
+					string[] | null,
+					string | null,
+				][]
 			).map(([projectId, folderIds, generalId]) => [
 				projectId,
 				{ folderIds, generalId },
@@ -8221,9 +8143,8 @@ function App({
 			// A panel that has changed folder is let go by its old workspace only
 			// once the new folder's workspace exists to show it.
 			const canHandOver = (panel: ServerWorkspacePanel) =>
-				workspaceRefs.current
-					.get(panel.projectId, panel.folderId)
-					?.isReady() === true;
+				workspaceRefs.current.get(panel.projectId, panel.folderId)?.isReady() ===
+				true;
 			for (const workspace of workspaceRefs.current.all()) {
 				workspace.reconcileServerPanels(canonicalTerminalPanels, canHandOver);
 			}
@@ -8360,8 +8281,7 @@ function App({
 	 */
 	const folderIdOfPanel = useCallback(
 		(projectId: string, panelId: string): string | undefined => {
-			const panel =
-				workspaceSnapshotStoreRef.current?.snapshot?.panels[panelId];
+			const panel = workspaceSnapshotStoreRef.current?.snapshot?.panels[panelId];
 			return panel?.projectId === projectId
 				? panel.folderId
 				: folderIdOfInventoryPanel(
@@ -8374,15 +8294,11 @@ function App({
 	/** The workspace presenting a panel: its folder's, whichever is selected. */
 	const workspaceOfPanel = useCallback(
 		(projectId: string, panelId: string): ProjectWorkspaceHandle | undefined =>
-			workspaceRefs.current.get(
-				projectId,
-				folderIdOfPanel(projectId, panelId),
-			) ??
+			workspaceRefs.current.get(projectId, folderIdOfPanel(projectId, panelId)) ??
 			workspaceRefs.current
 				.ofProject(projectId)
 				.find(
-					(workspace) =>
-						workspace.terminalSessionForPanel(panelId) !== undefined,
+					(workspace) => workspace.terminalSessionForPanel(panelId) !== undefined,
 				),
 		[folderIdOfPanel],
 	);
@@ -8645,18 +8561,20 @@ function App({
 			const pendingMove = { projectId, folderId };
 			if (answer === 'accept' && sessionId !== undefined)
 				pendingTerminalMovesRef.current.set(sessionId, pendingMove);
-			void store.answerFolderOffer(folderId, answer).catch((error: unknown) => {
-				if (
-					sessionId !== undefined &&
-					pendingTerminalMovesRef.current.get(sessionId) === pendingMove
-				)
-					pendingTerminalMovesRef.current.delete(sessionId);
-				commandWorkspace(projectId)?.reportError(
-					error instanceof Error
-						? error.message
-						: 'Unable to answer that offer.',
-				);
-			});
+			void store
+				.answerFolderOffer(folderId, answer)
+				.catch((error: unknown) => {
+					if (
+						sessionId !== undefined &&
+						pendingTerminalMovesRef.current.get(sessionId) === pendingMove
+					)
+						pendingTerminalMovesRef.current.delete(sessionId);
+					commandWorkspace(projectId)?.reportError(
+						error instanceof Error
+							? error.message
+							: 'Unable to answer that offer.',
+					);
+				});
 		},
 		[commandWorkspace, terminalClientContext?.workspaceSnapshotStore],
 	);
@@ -8885,11 +8803,7 @@ function App({
 	);
 
 	const updateWorkspaceInventory = useCallback(
-		(
-			projectId: string,
-			folderId: string,
-			entries: WorkspaceInventoryEntry[],
-		) => {
+		(projectId: string, folderId: string, entries: WorkspaceInventoryEntry[]) => {
 			setInventoryByFolder((current) =>
 				withFolderInventory(current, projectId, folderId, entries),
 			);
@@ -9022,7 +8936,8 @@ function App({
 			isVisible: () => document.visibilityState === 'visible',
 			onVisibilityChange: (listener) => {
 				document.addEventListener('visibilitychange', listener);
-				return () => document.removeEventListener('visibilitychange', listener);
+				return () =>
+					document.removeEventListener('visibilitychange', listener);
 			},
 		});
 	}, [pushClient, serverPushes, sessionNotifications]);
@@ -9065,12 +8980,7 @@ function App({
 			);
 		}
 		return presented;
-	}, [
-		byServerId,
-		currentServerId,
-		inventoryByProject,
-		liveAgentSnapshotsByServer,
-	]);
+	}, [byServerId, currentServerId, inventoryByProject, liveAgentSnapshotsByServer]);
 	// Another attached server has no live panel inventory in this window, but
 	// its agent projection still says which of its projects are waiting on a
 	// person — which is the thing worth showing across a server boundary.
@@ -9102,7 +9012,10 @@ function App({
 	 * data root produce the same project ids for different projects.
 	 */
 	const agentsByServerProject = useMemo(() => {
-		const byServer: Record<string, Record<string, AgentStatusEntry[]>> = {};
+		const byServer: Record<
+			string,
+			Record<string, AgentStatusEntry[]>
+		> = {};
 		for (const [serverId, snapshot] of Object.entries(agentSnapshotsByServer)) {
 			const byProject: Record<string, AgentStatusEntry[]> = {};
 			for (const entry of selectLiveAgentStatusEntries(snapshot)) {
@@ -9233,10 +9146,7 @@ function App({
 	const hostStatsItemsShown = useMemo(
 		() =>
 			settings.hostStats.enabled && hostStatsServer.supported
-				? hostStatsItems(
-						hostStatsServer.history,
-						hostStatsServerLabel ?? 'Host',
-					)
+				? hostStatsItems(hostStatsServer.history, hostStatsServerLabel ?? 'Host')
 				: undefined,
 		[
 			hostStatsServer.history,
@@ -9288,8 +9198,7 @@ function App({
 					source.kinds.includes(kind) && source.settings?.[key] !== false,
 			);
 		const hidden = new Set<HomeSection>();
-		if (!offers('pullRequest', 'pullRequestsOnHome'))
-			hidden.add('pullRequests');
+		if (!offers('pullRequest', 'pullRequestsOnHome')) hidden.add('pullRequests');
 		if (!offers('issue', 'issuesOnHome')) hidden.add('issues');
 		return hidden;
 	}, [forgeHome?.unbound, forgeSources]);
@@ -9380,7 +9289,9 @@ function App({
 	useEffect(() => {
 		window.dispatchEvent(new Event(APP_WINDOW_LAYOUT_EVENT));
 	}, [activeProjectId, isHomeSelected]);
-	const automationSectionServers = useMemo<readonly AutomationsSectionServer[]>(
+	const automationSectionServers = useMemo<
+		readonly AutomationsSectionServer[]
+	>(
 		() =>
 			connections.map((connection) => {
 				const context =
@@ -9825,8 +9736,9 @@ function App({
 			buildCompactSwitcherGroups({
 				foldersByProject: compactSwitcherFolders,
 				previewForSession: (sessionId) =>
-					sharedTerminalContextReadersRef.current.get(sessionId)?.()
-						.recentOutput,
+					sharedTerminalContextReadersRef.current
+						.get(sessionId)
+						?.().recentOutput,
 				sources: dashboardSources,
 			}),
 		[compactSwitcherFolders, dashboardSources],
@@ -9971,22 +9883,19 @@ function App({
 	 * project that was just selected may mount a frame or more later, so the
 	 * dispatch waits for its handle rather than dropping the request.
 	 */
-	const createTerminalInProject = useCallback(
-		(projectId: string) => {
-			const startedAt = performance.now();
-			const dispatch = () => {
-				const workspace = commandWorkspace(projectId);
-				if (workspace) {
-					void workspace.executeCommand('new-terminal');
-					return;
-				}
-				if (performance.now() - startedAt >= 1_000) return;
-				window.requestAnimationFrame(dispatch);
-			};
-			dispatch();
-		},
-		[commandWorkspace],
-	);
+	const createTerminalInProject = useCallback((projectId: string) => {
+		const startedAt = performance.now();
+		const dispatch = () => {
+			const workspace = commandWorkspace(projectId);
+			if (workspace) {
+				void workspace.executeCommand('new-terminal');
+				return;
+			}
+			if (performance.now() - startedAt >= 1_000) return;
+			window.requestAnimationFrame(dispatch);
+		};
+		dispatch();
+	}, [commandWorkspace]);
 	/**
 	 * Creating in a project the window is not working in means going to its
 	 * server first; the intent is held until that binding lands, the same way a
@@ -10217,11 +10126,7 @@ function App({
 					activateDashboardRow(result.serverId, result.row);
 					return;
 				case 'agent':
-					activateDashboardAgent(
-						result.serverId,
-						result.projectId,
-						result.agent,
-					);
+					activateDashboardAgent(result.serverId, result.projectId, result.agent);
 					return;
 				case 'automation':
 					openAutomationsFromOverview({
@@ -10332,10 +10237,7 @@ function App({
 				serverUpgrades.dismissNotice(item.serverUpgrade.id);
 				return;
 			}
-			if (
-				item.notificationId !== undefined &&
-				notificationClient !== undefined
-			) {
+			if (item.notificationId !== undefined && notificationClient !== undefined) {
 				// The server removes exactly this notification: an activity one by
 				// acknowledging its terminal, one a process sent by itself, a bot's
 				// by acknowledging the posts it covers.
@@ -10517,9 +10419,7 @@ function App({
 		) => {
 			const here = serverId === currentServerId;
 			const entry = here
-				? inventoryByProject[projectId]?.find(
-						(item) => item.panelId === panelId,
-					)
+				? inventoryByProject[projectId]?.find((item) => item.panelId === panelId)
 				: undefined;
 			if (here && entry === undefined) return;
 			const session = sessionId ?? entry?.sessionId;
@@ -10563,11 +10463,7 @@ function App({
 			onDismissAllNotifications: dismissAllNotifications,
 			onOpenRecording: (recordingId) => {
 				selectHome();
-				openInHome({
-					kind: 'recording',
-					serverId: currentServerId,
-					recordingId,
-				});
+				openInHome({ kind: 'recording', serverId: currentServerId, recordingId });
 			},
 			quickActions: {
 				onNewProject: () => void createServerProject(),
@@ -10821,8 +10717,7 @@ function App({
 								isMac,
 							),
 							onSelect: run(
-								() =>
-									void auxiliaryRouteController.openSettings('import-export'),
+								() => void auxiliaryRouteController.openSettings('import-export'),
 							),
 						} satisfies CommandBarItem,
 					]
@@ -11096,9 +10991,7 @@ function App({
 			project,
 			folders: snapshot.folders,
 			panels: snapshot.panels,
-			selectedFolderId: isOwn
-				? rememberedFolderId(target.projectId)
-				: undefined,
+			selectedFolderId: isOwn ? rememberedFolderId(target.projectId) : undefined,
 			inventory: isOwn
 				? (inventoryByProject[target.projectId] ?? NO_INVENTORY)
 				: NO_INVENTORY,
@@ -11167,9 +11060,7 @@ function App({
 		setTabOrder(order);
 		if (namesServers) return;
 		onReorder(
-			nextTabs.filter(
-				(tab) => tab.serverId === currentServerId,
-			) as ProjectTab[],
+			nextTabs.filter((tab) => tab.serverId === currentServerId) as ProjectTab[],
 		);
 	};
 	const persistMovedComposedTab = (handle: string) => {
@@ -11279,9 +11170,7 @@ function App({
 			await installAppUpdate();
 		} catch (error) {
 			setAppUpdateInstallError(
-				error instanceof Error
-					? error.message
-					: 'The update could not be installed.',
+				error instanceof Error ? error.message : 'The update could not be installed.',
 			);
 		} finally {
 			// Cancelling the quit confirmation leaves the app running.
@@ -11335,907 +11224,838 @@ function App({
 		<TerminalTitleStoreContext.Provider
 			value={terminalClientContext?.terminalTitleStore}
 		>
-			<AppWindowsContext.Provider value={serverAppWindows}>
-				<WorkflowsContext.Provider value={serverWorkflows}>
-					<div
-						className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}${isWindows && hasNativeWindowControls ? ' app-shell--windows' : ''}`}
-						data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
-						data-terminay-compact-chrome={isCompactChrome ? 'true' : 'false'}
-						data-terminay-active-project-id={displayedActiveProjectId}
-						data-terminay-selected-view={isHomeSelected ? 'home' : 'project'}
-						data-terminay-server-id={terminalClientContext?.serverId}
-						data-terminay-workspace-revision={
-							terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision
+		<AppWindowsContext.Provider value={serverAppWindows}>
+		<WorkflowsContext.Provider value={serverWorkflows}>
+		<div
+			className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}${isWindows && hasNativeWindowControls ? ' app-shell--windows' : ''}`}
+			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
+			data-terminay-compact-chrome={isCompactChrome ? 'true' : 'false'}
+			data-terminay-active-project-id={displayedActiveProjectId}
+			data-terminay-selected-view={isHomeSelected ? 'home' : 'project'}
+			data-terminay-server-id={terminalClientContext?.serverId}
+			data-terminay-workspace-revision={
+				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision
+			}
+			style={
+				{
+					'--terminal-panel-surface': resolveTerminalTheme(settings).background,
+					...(isHomeSelected
+						? { '--project-color': HOME_CHROME_COLOR }
+						: !displayedActiveProject?.color
+							? {}
+							: { '--project-color': displayedActiveProject.color }),
+				} as CSSProperties
+			}
+		>
+			<header
+				ref={projectTabBarRef}
+				className={`project-tabbar${isProjectDropTarget ? ' project-tabbar--drop-target' : ''}${isCompactChrome ? ' project-tabbar--compact' : ''}`}
+			>
+				{isCompactChrome ? (
+					<CompactChromeRow
+						breadcrumbButtonRef={compactBreadcrumbRef}
+						connection={{
+							isReachable: currentServerReachable,
+							serverLabel: currentServerLabel,
+							...(serverUpgrades.activeVersion === undefined
+								? {}
+								: { upgradeVersion: serverUpgrades.activeVersion }),
+						}}
+						isExplorerOpen={
+							!isHomeSelected && activeProject?.isFileExplorerOpen === true
 						}
-						style={
-							{
-								'--terminal-panel-surface':
-									resolveTerminalTheme(settings).background,
-								...(isHomeSelected
-									? { '--project-color': HOME_CHROME_COLOR }
-									: !displayedActiveProject?.color
-										? {}
-										: { '--project-color': displayedActiveProject.color }),
-							} as CSSProperties
-						}
-					>
-						<header
-							ref={projectTabBarRef}
-							className={`project-tabbar${isProjectDropTarget ? ' project-tabbar--drop-target' : ''}${isCompactChrome ? ' project-tabbar--compact' : ''}`}
-						>
-							{isCompactChrome ? (
-								<CompactChromeRow
-									breadcrumbButtonRef={compactBreadcrumbRef}
-									connection={{
-										isReachable: currentServerReachable,
-										serverLabel: currentServerLabel,
-										...(serverUpgrades.activeVersion === undefined
-											? {}
-											: { upgradeVersion: serverUpgrades.activeVersion }),
-									}}
-									isExplorerOpen={
-										!isHomeSelected &&
-										activeProject?.isFileExplorerOpen === true
-									}
-									showSidebarToggle={!isHomeSelected}
-									isNotificationsOpen={isActivityMenuOpen}
-									isSwitcherOpen={isCompactSwitcherOpen}
-									notificationCount={notificationCount}
-									notificationsButtonRef={compactNotificationsRef}
-									onOpenCommandBar={openCompactCommandBar}
-									onToggleNotifications={() => {
-										setIsRemoteMenuOpen(false);
-										setIsActivityMenuOpen((current) => !current);
-									}}
-									onOpenSwitcher={openCompactSwitcher}
-									onToggleExplorer={toggleActiveProjectExplorer}
-									{...(isPixelShown
-										? { pixelSlotRef: setCompactPixelSlot }
-										: {})}
-									title={compactTitle}
-									updateAction={appUpdateAction}
-								/>
-							) : (
-								<>
-									{hostPresentation?.openApplicationMenu ===
-									undefined ? null : (
-										<ApplicationMenuButton
-											openApplicationMenu={hostPresentation.openApplicationMenu}
-										/>
-									)}
-									{/* The leading toggle answers for the column on the leading side: a
+						showSidebarToggle={!isHomeSelected}
+						isNotificationsOpen={isActivityMenuOpen}
+						isSwitcherOpen={isCompactSwitcherOpen}
+						notificationCount={notificationCount}
+						notificationsButtonRef={compactNotificationsRef}
+						onOpenCommandBar={openCompactCommandBar}
+						onToggleNotifications={() => {
+							setIsRemoteMenuOpen(false);
+							setIsActivityMenuOpen((current) => !current);
+						}}
+						onOpenSwitcher={openCompactSwitcher}
+						onToggleExplorer={toggleActiveProjectExplorer}
+						{...(isPixelShown ? { pixelSlotRef: setCompactPixelSlot } : {})}
+						title={compactTitle}
+						updateAction={appUpdateAction}
+					/>
+				) : (
+					<>
+				{hostPresentation?.openApplicationMenu === undefined ? null : (
+					<ApplicationMenuButton
+						openApplicationMenu={hostPresentation.openApplicationMenu}
+					/>
+				)}
+				{/* The leading toggle answers for the column on the leading side: a
 				    project's Folders tree, or Home's own sidebar while Home is shown. */}
-									<div className="project-tab-sidebar-toggle-box">
-										<button
-											type="button"
-											className={
-												isHomeSelected
-													? `project-tab-sidebar-toggle${isHomeSidebarVisible ? ' project-tab-sidebar-toggle--active' : ''}`
-													: `project-tab-folders-toggle${activeProject && isFoldersTreeOpenFor(activeProject.id) ? ' project-tab-folders-toggle--active' : ''}`
-											}
-											onClick={
-												isHomeSelected
-													? toggleHomeSidebar
-													: toggleActiveProjectFolders
-											}
-											disabled={!isHomeSelected && !activeProject}
-											aria-label={
-												isHomeSelected
-													? 'Toggle file explorer'
-													: 'Toggle folders'
-											}
-											title={
-												isHomeSelected
-													? 'Toggle file explorer'
-													: 'Toggle folders'
-											}
-										>
-											<svg
-												aria-hidden="true"
-												width="14"
-												height="14"
-												viewBox="0 0 14 14"
-												fill="none"
-												xmlns="http://www.w3.org/2000/svg"
-											>
-												<path
-													d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
-													stroke="currentColor"
-													strokeWidth="1.4"
-												/>
-												<path
-													d="M5 2.25V11.75"
-													stroke="currentColor"
-													strokeWidth="1.4"
-												/>
-											</svg>
-										</button>
-									</div>
-									<div className="project-tab-home-box">
-										<button
-											type="button"
-											className={`project-tab-home${isHomeSelected ? ' project-tab-home--active' : ''}`}
-											onClick={selectHome}
-											aria-label={
-												botUnreadTotal > 0
-													? `Home, ${botUnreadLabel(botUnreadTotal)}`
-													: 'Home'
-											}
-											aria-pressed={isHomeSelected}
-											title="Home"
-											data-terminay-home-control="true"
-										>
-											<House size={14} aria-hidden="true" />
-											{botUnreadTotal > 0 ? (
-												<span
-													className="project-tab-home__badge"
-													aria-hidden="true"
-													data-terminay-home-control-unread="true"
-												>
-													{formatActivityCount(botUnreadTotal)}
-												</span>
-											) : null}
-										</button>
-									</div>
-									<ProjectTabList
-										activeProjectId={
-											isHomeSelected ? '' : displayedActiveHandle
-										}
-										activityBadgesByProject={activityBadgesByProject}
-										draggingProjectId={
-											draggingProjectId === null
-												? null
-												: compositionTabKey(currentServerId, draggingProjectId)
-										}
-										dropPreview={dropPreview}
-										isDraggingTabTornOff={isDraggingTabTornOff}
-										onActivate={activateComposedTab}
-										onClose={closeComposedTab}
-										onDragEnd={endComposedTabDrag}
-										onDragMove={moveComposedTabDrag}
-										onDragStart={startComposedTabDrag}
-										onEdit={openEditComposedTab}
-										onReorder={(nextProjects) =>
-											onReorderComposed(
-												nextProjects.filter(
-													(project) => project.creationStatus === undefined,
-												),
-											)
-										}
-										onReorderCommit={persistMovedComposedTab}
-										onSwitcherOpen={() => {
-											setIsRemoteMenuOpen(false);
-											setIsActivityMenuOpen(false);
-										}}
-										onTerminalDrop={dropTerminalOnComposedTab}
-										terminalDropTargetIds={terminalDropTargetIds}
-										canCreateProject={
-											canAddProject &&
-											(pendingProjectCreation === null ||
-												failedProjectCreation !== null)
-										}
-										onCreateProject={() => void createServerProject()}
-										projects={displayedProjects}
-									/>
-									<ProjectTabPeek
-										activeTabId={isHomeSelected ? null : displayedActiveHandle}
-										isDragging={
-											draggingProjectId !== null || terminalTabDrag !== null
-										}
-										foldersOf={peekFoldersOf}
-										onChooseFolder={choosePeekFolder}
-										onChooseTerminal={choosePeekTerminal}
-									/>
-									<div className="project-tab-add-box">
-										<button
-											type="button"
-											className="project-tab-add"
-											aria-label={
-												namesServers
-													? 'Create project on a server'
-													: 'Create project'
-											}
-											title={
-												namesServers
-													? 'Create project — choose a server'
-													: 'Create project'
-											}
-											aria-haspopup={namesServers ? 'menu' : undefined}
-											disabled={
-												!canAddProject ||
-												(pendingProjectCreation !== null &&
-													failedProjectCreation === null)
-											}
-											onClick={(event) => {
-												// A project belongs to one server. With several attached the
-												// window asks which, defaulting to the tab in front.
-												if (!namesServers) {
-													void createServerProject();
-													return;
-												}
-												const rect =
-													event.currentTarget.getBoundingClientRect();
-												setProjectServerMenu({ x: rect.left, y: rect.bottom });
-											}}
-										>
-											+
-										</button>
-										{projectServerMenu === null ? null : (
-											<ContextMenu
-												x={projectServerMenu.x}
-												y={projectServerMenu.y}
-												onClose={() => setProjectServerMenu(null)}
-												items={[
-													{
-														label: 'New project on',
-														heading: true,
-														key: 'heading',
-													},
-													...projectTabSources.map((source) => ({
-														key: source.serverId,
-														label:
-															source.serverId === currentServerId
-																? `${source.serverLabel} (current)`
-																: source.serverLabel,
-														disabled: !source.usable,
-														onClick: () =>
-															createProjectOnServer(source.serverId),
-													})),
-												]}
-											/>
-										)}
-									</div>
-									<div className="header-actions">
-										{appUpdateAction}
-										<TerminalActivityOverview
-											activityMenuRef={activityMenuRef}
-											isOpen={isActivityMenuOpen}
-											notifications={terminalActivityItems.notifications}
-											onActivate={activateTerminalFromOverview}
-											onDismiss={dismissNotification}
-											onDismissAll={dismissAllNotifications}
-											onToggle={() => {
+				<div className="project-tab-sidebar-toggle-box">
+					<button
+						type="button"
+						className={
+							isHomeSelected
+								? `project-tab-sidebar-toggle${isHomeSidebarVisible ? ' project-tab-sidebar-toggle--active' : ''}`
+								: `project-tab-folders-toggle${activeProject && isFoldersTreeOpenFor(activeProject.id) ? ' project-tab-folders-toggle--active' : ''}`
+						}
+						onClick={
+							isHomeSelected ? toggleHomeSidebar : toggleActiveProjectFolders
+						}
+						disabled={!isHomeSelected && !activeProject}
+						aria-label={isHomeSelected ? 'Toggle file explorer' : 'Toggle folders'}
+						title={isHomeSelected ? 'Toggle file explorer' : 'Toggle folders'}
+					>
+						<svg
+							aria-hidden="true"
+							width="14"
+							height="14"
+							viewBox="0 0 14 14"
+							fill="none"
+							xmlns="http://www.w3.org/2000/svg"
+						>
+							<path
+								d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
+								stroke="currentColor"
+								strokeWidth="1.4"
+							/>
+							<path d="M5 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
+						</svg>
+					</button>
+				</div>
+				<div className="project-tab-home-box">
+					<button
+						type="button"
+						className={`project-tab-home${isHomeSelected ? ' project-tab-home--active' : ''}`}
+						onClick={selectHome}
+						aria-label={
+							botUnreadTotal > 0
+								? `Home, ${botUnreadLabel(botUnreadTotal)}`
+								: 'Home'
+						}
+						aria-pressed={isHomeSelected}
+						title="Home"
+						data-terminay-home-control="true"
+					>
+						<House size={14} aria-hidden="true" />
+						{botUnreadTotal > 0 ? (
+							<span
+								className="project-tab-home__badge"
+								aria-hidden="true"
+								data-terminay-home-control-unread="true"
+							>
+								{formatActivityCount(botUnreadTotal)}
+							</span>
+						) : null}
+					</button>
+				</div>
+				<ProjectTabList
+					activeProjectId={isHomeSelected ? '' : displayedActiveHandle}
+					activityBadgesByProject={activityBadgesByProject}
+					draggingProjectId={
+						draggingProjectId === null
+							? null
+							: compositionTabKey(currentServerId, draggingProjectId)
+					}
+					dropPreview={dropPreview}
+					isDraggingTabTornOff={isDraggingTabTornOff}
+					onActivate={activateComposedTab}
+					onClose={closeComposedTab}
+					onDragEnd={endComposedTabDrag}
+					onDragMove={moveComposedTabDrag}
+					onDragStart={startComposedTabDrag}
+					onEdit={openEditComposedTab}
+					onReorder={(nextProjects) =>
+						onReorderComposed(
+							nextProjects.filter(
+								(project) => project.creationStatus === undefined,
+							),
+						)
+					}
+					onReorderCommit={persistMovedComposedTab}
+					onSwitcherOpen={() => {
+						setIsRemoteMenuOpen(false);
+						setIsActivityMenuOpen(false);
+					}}
+					onTerminalDrop={dropTerminalOnComposedTab}
+					terminalDropTargetIds={terminalDropTargetIds}
+					canCreateProject={
+						canAddProject &&
+						(pendingProjectCreation === null || failedProjectCreation !== null)
+					}
+					onCreateProject={() => void createServerProject()}
+					projects={displayedProjects}
+				/>
+				<ProjectTabPeek
+					activeTabId={isHomeSelected ? null : displayedActiveHandle}
+					isDragging={draggingProjectId !== null || terminalTabDrag !== null}
+					foldersOf={peekFoldersOf}
+					onChooseFolder={choosePeekFolder}
+					onChooseTerminal={choosePeekTerminal}
+				/>
+				<div className="project-tab-add-box">
+					<button
+						type="button"
+						className="project-tab-add"
+						aria-label={
+							namesServers ? 'Create project on a server' : 'Create project'
+						}
+						title={
+							namesServers
+								? 'Create project — choose a server'
+								: 'Create project'
+						}
+						aria-haspopup={namesServers ? 'menu' : undefined}
+						disabled={
+							!canAddProject ||
+							(pendingProjectCreation !== null &&
+								failedProjectCreation === null)
+						}
+						onClick={(event) => {
+							// A project belongs to one server. With several attached the
+							// window asks which, defaulting to the tab in front.
+							if (!namesServers) {
+								void createServerProject();
+								return;
+							}
+							const rect = event.currentTarget.getBoundingClientRect();
+							setProjectServerMenu({ x: rect.left, y: rect.bottom });
+						}}
+					>
+						+
+					</button>
+					{projectServerMenu === null ? null : (
+						<ContextMenu
+							x={projectServerMenu.x}
+							y={projectServerMenu.y}
+							onClose={() => setProjectServerMenu(null)}
+							items={[
+								{ label: 'New project on', heading: true, key: 'heading' },
+								...projectTabSources.map((source) => ({
+									key: source.serverId,
+									label:
+										source.serverId === currentServerId
+											? `${source.serverLabel} (current)`
+											: source.serverLabel,
+									disabled: !source.usable,
+									onClick: () => createProjectOnServer(source.serverId),
+								})),
+							]}
+						/>
+					)}
+				</div>
+				<div className="header-actions">
+					{appUpdateAction}
+					<TerminalActivityOverview
+						activityMenuRef={activityMenuRef}
+						isOpen={isActivityMenuOpen}
+						notifications={terminalActivityItems.notifications}
+						onActivate={activateTerminalFromOverview}
+						onDismiss={dismissNotification}
+						onDismissAll={dismissAllNotifications}
+						onToggle={() => {
+							setIsRemoteMenuOpen(false);
+							setIsActivityMenuOpen((current) => !current);
+						}}
+					/>
+					<RemoteAccessConnectionMenu
+						connectionSwitcherEntries={connectionSwitcherEntries}
+						currentServerLabel={currentServerLabel}
+						errorMessage={connectionSwitcherError}
+						isOpen={isRemoteMenuOpen}
+						isToggling={isTogglingRemoteAccess}
+						menuRef={remoteMenuRef}
+						onOpenConnection={
+							onOpenConnectionManager ??
+							(() =>
+								setConnectionSwitcherError(
+									'Connection management is unavailable in this host.',
+								))
+						}
+						onOpenPairingQr={() => void openPairingQr()}
+						onSelectConnection={selectConnectionProfile}
+						onSelectServer={goToServer}
+						onSwitchConnections={onSwitchConnections}
+						onToggleExposure={() => void toggleRemoteAccess()}
+						onToggleMenu={() => {
+							setIsActivityMenuOpen(false);
+							setConnectionSwitcherError(null);
+							refreshConnectionSwitcherEntries();
+							setIsRemoteMenuOpen((current) => !current);
+						}}
+						{...(serverUpgrades.activeVersion === undefined
+							? {}
+							: { serverUpgradeVersion: serverUpgrades.activeVersion })}
+						{...(serverUpgrades.rows.length === 0
+							? {}
+							: {
+									serverUpgrades: (
+										<ServerUpgradeMenuRows
+											rows={serverUpgrades.rows}
+											namesServers={serverUpgrades.namesServers}
+											onCheck={serverUpgrades.checkForUpgrade}
+											onUpgrade={(profileId) => {
 												setIsRemoteMenuOpen(false);
-												setIsActivityMenuOpen((current) => !current);
+												serverUpgrades.requestUpgrade(profileId);
 											}}
+											variant="menu"
 										/>
-										<RemoteAccessConnectionMenu
-											connectionSwitcherEntries={connectionSwitcherEntries}
-											currentServerLabel={currentServerLabel}
-											errorMessage={connectionSwitcherError}
-											isOpen={isRemoteMenuOpen}
-											isToggling={isTogglingRemoteAccess}
-											menuRef={remoteMenuRef}
-											onOpenConnection={
-												onOpenConnectionManager ??
-												(() =>
-													setConnectionSwitcherError(
-														'Connection management is unavailable in this host.',
-													))
-											}
-											onOpenPairingQr={() => void openPairingQr()}
-											onSelectConnection={selectConnectionProfile}
-											onSelectServer={goToServer}
-											onSwitchConnections={onSwitchConnections}
-											onToggleExposure={() => void toggleRemoteAccess()}
-											onToggleMenu={() => {
-												setIsActivityMenuOpen(false);
-												setConnectionSwitcherError(null);
-												refreshConnectionSwitcherEntries();
-												setIsRemoteMenuOpen((current) => !current);
-											}}
-											{...(serverUpgrades.activeVersion === undefined
-												? {}
-												: {
-														serverUpgradeVersion: serverUpgrades.activeVersion,
-													})}
-											{...(serverUpgrades.rows.length === 0
-												? {}
-												: {
-														serverUpgrades: (
-															<ServerUpgradeMenuRows
-																rows={serverUpgrades.rows}
-																namesServers={serverUpgrades.namesServers}
-																onCheck={serverUpgrades.checkForUpgrade}
-																onUpgrade={(profileId) => {
-																	setIsRemoteMenuOpen(false);
-																	serverUpgrades.requestUpgrade(profileId);
-																}}
-																variant="menu"
-															/>
-														),
-													})}
-											status={remoteStatus}
-											tone={remoteButtonTone}
-										/>
-									</div>
-									{/* A project's sidebar is on the trailing side, and so is its toggle.
+									),
+								})}
+						status={remoteStatus}
+						tone={remoteButtonTone}
+					/>
+				</div>
+				{/* A project's sidebar is on the trailing side, and so is its toggle.
 				    Home has one column, toggled from the leading end. */}
-									{isHomeSelected ? null : (
-										<div className="project-tab-sidebar-toggle-box project-tab-sidebar-toggle-box--trailing">
-											<button
-												type="button"
-												className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
-												onClick={toggleActiveProjectExplorer}
-												disabled={!activeProject}
-												aria-label="Toggle file explorer"
-												title="Toggle file explorer"
-											>
-												<svg
-													aria-hidden="true"
-													width="14"
-													height="14"
-													viewBox="0 0 14 14"
-													fill="none"
-													xmlns="http://www.w3.org/2000/svg"
-												>
-													<path
-														d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
-														stroke="currentColor"
-														strokeWidth="1.4"
-													/>
-													<path
-														d="M9 2.25V11.75"
-														stroke="currentColor"
-														strokeWidth="1.4"
-													/>
-												</svg>
-											</button>
-										</div>
-									)}
-								</>
-							)}
-						</header>
-						{isCompactChrome && isActivityMenuOpen ? (
-							<CompactNotifications
-								notifications={terminalActivityItems.notifications}
-								onActivate={activateTerminalFromOverview}
-								onClose={closeCompactNotifications}
-								onDismiss={dismissNotification}
-								onDismissAll={dismissAllNotifications}
-							/>
-						) : null}
-						{isCompactChrome && isCompactSwitcherOpen ? (
-							<CompactSwitcher
-								{...(compactApplicationMenu === undefined
-									? {}
-									: { applicationMenu: compactApplicationMenu })}
-								groups={orderedCompactSwitcherGroups}
-								isHomeSelected={isHomeSelected}
-								currentServer={{
-									id: currentServerId,
-									label: currentServerLabel,
-									isReachable: currentServerReachable,
-								}}
-								{...(isHomeSelected || activeProjectId === undefined
-									? {}
-									: {
-											frontProjectKey: compositionTabKey(
-												currentServerId,
-												activeProjectId,
-											),
-										})}
-								{...(homeFrontTab?.section === undefined
-									? {}
-									: { homeFrontSection: homeFrontTab.section })}
-								homeSections={compactHomeSections}
-								launchers={terminalLaunchers}
-								rememberedLauncherId={compactRememberedLauncher}
-								collapsedFolderIdsFor={(group) =>
-									group.serverId === currentServerId
-										? collapsedFolderSetFor(group.projectId)
-										: NO_COLLAPSED_FOLDERS
-								}
-								selectedFolderIdFor={(group) =>
-									group.serverId === currentServerId
-										? rememberedFolderId(group.projectId)
-										: undefined
-								}
-								folderMenuFor={(group, folder) =>
-									group.serverId === currentServerId
-										? (
-												workspaceRefs.current.get(
-													group.projectId,
-													folder.folderId,
-												) ?? commandWorkspace(group.projectId)
-											)?.folderMenu(folder.folderId)?.entries
-										: undefined
-								}
-								{...(settings.agentIntegration.enabled &&
-								!isHomeSelected &&
-								activeProject !== null
-									? {
-											agents: (
-												<div
-													ref={setCompactAgentsHost}
-													className="compact-switcher__agents-host"
-												/>
-											),
-										}
-									: {})}
-								onActivatePanel={(row) => {
-									closeCompactSwitcher();
-									activateCompactSwitcherPanel(row);
-								}}
-								onAddConnection={() => {
-									closeCompactSwitcher();
-									if (onOpenConnectionManager === undefined) {
-										setConnectionSwitcherError(
-											'Connection management is unavailable in this host.',
-										);
-										return;
-									}
-									onOpenConnectionManager();
-								}}
-								onClosePanel={closeCompactSwitcherPanel}
-								onCloseProject={(group) => {
-									closeComposedTab(
-										compositionTabKey(group.serverId, group.projectId),
-									);
-								}}
-								onDismiss={closeCompactSwitcher}
-								{...(serverUpgrades.rows.length === 0
-									? {}
-									: {
-											serverUpgrades: (
-												<ServerUpgradeMenuRows
-													rows={serverUpgrades.rows}
-													namesServers={serverUpgrades.namesServers}
-													onCheck={serverUpgrades.checkForUpgrade}
-													onUpgrade={(profileId) => {
-														closeCompactSwitcher();
-														serverUpgrades.requestUpgrade(profileId);
-													}}
-													variant="sheet"
-												/>
-											),
-										})}
-								{...(switchWindowServer === undefined
-									? {}
-									: {
-											servers: compactSwitcherServers,
-											onSwitchServer: (profileId: string) => {
-												setConnectionSwitcherError(null);
-												setCompactSwitchingProfileId(profileId);
-												// A switch that succeeds replaces this document; only a
-												// failure comes back here.
-												void switchWindowServer(profileId)
-													.catch((cause: unknown) => {
-														closeCompactSwitcher();
-														setConnectionSwitcherError(
-															cause instanceof Error
-																? cause.message
-																: 'Terminay could not switch to that server.',
-														);
-													})
-													.finally(() =>
-														setCompactSwitchingProfileId(undefined),
-													);
-											},
-										})}
-								onEditProject={(group) => {
-									closeCompactSwitcher();
-									void openEditComposedTab(
-										compositionTabKey(group.serverId, group.projectId),
-									);
-								}}
-								onRenamePanel={(row) => {
-									closeCompactSwitcher();
-									editCompactSwitcherPanel(row);
-								}}
-								onMovePanelToFolder={(row, folderId) =>
-									moveTerminalToFolder(row.projectId, row.panelId, folderId)
-								}
-								onNewProject={() => {
-									closeCompactSwitcher();
-									void createProjectOnServer(currentServerId);
-								}}
-								onCreateTerminal={(group, folder, launcherId) => {
-									closeCompactSwitcher();
-									createCompactTerminal(group, folder, launcherId);
-								}}
-								onFolderMenuAction={(group, folder, action) => {
-									closeCompactSwitcher();
-									runCompactFolderAction(group, folder, action);
-								}}
-								onActivateFolder={(group, folder) => {
-									closeCompactSwitcher();
-									// A folder on another server is reached by going there; which
-									// folder is in front is then that visit's own choice.
-									if (activateAnotherServer(group.serverId, group.projectId))
-										return;
-									selectFolder(group.projectId, folder.folderId);
-									activateProject(group.projectId);
-								}}
-								onOpenHomeSection={(section) => {
-									closeCompactSwitcher();
-									openHomeSection(section);
-								}}
-								onReorderFolders={reorderCompactFolders}
-								onReorderPanels={reorderCompactPanels}
-								onReorderProjects={(projectIds) => {
-									// The current server's tabs take the new order in the places
-									// they already hold; every other tab stays where it is.
-									const own = new Map(
-										displayedProjects
-											.filter((tab) => tab.serverId === currentServerId)
-											.map((tab) => [tab.id, tab]),
-									);
-									const ordered = projectIds.flatMap((projectId) => {
-										const tab = own.get(projectId);
-										return tab === undefined ? [] : [tab];
-									});
-									let next = 0;
-									onReorderComposed(
-										displayedProjects.map((tab) =>
-											tab.serverId === currentServerId
-												? (ordered[next++] ?? tab)
-												: tab,
-										),
-									);
-									// The one project that moved is committed to the server, as a
-									// dropped tab is; the reorder above has already updated the
-									// order it is committed against.
-									const before = [...own.keys()];
-									const after = ordered.map((tab) => tab.id);
-									const first = after.findIndex(
-										(id, index) => id !== before[index],
-									);
-									if (first < 0) return;
-									let last = after.length - 1;
-									while (last > first && after[last] === before[last])
-										last -= 1;
-									const moved =
-										after[first] === before[last] ? after[first] : after[last];
-									const movedTab = own.get(moved);
-									if (movedTab !== undefined)
-										persistMovedComposedTab(movedTab.handle);
-								}}
-								onToggleFolderCollapsed={(group, folder) => {
-									if (group.serverId === currentServerId)
-										toggleFolderCollapsed(group.projectId, folder.folderId);
-								}}
-								{...(activeCompactPanel === undefined
-									? {}
-									: {
-											activePanelKey: compositionTabKey(
-												currentServerId,
-												activeCompactPanel.panelId,
-											),
-										})}
-							/>
-						) : null}
-
-						<div className="workspace-stack">
-							{isPendingProjectFailure && failedProjectCreation !== null ? (
-								<div
-									className="workspace-empty-state workspace-empty-state--error workspace-empty-state--actionable"
-									role="alert"
-								>
-									<span>
-										{failedProjectCreation.tab.creationError ??
-											'Project creation failed.'}
-									</span>
-									<span className="workspace-empty-state__actions">
-										<button
-											type="button"
-											onClick={() => void createServerProject()}
-										>
-											Retry
-										</button>
-										<button
-											type="button"
-											onClick={() =>
-												closeComposedTab(
-													compositionTabKey(
-														currentServerId,
-														failedProjectCreation.tab.id,
-													),
-												)
-											}
-										>
-											Dismiss
-										</button>
-									</span>
-								</div>
-							) : null}
-							{isWorkspaceHydrating ? (
-								<div className="workspace-empty-state" role="status">
-									Loading workspace...
-								</div>
-							) : null}
-							{projectCreationError !== null ? (
-								<div
-									className="workspace-empty-state workspace-empty-state--error"
-									role="alert"
-								>
-									{projectCreationError}
-								</div>
-							) : null}
-							{workspaceSynchronizationError !== null ? (
-								<div
-									className="workspace-empty-state workspace-empty-state--error"
-									role="alert"
-								>
-									{workspaceSynchronizationError}
-								</div>
-							) : null}
-							{projectStartError !== null ? (
-								<div
-									className="workspace-empty-state workspace-empty-state--error"
-									role="alert"
-								>
-									{projectStartError}
-								</div>
-							) : null}
-							{connectionFeatureError !== null ? (
-								<div
-									className="workspace-empty-state workspace-empty-state--error"
-									role="alert"
-								>
-									{connectionFeatureError}
-								</div>
-							) : null}
-							<McpApprovalsContext.Provider value={serverMcpApprovals}>
-								{hasShownHome ? (
-									<HomeWorkspace
-										ref={attachHome}
-										automations={automationsData}
-										commandBarShortcutLabel={getCommandShortcutLabel(
-											settings.keyboardShortcuts,
-											'open-command-bar',
-											isMac,
-										)}
-										isActive={isHomeSelected}
-										isCompact={isCompactChrome}
-										compactDrawerEpoch={compactDrawerEpoch}
-										// A compact workspace has no Home sidebar; the switcher's
-										// Home panel opens sections, and the remembered choice is
-										// left for the next wide window.
-										isSidebarVisible={!isCompactChrome && isHomeSidebarVisible}
-										onDismissSidebar={() => setHomeSidebarVisibility(false)}
-										onOpenCommandBar={() => setIsViewCommandBarOpen(true)}
-										onSectionChosenInDrawer={() =>
-											setIsHomeSidebarVisible(false)
-										}
-										onActiveTabChange={setHomeFrontTab}
-										onSidebarWidthCommit={setHomeSidebarWidth}
-										renderSection={renderHomeSection}
-										sectionBadges={homeSectionBadges}
-										hiddenSections={hiddenHomeSections}
-										renderBots={(host) => (
-											<BotsSection servers={serverBots} host={host} />
-										)}
-										renderBot={(target, host) => (
-											<BotTab
-												server={serverBots.get(target.serverId)}
-												botId={target.botId}
-												host={host}
-											/>
-										)}
-										renderSidebarBots={({ activeBot, openBot, openBots }) => (
-											<BotsSidebarList
-												servers={serverBots}
-												activeBot={activeBot}
-												onOpenBot={openBot}
-												unread={botUnread}
-												onNewBot={() => {
-													openBots();
-													requestNewBot();
-												}}
-											/>
-										)}
-										renderForgeItem={(target, host) =>
-											target.serverId === currentServerId ? (
-												<ForgeItemView
-													client={forgeClient}
-													environment={forgeEnvironment}
-													target={{
-														sourceId: target.sourceId,
-														reference: {
-															kind: target.itemKind,
-															origin: target.origin,
-															owner: target.owner,
-															name: target.name,
-															number: target.number,
-														},
-													}}
-													setTitle={host.setTitle}
-												/>
-											) : (
-												<FeatureUnavailableState reason="This pull request or issue is on another server. Switch to that server to see it." />
-											)
-										}
-										renderBotIcon={(target) =>
-											serverBots
-												.get(target.serverId)
-												?.bots.some((bot) => bot.id === target.botId) ? (
-												<BotTabIcon servers={serverBots} target={target} />
-											) : undefined
-										}
-										sidebarWidth={homeSidebarWidth}
-									/>
-								) : null}
-								<ViewCommandBar
-									commands={viewCommands}
-									isOpen={isViewCommandBarOpen}
-									onClose={closeViewCommandBar}
-									searchPlaces={searchViewPlaces}
+				{isHomeSelected ? null : (
+					<div className="project-tab-sidebar-toggle-box project-tab-sidebar-toggle-box--trailing">
+						<button
+							type="button"
+							className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
+							onClick={toggleActiveProjectExplorer}
+							disabled={!activeProject}
+							aria-label="Toggle file explorer"
+							title="Toggle file explorer"
+						>
+							<svg
+								aria-hidden="true"
+								width="14"
+								height="14"
+								viewBox="0 0 14 14"
+								fill="none"
+								xmlns="http://www.w3.org/2000/svg"
+							>
+								<path
+									d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
+									stroke="currentColor"
+									strokeWidth="1.4"
 								/>
-								<MissedRunsNotice automations={serverAutomations} />
-								{projectFolderWorkspaces.flatMap(
-									({ project, folders, selectedFolderId }) =>
-										// A project awaiting its start choice has no panels and no
-										// sidebar: its chooser stands in for the whole workspace.
-										projectAwaitsStartChoice(workspaceSnapshot, project.id) &&
-										terminalClientContext?.workspaceSnapshotStore !==
-											undefined ? (
-											<ProjectStartChooser
-												key={`start:${project.id}`}
-												projectId={project.id}
-												projectTitle={project.title}
-												projectColor={project.color}
-												isActive={
-													!isHomeSelected &&
-													!isPendingProjectFailure &&
-													project.id === activeProjectId
-												}
-												isCompact={isCompactChrome}
-												{...(connections.length > 1
-													? { serverLabel: currentServerLabel }
-													: {})}
-												store={terminalClientContext.workspaceSnapshotStore}
-												recentFoldersKey={
-													workspaceSnapshot?.recentProjectFolders
-												}
-												onStarted={launchStartedProjectTerminal}
-												shownProjectIds={shownProjectIds}
-												onReuseProject={reuseOpenProject}
-											/>
-										) : (
-											folders.map((folder) => (
-												<ProjectWorkspace
-													key={folderWorkspaceKey(project.id, folder.id)}
-													ref={workspaceRefFor(project.id, folder.id)}
-													agentStatusSnapshot={agentStatusSnapshot}
-													auxiliaryRoutes={auxiliaryRouteController}
-													folder={folder}
-													// On screen only as the selected folder of the project in front.
-													// Every other workspace keeps its terminals running behind it.
-													isActive={
-														!isHomeSelected &&
-														!isPendingProjectFailure &&
-														project.id === activeProjectId &&
-														folder.id === selectedFolderId
-													}
-													projectInventory={
-														inventoryByProject[project.id] ?? NO_INVENTORY
-													}
-													isFoldersTreeOpen={isFoldersTreeOpenFor(project.id)}
-													foldersTreeWidth={foldersColumnWidth}
-													onFoldersTreeWidthCommit={commitFoldersColumnWidth}
-													sidebarWidth={sidebarWidth}
-													onSidebarWidthCommit={commitSidebarWidth}
-													foldersColumnTab={foldersColumnTabFor(project.id)}
-													collapsedFolderIds={collapsedFolderSetFor(project.id)}
-													gitListingMemory={gitListingMemory}
-													onToggleFolderCollapsed={toggleFolderCollapsed}
-													onFoldersColumnTabChange={selectFoldersColumnTab}
-													compactAgentsHost={compactAgentsHost}
-													onCompactAgentActivated={closeCompactSwitcher}
-													acceptsFolderTerminalDrop={
-														terminalTabDrag?.sourceProjectId === project.id
-													}
-													onSelectFolder={selectFolder}
-													onActivateFolderPanel={activateFolderPanel}
-													onDropTerminalOnFolder={dropTerminalOnFolder}
-													onAnswerFolderOffer={answerFolderOffer}
-													onOpenShellInFolder={openShellInFolder}
-													onNewTerminalInFolder={newTerminalInFolder}
-													terminalLaunchers={terminalLaunchers}
-													{...(projectForgeContexts.get(project.id) ===
-													undefined
-														? {}
-														: { forge: projectForgeContexts.get(project.id) })}
-													onLaunchTerminalInFolder={launchTerminalInFolder}
-													onCloseFolderPanel={closeFolderPanel}
-													isCompactChrome={isCompactChrome}
-													sharedTerminalContextReaders={
-														sharedTerminalContextReadersRef
-													}
-													isMac={isMac}
-													macros={macros}
-													macroCategories={macroCategories}
-													onAddProject={createServerProject}
-													onShowDashboard={selectHome}
-													onShowRecordings={showRecordings}
-													onShowWorkflows={showWorkflows}
-													onCloseActiveWithNoPanel={closeProjectWithNoPanels}
-													searchPlaces={searchPlacesNow}
-													onToggleStatusBar={toggleStatusBar}
-													isStatusBarVisible={isStatusBarVisible}
-													statusBarSlot={statusBarSlot}
-													onEditProject={openEditProjectWindow}
-													onMoveTerminalToFolder={moveTerminalToFolder}
-													onMoveTerminalToProject={moveTerminalToProject}
-													onPopoutProject={popoutProject}
-													onTerminalTabDrag={reportTerminalTabDrag}
-													onWorkspaceInventoryChange={updateWorkspaceInventory}
-													onWorktreeStatusChange={
-														isCompactChrome
-															? noteWorktreeStatusChange
-															: undefined
-													}
-													onCommitProjectSidebar={commitProjectSidebar}
-													onUpdateProject={updateProject}
-													popoutUrl={popoutUrl}
-													project={project}
-													projects={projects}
-													terminalClientContext={terminalClientContext}
-													adoptedTerminals={
-														adoptedTerminalsByProject[project.id]
-													}
-												/>
-											))
-										),
-								)}
-								<AppWindowHost />
-							</McpApprovalsContext.Provider>
-						</div>
-						{isStatusBarVisible ? (
-							<WorkspaceStatusBar
-								{...(hostStatsItemsShown === undefined
-									? {}
-									: { hostStats: hostStatsItemsShown })}
-								onToggleConnectionMenu={() => {
-									setIsActivityMenuOpen(false);
+								<path d="M9 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
+							</svg>
+						</button>
+					</div>
+				)}
+					</>
+				)}
+			</header>
+			{isCompactChrome && isActivityMenuOpen ? (
+				<CompactNotifications
+					notifications={terminalActivityItems.notifications}
+					onActivate={activateTerminalFromOverview}
+					onClose={closeCompactNotifications}
+					onDismiss={dismissNotification}
+					onDismissAll={dismissAllNotifications}
+				/>
+			) : null}
+			{isCompactChrome && isCompactSwitcherOpen ? (
+				<CompactSwitcher
+					{...(compactApplicationMenu === undefined
+						? {}
+						: { applicationMenu: compactApplicationMenu })}
+					groups={orderedCompactSwitcherGroups}
+					isHomeSelected={isHomeSelected}
+					currentServer={{
+						id: currentServerId,
+						label: currentServerLabel,
+						isReachable: currentServerReachable,
+					}}
+					{...(isHomeSelected || activeProjectId === undefined
+						? {}
+						: {
+								frontProjectKey: compositionTabKey(
+									currentServerId,
+									activeProjectId,
+								),
+							})}
+					{...(homeFrontTab?.section === undefined
+						? {}
+						: { homeFrontSection: homeFrontTab.section })}
+					homeSections={compactHomeSections}
+					launchers={terminalLaunchers}
+					rememberedLauncherId={compactRememberedLauncher}
+					collapsedFolderIdsFor={(group) =>
+						group.serverId === currentServerId
+							? collapsedFolderSetFor(group.projectId)
+							: NO_COLLAPSED_FOLDERS
+					}
+					selectedFolderIdFor={(group) =>
+						group.serverId === currentServerId
+							? rememberedFolderId(group.projectId)
+							: undefined
+					}
+					folderMenuFor={(group, folder) =>
+						group.serverId === currentServerId
+							? (
+									workspaceRefs.current.get(group.projectId, folder.folderId) ??
+									commandWorkspace(group.projectId)
+								)?.folderMenu(folder.folderId)?.entries
+							: undefined
+					}
+					{...(settings.agentIntegration.enabled &&
+					!isHomeSelected &&
+					activeProject !== null
+						? {
+								agents: (
+									<div
+										ref={setCompactAgentsHost}
+										className="compact-switcher__agents-host"
+									/>
+								),
+							}
+						: {})}
+					onActivatePanel={(row) => {
+						closeCompactSwitcher();
+						activateCompactSwitcherPanel(row);
+					}}
+					onAddConnection={() => {
+						closeCompactSwitcher();
+						if (onOpenConnectionManager === undefined) {
+							setConnectionSwitcherError(
+								'Connection management is unavailable in this host.',
+							);
+							return;
+						}
+						onOpenConnectionManager();
+					}}
+					onClosePanel={closeCompactSwitcherPanel}
+					onCloseProject={(group) => {
+						closeComposedTab(
+							compositionTabKey(group.serverId, group.projectId),
+						);
+					}}
+					onDismiss={closeCompactSwitcher}
+					{...(serverUpgrades.rows.length === 0
+						? {}
+						: {
+								serverUpgrades: (
+									<ServerUpgradeMenuRows
+										rows={serverUpgrades.rows}
+										namesServers={serverUpgrades.namesServers}
+										onCheck={serverUpgrades.checkForUpgrade}
+										onUpgrade={(profileId) => {
+											closeCompactSwitcher();
+											serverUpgrades.requestUpgrade(profileId);
+										}}
+										variant="sheet"
+									/>
+								),
+							})}
+					{...(switchWindowServer === undefined
+						? {}
+						: {
+								servers: compactSwitcherServers,
+								onSwitchServer: (profileId: string) => {
 									setConnectionSwitcherError(null);
-									refreshConnectionSwitcherEntries();
-									setIsRemoteMenuOpen((current) => !current);
-								}}
-								remote={remoteIndicator}
-								slotRef={setStatusBarSlot}
-								pixelSlotRef={setPixelSlot}
-							/>
-						) : null}
-						{isPixelShown &&
-						activeServerId !== undefined &&
-						(isCompactChrome
-							? compactPixelSlot !== null
-							: !isStatusBarVisible || pixelSlot !== null) ? (
-							<PixelCompanion
-								server={pixelServer}
-								serverId={activeServerId}
-								headerDock={isCompactChrome ? compactPixelSlot : null}
-								statusBarDock={isStatusBarVisible ? pixelSlot : null}
-							/>
-						) : null}
+									setCompactSwitchingProfileId(profileId);
+									// A switch that succeeds replaces this document; only a
+									// failure comes back here.
+									void switchWindowServer(profileId)
+										.catch((cause: unknown) => {
+											closeCompactSwitcher();
+											setConnectionSwitcherError(
+												cause instanceof Error
+													? cause.message
+													: 'Terminay could not switch to that server.',
+											);
+										})
+										.finally(() => setCompactSwitchingProfileId(undefined));
+								},
+							})}
+					onEditProject={(group) => {
+						closeCompactSwitcher();
+						void openEditComposedTab(
+							compositionTabKey(group.serverId, group.projectId),
+						);
+					}}
+					onRenamePanel={(row) => {
+						closeCompactSwitcher();
+						editCompactSwitcherPanel(row);
+					}}
+					onMovePanelToFolder={(row, folderId) =>
+						moveTerminalToFolder(row.projectId, row.panelId, folderId)
+					}
+					onNewProject={() => {
+						closeCompactSwitcher();
+						void createProjectOnServer(currentServerId);
+					}}
+					onCreateTerminal={(group, folder, launcherId) => {
+						closeCompactSwitcher();
+						createCompactTerminal(group, folder, launcherId);
+					}}
+					onFolderMenuAction={(group, folder, action) => {
+						closeCompactSwitcher();
+						runCompactFolderAction(group, folder, action);
+					}}
+					onActivateFolder={(group, folder) => {
+						closeCompactSwitcher();
+						// A folder on another server is reached by going there; which
+						// folder is in front is then that visit's own choice.
+						if (activateAnotherServer(group.serverId, group.projectId)) return;
+						selectFolder(group.projectId, folder.folderId);
+						activateProject(group.projectId);
+					}}
+					onOpenHomeSection={(section) => {
+						closeCompactSwitcher();
+						openHomeSection(section);
+					}}
+					onReorderFolders={reorderCompactFolders}
+					onReorderPanels={reorderCompactPanels}
+					onReorderProjects={(projectIds) => {
+						// The current server's tabs take the new order in the places
+						// they already hold; every other tab stays where it is.
+						const own = new Map(
+							displayedProjects
+								.filter((tab) => tab.serverId === currentServerId)
+								.map((tab) => [tab.id, tab]),
+						);
+						const ordered = projectIds.flatMap((projectId) => {
+							const tab = own.get(projectId);
+							return tab === undefined ? [] : [tab];
+						});
+						let next = 0;
+						onReorderComposed(
+							displayedProjects.map((tab) =>
+								tab.serverId === currentServerId
+									? (ordered[next++] ?? tab)
+									: tab,
+							),
+						);
+						// The one project that moved is committed to the server, as a
+						// dropped tab is; the reorder above has already updated the
+						// order it is committed against.
+						const before = [...own.keys()];
+						const after = ordered.map((tab) => tab.id);
+						const first = after.findIndex((id, index) => id !== before[index]);
+						if (first < 0) return;
+						let last = after.length - 1;
+						while (last > first && after[last] === before[last]) last -= 1;
+						const moved =
+							after[first] === before[last] ? after[first] : after[last];
+						const movedTab = own.get(moved);
+						if (movedTab !== undefined) persistMovedComposedTab(movedTab.handle);
+					}}
+					onToggleFolderCollapsed={(group, folder) => {
+						if (group.serverId === currentServerId)
+							toggleFolderCollapsed(group.projectId, folder.folderId);
+					}}
+					{...(activeCompactPanel === undefined
+						? {}
+						: {
+								activePanelKey: compositionTabKey(
+									currentServerId,
+									activeCompactPanel.panelId,
+								),
+							})}
+				/>
+			) : null}
 
-						{serverUpgrades.confirmation === undefined ? null : (
-							<ServerUpgradeDialog
-								key={serverUpgrades.confirmation.entry.profileId}
-								confirmation={serverUpgrades.confirmation}
+			<div className="workspace-stack">
+				{isPendingProjectFailure && failedProjectCreation !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error workspace-empty-state--actionable"
+						role="alert"
+					>
+						<span>
+							{failedProjectCreation.tab.creationError ??
+								'Project creation failed.'}
+						</span>
+						<span className="workspace-empty-state__actions">
+							<button type="button" onClick={() => void createServerProject()}>
+								Retry
+							</button>
+							<button
+								type="button"
+								onClick={() =>
+									closeComposedTab(
+										compositionTabKey(
+											currentServerId,
+											failedProjectCreation.tab.id,
+										),
+									)
+								}
+							>
+								Dismiss
+							</button>
+						</span>
+					</div>
+				) : null}
+				{isWorkspaceHydrating ? (
+					<div className="workspace-empty-state" role="status">
+						Loading workspace...
+					</div>
+				) : null}
+				{projectCreationError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{projectCreationError}
+					</div>
+				) : null}
+				{workspaceSynchronizationError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{workspaceSynchronizationError}
+					</div>
+				) : null}
+				{projectStartError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{projectStartError}
+					</div>
+				) : null}
+				{connectionFeatureError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{connectionFeatureError}
+					</div>
+				) : null}
+				<McpApprovalsContext.Provider value={serverMcpApprovals}>
+					{hasShownHome ? (
+					<HomeWorkspace
+						ref={attachHome}
+						automations={automationsData}
+						commandBarShortcutLabel={getCommandShortcutLabel(
+							settings.keyboardShortcuts,
+							'open-command-bar',
+							isMac,
+						)}
+						isActive={isHomeSelected}
+						isCompact={isCompactChrome}
+						compactDrawerEpoch={compactDrawerEpoch}
+						// A compact workspace has no Home sidebar; the switcher's
+						// Home panel opens sections, and the remembered choice is
+						// left for the next wide window.
+						isSidebarVisible={!isCompactChrome && isHomeSidebarVisible}
+						onDismissSidebar={() => setHomeSidebarVisibility(false)}
+						onOpenCommandBar={() => setIsViewCommandBarOpen(true)}
+						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}
+						onActiveTabChange={setHomeFrontTab}
+						onSidebarWidthCommit={setHomeSidebarWidth}
+						renderSection={renderHomeSection}
+						sectionBadges={homeSectionBadges}
+						hiddenSections={hiddenHomeSections}
+						renderBots={(host) => (
+							<BotsSection servers={serverBots} host={host} />
+						)}
+						renderBot={(target, host) => (
+							<BotTab
+								server={serverBots.get(target.serverId)}
+								botId={target.botId}
+								host={host}
 							/>
 						)}
-						{isPairingModalOpen ? (
-							<RemotePairingModal
-								expiresAt={selectedPairingExpiresAt}
-								busy={busyPairingApprovalId !== null}
-								onApprove={(approvalId) =>
-									void approvePairingDevice(approvalId)
-								}
-								onClose={closePairingModal}
-								onDeny={(approvalId) => void denyPairingDevice(approvalId)}
-								pairingUrl={selectedPairingUrl}
-								pendingApproval={pendingPairingApproval}
-								qrCodeDataUrl={visiblePairingQrCodeDataUrl}
-								statusMessage={remoteStatus?.webRtcStatusMessage}
-								success={pairingOutcome === 'success'}
+						renderSidebarBots={({ activeBot, openBot, openBots }) => (
+							<BotsSidebarList
+								servers={serverBots}
+								activeBot={activeBot}
+								onOpenBot={openBot}
+								unread={botUnread}
+								onNewBot={() => {
+									openBots();
+									requestNewBot();
+								}}
 							/>
-						) : null}
-					</div>
-				</WorkflowsContext.Provider>
-			</AppWindowsContext.Provider>
+						)}
+						renderForgeItem={(target, host) =>
+							target.serverId === currentServerId ? (
+								<ForgeItemView
+									client={forgeClient}
+									environment={forgeEnvironment}
+									target={{
+										sourceId: target.sourceId,
+										reference: {
+											kind: target.itemKind,
+											origin: target.origin,
+											owner: target.owner,
+											name: target.name,
+											number: target.number,
+										},
+									}}
+									setTitle={host.setTitle}
+								/>
+							) : (
+								<FeatureUnavailableState reason="This pull request or issue is on another server. Switch to that server to see it." />
+							)
+						}
+						renderBotIcon={(target) =>
+							serverBots.get(target.serverId)?.bots.some(
+								(bot) => bot.id === target.botId,
+							) ? (
+								<BotTabIcon servers={serverBots} target={target} />
+							) : undefined
+						}
+						sidebarWidth={homeSidebarWidth}
+					/>
+					) : null}
+					<ViewCommandBar
+						commands={viewCommands}
+						isOpen={isViewCommandBarOpen}
+						onClose={closeViewCommandBar}
+						searchPlaces={searchViewPlaces}
+					/>
+					<MissedRunsNotice automations={serverAutomations} />
+					{projectFolderWorkspaces.flatMap(
+						({ project, folders, selectedFolderId }) =>
+							// A project awaiting its start choice has no panels and no
+							// sidebar: its chooser stands in for the whole workspace.
+							projectAwaitsStartChoice(workspaceSnapshot, project.id) &&
+							terminalClientContext?.workspaceSnapshotStore !== undefined ? (
+								<ProjectStartChooser
+									key={`start:${project.id}`}
+									projectId={project.id}
+									projectTitle={project.title}
+									projectColor={project.color}
+									isActive={
+										!isHomeSelected &&
+										!isPendingProjectFailure &&
+										project.id === activeProjectId
+									}
+									isCompact={isCompactChrome}
+									{...(connections.length > 1
+										? { serverLabel: currentServerLabel }
+										: {})}
+									store={terminalClientContext.workspaceSnapshotStore}
+									recentFoldersKey={workspaceSnapshot?.recentProjectFolders}
+									onStarted={launchStartedProjectTerminal}
+									shownProjectIds={shownProjectIds}
+									onReuseProject={reuseOpenProject}
+								/>
+							) :
+							folders.map((folder) => (
+						<ProjectWorkspace
+							key={folderWorkspaceKey(project.id, folder.id)}
+							ref={workspaceRefFor(project.id, folder.id)}
+							agentStatusSnapshot={agentStatusSnapshot}
+							auxiliaryRoutes={auxiliaryRouteController}
+							folder={folder}
+							// On screen only as the selected folder of the project in front.
+							// Every other workspace keeps its terminals running behind it.
+							isActive={
+								!isHomeSelected &&
+								!isPendingProjectFailure &&
+								project.id === activeProjectId &&
+								folder.id === selectedFolderId
+							}
+							projectInventory={inventoryByProject[project.id] ?? NO_INVENTORY}
+							isFoldersTreeOpen={isFoldersTreeOpenFor(project.id)}
+							foldersTreeWidth={foldersColumnWidth}
+							onFoldersTreeWidthCommit={commitFoldersColumnWidth}
+							sidebarWidth={sidebarWidth}
+							onSidebarWidthCommit={commitSidebarWidth}
+							foldersColumnTab={foldersColumnTabFor(project.id)}
+							collapsedFolderIds={collapsedFolderSetFor(project.id)}
+							gitListingMemory={gitListingMemory}
+							onToggleFolderCollapsed={toggleFolderCollapsed}
+							onFoldersColumnTabChange={selectFoldersColumnTab}
+							compactAgentsHost={compactAgentsHost}
+							onCompactAgentActivated={closeCompactSwitcher}
+							acceptsFolderTerminalDrop={
+								terminalTabDrag?.sourceProjectId === project.id
+							}
+							onSelectFolder={selectFolder}
+							onActivateFolderPanel={activateFolderPanel}
+							onDropTerminalOnFolder={dropTerminalOnFolder}
+							onAnswerFolderOffer={answerFolderOffer}
+							onOpenShellInFolder={openShellInFolder}
+							onNewTerminalInFolder={newTerminalInFolder}
+							terminalLaunchers={terminalLaunchers}
+							{...(projectForgeContexts.get(project.id) === undefined
+								? {}
+								: { forge: projectForgeContexts.get(project.id) })}
+							onLaunchTerminalInFolder={launchTerminalInFolder}
+							onCloseFolderPanel={closeFolderPanel}
+							isCompactChrome={isCompactChrome}
+							sharedTerminalContextReaders={sharedTerminalContextReadersRef}
+							isMac={isMac}
+							macros={macros}
+							macroCategories={macroCategories}
+							onAddProject={createServerProject}
+							onShowDashboard={selectHome}
+							onShowRecordings={showRecordings}
+							onShowWorkflows={showWorkflows}
+							onCloseActiveWithNoPanel={closeProjectWithNoPanels}
+							searchPlaces={searchPlacesNow}
+							onToggleStatusBar={toggleStatusBar}
+							isStatusBarVisible={isStatusBarVisible}
+							statusBarSlot={statusBarSlot}
+							onEditProject={openEditProjectWindow}
+							onMoveTerminalToFolder={moveTerminalToFolder}
+							onMoveTerminalToProject={moveTerminalToProject}
+							onPopoutProject={popoutProject}
+							onTerminalTabDrag={reportTerminalTabDrag}
+							onWorkspaceInventoryChange={updateWorkspaceInventory}
+							onWorktreeStatusChange={
+								isCompactChrome ? noteWorktreeStatusChange : undefined
+							}
+							onCommitProjectSidebar={commitProjectSidebar}
+							onUpdateProject={updateProject}
+							popoutUrl={popoutUrl}
+							project={project}
+							projects={projects}
+							terminalClientContext={terminalClientContext}
+							adoptedTerminals={adoptedTerminalsByProject[project.id]}
+						/>
+							)),
+					)}
+				<AppWindowHost />
+				</McpApprovalsContext.Provider>
+			</div>
+			{isStatusBarVisible ? (
+				<WorkspaceStatusBar
+					{...(hostStatsItemsShown === undefined ? {} : { hostStats: hostStatsItemsShown })}
+					onToggleConnectionMenu={() => {
+						setIsActivityMenuOpen(false);
+						setConnectionSwitcherError(null);
+						refreshConnectionSwitcherEntries();
+						setIsRemoteMenuOpen((current) => !current);
+					}}
+					remote={remoteIndicator}
+					slotRef={setStatusBarSlot}
+					pixelSlotRef={setPixelSlot}
+				/>
+			) : null}
+			{isPixelShown &&
+			activeServerId !== undefined &&
+			(isCompactChrome
+				? compactPixelSlot !== null
+				: !isStatusBarVisible || pixelSlot !== null) ? (
+				<PixelCompanion
+					server={pixelServer}
+					serverId={activeServerId}
+					headerDock={isCompactChrome ? compactPixelSlot : null}
+					statusBarDock={isStatusBarVisible ? pixelSlot : null}
+				/>
+			) : null}
+
+			{serverUpgrades.confirmation === undefined ? null : (
+				<ServerUpgradeDialog
+					key={serverUpgrades.confirmation.entry.profileId}
+					confirmation={serverUpgrades.confirmation}
+				/>
+			)}
+			{isPairingModalOpen ? (
+				<RemotePairingModal
+					expiresAt={selectedPairingExpiresAt}
+					busy={busyPairingApprovalId !== null}
+					onApprove={(approvalId) => void approvePairingDevice(approvalId)}
+					onClose={closePairingModal}
+					onDeny={(approvalId) => void denyPairingDevice(approvalId)}
+					pairingUrl={selectedPairingUrl}
+					pendingApproval={pendingPairingApproval}
+					qrCodeDataUrl={visiblePairingQrCodeDataUrl}
+					statusMessage={remoteStatus?.webRtcStatusMessage}
+					success={pairingOutcome === 'success'}
+				/>
+			) : null}
+		</div>
+		</WorkflowsContext.Provider>
+		</AppWindowsContext.Provider>
 		</TerminalTitleStoreContext.Provider>
 	);
 }
