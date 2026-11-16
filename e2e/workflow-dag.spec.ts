@@ -164,6 +164,12 @@ test('steps that run alongside each other are a bracket, the rail a capsule, and
 		await expect(expanded.locator('.workflow-step-after')).toHaveCount(0);
 		await expect(expanded.locator('.workflow-step--active')).toHaveCount(2);
 		await expect(expanded.locator('.workflow-progress')).toContainText('1 of 5 done · 2 running');
+		// The progress line takes the header's whole width, and wraps only between its parts.
+		for (const part of await expanded.locator('.workflow-progress-part').all())
+			expect((await part.boundingBox())?.height).toBeLessThanOrEqual(17);
+		expect((await expanded.locator('.workflow-progress').boundingBox())?.width).toBeGreaterThan(
+			((await expanded.locator('.workflow-header-buttons').boundingBox())?.x ?? 0) - ((await panel.boundingBox())?.x ?? 0),
+		);
 		await expectTerminalClear(panelFor(mainWindow, sessionId), panel, 'right');
 		await panel.screenshot({ path: testInfo.outputPath('dag-vertical-expanded.png') });
 
@@ -253,7 +259,24 @@ test('the options menu switches to the horizontal drawer, whose map, strip and s
 		await expect(menu).toBeVisible();
 		await expect(menu.getByRole('menuitemradio', { name: /Vertical/u })).toHaveAttribute('aria-checked', 'true');
 		await expect(menu.getByRole('menuitemradio', { name: /Vertical/u })).toBeFocused();
-		await panel.screenshot({ path: testInfo.outputPath('dag-options-menu.png') });
+		// Step notes are chosen here too, under Show as.
+		await expect(menu.getByRole('menuitemradio', { name: 'Step notes: Full' })).toHaveAttribute('aria-checked', 'true');
+		// Wider than the panel, the menu still lies wholly inside the window.
+		const menuBox = await menu.boundingBox();
+		const viewport = mainWindow.viewportSize() ?? (await mainWindow.evaluate(() => ({ width: innerWidth, height: innerHeight })));
+		expect(menuBox?.x).toBeGreaterThanOrEqual(0);
+		expect((menuBox?.x ?? 0) + (menuBox?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
+		expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
+		const clipX = Math.max(0, (menuBox?.x ?? 0) - 40);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('dag-options-menu.png'),
+			clip: {
+				x: clipX,
+				y: 0,
+				width: viewport.width - clipX,
+				height: Math.min(viewport.height, (menuBox?.y ?? 0) + (menuBox?.height ?? 0) + 60),
+			},
+		});
 		const rowsBefore = (await terminal.locator('.xterm-rows').textContent()) ?? '';
 		await mainWindow.keyboard.type('zqzq');
 		await mainWindow.keyboard.press('ArrowDown');
@@ -373,7 +396,19 @@ test('in a short pane the drawer keeps its strip, and its overlay closes the men
 		});
 		await expect(drawer).toHaveAttribute('data-workflow-mode', 'forced-collapsed', { timeout: READY_TIMEOUT_MS });
 		const height = () => terminal.evaluate((element) => element.querySelector('.xterm-screen')?.getBoundingClientRect().height ?? -1);
-		const before = await height();
+		// The terminal refits after the window shrinks; take its height once it holds still.
+		let before = -1;
+		await expect
+			.poll(
+				async () => {
+					const first = await height();
+					await mainWindow.waitForTimeout(300);
+					before = await height();
+					return before === first && before > 0;
+				},
+				{ timeout: READY_TIMEOUT_MS },
+			)
+			.toBe(true);
 
 		// Expanding opens the overlay: focused, over the terminal, with no strip behind it.
 		await drawer.getByRole('button', { name: 'Expand workflow' }).click();
@@ -444,6 +479,22 @@ test('the outline editor builds two tracks, which launch as a bracket, and moves
 		await settings.keyboard.press('Alt+ArrowUp');
 		await expect(settings.getByLabel('Step 2 title')).toHaveValue('Review three');
 		await expect(settings.getByLabel('Step 1 title')).toHaveValue('Propose');
+
+		// A step's prompt opens beneath its row and takes as many lines as it needs.
+		const promptToggle = settings.getByRole('button', { name: 'Step 1 prompt', exact: true });
+		await promptToggle.click();
+		await expect(promptToggle).toHaveAttribute('aria-expanded', 'true');
+		const prompt = settings.getByLabel('Step 1 prompt text', { exact: true });
+		const lines = ['Propose the change.', '', '- capture every decision', '- do not reopen settled questions', '- list open questions'];
+		await prompt.fill(lines.join('\n'));
+		await expect(prompt).toHaveValue(lines.join('\n'));
+		expect(Number(await prompt.getAttribute('rows'))).toBeGreaterThanOrEqual(lines.length);
+		await settings.locator('.workflow-steps-editor').screenshot({ path: testInfo.outputPath('dag-outline-prompt.png') });
+		// Escape closes it, back on the title; the closed row shows the prompt's first line.
+		await settings.keyboard.press('Escape');
+		await expect(prompt).toHaveCount(0);
+		await expect(settings.getByLabel('Step 1 title')).toBeFocused();
+		await expect(settings.locator('[data-step-key] .workflow-outline-excerpt').first()).toHaveText('Propose the change.');
 		await settings.locator('.workflow-steps-editor').screenshot({ path: testInfo.outputPath('dag-outline-editor.png') });
 		await settings.getByRole('button', { name: 'Save', exact: true }).click();
 		await expect(settings.locator('.macro-save-state')).toHaveText('Saved');

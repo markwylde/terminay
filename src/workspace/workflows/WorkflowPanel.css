@@ -240,24 +240,35 @@
   font-size: 13px;
 }
 
+/* The eyebrow shares its row with the buttons; the name and progress take the
+   panel's whole width beneath, so neither is squeezed beside the buttons. */
 .workflow-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 14px 12px 14px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 12px 12px 14px 16px;
   border-bottom: 1px solid rgb(255 255 255 / 0.08);
 }
 
 .workflow-summary {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  display: contents;
+}
+
+.workflow-header > .workflow-header-buttons {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.workflow-summary > .workflow-name,
+.workflow-summary > .workflow-progress {
+  grid-column: 1 / -1;
 }
 
 .workflow-eyebrow {
-  margin-bottom: 2px;
+  grid-row: 1;
+  grid-column: 1;
   color: var(--text-secondary, #9aa4af);
   font-size: 10px;
   line-height: 14px;
@@ -275,54 +286,14 @@
 }
 
 .workflow-progress {
-  margin-top: 2px;
   color: var(--text-secondary, #9aa4af);
   font-size: 12px;
   line-height: 16px;
 }
 
-/* The note density: its own line under the summary, so it never competes
-   with the collapse button for the header's width. */
-.workflow-notes-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  max-width: 100%;
-  margin-top: 6px;
-}
-
-.workflow-notes-label {
-  color: var(--text-secondary, #9aa4af);
-  font-size: 10px;
-  line-height: 14px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.workflow-notes-select {
-  min-width: 0;
-  max-width: 100%;
-  height: 22px;
-  padding: 0 4px;
-  border: 1px solid rgb(255 255 255 / 0.14);
-  border-radius: 6px;
-  color: var(--text-primary, #e6e6e6);
-  background: rgb(255 255 255 / 0.04);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.workflow-notes-select:hover,
-.workflow-notes-select:focus-visible {
-  background: rgb(255 255 255 / 0.08);
-}
-
-.workflow-notes-select option {
-  color: #e6e6e6;
-  background: #1e1e1e;
+/* "2s elapsed" never breaks from its number: the line wraps only between parts. */
+.workflow-progress-part {
+  white-space: nowrap;
 }
 
 /* 2 lines: the note is cut, never changed; its full text is its title. */
@@ -788,11 +759,17 @@
   flex: none;
 }
 
+/* Fixed, and placed inside the window by WorkflowOptionsMenu, so no pane or
+   panel edge clips it. */
 .workflow-menu {
-  position: absolute;
-  z-index: 20;
-  right: 0;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
   box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   width: 236px;
@@ -806,12 +783,8 @@
   text-align: left;
 }
 
-.workflow-menu--down {
-  top: calc(100% + 6px);
-}
-
-.workflow-menu--up {
-  bottom: calc(100% + 6px);
+.workflow-menu-item.workflow-menu-item--plain {
+  grid-template-columns: 16px 1fr;
 }
 
 .workflow-menu-label {

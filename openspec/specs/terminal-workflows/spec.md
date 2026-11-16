@@ -96,7 +96,7 @@ Templates and categories SHALL be reorderable by dragging, and by Alt+Arrow Up a
 
 ### Requirement: Template editor
 
-The editor SHALL edit the name, description, category, opening prompt, and steps. The steps SHALL be edited as an outline drawn as the vertical panel draws a workflow, with brackets for steps that run alongside each other. Each step SHALL offer an icon picker of the fixed icon set, a title, a prompt, a remove control, "+ then", which adds a step directly after it in its track, and "+ alongside", which adds a step that runs alongside it. Each bracket SHALL offer "+ another track alongside", and the outline SHALL end with "+ Add step at the end". Removing a track's last step SHALL remove that track, and a bracket left with one track SHALL become a sequence. A step SHALL be moved within its track by dragging or by Alt+Arrow Up and Alt+Arrow Down on its handle. The editor SHALL show the text that launching the template types into the terminal. No template field SHALL choose whether the workflow panel is collapsed or expanded, or its layout.
+The editor SHALL edit the name, description, category, opening prompt, and steps. The steps SHALL be edited as an outline drawn as the vertical panel draws a workflow, with brackets for steps that run alongside each other. Each step SHALL be one row showing its icon, which opens the picker of the fixed icon set, its title, editable in place, and the first line of its prompt, with "+ then", which adds a step directly after it in its track, "+ alongside", which adds a step that runs alongside it, a control that opens its prompt, and a remove control at the row's end. An open prompt SHALL be edited beneath its row in a field that grows with its text and keeps every line, and Escape SHALL close it and return focus to the step's title. A step just added SHALL open with its title focused. Each bracket SHALL offer "+ another track alongside", and the outline SHALL end with "+ Add step at the end". Removing a track's last step SHALL remove that track, and a bracket left with one track SHALL become a sequence. A step SHALL be moved within its track by dragging or by Alt+Arrow Up and Alt+Arrow Down on its handle. The editor SHALL show the text that launching the template types into the terminal. No template field SHALL choose whether the workflow panel is collapsed or expanded, or its layout.
 
 #### Scenario: Reordering a step from the keyboard
 
@@ -107,6 +107,11 @@ The editor SHALL edit the name, description, category, opening prompt, and steps
 
 - **WHEN** the user opens a step's icon picker and chooses the wrench
 - **THEN** the step shows the wrench in the editor and in the workflow panel after the template is launched
+
+#### Scenario: Writing a prompt over several lines
+
+- **WHEN** the user opens a step's prompt and types a prompt of five lines
+- **THEN** the field shows all five lines, the template saves them, and once closed the row shows the prompt's first line
 
 #### Scenario: Removing a track's only step
 
@@ -837,7 +842,7 @@ The workflow panel's chosen width SHALL be a device-local user setting, kept and
 
 ### Requirement: Step note density in the panel
 
-The expanded workflow panel, and its narrow-pane overlay, SHALL offer a control in its header that shows step notes **Full**, cut to **2 lines**, or for **Current only**, which shows the notes of every `running`, `failed`, or `needs_input` step and no other. Full SHALL be the default. The choice SHALL change only how notes are shown: never which steps are listed, nor any note's text.
+The expanded workflow panel, and its narrow-pane overlay, SHALL offer in its ⋯ workflow options menu a choice that shows step notes **Full**, cut to **2 lines**, or for **Current only**, which shows the notes of every `running`, `failed`, or `needs_input` step and no other. Full SHALL be the default. The choice SHALL change only how notes are shown: never which steps are listed, nor any note's text.
 
 #### Scenario: Current only
 
@@ -881,13 +886,13 @@ The expanded workflow panel, and its narrow-pane overlay, SHALL offer a control 
 
 #### Scenario: Choosing a density in the overlay
 
-- **WHEN** the user opens the overlay in a narrow pane and chooses Current only from its header with the keyboard
+- **WHEN** the user opens the overlay in a narrow pane and chooses Current only from its ⋯ menu with the keyboard
 - **THEN** the overlay stays open showing notes for Current only, the terminal receives no input, Escape still closes the overlay, and reopening it shows Current only
 
 #### Scenario: The header at the narrowest panel
 
 - **WHEN** the panel is drawn at its 200-pixel minimum, or the overlay narrower than that, with a workflow name longer than the panel is wide
-- **THEN** the name wraps, and the density control and the collapse control are both fully visible and usable
+- **THEN** the name wraps, the progress line wraps only between its parts, the ⋯ control and the collapse control are both fully visible and usable, and the opened menu lies inside the window
 
 ### Requirement: Panel note density is a device-local setting
 
@@ -1012,7 +1017,7 @@ A terminal's workflow SHALL be shown in one of two layouts: **vertical**, the wo
 
 ### Requirement: Workflow options menu
 
-The expanded panel, the collapsed rail, the expanded drawer, and the collapsed strip SHALL each offer a ⋯ control at their top right that opens the workflow options menu. The menu SHALL offer **Show as** with **Vertical** and **Horizontal** as a choice of one, the current layout marked, followed by **Remove workflow…**. Choosing a layout SHALL apply it and close the menu. Choosing Remove workflow… SHALL replace the menu's content with a confirmation that names the workflow and offers Cancel and Remove; Remove SHALL remove the workflow, and Cancel SHALL return to the menu without changing anything. When removing fails, the menu SHALL say the workflow could not be removed and the workflow SHALL be unchanged. The menu SHALL be operable from the keyboard, Escape SHALL close it and return focus to its ⋯ control, and opening it SHALL send no input to the terminal. No other control of the panel, rail, drawer, or strip SHALL remove a workflow.
+The expanded panel, the collapsed rail, the expanded drawer, and the collapsed strip SHALL each offer a ⋯ control at their top right that opens the workflow options menu. The menu SHALL offer **Show as** with **Vertical** and **Horizontal** as a choice of one, the current layout marked; in the vertical layout, **Step notes** with **Full**, **2 lines**, and **Current only** as a choice of one, the current density marked; and then **Remove workflow…**. Choosing a layout or a density SHALL apply it and close the menu. The menu SHALL open beside its ⋯ control and lie wholly inside the window, moved in from any window edge it would cross, and SHALL NOT be cut off by the pane, panel, or drawer that holds the control. Choosing Remove workflow… SHALL replace the menu's content with a confirmation that names the workflow and offers Cancel and Remove; Remove SHALL remove the workflow, and Cancel SHALL return to the menu without changing anything. When removing fails, the menu SHALL say the workflow could not be removed and the workflow SHALL be unchanged. The menu SHALL be operable from the keyboard, Escape SHALL close it and return focus to its ⋯ control, and opening it SHALL send no input to the terminal. No other control of the panel, rail, drawer, or strip SHALL remove a workflow.
 
 #### Scenario: Removing from the menu
 
@@ -1023,6 +1028,16 @@ The expanded panel, the collapsed rail, the expanded drawer, and the collapsed s
 
 - **WHEN** the user chooses Remove workflow… and then Cancel
 - **THEN** the menu shows Show as and Remove workflow… again and the workflow is unchanged
+
+#### Scenario: The menu stays inside the window
+
+- **WHEN** the panel is narrower than the menu, or the pane sits at the window's left edge, and the user opens the ⋯ menu
+- **THEN** the whole menu is visible inside the window
+
+#### Scenario: Choosing a note density from the menu
+
+- **WHEN** the layout is vertical and the user opens the ⋯ menu and chooses Step notes 2 lines
+- **THEN** the menu closes, focus returns to the ⋯ control, and the panel shows notes cut to two lines
 
 #### Scenario: Switching layout from the collapsed rail
 

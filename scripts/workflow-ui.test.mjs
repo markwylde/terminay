@@ -316,18 +316,16 @@ test('the expanded header offers Full, 2 lines and Current only, and the panel s
 	const at = (notes) => render({ mode: 'expanded', view: attached(steps), ...(notes ? { notes } : {}) });
 	const full = at();
 	assert.match(full, /class="workflow-panel workflow-panel--expanded workflow-panel--notes-full"/);
-	assert.match(full, /<select class="workflow-notes-select" aria-label="Step notes" title="Step notes">/);
-	assert.match(full, /<option value="full" selected="">Full<\/option><option value="short">2 lines<\/option><option value="current">Current only<\/option>/);
+	// The density is chosen in the ⋯ menu, not the header (ADR-0128).
+	assert.ok(!/<select/.test(full));
 	for (const note of ['note a', 'note b', 'note c', 'note d']) assert.match(full, new RegExp(note));
 	assert.ok(!/workflow-step-note[^>]*title=/.test(full), 'no title while notes show in full');
 
 	const short = at('short');
 	assert.match(short, /workflow-panel--notes-short/);
-	assert.match(short, /<option value="short" selected="">2 lines<\/option>/);
 	assert.match(short, /<span class="workflow-step-note workflow-text" title="note a">note a<\/span>/);
 
 	const currentOnly = at('current');
-	assert.match(currentOnly, /<option value="current" selected="">Current only<\/option>/);
 	assert.deepEqual(currentOnly.match(/note [a-e]/g), ['note b', 'note d']);
 	assert.equal(currentOnly.match(/class="workflow-step[ "]/g).length, 5, 'every step is still listed');
 
@@ -779,7 +777,7 @@ test('the editor shows the size against 56 KiB and the exact launch text', () =>
 	assert.ok(!/[\r\n\t]/.test(preview));
 	assert.equal(preview, library.launchPreview(`${template.openingPrompt}\n\n`));
 	assert.ok(markup.includes(preview.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#x27;')));
-	assert.ok(!/collapse|expanded/i.test(markup), 'no template field chooses how the panel opens');
+	assert.ok(!/collapse|(?<!aria-)expanded/i.test(markup), 'no template field chooses how the panel opens');
 	assert.match(markup, /<fieldset class="workflow-editor-fieldset">/);
 });
 
@@ -1220,7 +1218,7 @@ test('two reviews of one proposal show as a bracket of two tracks with no after 
 	assert.equal(markup.match(/class="workflow-track"/g).length, 2);
 	assert.doesNotMatch(markup, /workflow-step-after/);
 	assert.equal(markup.match(/workflow-step--active/g).length, 2);
-	assert.match(markup, /1 of 4 done · 2 running/);
+	assert.match(markup, /1 of 4 done<\/span><span aria-hidden="true"> · <\/span><span class="workflow-progress-part">2 running/);
 	// Propose, the bracket, then Amend, in that order.
 	assert.ok(markup.indexOf('Propose') < markup.indexOf('workflow-group') && markup.indexOf('workflow-group') < markup.indexOf('Amend'));
 });
@@ -1289,7 +1287,7 @@ test('the strip shows the count, the small map and every active step; the expand
 
 	const expanded = renderDrawer({ mode: 'expanded', view: reviews() });
 	assert.match(expanded, /--workflow-drawer-height:164px/);
-	assert.match(expanded, /1 of 4 done · 2 running/);
+	assert.match(expanded, /1 of 4 done<\/span><span aria-hidden="true"> · <\/span><span class="workflow-progress-part">2 running/);
 	// Propose in column 0, the reviews stacked in column 1, Amend in column 2.
 	const at = (id) => {
 		const match = expanded.match(new RegExp(`data-workflow-step-id="${id}"[^>]*style="left:(\\d+)px;top:(\\d+)px"`));

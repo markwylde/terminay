@@ -26,11 +26,10 @@ import { useWorkflowTrace, type WorkflowTrace } from './useWorkflowTrace';
 import { type MetroLayout, metroLayout } from './workflowGraph';
 import { WorkflowStepMarker } from './workflowIcons';
 import { WorkflowOptionsMenu } from './WorkflowOptionsMenu';
-import { StepAction, useNow } from './WorkflowPanel';
+import { StepAction, useNow, WorkflowProgress } from './WorkflowPanel';
 import {
 	isSettledStatus,
 	markerStyle,
-	progressLabel,
 	statusLabel,
 	stepTime,
 	stripWords,
@@ -209,7 +208,7 @@ function DrawerSummary({ workflow }: { readonly workflow: Workflow }) {
 	return (
 		<div className="workflow-drawer-summary">
 			<span className="workflow-drawer-name">{workflow.name}</span>
-			<span className="workflow-progress">{progressLabel(workflow, now)}</span>
+			<WorkflowProgress workflow={workflow} now={now} />
 		</div>
 	);
 }

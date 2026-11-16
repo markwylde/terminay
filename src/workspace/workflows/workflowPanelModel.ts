@@ -474,6 +474,11 @@ export function reservedHeight(layout: WorkflowDrawerLayout | undefined): number
  * before any step has started.
  */
 export function progressLabel(workflow: Workflow, now: number): string {
+	return progressParts(workflow, now).join(' · ');
+}
+
+/** The progress line's parts, each drawn unbroken so the line wraps only between them. */
+export function progressParts(workflow: Workflow, now: number): readonly string[] {
 	const running = workflow.steps.filter((step) => step.status === 'running').length;
 	const needs = workflow.steps.filter((step) => step.status === 'needs_input').length;
 	const since = elapsed(workflow, now);
@@ -482,7 +487,7 @@ export function progressLabel(workflow: Workflow, now: number): string {
 		...(running > 0 ? [`${running} running`] : []),
 		...(needs > 0 ? [`${needs} ${needs === 1 ? 'needs' : 'need'} you`] : []),
 		...(since === undefined ? [] : [`${since} elapsed`]),
-	].join(' · ');
+	];
 }
 
 /**

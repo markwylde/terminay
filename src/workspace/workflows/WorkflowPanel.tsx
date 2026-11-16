@@ -31,7 +31,7 @@ import {
 	canSkip,
 	isActive,
 	PANEL_SKIP_NOTE,
-	progressLabel,
+	progressParts,
 	showsStepNote,
 	statusLabel,
 	stepTime,
@@ -43,7 +43,6 @@ import {
 	type WorkflowPanelNotes,
 } from './workflowPanelModel';
 import {
-	setWorkflowPanelNotes,
 	setWorkflowPanelSetting,
 	setWorkflowPanelWidth,
 } from './workflowPanelSetting';
@@ -76,11 +75,23 @@ export function workflowRailWidth(view: SessionWorkflow): number {
 	return stageRailWidth(analyzeStages(view.workflow.steps).tree);
 }
 
-const NOTES_OPTIONS: readonly [WorkflowPanelNotes, string][] = [
-	['full', 'Full'],
-	['short', '2 lines'],
-	['current', 'Current only'],
-];
+/**
+ * A workflow's progress as one line that wraps only between its parts, so
+ * "2s elapsed" never breaks from its number.
+ */
+export function WorkflowProgress({ workflow, now }: { readonly workflow: Workflow; readonly now: number }) {
+	const parts = progressParts(workflow, now);
+	return (
+		<span className="workflow-progress">
+			{parts.map((part, index) => (
+				<Fragment key={part}>
+					{index === 0 ? null : <span aria-hidden="true">{' · '}</span>}
+					<span className="workflow-progress-part">{part}</span>
+				</Fragment>
+			))}
+		</span>
+	);
+}
 
 export function WorkflowPanel(props: WorkflowPanelProps) {
 	const [overlay, setOverlay] = useState(false);
@@ -356,10 +367,7 @@ function ExpandedWorkflow(
 						<span className="workflow-eyebrow">Workflow</span>
 					</div>
 				) : (
-					<WorkflowSummary
-						workflow={props.view.workflow}
-						notes={props.notes ?? 'full'}
-					/>
+					<WorkflowSummary workflow={props.view.workflow} />
 				)}
 				<div className="workflow-header-buttons">
 					<WorkflowOptionsMenu
@@ -394,13 +402,11 @@ function ExpandedWorkflow(
 	);
 }
 
-function WorkflowSummary({
-	workflow,
-	notes,
-}: {
-	readonly workflow: Workflow;
-	readonly notes: WorkflowPanelNotes;
-}) {
+/**
+ * The header's text. The eyebrow shares its row with the header's buttons;
+ * the name and progress take the panel's whole width beneath them.
+ */
+function WorkflowSummary({ workflow }: { readonly workflow: Workflow }) {
 	const now = useNow(workflow);
 	return (
 		<div className="workflow-summary">
@@ -408,27 +414,7 @@ function WorkflowSummary({
 				Workflow
 			</span>
 			<span className="workflow-name">{workflow.name}</span>
-			<span className="workflow-progress">{progressLabel(workflow, now)}</span>
-			<label className="workflow-notes-field">
-				<span className="workflow-notes-label" aria-hidden="true">
-					Notes
-				</span>
-				<select
-					className="workflow-notes-select"
-					aria-label="Step notes"
-					title="Step notes"
-					value={notes}
-					onChange={(event) =>
-						setWorkflowPanelNotes(event.target.value as WorkflowPanelNotes)
-					}
-				>
-					{NOTES_OPTIONS.map(([value, text]) => (
-						<option key={value} value={value}>
-							{text}
-						</option>
-					))}
-				</select>
-			</label>
+			<WorkflowProgress workflow={workflow} now={now} />
 		</div>
 	);
 }

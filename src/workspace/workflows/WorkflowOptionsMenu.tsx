@@ -11,12 +11,22 @@ import type {
 	WorkflowTarget,
 } from '@terminay/client-core';
 import { Check, Ellipsis } from 'lucide-react';
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
+import {
+	type KeyboardEvent,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from 'react';
 import {
 	setWorkflowLayout,
+	setWorkflowPanelNotes,
 	useWorkflowLayout,
+	useWorkflowPanelNotes,
 	type WorkflowLayout,
 } from './workflowPanelSetting';
+import type { WorkflowPanelNotes } from './workflowPanelModel';
 
 export interface WorkflowOptionsMenuProps {
 	readonly view: SessionWorkflow;
@@ -31,8 +41,19 @@ const LAYOUTS: readonly [WorkflowLayout, string, string][] = [
 	['horizontal', 'Horizontal', 'Bottom drawer'],
 ];
 
+const NOTES: readonly [WorkflowPanelNotes, string][] = [
+	['full', 'Full'],
+	['short', '2 lines'],
+	['current', 'Current only'],
+];
+
+/** The menu keeps this far from every edge of the window, and this far from its control. */
+const MENU_MARGIN = 8;
+const MENU_GAP = 6;
+
 export function WorkflowOptionsMenu(props: WorkflowOptionsMenuProps) {
 	const layout = useWorkflowLayout();
+	const notes = useWorkflowPanelNotes();
 	const [open, setOpen] = useState(false);
 	const [confirming, setConfirming] = useState(false);
 	const [failed, setFailed] = useState(false);
@@ -49,14 +70,77 @@ export function WorkflowOptionsMenu(props: WorkflowOptionsMenuProps) {
 	};
 
 	// Focus the checked layout, or the confirmation's Cancel, as the menu changes.
+	// Opening it from a pane that was not active makes the pane focus its
+	// terminal just after; take the focus back once that has happened.
 	useEffect(() => {
 		if (!open) return;
-		const menu = menuRef.current;
-		const first =
-			menu?.querySelector<HTMLElement>('[aria-checked="true"]') ??
-			menu?.querySelector<HTMLElement>('button');
-		first?.focus();
+		const focusFirst = () => {
+			const menu = menuRef.current;
+			if (menu === null || menu.contains(menu.ownerDocument.activeElement)) return;
+			const first =
+				menu.querySelector<HTMLElement>('[aria-checked="true"]') ?? menu.querySelector<HTMLElement>('button');
+			first?.focus();
+		};
+		focusFirst();
+		const view = menuRef.current?.ownerDocument.defaultView;
+		const frame = view?.requestAnimationFrame(() => view.requestAnimationFrame(focusFirst));
+		return () => {
+			if (frame !== undefined) view?.cancelAnimationFrame(frame);
+		};
 	}, [open, confirming]);
+
+	// Escape closes the open menu wherever the focus is, before anything else hears it.
+	useEffect(() => {
+		if (!open) return;
+		const owner = buttonRef.current?.ownerDocument;
+		const onKeyDown = (event: globalThis.KeyboardEvent) => {
+			if (event.key !== 'Escape') return;
+			event.preventDefault();
+			event.stopPropagation();
+			close(true);
+		};
+		owner?.addEventListener('keydown', onKeyDown, true);
+		return () => owner?.removeEventListener('keydown', onKeyDown, true);
+	}, [open]);
+
+	// Place the menu by its control and inside the window: below it when it
+	// fits (above, for the drawer, when that fits), right-aligned to it, and
+	// moved in from any edge it would cross. It is fixed, so no pane or panel
+	// clips it, and it is placed from where it actually landed, so a
+	// transformed ancestor cannot misplace it.
+	useLayoutEffect(() => {
+		if (!open) return;
+		const place = () => {
+			const button = buttonRef.current;
+			const menu = menuRef.current;
+			const view = button?.ownerDocument.defaultView;
+			if (button === null || menu === null || view === null || view === undefined) return;
+			menu.style.left = '0px';
+			menu.style.top = '0px';
+			const anchor = button.getBoundingClientRect();
+			const origin = menu.getBoundingClientRect();
+			const below = anchor.bottom + MENU_GAP;
+			const above = anchor.top - MENU_GAP - origin.height;
+			const fitsBelow = below + origin.height <= view.innerHeight - MENU_MARGIN;
+			const fitsAbove = above >= MENU_MARGIN;
+			const up =
+				(props.direction ?? 'down') === 'up' ? fitsAbove || !fitsBelow : !fitsBelow && fitsAbove;
+			const top = Math.max(
+				MENU_MARGIN,
+				Math.min(up ? above : below, view.innerHeight - MENU_MARGIN - origin.height),
+			);
+			const left = Math.max(
+				MENU_MARGIN,
+				Math.min(anchor.right - origin.width, view.innerWidth - MENU_MARGIN - origin.width),
+			);
+			menu.style.left = `${left - origin.left}px`;
+			menu.style.top = `${top - origin.top}px`;
+		};
+		place();
+		const view = buttonRef.current?.ownerDocument.defaultView;
+		view?.addEventListener('resize', place);
+		return () => view?.removeEventListener('resize', place);
+	}, [open, confirming, failed, layout, props.direction]);
 
 	// A press outside closes it, leaving focus where the press put it.
 	useEffect(() => {
@@ -152,7 +236,7 @@ export function WorkflowOptionsMenu(props: WorkflowOptionsMenuProps) {
 				<div
 					ref={menuRef}
 					id={menuId}
-					className={`workflow-menu workflow-menu--${props.direction ?? 'down'}`}
+					className="workflow-menu"
 					role="menu"
 					aria-label="Workflow options"
 					onKeyDown={onMenuKeyDown}
@@ -218,6 +302,33 @@ export function WorkflowOptionsMenu(props: WorkflowOptionsMenuProps) {
 									</span>
 								</button>
 							))}
+							{layout === 'vertical' ? (
+								<>
+									<hr className="workflow-menu-rule" />
+									<span className="workflow-menu-label" aria-hidden="true">
+										Step notes
+									</span>
+									{NOTES.map(([value, label]) => (
+										<button
+											key={value}
+											type="button"
+											role="menuitemradio"
+											aria-checked={notes === value}
+											aria-label={`Step notes: ${label}`}
+											className="workflow-menu-item workflow-menu-item--plain"
+											onClick={() => {
+												setWorkflowPanelNotes(value);
+												close(true);
+											}}
+										>
+											<span className="workflow-menu-check" aria-hidden="true">
+												{notes === value ? <Check size={13} strokeWidth={2.4} /> : null}
+											</span>
+											<span className="workflow-menu-text">{label}</span>
+										</button>
+									))}
+								</>
+							) : null}
 							{props.client === undefined ? null : (
 								<>
 									<hr className="workflow-menu-rule" />

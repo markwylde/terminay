@@ -166,6 +166,18 @@ That replaces their three hand-rolled versions. A step needing input reads "Docs
 
 The expanded drawer is as tall as its header plus its map need, at most 240px. `drawerLayout` takes that height, the pane height and the row height. It expands when `paneHeight − drawerHeight ≥ 10 rows`. Otherwise it shows the 46px strip, with the 85%-of-pane overlay on expand. The ⋯ menu handles Escape before the overlay does: the first Escape closes the menu, the second closes the overlay.
 
+### 12. Review of the built UI (added before merge)
+
+After seeing the built panel and editor, the user asked for three changes, and this change carries them:
+
+- **Notes in the ⋯ menu.** The note density leaves the expanded header and becomes a **Step notes** choice in the options menu, under Show as, shown in the vertical layout. The header becomes a grid: the eyebrow shares a row with the buttons, and the name and progress take the whole width below. The progress line wraps only between its parts, so "2s elapsed" never breaks from its number.
+- **The menu stays on screen.** The menu is `position: fixed`. It is placed from its control's rectangle, clamped 8px inside the window, and flipped above the control when it doesn't fit below. Its offsets are measured from where it actually lands, so a transformed ancestor cannot misplace it. A fixed menu also escapes the pane's clipping.
+- **The outline editor follows the prototype.**
+  - Each step is one row: its icon circle (the icon picker), its title edited in place, the first line of its prompt, and then "+ then", "+ alongside", a prompt control and remove.
+  - Brackets are drawn as a line down the tracks' left.
+  - A step's prompt opens beneath its row in a textarea that grows with its line count. The earlier editor had only a two-row box.
+  - A newly added step opens with its title focused.
+
 ## Risks / Trade-offs
 
 - [An agent written for `step_active` now sees two steps running and may be confused] → The launch and resume text explain the dependency rule. `step_blocked` names exactly what is unsettled. A plain list still behaves sequentially, because each step waits on the one above.

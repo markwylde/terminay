@@ -1,4 +1,4 @@
-/* Settings › Workflows: the step editor and launch preview. */
+/* Settings › Workflows: the step outline and launch preview. */
 .workflow-editor-textarea {
   box-sizing: border-box;
   width: 100%;
@@ -10,14 +10,16 @@
 .workflow-steps-editor {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 8px;
 }
 
+/* The outline (ADR-0128): one row per step, drawn as the vertical panel draws
+   a workflow, with a bracket of tracks for steps that run alongside each other. */
 .workflow-step-rows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   width: 100%;
   margin: 0;
   padding: 0;
@@ -25,78 +27,87 @@
 }
 
 .workflow-step-row {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 6px;
-  padding: 6px;
-  border: 1px solid var(--settings-border, rgb(127 127 127 / 0.25));
-  border-radius: 6px;
+  border-radius: 8px;
+  list-style: none;
+}
+
+.workflow-step-row:hover,
+.workflow-step-row:focus-within,
+.workflow-step-row--open {
+  background: rgb(127 127 127 / 0.08);
 }
 
 .workflow-step-row--drop {
   box-shadow: inset 0 2px 0 var(--settings-accent, #3b82f6);
 }
 
+.workflow-outline-row {
+  display: grid;
+  grid-template-columns: 18px 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 4px 10px 4px 4px;
+}
+
 .workflow-step-handle,
-.workflow-step-remove {
+.workflow-outline-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   color: inherit;
   background: transparent;
   cursor: pointer;
-  opacity: 0.7;
 }
 
 .workflow-step-handle {
+  width: 18px;
   cursor: grab;
+  opacity: 0;
+}
+
+.workflow-step-row:hover .workflow-step-handle,
+.workflow-step-row:focus-within .workflow-step-handle,
+.workflow-step-handle:focus-visible {
+  opacity: 0.6;
 }
 
 .workflow-step-handle:hover,
 .workflow-step-handle:focus-visible,
-.workflow-step-remove:hover,
-.workflow-step-remove:focus-visible {
+.workflow-outline-icon-button:hover,
+.workflow-outline-icon-button:focus-visible {
   opacity: 1;
   background: rgb(127 127 127 / 0.15);
 }
 
-.workflow-step-number {
-  min-width: 1.5em;
-  padding-top: 3px;
-  text-align: right;
-  opacity: 0.6;
-  font-variant-numeric: tabular-nums;
-}
-
-.workflow-step-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.workflow-step-title-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.workflow-step-title-row .settings-input-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
+/* The step's icon as the panel draws its marker; the picker is the circle itself. */
 .workflow-icon-picker {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1.5px solid var(--settings-text-muted, rgb(127 127 127 / 0.6));
+  border-radius: 50%;
+  color: var(--settings-text-muted, inherit);
+}
+
+.workflow-icon-picker[data-icon="none"] {
+  border-style: dashed;
+}
+
+.workflow-icon-picker:hover,
+.workflow-icon-picker:focus-within {
+  border-color: var(--settings-accent, #3b82f6);
+  color: var(--settings-text, inherit);
 }
 
 .workflow-icon-picker-swatch {
@@ -105,6 +116,196 @@
   justify-content: center;
   width: 16px;
   height: 16px;
+}
+
+.workflow-icon-picker select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.workflow-outline-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.workflow-outline-title {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  margin-left: -6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--settings-text, inherit);
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+}
+
+.workflow-outline-title:hover {
+  border-color: var(--settings-border, rgb(127 127 127 / 0.3));
+}
+
+.workflow-outline-title:focus {
+  border-color: var(--settings-accent, #3b82f6);
+  outline: none;
+  background: var(--settings-input-bg, rgb(127 127 127 / 0.06));
+}
+
+.workflow-outline-excerpt {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  color: var(--settings-text-muted, inherit);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.workflow-outline-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.workflow-outline-action {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--settings-text-muted, inherit);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.workflow-outline-icon-button {
+  color: var(--settings-text-muted, inherit);
+  opacity: 0.55;
+}
+
+.workflow-outline-icon-button--filled {
+  color: var(--settings-accent, #3b82f6);
+}
+
+.workflow-step-row:hover :is(.workflow-outline-action, .workflow-outline-icon-button),
+.workflow-step-row:focus-within :is(.workflow-outline-action, .workflow-outline-icon-button),
+.workflow-step-row--open :is(.workflow-outline-action, .workflow-outline-icon-button) {
+  opacity: 1;
+}
+
+.workflow-outline-action:hover,
+.workflow-outline-action:focus-visible {
+  color: var(--settings-text, inherit);
+  background: rgb(127 127 127 / 0.15);
+}
+
+.workflow-outline-action:disabled {
+  cursor: default;
+  opacity: 0.3;
+}
+
+/* A step's prompt, edited over as many lines as it needs. */
+.workflow-outline-detail {
+  padding: 0 12px 12px 66px;
+}
+
+.workflow-outline-prompt {
+  line-height: 1.5;
+}
+
+.workflow-outline-after {
+  font-size: 12px;
+  color: var(--settings-text-muted, inherit);
+}
+
+.workflow-outline-notice {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* A bracket: its tracks run at the same time, so a line runs down their left. */
+.workflow-outline-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-left: 18px;
+  list-style: none;
+}
+
+.workflow-outline-bracket {
+  position: relative;
+  align-self: stretch;
+}
+
+.workflow-outline-bracket::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: -12px;
+  width: 7px;
+  border: 2px solid var(--settings-text-muted, rgb(127 127 127 / 0.6));
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  opacity: 0.6;
+}
+
+.workflow-outline-track {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-outline-track + .workflow-outline-track {
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px dashed var(--settings-border, rgb(127 127 127 / 0.35));
+}
+
+.workflow-outline-link {
+  margin: 2px 0 6px 2px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--settings-text-muted, inherit);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.workflow-outline-link:hover,
+.workflow-outline-link:focus-visible {
+  color: var(--settings-text, inherit);
+  background: rgb(127 127 127 / 0.12);
+}
+
+.workflow-outline-link:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.workflow-outline-add-end {
+  align-self: flex-start;
+  margin-top: 6px;
 }
 
 .workflow-launch-preview {
@@ -130,72 +331,4 @@
   margin: 0;
   padding: 0;
   border: 0;
-}
-
-/* The outline (ADR-0128): brackets of tracks for steps placed alongside each other. */
-.workflow-outline-group {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 6px 6px 14px;
-  border: 1px dashed var(--settings-border, rgb(127 127 127 / 0.35));
-  border-left: 3px solid var(--settings-accent, #3b82f6);
-  border-radius: 8px;
-  list-style: none;
-}
-
-.workflow-outline-track {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.workflow-outline-track + .workflow-outline-track {
-  padding-top: 6px;
-  border-top: 1px dashed var(--settings-border, rgb(127 127 127 / 0.35));
-}
-
-.workflow-outline-step-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.workflow-outline-add {
-  padding: 1px 8px;
-  border: 1px solid var(--settings-border, rgb(127 127 127 / 0.3));
-  border-radius: 999px;
-  color: inherit;
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  opacity: 0.8;
-  cursor: pointer;
-}
-
-.workflow-outline-add:hover,
-.workflow-outline-add:focus-visible {
-  opacity: 1;
-  background: rgb(127 127 127 / 0.12);
-}
-
-.workflow-outline-add:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.workflow-outline-after {
-  font-size: 12px;
-  opacity: 0.7;
-}
-
-.workflow-outline-notice {
-  margin: 0;
-  font-size: 12px;
-  opacity: 0.8;
 }
