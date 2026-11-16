@@ -92,3 +92,28 @@ test('real Compose and native Podman use API attribution; another bot can contro
 	});
 	assert.ok((await request(rawSocket,'GET',`/images/${encodeURIComponent(tag)}/json`)).Id);
 });
+
+test('real Docker CLI attached run and start --attach complete through the proxy', { skip: !rawSocket || !process.env.BOT_PROXY_DOCKER_BIN, timeout:120000 }, async t => {
+	// The CLI waits for /containers/{id}/wait headers before /start; withheld headers deadlock both commands.
+	const docker=process.env.BOT_PROXY_DOCKER_BIN;
+	const root=await mkdtemp(join(tmpdir(),'proxy-real-attach-'));
+	const serverId=`proxy-attach-${process.pid}`;
+	const image=process.env.BOT_PROXY_TEST_IMAGE ?? 'localhost/terminay-bot:local';
+	const socketPath=join(root,'bot.sock');
+	const proxy=await startEngineProxy({rawSocket,socketPath,serverId,botId:'proxytest003',uid:process.getuid(),gid:process.getgid()});
+	const owned=async()=>request(rawSocket,'GET',`/containers/json?all=1&filters=${encodeURIComponent(JSON.stringify({label:[`terminay.server=${serverId}`]}))}`);
+	t.after(async()=>{
+		for (const c of await owned().catch(()=>[])) await request(rawSocket,'DELETE',`/containers/${c.Id}?force=1`).catch(()=>{});
+		await proxy.close();
+		await rm(root,{recursive:true,force:true});
+	});
+	const env={...process.env,DOCKER_HOST:`unix://${socketPath}`};
+	const run=await exec(docker,['run','--rm','--pull=never','--entrypoint','sh',image,'-c','echo proxy-run-ok'],{env,timeout:60000,killSignal:'SIGKILL'});
+	assert.equal(run.stdout.trim(),'proxy-run-ok');
+	const id=(await exec(docker,['create','--pull=never','--entrypoint','sh',image,'-c','echo proxy-attach-ok'],{env,timeout:30000,killSignal:'SIGKILL'})).stdout.trim();
+	const attached=await exec(docker,['start','--attach',id],{env,timeout:60000,killSignal:'SIGKILL'});
+	assert.equal(attached.stdout.trim(),'proxy-attach-ok');
+	assert.equal((await request(rawSocket,'GET',`/containers/${id}/json`)).State.ExitCode,0);
+	await exec(docker,['rm',id],{env,timeout:30000,killSignal:'SIGKILL'});
+	assert.deepEqual(await owned(),[]);
+});
