@@ -312,15 +312,20 @@ test('A saved server says whether this window holds it, and keeps Forget in a da
 		expect(box.y).toBeGreaterThanOrEqual(card.y + card.height + 16);
 	await shoot('saved-server-forget-confirm');
 
-	await page.emulateMedia({ colorScheme: 'light' });
-	await shoot('saved-server-forget-confirm-light');
-
 	// Rename swaps the actions for its form and puts the danger zone away.
-	await page.emulateMedia({ colorScheme: 'dark' });
 	await detail.getByRole('button', { name: 'Rename' }).click();
 	await expect(confirm).toHaveCount(0);
 	await expect(detail.locator('.settings-section-title')).toHaveText([
 		'Connection',
 	]);
 	await shoot('saved-server-rename');
+
+	// Light mode is loaded fresh, as a light-mode user opens it.
+	await page.emulateMedia({ colorScheme: 'light' });
+	await page.goto(fixtureUrl());
+	await listItem(page, 'Old build box').click();
+	await shoot('saved-server-detail-light');
+	await detail.getByRole('button', { name: 'Forget' }).click();
+	await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+	await shoot('saved-server-forget-confirm-light');
 });
