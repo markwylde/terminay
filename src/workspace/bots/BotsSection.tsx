@@ -38,6 +38,7 @@ import {
 } from './useBotEngine';
 import { useNow } from './useNow';
 import { botEntries, type ServerBots } from './useServerBots';
+import '../../components/AgentStatusIndicator.css';
 import './bots.css';
 import './botPanels.css';
 

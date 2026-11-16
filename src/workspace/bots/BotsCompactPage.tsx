@@ -328,11 +328,13 @@ function BotRow({
 			chips={
 				<CompactChip
 					tone={
-						ACTIVITY_TONE[activity] === 'attention'
-							? 'attention'
-							: ACTIVITY_TONE[activity] === 'working'
-								? 'working'
-								: undefined
+						activity === 'queued'
+							? 'info'
+							: ACTIVITY_TONE[activity] === 'attention'
+								? 'attention'
+								: ACTIVITY_TONE[activity] === 'working'
+									? 'working'
+									: undefined
 					}
 				>
 					{label}

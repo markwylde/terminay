@@ -11,9 +11,12 @@
 	--c-text: #e7ecf5;
 	--c-muted: #8d97a8;
 	--c-accent: #4db5ff;
-	--c-attention: #f2b44c;
+	/* Status colours alias the shared source (ADR-0126). */
+	--c-working: var(--status-working);
+	--c-attention: var(--status-attention);
 	--c-danger: #ff6b6b;
-	--c-done: #4cc38a;
+	--c-done: var(--status-done);
+	--c-idle: var(--status-idle);
 	--c-merged: #a58bff;
 	color: var(--c-text);
 }
@@ -304,11 +307,18 @@
 
 .crow__mark--attention {
 	background: var(--c-attention);
-	box-shadow: 0 0 0 3px rgba(242, 180, 76, 0.25);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-attention) 25%, transparent);
 }
 
 .crow__mark--working {
-	background: var(--c-accent);
+	background: var(--c-working);
+	animation: agent-status-breathe 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.crow__mark--working {
+		animation: none;
+	}
 }
 
 .crow__mark--done {
@@ -317,7 +327,7 @@
 
 .crow__mark--idle {
 	background: transparent;
-	border: 2px solid var(--c-muted);
+	border: 2px solid var(--c-idle);
 }
 
 .crow__mark--muted {
@@ -388,18 +398,22 @@
 }
 
 .crow__chip--attention {
-	background: rgba(242, 180, 76, 0.16);
+	background: color-mix(in srgb, var(--c-attention) 16%, transparent);
 	color: var(--c-attention);
 }
 
-.crow__chip--working,
+.crow__chip--working {
+	background: color-mix(in srgb, var(--c-working) 16%, transparent);
+	color: var(--c-working);
+}
+
 .crow__chip--info {
 	background: rgba(77, 181, 255, 0.14);
 	color: var(--c-accent);
 }
 
 .crow__chip--done {
-	background: rgba(76, 195, 138, 0.14);
+	background: color-mix(in srgb, var(--c-done) 14%, transparent);
 	color: var(--c-done);
 }
 
@@ -490,7 +504,7 @@
 .ccard {
 	margin: 12px 16px 0;
 	padding: 14px;
-	border: 1px solid rgba(242, 180, 76, 0.3);
+	border: 1px solid color-mix(in srgb, var(--c-attention) 30%, transparent);
 	border-radius: 14px;
 	background: var(--c-raise);
 }
@@ -938,7 +952,7 @@
 }
 
 .cdetail__step--attention {
-	background: rgba(242, 180, 76, 0.1);
+	background: color-mix(in srgb, var(--c-attention) 10%, transparent);
 	box-shadow: inset 3px 0 0 var(--c-attention);
 }
 
@@ -984,7 +998,7 @@
 	min-height: 36px;
 	margin-top: 6px;
 	padding: 0 12px;
-	border-color: rgba(242, 180, 76, 0.5);
+	border-color: color-mix(in srgb, var(--c-attention) 50%, transparent);
 	color: var(--c-attention);
 }
 

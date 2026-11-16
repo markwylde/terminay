@@ -222,6 +222,11 @@ test('compact section pages: seeded Tabs, Workflows, Automations, and Recordings
 	await expect(count(workflows, 'alert')).toHaveText('1');
 	await expect(count(workflows, 'alert')).toHaveAttribute('data-marked', 'true');
 	await expect(count(workflows, 'running')).toHaveText('1');
+	// A running workflow's mark is the wide workspace's amber, and breathes.
+	const runningMark = workflows.locator('.crow__mark--working').first();
+	await expect(runningMark).toBeVisible();
+	expect(await runningMark.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(232, 185, 49)');
+	expect(await runningMark.evaluate((element) => getComputedStyle(element).animationName)).toBe('agent-status-breathe');
 	await shot(mainWindow, testInfo, '04-workflows');
 	await workflows.locator('[data-compact-view-options]').click();
 	await shot(mainWindow, testInfo, '05-workflows-sheet');
