@@ -662,7 +662,7 @@ const savedTemplate = (id, extra = {}) => ({
 	description: '',
 	category: '',
 	openingPrompt: '',
-	steps: [{ id: `${id}-s1`, title: 'Explore', prompt: 'look around', icon: '' }],
+	steps: [{ id: `${id}-s1`, title: 'Explore', prompt: 'look around', icon: '', after: [] }],
 	...extra,
 });
 
@@ -670,7 +670,7 @@ test('the library groups by category, shows step counts, and the filter reaches 
 	const draft = library.draftFrom(
 		templateState(
 			[
-				savedTemplate('a', { category: 'OpenSpec', steps: [{ id: 's1', title: 'Propose', prompt: 'write the proposal', icon: '' }, { id: 's2', title: 'Apply', prompt: 'zebracorn', icon: '' }] }),
+				savedTemplate('a', { category: 'OpenSpec', steps: [{ id: 's1', title: 'Propose', prompt: 'write the proposal', icon: '', after: [] }, { id: 's2', title: 'Apply', prompt: 'zebracorn', icon: '', after: ['s1'] }] }),
 				savedTemplate('b', { category: 'Release' }),
 				savedTemplate('c'),
 			],
@@ -700,20 +700,31 @@ test('a saved step keeps its id on save, and a new step is sent without one', ()
 	assert.equal(library.templateFingerprint(draft.templates[0]), library.templateFingerprint(library.draftFrom(templateState([savedTemplate('a')])).templates[0]));
 });
 
-test('Alt+Arrow moves a step by one place and never past either end', () => {
-	assert.deepEqual(library.moveBy(['a', 'b', 'c'], 2, -1), ['a', 'c', 'b']);
-	const same = ['a', 'b'];
-	assert.equal(library.moveBy(same, 0, -1), same);
-	assert.equal(library.moveBy(same, 1, 1), same);
-	assert.deepEqual(library.moveBefore(['a', 'b', 'c'], 0, 3), ['b', 'c', 'a']);
-	assert.deepEqual(library.moveBefore(['a', 'b', 'c'], 2, 0), ['c', 'a', 'b']);
+test('the outline editor draws a bracket, its actions, and a handle per step', () => {
+	const template = library.withSteps(
+		{ id: 't', name: 'T', description: '', category: '', openingPrompt: '' },
+		[
+			{ key: 'p', title: 'Propose', prompt: '', icon: '', after: [] },
+			{ key: 'c', title: 'Codex review', prompt: '', icon: '', after: ['p'] },
+			{ key: 's', title: 'Spec review', prompt: '', icon: '', after: ['p'] },
+			{ key: 'a', title: 'Amend', prompt: '', icon: '', after: ['c', 's'] },
+		],
+	);
+	const noop = () => {};
 	const markup = renderToStaticMarkup(
-		React.createElement(category.StepList, {
-			editor: { addStep() {}, removeStep() {}, updateStep() {}, moveStep() {}, reorderSteps() {} },
-			template: library.draftFrom(templateState([savedTemplate('a')])).templates[0],
+		React.createElement(category.StepOutline, {
+			editor: { addStep: noop, addStepThen: noop, addStepAlongside: noop, addStepTrack: noop, removeStep: noop, updateStep: noop, moveStep: noop, moveStepBefore: noop },
+			template,
 		}),
 	);
 	assert.match(markup, /aria-label="Move step 1" aria-keyshortcuts="Alt\+ArrowUp Alt\+ArrowDown"/);
+	assert.equal(markup.match(/class="workflow-outline-group"/g).length, 1);
+	assert.equal(markup.match(/class="workflow-outline-track"/g).length, 2);
+	assert.equal(markup.match(/>\+ then</g).length, 4);
+	assert.equal(markup.match(/>\+ alongside</g).length, 4);
+	assert.match(markup, />\+ another track alongside</);
+	assert.match(markup, />\+ Add step at the end</);
+	assert.doesNotMatch(markup, /workflow-outline-after|workflow-outline-notice/);
 });
 
 test('the icon picker offers none and every icon, and shows the chosen one', () => {
@@ -850,7 +861,7 @@ test('a stale save explains itself, and a refusal is read through the facade wra
 
 const templateFor = (id, name, category = '') => ({
 	id, name, description: '', category, openingPrompt: '', revision: 1,
-	steps: [{ id: `${id}-1`, title: 'Investigate', prompt: '', icon: '' }],
+	steps: [{ id: `${id}-1`, title: 'Investigate', prompt: '', icon: '', after: [] }],
 });
 const commandTemplates = templateState(
 	[templateFor('loose', 'Loose ends'), { ...templateFor('std', 'Standard flow', 'OpenSpec'), description: 'Not the lite one' }, templateFor('hot', 'Hotfix', 'Release'), templateFor('lite', 'Lite flow', 'OpenSpec')],

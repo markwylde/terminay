@@ -131,3 +131,71 @@
   padding: 0;
   border: 0;
 }
+
+/* The outline (ADR-0127): brackets of tracks for steps placed alongside each other. */
+.workflow-outline-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 6px 6px 14px;
+  border: 1px dashed var(--settings-border, rgb(127 127 127 / 0.35));
+  border-left: 3px solid var(--settings-accent, #3b82f6);
+  border-radius: 8px;
+  list-style: none;
+}
+
+.workflow-outline-track {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-outline-track + .workflow-outline-track {
+  padding-top: 6px;
+  border-top: 1px dashed var(--settings-border, rgb(127 127 127 / 0.35));
+}
+
+.workflow-outline-step-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.workflow-outline-add {
+  padding: 1px 8px;
+  border: 1px solid var(--settings-border, rgb(127 127 127 / 0.3));
+  border-radius: 999px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+.workflow-outline-add:hover,
+.workflow-outline-add:focus-visible {
+  opacity: 1;
+  background: rgb(127 127 127 / 0.12);
+}
+
+.workflow-outline-add:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.workflow-outline-after {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.workflow-outline-notice {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.8;
+}

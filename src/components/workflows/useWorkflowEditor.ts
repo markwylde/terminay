@@ -3,6 +3,7 @@ import type {
 	WorkflowIconName,
 	WorkflowTemplateState,
 } from '@terminay/client-core';
+import { WORKFLOW_CLIENT_LIMITS } from '@terminay/client-core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	moveMacroInLibrary,
@@ -14,14 +15,26 @@ import {
 	type DraftTemplate,
 	describeSaveError,
 	draftFrom,
+	effectiveSteps,
 	emptyStep,
 	emptyTemplate,
-	moveBy,
 	templateFingerprint,
 	templateInput,
 	templateProblems,
 	type WorkflowDraft,
+	withSteps,
 } from './workflowLibraryModel';
+import {
+	addAlongside,
+	addAtEnd,
+	addThen,
+	addTrack,
+	moveBeforeInTrack,
+	moveWithinTrack,
+	type Outline,
+	outlineKeys,
+	removeStep as removeFromOutline,
+} from './workflowOutlineModel';
 
 const EMPTY_STATE: WorkflowTemplateState = Object.freeze({
 	revision: -1,
@@ -157,6 +170,35 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 		}));
 	const updateSteps = (id: string, update: (steps: readonly DraftStep[]) => readonly DraftStep[]) =>
 		updateTemplate(id, (template) => ({ ...template, steps: update(template.steps) }));
+	/**
+	 * A change to the outline's shape: the steps follow the outline's order,
+	 * and from now on saving derives every step's dependencies (ADR-0127).
+	 */
+	const reshape = (
+		id: string,
+		update: (outline: Outline, template: DraftTemplate) => { outline: Outline; added?: DraftStep },
+	) =>
+		updateTemplate(id, (template) => {
+			const { outline, added } = update(template.outline, template);
+			if (outline === template.outline && added === undefined) return template;
+			const byKey = new Map(
+				[...template.steps, ...(added === undefined ? [] : [added])].map((step) => [step.key, step]),
+			);
+			const steps = outlineKeys(outline).flatMap((key) => {
+				const step = byKey.get(key);
+				return step === undefined ? [] : [step];
+			});
+			return { ...template, outline, steps, shapeChanged: true };
+		});
+	const withNewStep = (
+		id: string,
+		place: (outline: Outline, key: string) => Outline,
+	) =>
+		reshape(id, (outline, template) => {
+			if (template.steps.length >= WORKFLOW_CLIENT_LIMITS.maxSteps) return { outline };
+			const added = emptyStep(template.steps.length + 1);
+			return { outline: place(outline, added.key), added };
+		});
 
 	const addTemplate = (category: string) => {
 		if (!isReady) return;
@@ -177,15 +219,32 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 			name: `${selected.name} copy`,
 			description: selected.description,
 			openingPrompt: selected.openingPrompt,
-			// A copy's steps are new steps with ids of their own.
-			steps: selected.steps.map((step, index) => ({ ...emptyStep(index + 1), title: step.title, prompt: step.prompt, icon: step.icon })),
+			outline: [],
+			shapeChanged: false,
+			steps: [],
 		};
+		// A copy's steps are new steps with keys of their own, waiting on the same steps.
+		const source = effectiveSteps(selected);
+		const keys = new Map(source.map((step) => [step.key, emptyStep(0).key]));
+		const copied = withSteps(
+			copy,
+			source.map((step) => ({
+				key: keys.get(step.key) as string,
+				title: step.title,
+				prompt: step.prompt,
+				icon: step.icon,
+				after: step.after.flatMap((key) => {
+					const mapped = keys.get(key);
+					return mapped === undefined ? [] : [mapped];
+				}),
+			})),
+		);
 		change((current) => {
 			const templates = [...current.templates];
-			templates.splice(templates.findIndex((template) => template.id === selected.id) + 1, 0, copy);
+			templates.splice(templates.findIndex((template) => template.id === selected.id) + 1, 0, copied);
 			return { ...current, templates };
 		});
-		setSelectedId(copy.id);
+		setSelectedId(copied.id);
 	};
 
 	const deleteSelected = () => {
@@ -196,20 +255,27 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 		setSelectedId((remaining[index] ?? remaining[index - 1])?.id ?? null);
 	};
 
-	const addStep = (id: string) =>
-		updateSteps(id, (steps) => [...steps, emptyStep(steps.length + 1)]);
+	/** "+ Add step at the end". */
+	const addStep = (id: string) => withNewStep(id, addAtEnd);
+	/** "+ then": a step directly after `key` in its track. */
+	const addStepThen = (id: string, key: string) =>
+		withNewStep(id, (outline, added) => addThen(outline, key, added));
+	/** "+ alongside": a step that runs alongside `key`. */
+	const addStepAlongside = (id: string, key: string) =>
+		withNewStep(id, (outline, added) => addAlongside(outline, key, added));
+	/** "+ another track alongside" on the bracket named by its first step. */
+	const addStepTrack = (id: string, group: string) =>
+		withNewStep(id, (outline, added) => addTrack(outline, group, added));
 	const removeStep = (id: string, key: string) =>
-		updateSteps(id, (steps) => steps.filter((step) => step.key !== key));
+		reshape(id, (outline) => ({ outline: removeFromOutline(outline, key) }));
 	const updateStep = (id: string, key: string, update: Partial<Pick<DraftStep, 'title' | 'prompt'>> & { icon?: WorkflowIconName | '' }) =>
 		updateSteps(id, (steps) => steps.map((step) => (step.key === key ? { ...step, ...update } : step)));
+	/** Alt+Arrow on a handle: one place within its track. */
 	const moveStep = (id: string, key: string, direction: -1 | 1) =>
-		updateSteps(id, (steps) => moveBy(steps, steps.findIndex((step) => step.key === key), direction));
-	const reorderSteps = (id: string, keys: readonly string[]) =>
-		updateSteps(id, (steps) => {
-			const byKey = new Map(steps.map((step) => [step.key, step]));
-			const next = keys.map((key) => byKey.get(key)).filter((step): step is DraftStep => step !== undefined);
-			return next.length === steps.length ? next : steps;
-		});
+		reshape(id, (outline) => ({ outline: moveWithinTrack(outline, key, direction) }));
+	/** A drop: before another step of the same track, or at its end. */
+	const moveStepBefore = (id: string, key: string, before: string | null) =>
+		reshape(id, (outline) => ({ outline: moveBeforeInTrack(outline, key, before) }));
 
 	const createCategory = (): string => {
 		const name = nextCategoryName(draft.categories);
@@ -335,10 +401,13 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 		duplicateSelected,
 		deleteSelected,
 		addStep,
+		addStepThen,
+		addStepAlongside,
+		addStepTrack,
 		removeStep,
 		updateStep,
 		moveStep,
-		reorderSteps,
+		moveStepBefore,
 		createCategory,
 		renameCategory,
 		removeCategory,
