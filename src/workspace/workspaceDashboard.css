@@ -287,11 +287,14 @@
 	margin-top: 0;
 }
 
-/* Status, colour, kind, title, then the agent detail that fills what is left.
-   The detail cell is `minmax(0, auto)` so it surrenders width before the title
-   does: which agent it is matters more than which model it is running. */
+/* Status, colour, kind, title, then the agent detail that fills what is left,
+   then the folder's pull request and checks, then the server. The detail
+   surrenders width before the title does: which agent it is matters more than
+   which model it is running. The trailing cells have fixed columns so a row
+   without a detail or chips never moves them into the wrong track, and never
+   wraps them onto a second grid line. */
 .workspace-dashboard__row--panel {
-	grid-template-columns: 14px 3px 15px minmax(0, auto) minmax(0, 1fr);
+	grid-template-columns: 14px 3px 15px minmax(0, auto) minmax(0, 1fr) auto auto;
 	gap: 7px;
 	padding-left: 22px;
 	color: rgba(220, 226, 240, 0.82);
@@ -936,4 +939,19 @@
 
 .workspace-dashboard__row .workspace-dashboard__worktree {
 	flex: none;
+}
+
+.workspace-dashboard__row--panel > .workspace-dashboard__row-detail {
+	grid-column: 5;
+}
+
+/* The facts are never clipped: the detail and title give way first. */
+.workspace-dashboard__row--panel > .workspace-dashboard__worktree {
+	grid-column: 6;
+	min-width: max-content;
+	overflow: visible;
+}
+
+.workspace-dashboard__row--panel > .workspace-dashboard__server {
+	grid-column: 7;
 }

@@ -175,6 +175,8 @@ function listRequest(request: QueryRequest): ForgeListRequest {
 		...(Array.isArray(body.repositories)
 			? { repositories: body.repositories as ForgeListRequest['repositories'] }
 			: {}),
+		// Any value is passed on so a malformed filter is refused, never ignored.
+		...('accounts' in body ? { accounts: body.accounts as ForgeListRequest['accounts'] } : {}),
 		...(typeof body.text === 'string' ? { text: body.text } : {}),
 		...(typeof body.pageSize === 'number' ? { pageSize: body.pageSize } : {}),
 		...(typeof body.cursor === 'string' ? { cursor: body.cursor } : {}),

@@ -2,9 +2,12 @@ import type { BotPermission } from '@terminay/protocol';
 export function PermissionPrompt({
 	permission,
 	onDecide,
+	disabled = false,
 }: Readonly<{
 	permission: BotPermission;
 	onDecide: (optionId: string) => void;
+	/** True while a decision is in flight. */
+	disabled?: boolean;
 }>) {
 	const toolCall = permission.toolCall as Record<string, unknown> | null;
 	const title =
@@ -25,6 +28,7 @@ export function PermissionPrompt({
 						key={option.optionId}
 						type="button"
 						className={`bots-btn bots-btn--sm${option.kind.startsWith('allow') ? ' bots-btn--primary' : ''}`}
+						disabled={disabled}
 						onClick={() => onDecide(option.optionId)}
 						data-terminay-bot-permission-option={option.optionId}
 					>

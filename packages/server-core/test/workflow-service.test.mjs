@@ -22,6 +22,7 @@ import {
   workflowLaunchText,
   workflowResumeText,
 } from "../dist/index.js";
+import { typedWorkflowGoal } from "@terminay/protocol";
 
 const root = () => mkdtempSync(join(tmpdir(), "terminay-workflows-"));
 const step = (title, extra = {}) => ({ title, prompt: `do ${title}`, ...extra });
@@ -446,12 +447,23 @@ test("a held session keeps its file over shutdown; ending the session deletes it
 
 // 3.1 launch text
 
-test("launch and resume text is /goal, the opening prompt, and the fixed instruction", () => {
-  assert.equal(workflowLaunchText("Ship it."), `/goal Ship it.\n\n${WORKFLOW_LAUNCH_INSTRUCTION}`);
+test("launch and resume text is /goal, the opening prompt, and the fixed instruction, on one line", () => {
+  assert.equal(workflowLaunchText("Ship it."), `/goal Ship it. ${WORKFLOW_LAUNCH_INSTRUCTION}`);
+  assert.equal(workflowLaunchText("One.\r\n\n\tTwo."), `/goal One. Two. ${WORKFLOW_LAUNCH_INSTRUCTION}`);
+  // The template editor's preview shows this same text.
+  for (const prompt of ["Ship it.", "One.\n\nTwo.", "", "Café — 日本 😀"]) {
+    assert.equal(workflowLaunchText(prompt), typedWorkflowGoal(prompt, WORKFLOW_LAUNCH_INSTRUCTION));
+    assert.equal(workflowResumeText(prompt), typedWorkflowGoal(prompt, WORKFLOW_RESUME_INSTRUCTION));
+  }
   assert.equal(workflowLaunchText("  "), `/goal ${WORKFLOW_LAUNCH_INSTRUCTION}`);
   assert.equal(workflowResumeText(""), `/goal ${WORKFLOW_RESUME_INSTRUCTION}`);
   assert.match(WORKFLOW_RESUME_INSTRUCTION, /resume_step_id/u);
   assert.throws(() => workflowLaunchText("x".repeat(16 * 1024)), code("invalid_workflow"));
+  // The bound is on the text as composed: one that fits only once its line
+  // breaks are flattened is still refused.
+  const spacious = `a${"\n \n".repeat(16 * 1024 / 3)}b`;
+  assert.ok(typedWorkflowGoal(spacious, WORKFLOW_LAUNCH_INSTRUCTION).length < 16 * 1024);
+  assert.throws(() => workflowLaunchText(spacious), code("invalid_workflow"));
 });
 
 // skip-workflow-steps

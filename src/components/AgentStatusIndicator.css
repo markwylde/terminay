@@ -1,5 +1,14 @@
+:root {
+	/* The one source of status colours (ADR-0126). Every surface that shows
+	   agent, terminal, workflow, or bot status reads these. */
+	--status-working: #e8b931;
+	--status-attention: #ee6258;
+	--status-done: #45c874;
+	--status-idle: #77818c;
+}
+
 .agent-status-indicator {
-	--agent-status-color: #77818c;
+	--agent-status-color: var(--status-idle);
 	--agent-status-size: 7px;
 	display: inline-grid;
 	flex: 0 0 auto;
@@ -25,21 +34,21 @@
 }
 
 .agent-status-indicator--working {
-	--agent-status-color: #e8b931;
+	--agent-status-color: var(--status-working);
 }
 
 .agent-status-indicator--waiting,
 .agent-status-indicator--blocked,
 .agent-status-indicator--attention {
-	--agent-status-color: #ee6258;
+	--agent-status-color: var(--status-attention);
 }
 
 .agent-status-indicator--done {
-	--agent-status-color: #45c874;
+	--agent-status-color: var(--status-done);
 }
 
 .agent-status-indicator--idle {
-	--agent-status-color: #77818c;
+	--agent-status-color: var(--status-idle);
 	opacity: 0.52;
 }
 

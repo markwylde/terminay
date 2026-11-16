@@ -1,15 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+	createForgeClickIntent,
 	defaultIssueBranch,
+	FORGE_DOUBLE_CLICK_MS,
+	forgeItemPlaceholderTitle,
+	forgeItemTabTitle,
+	drawnForgeDetailWidth,
 	emptyReason,
+	forgeDetailLayout,
+	forgeDetailWidthBounds,
 	groupByRepository,
 	linkify,
 	orderedChecks,
 	projectPullRequestGroups,
 	pullRequestActions,
+	readForgeItemTarget,
 	readGitPaneLayout,
 	readPreferences,
+	homeAccountOptions,
+	effectiveAccount,
+	belongsToAccount,
+	type ForgeAccountOption,
 	reviewPrompt,
 	startWorkAvailability,
 	startWorkPrompt,
@@ -39,9 +51,9 @@ function entry(number: number, updatedAt: string, extra: Record<string, unknown>
 }
 
 test('a first visit selects Needs my review, open, grouped by repository', () => {
-	assert.deepEqual(readPreferences('pullRequest', null), { scope: 'reviewRequested', state: 'open', group: 'repo' });
-	assert.deepEqual(readPreferences('issue', 'not json'), { scope: 'assigned', state: 'open', group: 'repo' });
-	assert.deepEqual(readPreferences('issue', '{"scope":"mentioned","state":"closed","group":"none"}'), { scope: 'mentioned', state: 'closed', group: 'none' });
+	assert.deepEqual(readPreferences('pullRequest', null), { scope: 'reviewRequested', state: 'open', group: 'repo', account: null });
+	assert.deepEqual(readPreferences('issue', 'not json'), { scope: 'assigned', state: 'open', group: 'repo', account: null });
+	assert.deepEqual(readPreferences('issue', '{"scope":"mentioned","state":"closed","group":"none"}'), { scope: 'mentioned', state: 'closed', group: 'none', account: null });
 	assert.equal(readPreferences('issue', '{"state":"merged"}').state, 'open', 'issues have no merged state');
 });
 
@@ -157,4 +169,211 @@ test('the Git tab layout defaults to Issues then Pull Requests, and keeps what i
 	assert.deepEqual(stored.collapsed, { issues: false, pullRequests: true });
 	assert.equal(stored.heights.issues, 90);
 	assert.equal(stored.heights.pullRequests, fresh.heights.pullRequests);
+});
+
+function fakeTimers() {
+	const pending = new Map<number, () => void>();
+	let next = 0;
+	const delays: number[] = [];
+	return {
+		delays,
+		pending,
+		timers: {
+			set: (run: () => void, delayMs: number) => {
+				next += 1;
+				pending.set(next, run);
+				delays.push(delayMs);
+				return next;
+			},
+			clear: (handle: unknown) => {
+				pending.delete(handle as number);
+			},
+		},
+		flush: () => {
+			const runs = [...pending.values()];
+			pending.clear();
+			for (const run of runs) run();
+		},
+	};
+}
+
+test('a row that leaves the list waits out a single click and drops it for a double click', () => {
+	const calls: string[] = [];
+	const clock = fakeTimers();
+	const intent = createForgeClickIntent(
+		() => calls.push('single'),
+		() => calls.push('double'),
+		clock.timers,
+	);
+	intent.click(1);
+	assert.deepEqual(calls, []);
+	assert.deepEqual(clock.delays, [FORGE_DOUBLE_CLICK_MS]);
+	clock.flush();
+	assert.deepEqual(calls, ['single']);
+
+	calls.length = 0;
+	intent.click(1);
+	intent.click(2);
+	clock.flush();
+	assert.deepEqual(calls, ['double']);
+
+	calls.length = 0;
+	intent.click(1);
+	intent.click(2);
+	intent.click(3);
+	clock.flush();
+	assert.deepEqual(calls, ['double'], 'a third click opens nothing more');
+});
+
+test('a keyboard activation of a row acts at once', () => {
+	const calls: string[] = [];
+	const clock = fakeTimers();
+	const intent = createForgeClickIntent(
+		() => calls.push('single'),
+		() => calls.push('double'),
+		clock.timers,
+	);
+	intent.click(0);
+	assert.deepEqual(calls, ['single']);
+	assert.equal(clock.pending.size, 0);
+});
+
+test('a row that goes away drops its waiting single click', () => {
+	const calls: string[] = [];
+	const clock = fakeTimers();
+	const intent = createForgeClickIntent(
+		() => calls.push('single'),
+		() => calls.push('double'),
+		clock.timers,
+	);
+	intent.click(1);
+	intent.cancel();
+	clock.flush();
+	assert.deepEqual(calls, []);
+});
+
+test('an item tab is titled by repository and number until it loads, then by number and title', () => {
+	const reference = { kind: 'issue' as const, origin: ORIGIN, owner: 'acme', name: 'app', number: 540 };
+	assert.equal(forgeItemPlaceholderTitle(reference), 'app#540');
+	assert.equal(forgeItemTabTitle(reference, ' Open issues in a new tab '), '#540 Open issues in a new tab');
+	assert.equal(forgeItemTabTitle(reference, '   '), 'app#540');
+});
+
+test('an item tab reads only a well-formed target from its parameters', () => {
+	const target = {
+		sourceId: 'com.terminay.gitea/forge',
+		reference: { kind: 'pullRequest', origin: ORIGIN, owner: 'acme', name: 'app', number: 7 },
+	};
+	assert.deepEqual(readForgeItemTarget(target), target);
+	assert.equal(readForgeItemTarget(undefined), undefined);
+	assert.equal(readForgeItemTarget({ ...target, sourceId: '' }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, kind: 'commit' } }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, number: 0 } }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, number: 1.5 } }), undefined);
+	assert.equal(readForgeItemTarget({ ...target, reference: { ...target.reference, owner: '' } }), undefined);
+	assert.deepEqual(
+		readForgeItemTarget({ ...target, extra: true, reference: { ...target.reference, extra: true } }),
+		target,
+		'only the fields a tab needs are kept',
+	);
+});
+
+test('the Home preview is drawn within its bounds and leaves the list its room', () => {
+	assert.equal(drawnForgeDetailWidth(380, undefined), 380);
+	assert.equal(drawnForgeDetailWidth(380, 1_400), 380);
+	assert.equal(drawnForgeDetailWidth(900, 2_000), 720);
+	assert.equal(drawnForgeDetailWidth(100, 2_000), 280);
+	assert.equal(drawnForgeDetailWidth(720, 900), 580);
+	assert.equal(drawnForgeDetailWidth(480.6, undefined), 481);
+	// Too narrow for both: the preview keeps its minimum.
+	assert.equal(drawnForgeDetailWidth(500, 400), 280);
+	assert.deepEqual(forgeDetailWidthBounds(900), { min: 280, max: 580 });
+	assert.deepEqual(forgeDetailWidthBounds(undefined), { min: 280, max: 720 });
+	// Shrink and regrow: drawing never changes the chosen width, so it returns.
+	assert.deepEqual([1_400, 900, 1_400].map((grid) => drawnForgeDetailWidth(720, grid)), [720, 580, 720]);
+	// A stored width outside the preview's bounds is drawn within them.
+	assert.equal(drawnForgeDetailWidth(30, 1_400), 280);
+	assert.equal(drawnForgeDetailWidth(2_000, 1_400), 720);
+});
+
+test('the Home preview stacks under the list when the area is too narrow for both', () => {
+	assert.equal(forgeDetailLayout(undefined), 'side');
+	assert.equal(forgeDetailLayout(600), 'side');
+	assert.equal(forgeDetailLayout(599), 'stacked');
+	assert.equal(forgeDetailLayout(560), 'stacked');
+});
+
+// ── Account filter ─────────────────────────────────────────────────────
+
+const GITHUB_ORIGIN = 'https://github.com';
+const giteaAccount = { sourceId: 'com.terminay.gitea/forge', origin: ORIGIN };
+const githubAccount = { sourceId: 'com.terminay.github/forge', origin: GITHUB_ORIGIN };
+const accountSources = [
+	{
+		sourceId: giteaAccount.sourceId,
+		displayName: 'Gitea',
+		kinds: ['pullRequest', 'issue'] as const,
+		settings: { pullRequestsOnHome: true, issuesOnHome: true },
+	},
+	{
+		sourceId: githubAccount.sourceId,
+		displayName: 'GitHub',
+		kinds: ['pullRequest', 'issue'] as const,
+		settings: { pullRequestsOnHome: true, issuesOnHome: false },
+	},
+];
+const accountsAnswer = [
+	{
+		sourceId: giteaAccount.sourceId,
+		accounts: [
+			{ origin: ORIGIN, login: 'alice', state: 'ready' },
+			{ origin: 'https://old.example', login: 'alice', state: 'rejected' },
+		],
+	},
+	{ sourceId: githubAccount.sourceId, accounts: [{ origin: GITHUB_ORIGIN, login: 'alice', state: 'ready' }] },
+];
+
+test('a remembered account round-trips; a malformed one reads as All accounts', () => {
+	const stored = JSON.stringify({ scope: 'all', state: 'open', group: 'repo', account: giteaAccount });
+	assert.deepEqual(readPreferences('pullRequest', stored).account, giteaAccount);
+	for (const account of [
+		null,
+		'gitea',
+		{ sourceId: '', origin: ORIGIN },
+		{ sourceId: 'x', origin: 'http://insecure.example' },
+		{ sourceId: 'x' },
+	])
+		assert.equal(readPreferences('pullRequest', JSON.stringify({ account })).account, null, JSON.stringify(account));
+});
+
+test('the account control offers ready accounts of sources that show the kind on Home', () => {
+	const pulls = homeAccountOptions(accountsAnswer, accountSources, 'pullRequest');
+	assert.deepEqual(
+		pulls.map((option) => option.label),
+		[`alice · ${new URL(ORIGIN).host} (Gitea)`, 'alice · github.com (GitHub)'],
+	);
+	const issues = homeAccountOptions(accountsAnswer, accountSources, 'issue');
+	assert.deepEqual(
+		issues.map((option) => option.account),
+		[giteaAccount],
+		'GitHub does not show issues on Home',
+	);
+	assert.deepEqual(homeAccountOptions(accountsAnswer, [], 'pullRequest'), [], 'an unknown source offers nothing');
+});
+
+test('the effective account', () => {
+	const two: ForgeAccountOption[] = homeAccountOptions(accountsAnswer, accountSources, 'pullRequest');
+	const one = two.slice(0, 1);
+	assert.equal(effectiveAccount(null, two, false), null);
+	assert.deepEqual(effectiveAccount(giteaAccount, two, false), giteaAccount);
+	assert.deepEqual(effectiveAccount(giteaAccount, undefined, false), giteaAccount, 'before the accounts answer');
+	assert.equal(effectiveAccount(giteaAccount, two, true), null, 'a repository focus shows every account');
+	assert.equal(effectiveAccount(giteaAccount, one, false), null, 'fewer than two accounts');
+	assert.equal(effectiveAccount({ sourceId: 'gone/forge', origin: ORIGIN }, two, false), null, 'a missing account');
+});
+
+test('an item belongs to the account of its source and origin', () => {
+	assert.ok(belongsToAccount({ sourceId: giteaAccount.sourceId, reference: { origin: ORIGIN } }, giteaAccount));
+	assert.ok(!belongsToAccount({ sourceId: giteaAccount.sourceId, reference: { origin: GITHUB_ORIGIN } }, giteaAccount));
+	assert.ok(!belongsToAccount({ sourceId: githubAccount.sourceId, reference: { origin: ORIGIN } }, giteaAccount));
 });

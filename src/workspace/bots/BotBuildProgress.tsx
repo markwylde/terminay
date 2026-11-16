@@ -75,18 +75,38 @@ function useDismissed(key: string): boolean {
 	);
 }
 
+/** How many banners show each build, so a banner that moves is not "left". */
+const mountedBanners = new Map<string, number>();
+
 export function BuildBanner({
 	engine,
 	label,
 	visible = true,
+	open: openProp,
+	onOpenChange,
 }: {
 	engine: BotEngineView;
 	label?: string;
 	/** False while the surface holding the banner is hidden, e.g. a background tab. */
 	visible?: boolean;
+	/**
+	 * Whether the progress page is open, when the owner keeps it: a banner that
+	 * moves between surfaces (a compact workspace's page and a wide window's
+	 * rail) keeps the page open across the move.
+	 */
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 }) {
-	const [open, setOpen] = useState(false);
-	const close = useCallback(() => setOpen(false), []);
+	const [ownOpen, setOwnOpen] = useState(false);
+	const open = openProp ?? ownOpen;
+	const setOpen = useCallback(
+		(next: boolean) => {
+			if (onOpenChange === undefined) setOwnOpen(next);
+			else onOpenChange(next);
+		},
+		[onOpenChange],
+	);
+	const close = useCallback(() => setOpen(false), [setOpen]);
 	const last = useRef<BotBuildProgress | null>(null);
 	const banner = useRef<HTMLDivElement>(null);
 	if (engine.status?.build) last.current = engine.status.build;
@@ -109,9 +129,23 @@ export function BuildBanner({
 	useEffect(() => {
 		if (!visible && seen.current === key && key) dismissBuild(key);
 	}, [visible, key]);
+	// A banner that only moves (a compact page and a wide window's rail draw it
+	// in different places) has not been left: another one for the same build
+	// mounts in the same commit, and the notice stays.
+	useEffect(() => {
+		if (!key) return;
+		mountedBanners.set(key, (mountedBanners.get(key) ?? 0) + 1);
+		return () => {
+			mountedBanners.set(key, (mountedBanners.get(key) ?? 1) - 1);
+		};
+	}, [key]);
 	useEffect(
 		() => () => {
-			if (seen.current) dismissBuild(seen.current);
+			const left = seen.current;
+			if (!left) return;
+			window.setTimeout(() => {
+				if ((mountedBanners.get(left) ?? 0) === 0) dismissBuild(left);
+			}, 0);
 		},
 		[],
 	);

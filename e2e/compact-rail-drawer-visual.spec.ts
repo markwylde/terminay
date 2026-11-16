@@ -129,12 +129,36 @@ for (const scheme of ['dark', 'light'] as const) {
 			),
 		).toBe('rgba(0, 0, 0, 0)');
 
-		// The launcher dropup.
+		// The launcher dropup, over the project with General and two worktrees.
+		await expect(
+			drawer.locator('[data-compact-switcher-folder-group]'),
+		).toHaveCount(3);
 		await drawer.locator('[data-compact-switcher-launchers="true"]').click();
 		const dropup = drawer.getByRole('menu', { name: 'New terminal' });
 		await expect(dropup).toBeVisible();
 		await settle(drawer);
+		// Open in, collapsed: one line naming the target folder.
+		const openIn = drawer.locator('[data-compact-dropup-open-in="true"]');
+		await expect(openIn).toHaveAttribute('aria-expanded', 'false');
 		await shot(mainWindow, testInfo, `${scheme}-03-launcher-dropup`);
+		// Open in, expanded: the filter and the folder list.
+		await openIn.click();
+		const filter = drawer.getByRole('combobox', { name: 'Filter folders' });
+		await expect(filter).toBeFocused();
+		await expect(
+			drawer.getByRole('listbox', { name: 'Folders' }).getByRole('option'),
+		).toHaveCount(3);
+		await settle(drawer);
+		await shot(mainWindow, testInfo, `${scheme}-03b-open-in-picker`);
+		await filter.fill('rail');
+		await expect(
+			drawer.getByRole('listbox', { name: 'Folders' }).getByRole('option'),
+		).toHaveCount(1);
+		await shot(mainWindow, testInfo, `${scheme}-03c-open-in-filtered`);
+		// Escape collapses the picker, then closes the dropup.
+		await mainWindow.keyboard.press('Escape');
+		await expect(filter).toHaveCount(0);
+		await expect(dropup).toBeVisible();
 		await mainWindow.keyboard.press('Escape');
 		await expect(dropup).toHaveCount(0);
 
@@ -179,6 +203,19 @@ for (const scheme of ['dark', 'light'] as const) {
 		).toBeVisible();
 		await settle(drawer);
 		await shot(mainWindow, testInfo, `${scheme}-07-home-panel`);
+
+		// Servers in the rail, with its panel and Add connection.
+		const servers = drawer.locator('[data-compact-switcher-server="true"]');
+		await servers.click();
+		await expect(servers).toHaveAttribute('aria-pressed', 'true');
+		await expect(
+			drawer.locator('[data-compact-servers-panel="true"]'),
+		).toBeVisible();
+		await expect(
+			drawer.getByRole('button', { name: 'Add connection' }),
+		).toBeVisible();
+		await settle(drawer);
+		await shot(mainWindow, testInfo, `${scheme}-09-servers-panel`);
 	});
 }
 

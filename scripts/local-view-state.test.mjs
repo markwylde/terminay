@@ -737,6 +737,21 @@ test('a device with no remembered column widths uses each column default', async
     assert.equal(module.recallColumnWidth('folders'), 232)
     assert.equal(module.recallColumnWidth('sidebar'), 280)
     assert.equal(module.recallColumnWidth('home'), 220)
+    assert.equal(module.recallColumnWidth('forgeDetail'), 380)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the Home detail preview remembers its width apart from the columns', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    module.rememberColumnWidth('folders', 300)
+    module.rememberColumnWidth('forgeDetail', 512.4)
+    assert.equal(module.recallColumnWidth('forgeDetail'), 512)
+    assert.equal(module.recallColumnWidth('folders'), 300)
+    assert.equal(module.recallColumnWidth('home'), 220)
   } finally {
     delete globalThis.localStorage
   }

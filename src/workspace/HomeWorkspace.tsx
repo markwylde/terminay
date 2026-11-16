@@ -20,7 +20,15 @@ import {
 	type IDockviewPanelHeaderProps,
 	type IDockviewPanelProps,
 } from 'dockview-react';
-import { Bot, Film, SquareTerminal, Workflow, X } from 'lucide-react';
+import {
+	Bot,
+	CircleDot,
+	Film,
+	GitPullRequest,
+	SquareTerminal,
+	Workflow,
+	X,
+} from 'lucide-react';
 import {
 	createContext,
 	forwardRef,
@@ -68,6 +76,7 @@ import {
 	defaultHomeTabTitle,
 	HOME_TAB_COMPONENT,
 	HOME_TAB_TAB_COMPONENT,
+	type HomeForgeItemTarget,
 	type HomeTabDescriptor,
 	homeTabId,
 	homeTabSection,
@@ -78,11 +87,20 @@ import {
 	recallHomeLayout,
 	rememberHomeLayout,
 } from './localViewState.ts';
+import {
+	CompactDrawerEpochContext,
+	CompactHomeContext,
+} from './compact/CompactHomeContext';
 
 type HomeTabParams = Readonly<{
 	descriptor: HomeTabDescriptor;
 	/** What a new automation starts from. Never restored. */
 	form?: Partial<AutomationForm>;
+}>;
+
+/** What a pull request or issue tab may do to its tab. */
+export type HomeForgeItemHost = Readonly<{
+	setTitle: (title: string) => void;
 }>;
 
 type HomeTabsContextValue = Readonly<{
@@ -111,6 +129,10 @@ type HomeTabsContextValue = Readonly<{
 	renderBotIcon?: (
 		target: Readonly<{ serverId: string; botId: string }>,
 	) => ReactNode;
+	renderForgeItem?: (
+		target: HomeForgeItemTarget,
+		host: HomeForgeItemHost,
+	) => ReactNode;
 	requestClose: (id: string) => void;
 	setDirty: (id: string, dirty: boolean) => void;
 }>;
@@ -133,6 +155,12 @@ function descriptorIcon(descriptor: HomeTabDescriptor): ReactNode {
 			return <Film size={15} aria-hidden="true" />;
 		case 'bot':
 			return <Bot size={15} aria-hidden="true" />;
+		case 'forge-item':
+			return descriptor.itemKind === 'pullRequest' ? (
+				<GitPullRequest size={15} aria-hidden="true" />
+			) : (
+				<CircleDot size={15} aria-hidden="true" />
+			);
 		default:
 			return <Workflow size={15} aria-hidden="true" />;
 	}
@@ -276,6 +304,11 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 				/>
 			);
 			break;
+		case 'forge-item':
+			content = home.renderForgeItem?.(descriptor, {
+				setTitle: host.setTitle,
+			}) ?? null;
+			break;
 		case 'automation-terminal':
 			content = (
 				<AutomationTerminalPanel
@@ -417,7 +450,8 @@ export type HomeWorkspaceHandle = Readonly<{
 			| AutomationTabTarget
 			| Readonly<{ kind: 'section'; section: HomeSection }>
 			| (BotTabTarget & Readonly<{ kind: 'bot' }>)
-			| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>,
+			| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>
+			| HomeForgeItemTarget,
 	) => void;
 	/**
 	 * Close the tab in front as a person would. Returns whether there was one.
@@ -438,6 +472,8 @@ export type HomeWorkspaceProps = Readonly<{
 	isActive: boolean;
 	/** No tab strip is drawn at this width. */
 	isCompact: boolean;
+	/** Raised whenever another compact drawer opens; section sheets close. */
+	compactDrawerEpoch?: number;
 	isSidebarVisible: boolean;
 	onDismissSidebar: () => void;
 	onOpenCommandBar: () => void;
@@ -463,6 +499,11 @@ export type HomeWorkspaceProps = Readonly<{
 	renderBotIcon?: (
 		target: Readonly<{ serverId: string; botId: string }>,
 	) => ReactNode;
+	/** A pull request or issue tab's content, which the window composes. */
+	renderForgeItem?: (
+		target: HomeForgeItemTarget,
+		host: HomeForgeItemHost,
+	) => ReactNode;
 	/** The sidebar's bot roster, given the bot tab in front and how to open one. */
 	renderSidebarBots?: (args: {
 		activeBot: Readonly<{ serverId: string; botId: string }> | undefined;
@@ -480,6 +521,7 @@ export const HomeWorkspace = forwardRef<
 		commandBarShortcutLabel,
 		isActive,
 		isCompact,
+		compactDrawerEpoch = 0,
 		isSidebarVisible,
 		onDismissSidebar,
 		onOpenCommandBar,
@@ -493,6 +535,7 @@ export const HomeWorkspace = forwardRef<
 		sidebarWidth,
 		renderSidebarBots,
 		renderBotIcon,
+		renderForgeItem,
 		sectionBadges,
 	},
 	ref,
@@ -695,7 +738,11 @@ export const HomeWorkspace = forwardRef<
 		ref,
 		() => ({
 			open: (target) => {
-				if (target.kind === 'section' || target.kind === 'recording')
+				if (
+					target.kind === 'section' ||
+					target.kind === 'recording' ||
+					target.kind === 'forge-item'
+				)
 					openDescriptor(target);
 				else if (target.kind === 'bot') openBot(target);
 				else openTarget(target);
@@ -837,6 +884,7 @@ export const HomeWorkspace = forwardRef<
 			renderSection,
 			requestClose,
 			setDirty,
+			...(renderForgeItem === undefined ? {} : { renderForgeItem }),
 			...(hiddenSections === undefined ? {} : { hiddenSections }),
 			...(commandBarShortcutLabel === undefined
 				? {}
@@ -857,6 +905,7 @@ export const HomeWorkspace = forwardRef<
 			renderBot,
 			renderBotIcon,
 			renderBots,
+			renderForgeItem,
 			renderSection,
 			hiddenSections,
 			requestClose,
@@ -891,6 +940,8 @@ export const HomeWorkspace = forwardRef<
 				: { onSectionChosenInDrawer })}
 		>
 			<HomeTabsContext.Provider value={context}>
+			<CompactHomeContext.Provider value={isCompact}>
+			<CompactDrawerEpochContext.Provider value={compactDrawerEpoch}>
 				{notice === undefined ? null : (
 					<div
 						className="home-notice"
@@ -959,6 +1010,8 @@ export const HomeWorkspace = forwardRef<
 						</div>
 					</div>
 				)}
+			</CompactDrawerEpochContext.Provider>
+			</CompactHomeContext.Provider>
 			</HomeTabsContext.Provider>
 		</HomeView>
 	);

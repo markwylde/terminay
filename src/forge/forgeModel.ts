@@ -88,10 +88,15 @@ export const ISSUE_STATES: readonly ForgeScopeOption[] = [
 
 export type ForgeGrouping = 'repo' | 'none';
 
+/** One account: a forge source's login on one origin. */
+export type ForgeAccountRef = Readonly<{ sourceId: string; origin: string }>;
+
 export type ForgeViewPreferences = Readonly<{
 	scope: string;
 	state: string;
 	group: ForgeGrouping;
+	/** The account the list is narrowed to; null is All accounts. */
+	account: ForgeAccountRef | null;
 }>;
 
 export function defaultPreferences(kind: ForgeKind): ForgeViewPreferences {
@@ -99,7 +104,117 @@ export function defaultPreferences(kind: ForgeKind): ForgeViewPreferences {
 		scope: kind === 'pullRequest' ? 'reviewRequested' : 'assigned',
 		state: 'open',
 		group: 'repo',
+		account: null,
 	};
+}
+
+/** A stored account, or null for anything malformed. */
+export function readAccountRef(value: unknown): ForgeAccountRef | null {
+	if (typeof value !== 'object' || value === null) return null;
+	const { sourceId, origin } = value as Record<string, unknown>;
+	if (typeof sourceId !== 'string' || sourceId.length === 0) return null;
+	if (typeof origin !== 'string' || !/^https:\/\/[^/\s]+$/u.test(origin)) return null;
+	return { sourceId, origin };
+}
+
+export function sameAccount(left: ForgeAccountRef | null | undefined, right: ForgeAccountRef | null | undefined): boolean {
+	if (left === null || left === undefined || right === null || right === undefined)
+		return (left ?? null) === (right ?? null);
+	return left.sourceId === right.sourceId && left.origin === right.origin;
+}
+
+/** An account the Account control offers, with its label. */
+export type ForgeAccountOption = Readonly<{
+	account: ForgeAccountRef;
+	login: string;
+	host: string;
+	forge: string;
+	label: string;
+}>;
+
+/** What `forge.accounts` answers, as far as the account control reads it. */
+export type ForgeAccountsAnswer = ReadonlyArray<
+	Readonly<{
+		sourceId: string;
+		accounts: ReadonlyArray<Readonly<{ origin: string; login: string; state: string }>>;
+	}>
+>;
+
+/** What a section knows of a source: whether it serves the kind on Home. */
+export type ForgeAccountSourceFacts = Readonly<{
+	sourceId: string;
+	displayName: string;
+	kinds: readonly ForgeKind[];
+	settings?: Readonly<{ pullRequestsOnHome: boolean; issuesOnHome: boolean }>;
+}>;
+
+function hostOf(origin: string): string {
+	try {
+		return new URL(origin).host;
+	} catch {
+		return origin;
+	}
+}
+
+/**
+ * The accounts a Home section can be narrowed to: every signed-in (ready)
+ * account of a source that serves the kind and shows it on Home, ordered by
+ * forge, then host, then login.
+ */
+export function homeAccountOptions(
+	answer: ForgeAccountsAnswer,
+	sources: readonly ForgeAccountSourceFacts[],
+	kind: ForgeKind,
+): ForgeAccountOption[] {
+	const options: ForgeAccountOption[] = [];
+	for (const entry of answer) {
+		const source = sources.find((candidate) => candidate.sourceId === entry.sourceId);
+		if (source === undefined || !source.kinds.includes(kind)) continue;
+		const onHome = kind === 'pullRequest' ? source.settings?.pullRequestsOnHome : source.settings?.issuesOnHome;
+		if (onHome === false) continue;
+		for (const account of entry.accounts) {
+			if (account.state !== 'ready') continue;
+			const host = hostOf(account.origin);
+			options.push({
+				account: { sourceId: entry.sourceId, origin: account.origin },
+				login: account.login,
+				host,
+				forge: source.displayName,
+				label: `${account.login} · ${host} (${source.displayName})`,
+			});
+		}
+	}
+	return options.sort(
+		(left, right) =>
+			left.forge.localeCompare(right.forge) ||
+			left.host.localeCompare(right.host) ||
+			left.login.localeCompare(right.login),
+	);
+}
+
+/**
+ * The account a list is narrowed to now. A repository focus shows every
+ * account; so do fewer than two offered accounts, or a remembered account not
+ * among them. Before the offered accounts are known (`undefined`) the
+ * remembered one applies, so a restored filter does not flash every account.
+ */
+export function effectiveAccount(
+	remembered: ForgeAccountRef | null,
+	options: readonly ForgeAccountOption[] | undefined,
+	focused: boolean,
+): ForgeAccountRef | null {
+	if (remembered === null || focused) return null;
+	if (options === undefined) return remembered;
+	if (options.length < 2) return null;
+	return options.some((option) => sameAccount(option.account, remembered)) ? remembered : null;
+}
+
+/** Whether an item came from an account: its source and its origin. */
+export function belongsToAccount(
+	entry: Readonly<{ sourceId: string; reference: Pick<ForgeReference, 'origin'> }>,
+	account: ForgeAccountRef,
+): boolean {
+	return entry.sourceId === account.sourceId && entry.reference.origin === account.origin;
 }
 
 /** Read a device's remembered view; anything unreadable is the default. */
@@ -114,6 +229,7 @@ export function readPreferences(kind: ForgeKind, raw: string | null | undefined)
 			scope: scopes.some((option) => option.id === value.scope) ? (value.scope as string) : fallback.scope,
 			state: states.some((option) => option.id === value.state) ? (value.state as string) : fallback.state,
 			group: value.group === 'none' ? 'none' : 'repo',
+			account: readAccountRef(value.account),
 		};
 	} catch {
 		return fallback;
@@ -465,4 +581,121 @@ export function readGitPaneLayout(raw: string | null | undefined): ForgeGitPaneL
 		collapsed: { issues: flags.issues === true, pullRequests: flags.pullRequests === true },
 		heights: { issues: height('issues'), pullRequests: height('pullRequests') },
 	};
+}
+
+// ── An item open as a tab ──────────────────────────────────────────────
+
+/** A pull request or issue a tab shows: the source that serves it, and which item. */
+export type ForgeItemTarget = Readonly<{ sourceId: string; reference: ForgeReference }>;
+
+/** A tab's title before its item has loaded: the repository and number. */
+export function forgeItemPlaceholderTitle(reference: ForgeReference): string {
+	return `${reference.name}#${reference.number}`;
+}
+
+/** A tab's title once its item has loaded: the number and title. */
+export function forgeItemTabTitle(reference: ForgeReference, title: string): string {
+	const trimmed = title.trim();
+	return trimmed.length === 0 ? forgeItemPlaceholderTitle(reference) : `#${reference.number} ${trimmed}`;
+}
+
+/** A tab's target as its parameters carry it, or undefined for anything malformed. */
+export function readForgeItemTarget(value: unknown): ForgeItemTarget | undefined {
+	if (typeof value !== 'object' || value === null) return undefined;
+	const { sourceId, reference } = value as Record<string, unknown>;
+	if (typeof sourceId !== 'string' || sourceId.length === 0) return undefined;
+	if (typeof reference !== 'object' || reference === null) return undefined;
+	const { kind, origin, owner, name, number } = reference as Record<string, unknown>;
+	if (kind !== 'pullRequest' && kind !== 'issue') return undefined;
+	if (typeof origin !== 'string' || typeof owner !== 'string' || typeof name !== 'string') return undefined;
+	if (origin.length === 0 || owner.length === 0 || name.length === 0) return undefined;
+	if (typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0) return undefined;
+	return { sourceId, reference: { kind, origin, owner, name, number } };
+}
+
+/** How long a row waits after a click before treating it as a single click. */
+export const FORGE_DOUBLE_CLICK_MS = 250;
+
+export type ForgeClickTimers = Readonly<{
+	set: (run: () => void, delayMs: number) => unknown;
+	clear: (handle: unknown) => void;
+}>;
+
+/**
+ * Tells a row's single click from its double click, for a row whose single
+ * click leaves the list: the single click waits briefly and is dropped when a
+ * second click follows. A click with no count, as from the keyboard, acts at
+ * once.
+ */
+export function createForgeClickIntent(
+	onSingle: () => void,
+	onDouble: () => void,
+	timers: ForgeClickTimers = {
+		set: (run, delayMs) => globalThis.setTimeout(run, delayMs),
+		clear: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
+	},
+): Readonly<{ click: (detail: number) => void; cancel: () => void }> {
+	let pending: unknown;
+	let waiting = false;
+	const cancel = () => {
+		if (!waiting) return;
+		timers.clear(pending);
+		waiting = false;
+	};
+	return {
+		click: (detail) => {
+			if (detail <= 0) {
+				cancel();
+				onSingle();
+				return;
+			}
+			if (detail >= 2) {
+				cancel();
+				if (detail === 2) onDouble();
+				return;
+			}
+			cancel();
+			waiting = true;
+			pending = timers.set(() => {
+				waiting = false;
+				onSingle();
+			}, FORGE_DOUBLE_CLICK_MS);
+		},
+		cancel,
+	};
+}
+
+// ── Home detail preview width ──────────────────────────────────────────
+
+export const FORGE_DETAIL_MIN_WIDTH = 280;
+export const FORGE_DETAIL_MAX_WIDTH = 720;
+/** The narrowest the list beside the preview is ever drawn. */
+export const FORGE_LIST_MIN_WIDTH = 320;
+export const FORGE_DETAIL_RESIZE_STEP = 16;
+
+/**
+ * The widths the preview can be drawn at in a grid this wide. The list keeps
+ * its minimum first; the preview never goes below its own. An unmeasured grid
+ * (`undefined`) bounds the preview by its own limits only.
+ */
+export function forgeDetailWidthBounds(gridWidth: number | undefined): { min: number; max: number } {
+	const room = gridWidth === undefined ? FORGE_DETAIL_MAX_WIDTH : gridWidth - FORGE_LIST_MIN_WIDTH;
+	return {
+		min: FORGE_DETAIL_MIN_WIDTH,
+		max: Math.max(FORGE_DETAIL_MIN_WIDTH, Math.min(FORGE_DETAIL_MAX_WIDTH, Math.floor(room))),
+	};
+}
+
+/** The chosen width as drawn in a grid this wide, in whole pixels. */
+export function drawnForgeDetailWidth(chosen: number, gridWidth: number | undefined): number {
+	const { min, max } = forgeDetailWidthBounds(gridWidth);
+	return Math.min(max, Math.max(min, Math.round(chosen)));
+}
+
+/**
+ * Whether the preview sits beside the list or under it. A grid too narrow for
+ * both minimums stacks; an unmeasured one does not.
+ */
+export function forgeDetailLayout(gridWidth: number | undefined): 'side' | 'stacked' {
+	return gridWidth !== undefined && gridWidth < FORGE_LIST_MIN_WIDTH + FORGE_DETAIL_MIN_WIDTH ? 'stacked' : 'side';
 }

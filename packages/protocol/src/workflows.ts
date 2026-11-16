@@ -28,3 +28,18 @@ export function composeWorkflowGoal(openingPrompt: string, instruction: string):
 	const opening = openingPrompt.trim();
 	return opening === '' ? `/goal ${instruction}` : `/goal ${opening}\n\n${instruction}`;
 }
+
+/**
+ * The launch or resume text as Terminay types it: {@link composeWorkflowGoal}
+ * on one line. Typed text has no bracketed paste to hold lines together, and a
+ * typed line break or tab is a key press (a shell runs or completes on it), so
+ * each one, with the whitespace around it, becomes a single space.
+ */
+export function typedWorkflowGoal(openingPrompt: string, instruction: string): string {
+	return flattenTypedText(composeWorkflowGoal(openingPrompt, instruction));
+}
+
+/** `text` on one line: each run of whitespace holding a line break or tab becomes one space. */
+export function flattenTypedText(text: string): string {
+	return text.replace(/\s*[\r\n\t]\s*/g, ' ').trim();
+}

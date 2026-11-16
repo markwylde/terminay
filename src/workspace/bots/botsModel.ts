@@ -8,6 +8,7 @@
 
 import type {
 	BotEnvironmentState,
+	BotPermission,
 	BotProfile,
 	BotSessionRecord,
 	BotSessionState,
@@ -178,6 +179,8 @@ export type NeedsYouEntry = Readonly<{
 	/** What the bot is waiting for, in a line. */
 	summary: string;
 	since: number;
+	/** The permission request, when that is what the bot waits for. */
+	permission?: BotPermission;
 }>;
 
 function toolTitle(toolCall: unknown): string | undefined {
@@ -204,6 +207,9 @@ export function needsYou(entries: readonly BotEntry[]): NeedsYouEntry[] {
 						? 'Waiting for your decision'
 						: `Wants to run: ${tool}`,
 				since: session.startedAt,
+				...(session.permission === null
+					? {}
+					: { permission: session.permission }),
 			});
 		}
 	}

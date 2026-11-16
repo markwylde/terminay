@@ -1,9 +1,11 @@
 /* The compact switcher: a drawer from the leading edge, a rail of places
    beside a panel presenting the one selected.
 
-   The entrance is an animation on the drawer alone. Everything that changes
-   inside it — the rail selection, edit mode, menus, the dropup — is state in a
-   drawer that stays mounted, so none of it replays the slide.
+   The scrim, the drawer's geometry, and its entrance come from the shared
+   compact edge drawer shell (CompactEdgeDrawer.css, ADR-0125); this sheet
+   only gives the switcher its own look. Everything that changes inside it —
+   the rail selection, edit mode, menus, the dropup — is state in a drawer
+   that stays mounted, so none of it replays the slide.
 
    The tree is one grid. A folder header is [chevron][glyph][name][+][⋯]; a
    panel row is [lead][status][title][dial?][⋯]. The lead sits under the
@@ -27,41 +29,12 @@
 	--compact-gap: 6px;
 	--compact-trail: 36px;
 
-	position: absolute;
-	inset: 0;
-	z-index: 4000;
-	/* The chrome row stays visible above the drawer; the drawer starts below
-	   the top safe area. */
-	padding-top: env(safe-area-inset-top, 0px);
-	background: rgba(5, 7, 10, 0.68);
 	font-family: "Open Sans", "Segoe UI", Roboto, sans-serif;
 	color: #e7ecf5;
-	-webkit-tap-highlight-color: transparent;
 }
 
 .compact-drawer {
-	position: absolute;
-	top: env(safe-area-inset-top, 0px);
-	bottom: 0;
-	left: 0;
-	display: flex;
-	flex-direction: column;
-	/* A 52px strip of workspace stays beside the drawer: enough to press, and
-	   no more taken from the titles. */
-	width: min(420px, calc(100% - 52px));
-	border-right: 1px solid rgba(255, 255, 255, 0.1);
 	background: var(--compact-surface);
-	box-shadow: 16px 0 40px rgba(0, 0, 0, 0.5);
-	animation: compact-drawer-in 180ms cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-
-@keyframes compact-drawer-in {
-	from {
-		transform: translateX(-100%);
-	}
-	to {
-		transform: none;
-	}
 }
 
 /* ---- application menu ----
@@ -96,7 +69,7 @@
 	background: var(--compact-rail);
 }
 
-.compact-drawer__server,
+.compact-drawer__rail-servers,
 .compact-drawer__rail-home,
 .compact-drawer__rail-item,
 .compact-drawer__rail-add {
@@ -112,18 +85,10 @@
 	touch-action: manipulation;
 }
 
-.compact-drawer__server {
-	justify-content: center;
-	width: 44px;
-	height: 44px;
-	border-radius: 12px;
-	color: var(--compact-muted);
-}
-
 .compact-drawer__server-dot {
 	position: absolute;
-	right: 10px;
-	bottom: 10px;
+	right: 9px;
+	bottom: 9px;
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
@@ -170,13 +135,16 @@
 		0 0 0 4px rgba(255, 255, 255, 0.85);
 }
 
-/* Home is not a project: a neutral house, filled only while it is selected,
-   so it never reads as selected beside the project that is. */
+/* Servers and Home are not projects: neutral glyphs, filled only while
+   selected, so neither reads as selected beside the project that is. */
+.compact-drawer__rail-servers .compact-drawer__rail-tile,
 .compact-drawer__rail-home .compact-drawer__rail-tile {
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: #dfe6f2;
 }
 
+.compact-drawer__rail-servers.compact-drawer__rail-item--selected
+	.compact-drawer__rail-tile,
 .compact-drawer__rail-home.compact-drawer__rail-item--selected
 	.compact-drawer__rail-tile {
 	border-color: transparent;
@@ -1054,47 +1022,213 @@
 	padding: 2px 0 6px;
 }
 
-.compact-drawer__chips {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	padding: 4px 12px 2px;
-}
-
-.compact-drawer__chip {
+/* The Open in control: one line naming the target folder. With more than
+   one folder it is a disclosure that swaps the entries for the picker. */
+.compact-drawer__open-in {
 	all: unset;
 	box-sizing: border-box;
-	flex: none;
-	display: inline-flex;
+	display: flex;
 	align-items: center;
-	gap: 5px;
-	max-width: 100%;
-	min-height: 36px;
+	gap: 7px;
+	width: calc(100% - 12px);
+	min-height: 44px;
+	margin: 0 6px;
 	padding: 0 12px;
-	overflow: hidden;
-	border: 1px solid rgba(255, 255, 255, 0.14);
-	border-radius: 18px;
-	white-space: nowrap;
+	border-radius: 10px;
 	color: rgba(220, 226, 240, 0.82);
-	font-size: 13px;
+	font-size: 13.5px;
 	cursor: pointer;
 	touch-action: manipulation;
 }
 
-.compact-drawer__chip > svg {
+.compact-drawer__open-in--single {
+	cursor: default;
+}
+
+.compact-drawer__open-in-label {
+	flex: none;
+	color: var(--compact-muted);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.compact-drawer__open-in-glyph {
+	flex: none;
+	color: var(--compact-muted);
+}
+
+.compact-drawer__open-in-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	color: #fff;
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.compact-drawer__open-in-chevron {
+	flex: none;
+	color: var(--compact-muted);
+	transition: transform 140ms ease;
+}
+
+.compact-drawer__open-in[aria-expanded="true"]
+	.compact-drawer__open-in-chevron {
+	transform: rotate(180deg);
+}
+
+.compact-drawer__picker {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 4px 6px 0;
+}
+
+.compact-drawer__picker-search {
+	flex: none;
+	margin: 0 6px;
+}
+
+.compact-drawer__picker-empty {
+	margin: 10px 12px;
+	color: var(--compact-muted);
+	font-size: 13px;
+}
+
+/* The list scrolls on its own, so the filter stays put above a long one. */
+.compact-drawer__folder-list {
+	display: flex;
+	flex-direction: column;
+	max-height: min(320px, 46vh);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.compact-drawer__folder-list[hidden] {
+	display: none;
+}
+
+.compact-drawer__folder-option {
+	box-sizing: border-box;
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 10px;
+	min-height: 44px;
+	padding: 0 12px;
+	border-radius: 10px;
+	color: rgba(220, 226, 240, 0.82);
+	font-size: 14px;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.compact-drawer__folder-option > svg {
 	flex: none;
 }
 
-.compact-drawer__chip-label {
+.compact-drawer__folder-option-name {
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
-.compact-drawer__chip[aria-checked="true"] {
-	border-color: #4db5ff;
-	background: rgba(77, 181, 255, 0.16);
+.compact-drawer__folder-option[aria-selected="true"] {
 	color: #fff;
+	font-weight: 600;
+}
+
+.compact-drawer__folder-option-check {
+	color: #4db5ff;
+}
+
+.compact-drawer__folder-option--highlight {
+	background: rgba(77, 181, 255, 0.16);
+}
+
+/* ---- Servers ---- */
+
+.compact-drawer__servers {
+	padding: 6px;
+}
+
+.compact-drawer__server-list {
+	display: flex;
+	flex-direction: column;
+}
+
+.compact-drawer__server-row {
+	all: unset;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 52px;
+	padding: 0 12px;
+	border-radius: 10px;
+	font-size: 14.5px;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.compact-drawer__server-row--current {
+	background: rgba(77, 181, 255, 0.14);
+	font-weight: 600;
+}
+
+.compact-drawer__server-glyph {
+	position: relative;
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	color: var(--compact-muted);
+}
+
+.compact-drawer__server-glyph .compact-drawer__server-dot {
+	right: -2px;
+	bottom: -1px;
+	box-shadow: 0 0 0 2px var(--compact-surface);
+}
+
+.compact-drawer__server-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.compact-drawer__server-hint {
+	flex: none;
+	color: var(--compact-muted);
+	font-size: 11.5px;
+	font-weight: 500;
+}
+
+.compact-drawer__server-check {
+	flex: none;
+	color: #4db5ff;
+}
+
+.compact-drawer__server-upgrades {
+	margin-top: 10px;
+}
+
+.compact-drawer__panel-heading {
+	margin: 6px 12px 4px;
+	color: var(--compact-muted);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
 }
 
 .compact-drawer__live {
@@ -1113,6 +1247,7 @@
 
 .compact-drawer
 	:is(
+		.compact-drawer__rail-servers,
 		.compact-drawer__rail-home,
 		.compact-drawer__rail-item,
 		.compact-drawer__rail-add,
@@ -1141,7 +1276,6 @@
 
 .compact-drawer
 	:is(
-		.compact-drawer__server,
 		.compact-drawer__icon,
 		.compact-drawer__edit:not(.compact-drawer__edit--on),
 		.compact-drawer__folder-name,
@@ -1154,7 +1288,9 @@
 		.compact-drawer__result-folder,
 		.compact-drawer__section:not(.compact-drawer__section--current),
 		.compact-drawer__sheet-item:not(:disabled),
-		.compact-drawer__chip
+		.compact-drawer__server-row:not(.compact-drawer__server-row--current),
+		.compact-drawer__open-in:not(.compact-drawer__open-in--single),
+		.compact-drawer__folder-option
 	):active {
 	background: var(--compact-press);
 }
@@ -1182,6 +1318,7 @@
 .compact-drawer
 	:is(
 		.compact-drawer__rail-item,
+		.compact-drawer__rail-servers,
 		.compact-drawer__rail-home,
 		.compact-drawer__rail-add
 	):active
@@ -1192,7 +1329,6 @@
 @media (hover: hover) {
 	.compact-drawer
 		:is(
-			.compact-drawer__server,
 			.compact-drawer__icon,
 			.compact-drawer__folder-add,
 			.compact-drawer__folder-more,
@@ -1201,7 +1337,11 @@
 			.compact-drawer__empty-folder,
 			.compact-drawer__result-folder,
 			.compact-drawer__section:not(.compact-drawer__section--current),
-			.compact-drawer__chip:not([aria-checked="true"])
+			.compact-drawer__server-row:not(.compact-drawer__server-row--current),
+			.compact-drawer__open-in:not(.compact-drawer__open-in--single),
+			.compact-drawer__folder-option:not(
+				.compact-drawer__folder-option--highlight
+			)
 		):hover {
 		background: rgba(255, 255, 255, 0.05);
 	}
@@ -1219,15 +1359,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.compact-drawer {
-		animation: none;
-	}
-
 	.compact-drawer__rail-slot,
 	.compact-drawer__rail-tile,
 	.compact-drawer__folder,
 	.compact-drawer__row,
-	.compact-drawer__split-more svg {
+	.compact-drawer__split-more svg,
+	.compact-drawer__open-in-chevron {
 		transition: none;
 	}
 }

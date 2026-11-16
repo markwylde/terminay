@@ -278,10 +278,11 @@ test.describe('Automations section', () => {
 	}) => {
 		await homeControl(mainWindow).click();
 		await expect(mainWindow.locator('[data-terminay-home-sidebar]')).toBeVisible();
+		// Narrow but not compact: a compact workspace shows no Home sidebar.
 		await resize(mainWindow, electronApp, {
 			x: 40,
 			y: 40,
-			width: 600,
+			width: 712,
 			height: 760,
 		});
 		await sectionTab(mainWindow, 'automations').click();

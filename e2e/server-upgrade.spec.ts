@@ -640,13 +640,44 @@ test.describe('server upgrade at phone width', () => {
 			).toBeVisible();
 
 			await breadcrumb.click();
-			// The drawer lists server updates in its server menu, on the rail.
-			await mainWindow
-				.getByRole('dialog', { name: 'Switch terminal' })
-				.locator('[data-compact-switcher-server="true"]')
-				.click();
-			const row = mainWindow.locator('[data-server-upgrade-profile-id]');
+			// The drawer lists server updates in its Servers panel, on the rail.
+			const drawer = mainWindow.getByRole('dialog', {
+				name: 'Switch terminal',
+			});
+			const servers = drawer.locator('[data-compact-switcher-server="true"]');
+			await servers.click();
+			await expect(servers).toHaveAttribute('aria-pressed', 'true');
+			const panel = drawer.locator('[data-compact-servers-panel="true"]');
+			await expect(panel).toBeVisible();
+			const row = panel.locator('[data-server-upgrade-profile-id]');
 			await expect(row).toContainText('Update available · 5.2.0');
+			// Only the attached connection has reachability and an upgrade. Local
+			// is saved but not attached: a switch to it, and nothing else.
+			const local = panel.getByRole('radio', { name: 'Local', exact: true });
+			await expect(local).toHaveAttribute('aria-checked', 'false');
+			await expect(local.locator('.compact-drawer__server-dot')).toHaveCount(0);
+			await expect(row).toHaveCount(1);
+			await expect(row).not.toHaveAttribute(
+				'data-server-upgrade-profile-id',
+				(await local.getAttribute('data-compact-server-row')) ?? '',
+			);
+			const current = panel.locator(
+				'[data-compact-server-row][aria-checked="true"]',
+			);
+			await expect(current).toHaveCount(1);
+			await expect(current.locator('.compact-drawer__server-dot')).toHaveCount(
+				1,
+			);
+			await expect(
+				panel.getByRole('button', { name: /Rename|Forget|Edit|Remove/ }),
+			).toHaveCount(0);
+			// The panel offers no search and no edit control.
+			await expect(
+				drawer.getByRole('button', { name: 'Search terminals and projects' }),
+			).toHaveCount(0);
+			await expect(
+				drawer.locator('[data-compact-switcher-edit="true"]'),
+			).toHaveCount(0);
 			await row.getByRole('button', { name: 'Upgrade server…' }).click();
 
 			// Both modes, in place preselected, and what recreate costs.

@@ -5,26 +5,35 @@
  */
 
 import type { ForgeClientListRequest, TerminayForgeClient } from '@terminay/client-core';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+	belongsToAccount,
 	DEFAULT_FORGE_GIT_PANE_LAYOUT,
+	drawnForgeDetailWidth,
+	effectiveAccount,
+	type ForgeAccountRef,
+	type ForgeAccountsAnswer,
+	homeAccountOptions,
 	FORGE_GIT_PANES_KEY,
 	type ForgeClaimView,
+	forgeDetailLayout,
 	type ForgeGitPaneId,
 	type ForgeGitPaneLayout,
 	type ForgeHomeFocus,
+	type ForgeItemTarget,
 	type ForgeKind,
 	type ForgeListItemView,
 	type ForgeReference,
 	type ForgeRepositoryFocus,
 	type ForgeViewPreferences,
+	forgeDetailWidthBounds,
 	itemKey,
 	preferencesKey,
 	projectPullRequestGroups,
 	readGitPaneLayout,
 	readPreferences,
 } from './forgeModel.ts';
-import { House, RefreshCw } from 'lucide-react';
+import { ChevronLeft, House, RefreshCw } from 'lucide-react';
 import {
 	SidebarPanelStack,
 	type SidebarPanelStackItem,
@@ -36,6 +45,10 @@ import {
 	ForgeSidebarRow,
 } from './ForgeViews.tsx';
 import { useForgeChanges, useForgeDetail, useForgeList } from './useForge.ts';
+import { useCompactHome } from '../workspace/compact/CompactHomeContext';
+import { ForgeCompactPage, forgeCountKey, type ForgeScopeCount } from './ForgeCompactPage.tsx';
+import { ForgeDetailSeparator } from './ForgeDetailSeparator.tsx';
+import { useRememberedColumnWidth } from '../workspace/useRememberedColumnWidth.ts';
 
 const HOME_PAGE_SIZE = 50;
 
@@ -83,6 +96,40 @@ export function useForgeSources(client: TerminayForgeClient | undefined): readon
 	useEffect(load, [load]);
 	useForgeChanges(client, load);
 	return sources;
+}
+
+/**
+ * The server's forge accounts, asked when shown and again on `forge.changed`.
+ * Undefined until the first answer; an answer to an older request never
+ * replaces a newer one; a failure is no accounts.
+ */
+export function useForgeAccounts(
+	client: TerminayForgeClient | undefined,
+	visible: boolean,
+): ForgeAccountsAnswer | undefined {
+	const [answer, setAnswer] = useState<ForgeAccountsAnswer>();
+	const [revision, setRevision] = useState(0);
+	const latest = useRef(0);
+	useForgeChanges(client, () => setRevision((value) => value + 1));
+	useEffect(() => {
+		if (client === undefined) {
+			setAnswer(undefined);
+			return;
+		}
+		if (!visible) return;
+		const asked = ++latest.current;
+		client
+			.accounts()
+			.then((value) => {
+				if (asked !== latest.current) return;
+				const sources = (value as unknown as { sources?: ForgeAccountsAnswer }).sources;
+				setAnswer(Array.isArray(sources) ? sources : []);
+			})
+			.catch(() => {
+				if (asked === latest.current) setAnswer([]);
+			});
+	}, [client, revision, visible]);
+	return answer;
 }
 
 /** Each open project's claimed repositories, asked when the projects change and on `forge.changed`. */
@@ -172,11 +219,13 @@ export type ForgeHomeSectionProps = Readonly<{
 	/** A request from a project tab to show a repository and maybe an item. */
 	focus?: ForgeHomeFocus;
 	visible: boolean;
+	/** Open an item as a Home tab of its own: a row's double click, or the detail's Open in tab. */
+	onOpenItem?: (target: ForgeItemTarget) => void;
 }>;
 
 type Selection = Readonly<{ sourceId: string; reference: ForgeReference }>;
 
-export function ForgeHomeSection({ client, kind, environment, sources, focus, visible }: ForgeHomeSectionProps) {
+export function ForgeHomeSection({ client, kind, environment, sources, focus, visible, onOpenItem }: ForgeHomeSectionProps) {
 	const [preferences, setPreferences] = useState(() => recallPreferences(kind));
 	const [filter, setFilter] = useState<ForgeRepositoryFocus>();
 	const [selection, setSelection] = useState<Selection>();
@@ -189,6 +238,17 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 			setSelection({ sourceId: focus.sourceId, reference: focus.item });
 		else setSelection(undefined);
 	}, [appliedNonce]);
+	const accountsAnswer = useForgeAccounts(client, visible);
+	// Until both the accounts and the sources are known, the remembered account applies as is.
+	const accountOptions = useMemo(
+		() =>
+			accountsAnswer === undefined || (sources.length === 0 && accountsAnswer.some((entry) => entry.accounts.length > 0))
+				? undefined
+				: homeAccountOptions(accountsAnswer, sources, kind),
+		[accountsAnswer, kind, sources],
+	);
+	const account = effectiveAccount(preferences.account, accountOptions, filter !== undefined);
+	const accountKey = account === null ? '' : `${account.sourceId}\u0000${account.origin}`;
 	const request = useMemo<ForgeClientListRequest>(
 		() => ({
 			kind,
@@ -197,9 +257,18 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 			purpose: 'home',
 			pageSize: HOME_PAGE_SIZE,
 			...(filter === undefined ? {} : { repositories: [{ origin: filter.origin, owner: filter.owner, name: filter.name }] }),
+			...(account === null ? {} : { accounts: [{ sourceId: account.sourceId, origin: account.origin }] }),
 		}),
-		[filter, kind, preferences.scope, preferences.state],
+		[accountKey, filter, kind, preferences.scope, preferences.state],
 	);
+	const chooseAccount = (next: ForgeAccountRef | null) => {
+		const updated = { ...preferences, account: next };
+		setPreferences(updated);
+		rememberPreferences(kind, updated);
+		// The newest explicit choice wins over a project tab's repository focus.
+		setFilter(undefined);
+		if (next !== null && selection !== undefined && !belongsToAccount(selection, next)) setSelection(undefined);
+	};
 	const list = useForgeList(client, request, visible);
 	// The relative times are worked out when an answer arrives or the view is shown.
 	useEffect(() => setNow(Date.now()), [list.fetchedAt, visible]);
@@ -220,6 +289,108 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 	const projectTitle = (projectId: string) =>
 		environment.projects.find((project) => project.projectId === projectId)?.title;
 	const title = kind === 'pullRequest' ? 'Pull Requests' : 'Issues';
+	const detailWidth = useForgeDetailWidth();
+	// A phone's page counts each scope from results this tab has received for
+	// the current State and repository; nothing is fetched to count.
+	const compact = useCompactHome();
+	const [counts, setCounts] = useState<ReadonlyMap<string, ForgeScopeCount>>(() => new Map());
+	const countKey = forgeCountKey(preferences.scope, preferences.state, filter, accountKey);
+	useEffect(() => {
+		if (!list.settled || list.loading || list.error !== undefined) return;
+		setCounts((previous) => {
+			const seen = previous.get(countKey);
+			const next = { count: list.items.length, more: list.nextCursor !== undefined };
+			if (seen?.count === next.count && seen.more === next.more) return previous;
+			return new Map(previous).set(countKey, next);
+		});
+	}, [countKey, list.error, list.items.length, list.loading, list.nextCursor, list.settled]);
+	const setPreferencesAndRemember = (next: typeof preferences) => {
+		setPreferences(next);
+		rememberPreferences(kind, next);
+	};
+	if (compact) {
+		if (entry !== undefined || (selection !== undefined && detail.error !== undefined))
+			return (
+				<div className="forge-home forge-home--compact cpage-host" data-forge-home={kind}>
+					<div className="cpage cdetail" data-compact-section="forge-detail">
+						<div className="cpage__top">
+							<div className="cpage__head cdetail__head">
+								<button
+									type="button"
+									className="cdetail__back"
+									onClick={() => setSelection(undefined)}
+									data-forge-back="true"
+								>
+									<ChevronLeft size={20} aria-hidden="true" />
+									{title}
+								</button>
+							</div>
+						</div>
+						<div className="cpage__body cforge__detail">
+							{entry === undefined ? (
+								<div className="forge-failure" role="alert">
+									{detail.error}
+								</div>
+							) : (
+								<ForgeDetailPane
+									entry={entry}
+									{...(detail.detail === undefined ? {} : { body: detail.detail.body, comments: detail.detail.comments })}
+									loading={detail.loading}
+									{...(detail.error === undefined ? {} : { error: detail.error })}
+									environment={environment}
+									now={now}
+									onReload={detail.reload}
+									onClose={() => setSelection(undefined)}
+									{...(onOpenItem === undefined
+										? {}
+										: { onOpenInTab: () => onOpenItem({ sourceId: entry.sourceId, reference: entry.item.reference }) })}
+								/>
+							)}
+						</div>
+					</div>
+				</div>
+			);
+		return (
+			<div className="forge-home forge-home--compact cpage-host" data-forge-home={kind}>
+				<ForgeCompactPage
+					kind={kind}
+					preferences={preferences}
+					onPreferencesChange={setPreferencesAndRemember}
+					items={list.items}
+					counts={counts}
+					repository={filter}
+					onRepository={setFilter}
+					accountOptions={accountOptions ?? []}
+					account={account}
+					onAccountChange={chooseAccount}
+					loading={list.loading}
+					settled={list.settled}
+					noAccounts={list.noAccounts}
+					{...(list.error === undefined ? {} : { error: list.error })}
+					{...(list.fetchedAt === undefined ? {} : { fetchedAt: list.fetchedAt })}
+					{...(list.nextCursor === undefined ? {} : { nextCursor: list.nextCursor })}
+					loadingMore={list.loadingMore}
+					now={now}
+					notes={
+						preferences.scope === 'all' && ownersReachNote !== undefined ? (
+							<div className="cpage__notes">
+								<p className="forge-note" data-forge-owners-note="true">
+									{ownersReachNote}
+								</p>
+							</div>
+						) : null
+					}
+					onSelect={(next) => setSelection({ sourceId: next.sourceId, reference: next.item.reference })}
+					onRefresh={list.refresh}
+					onLoadMore={list.loadMore}
+					onOpenSettings={environment.actions.openSettings}
+					projectTitle={projectTitle}
+					projectOrder={environment.projects.map((project) => project.projectId)}
+					displayNames={environment.displayNames}
+				/>
+			</div>
+		);
+	}
 	return (
 		<div className="forge-home" data-forge-home={kind}>
 			<div className="forge-home__head">
@@ -230,7 +401,11 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 						: ' '}
 				</p>
 			</div>
-			<div className={`forge-home__grid${entry === undefined ? '' : ' forge-home__grid--detail'}`}>
+			<div
+				ref={detailWidth.gridRef}
+				className={`forge-home__grid${entry === undefined ? '' : ' forge-home__grid--detail'}${detailWidth.stacked ? ' forge-home__grid--stacked' : ''}`}
+				style={{ '--forge-detail-width': `${detailWidth.drawn}px` } as CSSProperties}
+			>
 				<ForgeListPane
 					kind={kind}
 					preferences={preferences}
@@ -250,12 +425,18 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 					now={now}
 					{...(selectedKey === undefined ? {} : { selectedKey })}
 					onSelect={(next) => setSelection({ sourceId: next.sourceId, reference: next.item.reference })}
+					{...(onOpenItem === undefined
+						? {}
+						: { onOpen: (next) => onOpenItem({ sourceId: next.sourceId, reference: next.item.reference }) })}
 					onRefresh={list.refresh}
 					onLoadMore={list.loadMore}
 					onOpenSettings={environment.actions.openSettings}
 					{...(ownersReachNote === undefined ? {} : { ownersReachNote })}
 					{...(filter === undefined ? {} : { repositoryFilter: filter })}
 					onClearRepositoryFilter={() => setFilter(undefined)}
+					accountOptions={accountOptions ?? []}
+					account={account}
+					onAccountChange={chooseAccount}
 					projectTitle={projectTitle}
 					projectOrder={environment.projects.map((project) => project.projectId)}
 					displayNames={environment.displayNames}
@@ -278,11 +459,52 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 						now={now}
 						onReload={detail.reload}
 						onClose={() => setSelection(undefined)}
+						{...(onOpenItem === undefined
+							? {}
+							: { onOpenInTab: () => onOpenItem({ sourceId: entry.sourceId, reference: entry.item.reference }) })}
+					/>
+				)}
+				{entry === undefined || detailWidth.stacked ? null : (
+					<ForgeDetailSeparator
+						width={detailWidth.drawn}
+						min={detailWidth.bounds.min}
+						max={detailWidth.bounds.max}
+						onPreview={detailWidth.setPreview}
+						onCommit={detailWidth.commit}
 					/>
 				)}
 			</div>
 		</div>
 	);
+}
+
+/**
+ * The detail preview's width: the one this device chose for both sections,
+ * a live drag over it, and the grid's width that bounds how it is drawn.
+ */
+function useForgeDetailWidth() {
+	const [chosen, commit] = useRememberedColumnWidth('forgeDetail');
+	const [preview, setPreview] = useState<number | null>(null);
+	const [gridWidth, setGridWidth] = useState<number>();
+	const observer = useRef<ResizeObserver | null>(null);
+	const gridRef = useCallback((grid: HTMLDivElement | null) => {
+		observer.current?.disconnect();
+		observer.current = null;
+		if (grid === null) return;
+		setGridWidth(grid.clientWidth || undefined);
+		const View = grid.ownerDocument.defaultView?.ResizeObserver;
+		if (View === undefined) return;
+		observer.current = new View(() => setGridWidth(grid.clientWidth || undefined));
+		observer.current.observe(grid);
+	}, []);
+	return {
+		gridRef,
+		drawn: drawnForgeDetailWidth(preview ?? chosen, gridWidth),
+		bounds: forgeDetailWidthBounds(gridWidth),
+		stacked: forgeDetailLayout(gridWidth) === 'stacked',
+		setPreview,
+		commit,
+	};
 }
 
 // ── A project's Git tab ────────────────────────────────────────────────
@@ -300,6 +522,8 @@ export type ProjectForgeTabsOptions = Readonly<{
 	bound: boolean;
 	environment: ForgeEnvironment;
 	openInHome: (focus: Omit<ForgeHomeFocus, 'nonce'>) => void;
+	/** Open an item as a tab in the selected folder: a row's double click. */
+	openInTab?: (target: ForgeItemTarget) => void;
 }>;
 
 /**
@@ -413,6 +637,11 @@ export function useProjectGitPanes(options: ProjectForgeTabsOptions): ProjectGit
 			setDetail({ sourceId: activation.sourceId, reference: activation.reference });
 		else options.openInHome(activation.focus);
 	};
+	const { openInTab } = options;
+	const open =
+		openInTab === undefined
+			? undefined
+			: (entry: ForgeListItemView) => openInTab({ sourceId: entry.sourceId, reference: entry.item.reference });
 	const detailFor = (kind: ForgeKind) =>
 		detail === undefined || detail.reference.kind !== kind ? null : (
 			<div className="forge-tab">
@@ -422,6 +651,7 @@ export function useProjectGitPanes(options: ProjectForgeTabsOptions): ProjectGit
 					reference={detail.reference}
 					environment={options.environment}
 					onClose={() => setDetail(undefined)}
+					{...(openInTab === undefined ? {} : { onOpenInTab: () => openInTab(detail) })}
 				/>
 			</div>
 		);
@@ -434,6 +664,7 @@ export function useProjectGitPanes(options: ProjectForgeTabsOptions): ProjectGit
 					showRepository={shown.length > 1}
 					selected={detail !== undefined && itemKey(detail.reference) === itemKey(entry.item.reference)}
 					onSelect={activate}
+					{...(open === undefined ? {} : { onOpen: open })}
 					projectTitle={projectTitle}
 					projectOrder={projectOrder}
 				/>
@@ -573,12 +804,14 @@ function ProjectForgeDetail({
 	reference,
 	environment,
 	onClose,
+	onOpenInTab,
 }: Readonly<{
 	client: TerminayForgeClient | undefined;
 	sourceId: string;
 	reference: ForgeReference;
 	environment: ForgeEnvironment;
 	onClose: () => void;
+	onOpenInTab?: () => void;
 }>) {
 	const detail = useForgeDetail(client, sourceId, reference, 0);
 	if (detail.detail === undefined)
@@ -606,6 +839,7 @@ function ProjectForgeDetail({
 			now={Date.now()}
 			onReload={detail.reload}
 			onClose={onClose}
+			{...(onOpenInTab === undefined ? {} : { onOpenInTab })}
 		/>
 	);
 }

@@ -565,3 +565,244 @@ test('a press beside the drawer closes the topmost layer first, and the header c
 	await drawer.getByRole('button', { name: 'Close switcher' }).click();
 	await expect(drawerOf(mainWindow)).toHaveCount(0);
 });
+
+/* ------------------------------------------------------------- Servers */
+
+const serversItem = (drawer: Locator) =>
+	drawer.locator('[data-compact-switcher-server="true"]');
+const serversPanel = (drawer: Locator) =>
+	drawer.locator('[data-compact-servers-panel="true"]');
+
+test('selecting Servers in the rail presents the Servers panel and opens no menu', async ({
+	electronApp,
+	mainWindow,
+}) => {
+	await resize(mainWindow, electronApp, PHONE);
+	const drawer = await openDrawer(mainWindow);
+	const servers = serversItem(drawer);
+	// A rail item like Home: a label beneath it, and a name for the server.
+	await expect(servers.locator('.compact-drawer__rail-label')).toHaveText(
+		'Servers',
+	);
+	await expect(servers).toHaveAccessibleName(/^Servers, \S/);
+	await expect(servers).toHaveAttribute('aria-pressed', 'false');
+	await expect(servers).not.toHaveAttribute('aria-haspopup');
+
+	await servers.click();
+	await expect(servers).toHaveAttribute('aria-pressed', 'true');
+	// Only one rail item is selected.
+	await expect(drawer.locator('[aria-pressed="true"]')).toHaveCount(1);
+	await expect(drawer.getByRole('menu')).toHaveCount(0);
+	await expect(drawer.locator('[data-compact-sheet="true"]')).toHaveCount(0);
+
+	const panel = serversPanel(drawer);
+	await expect(panel).toBeVisible();
+	await expect(drawer.locator('.compact-drawer__name')).toHaveText('Servers');
+	const current = panel.getByRole('radio', { checked: true });
+	await expect(current).toHaveCount(1);
+	// No search, no edit control, no Tabs and Agents, no new terminal.
+	await expect(
+		drawer.getByRole('button', { name: 'Search terminals and projects' }),
+	).toHaveCount(0);
+	await expect(
+		drawer.locator('[data-compact-switcher-edit="true"]'),
+	).toHaveCount(0);
+	await expect(drawer.getByRole('tab')).toHaveCount(0);
+	await expect(
+		drawer.locator('[data-compact-switcher-new-terminal]'),
+	).toHaveCount(0);
+	await expect(
+		drawer.getByRole('button', { name: 'Add connection' }),
+	).toBeVisible();
+
+	// Choosing the current server does nothing.
+	await current.click();
+	await expect(drawer).toBeVisible();
+	await expect(current).toHaveAttribute('aria-checked', 'true');
+
+	// No layer is open, so the dismiss key closes the drawer.
+	await mainWindow.keyboard.press('Escape');
+	await expect(drawerOf(mainWindow)).toHaveCount(0);
+});
+
+test('Add connection in the Servers panel dismisses the switcher and opens the connection manager', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+}) => {
+	await resize(mainWindow, electronApp, PHONE);
+	const drawer = await openDrawer(mainWindow);
+	await serversItem(drawer).click();
+	await expect(serversPanel(drawer)).toBeVisible();
+	const manager = await appHarness.openChildWindow(async () => {
+		await drawer.getByRole('button', { name: 'Add connection' }).click();
+	});
+	await expect(drawerOf(mainWindow)).toHaveCount(0);
+	await expect(manager.locator('.settings-content')).toBeVisible();
+	await manager.close();
+});
+
+test('Servers in edit mode has no grip or close, and selecting it ends edit mode', async ({
+	electronApp,
+	mainWindow,
+}) => {
+	await resize(mainWindow, electronApp, PHONE);
+	const drawer = await openDrawer(mainWindow);
+	const edit = drawer.locator('[data-compact-switcher-edit="true"]');
+	await edit.click();
+	await expect(edit).toHaveText('Done');
+	// The projects carry their edit affordances; Servers carries none.
+	await expect(drawer.locator('.compact-drawer__rail-grip')).not.toHaveCount(0);
+	const servers = serversItem(drawer);
+	await expect(servers.locator('.compact-drawer__rail-grip')).toHaveCount(0);
+	await expect(
+		drawer.getByRole('button', { name: /^Close Servers/ }),
+	).toHaveCount(0);
+
+	await servers.click();
+	await expect(serversPanel(drawer)).toBeVisible();
+	await expect(servers).toHaveAttribute('aria-pressed', 'true');
+	await expect(drawer.locator('[data-compact-editing="true"]')).toHaveCount(0);
+	await expect(drawer.locator('.compact-drawer__rail-grip')).toHaveCount(0);
+	await expect(drawer.locator('.compact-drawer__rail-close')).toHaveCount(0);
+});
+
+/* ------------------------------------------------------- folder picker */
+
+const PICKER_WORKTREES = [
+	'rail-drawer',
+	'rail-overlap',
+	'launchers',
+	'alpha',
+	'beta',
+	'gamma',
+	'delta',
+	'epsilon',
+	'zeta',
+	'eta',
+	'theta',
+] as const;
+
+test('the dropup picks one of a dozen folders by filter, arrows, Enter, or a tap', async ({
+	createWorkspace,
+	electronApp,
+	mainWindow,
+}) => {
+	test.setTimeout(150_000);
+	const root = await repository(
+		createWorkspace,
+		'drawer-folder-picker',
+		PICKER_WORKTREES,
+	);
+	await setProjectRoot(mainWindow, root);
+	await expect(folderRow(mainWindow, 'theta')).toBeVisible({ timeout: 30_000 });
+	await resize(mainWindow, electronApp, PHONE);
+	const drawer = await openDrawer(mainWindow);
+	const terminals = drawer.locator('[data-compact-switcher-terminal]');
+	const before = await terminals.count();
+
+	await drawer.locator('[data-compact-switcher-launchers="true"]').click();
+	const dropup = drawer.getByRole('menu', { name: 'New terminal' });
+	await expect(dropup).toBeVisible();
+	// One Open in control naming the target, and no chip for each folder.
+	const openIn = drawer.locator('[data-compact-dropup-open-in="true"]');
+	await expect(openIn).toHaveAccessibleName('Open in General');
+	await expect(openIn).toHaveAttribute('aria-expanded', 'false');
+	await expect(drawer.locator('[data-compact-dropup-folder]')).toHaveCount(0);
+
+	// Expanding swaps the launcher entries for a focused filter and the list.
+	await openIn.click();
+	await expect(openIn).toHaveAttribute('aria-expanded', 'true');
+	const filter = drawer.getByRole('combobox', { name: 'Filter folders' });
+	await expect(filter).toBeFocused();
+	expect(
+		await filter.evaluate((element) =>
+			Number.parseFloat(getComputedStyle(element).fontSize),
+		),
+	).toBeGreaterThanOrEqual(16);
+	await expect(dropup).toHaveCount(0);
+	const listbox = drawer.getByRole('listbox', { name: 'Folders' });
+	const options = listbox.getByRole('option');
+	await expect(options).toHaveCount(PICKER_WORKTREES.length + 1);
+	await expect(
+		listbox.getByRole('option', { name: 'General', exact: true }),
+	).toHaveAttribute('aria-selected', 'true');
+	// A long list scrolls inside the dropup.
+	expect(
+		await listbox.evaluate(
+			(element) => element.scrollHeight > element.clientHeight,
+		),
+	).toBe(true);
+
+	// Substring, ignoring case, on the displayed name.
+	await filter.fill('RAIL');
+	await expect(options).toHaveCount(2);
+	expect(
+		(await options.allInnerTexts()).map((text) => text.trim()).sort(),
+	).toEqual(['rail-drawer', 'rail-overlap']);
+
+	await filter.fill('no-such-folder');
+	await expect(options).toHaveCount(0);
+	await expect(drawer.getByText(/^No folders match/)).toBeVisible();
+
+	// The arrows move the highlight; Enter chooses it and collapses the
+	// picker back to the launchers without creating anything.
+	await filter.fill('rail');
+	await expect(options).toHaveCount(2);
+	await mainWindow.keyboard.press('ArrowDown');
+	const highlighted = await filter.getAttribute('aria-activedescendant');
+	if (highlighted === null) throw new Error('Expected a highlighted folder');
+	const chosen = (
+		(await drawer.locator(`[id="${highlighted}"]`).textContent()) ?? ''
+	).trim();
+	expect(chosen).not.toBe('');
+	expect(chosen).toBe(((await options.nth(1).textContent()) ?? '').trim());
+	await mainWindow.keyboard.press('Enter');
+	await expect(openIn).toHaveAttribute('aria-expanded', 'false');
+	await expect(openIn).toHaveAccessibleName(`Open in ${chosen}`);
+	await expect(dropup).toBeVisible();
+	await expect(drawer.locator('input')).toHaveCount(0);
+	await expect(terminals).toHaveCount(before);
+
+	// Escape collapses only the picker: the target stays and the dropup stays.
+	await openIn.click();
+	await expect(filter).toBeFocused();
+	await filter.fill('alpha');
+	await mainWindow.keyboard.press('Escape');
+	await expect(filter).toHaveCount(0);
+	await expect(openIn).toHaveAttribute('aria-expanded', 'false');
+	await expect(openIn).toHaveAccessibleName(`Open in ${chosen}`);
+	await expect(openIn).toBeFocused();
+	await expect(dropup).toBeVisible();
+	await expect(drawer).toBeVisible();
+
+	// A tap chooses too, and the launcher then creates in that folder.
+	await openIn.click();
+	await listbox.getByRole('option', { name: 'theta', exact: true }).click();
+	await expect(openIn).toHaveAccessibleName('Open in theta');
+	await expect(terminals).toHaveCount(before);
+	await dropup.getByRole('menuitem').first().click();
+	await expect(drawerOf(mainWindow)).toHaveCount(0);
+
+	const again = await openDrawer(mainWindow);
+	await expect(
+		folderSection(again, 'theta').locator('[data-compact-switcher-terminal]'),
+	).toHaveCount(1);
+});
+
+test('with one folder, Open in names it and does not expand', async ({
+	electronApp,
+	mainWindow,
+}) => {
+	await resize(mainWindow, electronApp, PHONE);
+	const drawer = await openDrawer(mainWindow);
+	await drawer.locator('[data-compact-switcher-launchers="true"]').click();
+	const dropup = drawer.getByRole('menu', { name: 'New terminal' });
+	await expect(dropup).toBeVisible();
+	const openIn = drawer.locator('[data-compact-dropup-open-in="true"]');
+	await expect(openIn).toHaveText(/Open in\s*General/);
+	await expect(openIn).not.toHaveAttribute('aria-expanded');
+	await openIn.click();
+	await expect(drawer.getByRole('combobox')).toHaveCount(0);
+	await expect(dropup).toBeVisible();
+});

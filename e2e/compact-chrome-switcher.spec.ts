@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { cancelEditWindow, longPress } from './support/ui';
 import { createStartedProject } from './support/project-start';
+import { cancelEditWindow, longPress } from './support/ui';
 
 const PHONE = { x: 40, y: 40, width: 390, height: 740 } as const;
 
@@ -216,6 +216,10 @@ test.describe('compact chrome', () => {
 		await expect(mainWindow.locator('.compact-title__where')).toHaveText(
 			'Home',
 		);
+		// Home has no sidebar on a compact workspace, so the row offers no toggle.
+		await expect(
+			mainWindow.locator('[data-compact-sidebar-toggle="true"]'),
+		).toHaveCount(0);
 
 		const drawer = await openDrawer(mainWindow);
 		await railProject(mainWindow, project).click();
@@ -408,9 +412,10 @@ test.describe('compact chrome', () => {
 		await expect(
 			drawer.getByRole('button', { name: 'New project' }),
 		).not.toHaveCount(0);
+		// Add connection sits in the Servers panel's create bar.
 		await drawer.locator('[data-compact-switcher-server="true"]').click();
 		await expect(
-			drawer.getByRole('menuitem', { name: 'Add connection' }),
+			drawer.getByRole('button', { name: 'Add connection' }),
 		).toBeVisible();
 	});
 
@@ -643,13 +648,11 @@ test.describe('compact chrome', () => {
 		);
 		// The order is the server's: a reload reads it back.
 		await mainWindow.reload();
-		await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible(
-			{ timeout: 15_000 },
-		);
+		await expect(
+			mainWindow.locator('[data-compact-chrome="true"]'),
+		).toBeVisible({ timeout: 15_000 });
 		const reopened = await openDrawer(mainWindow);
-		await expect
-			.poll(() => rowTitles(reopened))
-			.toEqual([...before].reverse());
+		await expect.poll(() => rowTitles(reopened)).toEqual([...before].reverse());
 	});
 
 	test('edit mode closes a project from the rail', async ({
@@ -728,12 +731,12 @@ test.describe('compact chrome', () => {
 		const dropup = drawer.getByRole('menu', { name: 'New terminal' });
 		await expect(dropup).toBeVisible();
 		await expect(dropup.getByRole('menuitem').first()).toHaveText(/Terminal/);
-		await expect(
-			drawer.getByRole('radiogroup', { name: 'Folder' }).getByRole('radio'),
-		).not.toHaveCount(0);
-		await expect(
-			drawer.getByRole('radio', { name: 'General' }),
-		).toHaveAttribute('aria-checked', 'true');
+		// One folder: Open in names it, and there is nothing to expand.
+		const openIn = drawer.locator('[data-compact-dropup-open-in="true"]');
+		await expect(openIn).toHaveText(/Open in\s*General/);
+		await expect(drawer.getByRole('button', { name: /^Open in / })).toHaveCount(
+			0,
+		);
 
 		// Escape closes the dropup and leaves the drawer.
 		await mainWindow.keyboard.press('Escape');
@@ -744,9 +747,7 @@ test.describe('compact chrome', () => {
 		await drawer
 			.getByRole('button', { name: /^New terminal in General of / })
 			.click();
-		await expect(
-			drawer.getByRole('radio', { name: 'General' }),
-		).toHaveAttribute('aria-checked', 'true');
+		await expect(openIn).toHaveText(/Open in\s*General/);
 		await dropup.getByRole('menuitem').first().click();
 		await expect(drawer).toHaveCount(0);
 		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(2);
