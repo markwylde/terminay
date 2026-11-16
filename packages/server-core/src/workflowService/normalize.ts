@@ -63,7 +63,7 @@ export function isDefaultAfter(
 /**
  * Bytes of the JSON encoding of what a `create_workflow` request carries to
  * make this content, with server ids, so escaping and the ids `get_workflow`
- * returns are counted (design decision 6; ADR-0127). `after` is counted only
+ * returns are counted (design decision 6; ADR-0128). `after` is counted only
  * where it is not the default, since a request leaves it out there.
  */
 export function serializedWorkflowSize(content: {
@@ -198,7 +198,7 @@ function stepObjects(input: unknown): readonly Record<string, unknown>[] {
  * Validation of steps. A step keeps a supplied id when it is valid, unused,
  * and (when `knownIds` is a set) one the caller already holds; any other step
  * gets a fresh server id. The id a request gives a step is also the name its
- * later steps' `after` use for it (ADR-0127): `after` may name only earlier
+ * later steps' `after` use for it (ADR-0128): `after` may name only earlier
  * steps, never one twice, and a step given without it waits on the step
  * above. `'any'` is the lenient load of committed state, which keeps every
  * valid stored id and skips the request-only bounds.
@@ -548,7 +548,7 @@ function validateStoredWorkflow(raw: unknown): Workflow | undefined {
 
 /**
  * A stored step's dependencies. A record written before steps had them reads
- * as waiting on the step above (ADR-0127). Undefined when they are not valid,
+ * as waiting on the step above (ADR-0128). Undefined when they are not valid,
  * so the record is treated as corrupt.
  */
 function storedAfter(

@@ -70,7 +70,7 @@ export interface WorkflowPanelProps {
 	readonly railWidth?: number;
 }
 
-/** The collapsed rail's width for a workflow: wider as its brackets nest (ADR-0127). */
+/** The collapsed rail's width for a workflow: wider as its brackets nest (ADR-0128). */
 export function workflowRailWidth(view: SessionWorkflow): number {
 	if (view.state !== 'attached') return stageRailWidth([]);
 	return stageRailWidth(analyzeStages(view.workflow.steps).tree);
@@ -444,7 +444,7 @@ interface StepsContext {
 }
 
 /**
- * The steps in the arrangement their dependencies give (ADR-0127): steps in
+ * The steps in the arrangement their dependencies give (ADR-0128): steps in
  * sequence, and brackets of tracks for steps that run alongside each other.
  */
 function WorkflowSteps({
@@ -549,7 +549,7 @@ function StepRow({
 			data-workflow-step-id={step.id}
 			aria-current={isActive(step.status) ? 'step' : undefined}
 			// Focusable, so tracing works from the keyboard too.
-			// biome-ignore lint/a11y/noNoninteractiveTabindex: focusing a step traces its dependencies (ADR-0127).
+			// biome-ignore lint/a11y/noNoninteractiveTabindex: focusing a step traces its dependencies (ADR-0128).
 			tabIndex={0}
 			{...context.trace.bind(step.id)}
 		>

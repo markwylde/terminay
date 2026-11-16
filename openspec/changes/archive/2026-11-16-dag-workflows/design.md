@@ -181,8 +181,8 @@ The expanded drawer is as tall as its header plus its map need, at most 240px. `
 - Fixtures in `workflow-service.test.mjs` cover:
   - a version 1 template at the size bound;
   - a version 1 workflow with step 3 running while step 2 is not started, which then finishes.
-- **Rollback loses the graph.** An older server reads a version 2 file, ignores `after`, and rewrites the record without it on its next change. Upgrading again then reads that record as a chain, so the parallel shape of any template or workflow touched while downgraded is lost. Untouched files keep `after`. This is accepted and documented in ADR-0127. The test for it: a version 2 record stripped of `after` by the old normaliser loads as a chain.
+- **Rollback loses the graph.** An older server reads a version 2 file, ignores `after`, and rewrites the record without it on its next change. Upgrading again then reads that record as a chain, so the parallel shape of any template or workflow touched while downgraded is lost. Untouched files keep `after`. This is accepted and documented in ADR-0128. The test for it: a version 2 record stripped of `after` by the old normaliser loads as a chain.
 
 ## Open Questions
 
-- None blocking. The prototype the user approved, with the reference `analyze` and `metro` code, is kept at `openspec/adr/evidence/0127-dag-run-layouts-prototype.html`. ADR-0097 decision 4 ("Templates are flat, ordered lists") is superseded by a new ADR recorded in the adr step. Decisions 1–3 carry forward unchanged.
+- None blocking. The prototype the user approved, with the reference `analyze` and `metro` code, is kept at `openspec/adr/evidence/0128-dag-run-layouts-prototype.html`. ADR-0097 decision 4 ("Templates are flat, ordered lists") is superseded by a new ADR recorded in the adr step. Decisions 1–3 carry forward unchanged.

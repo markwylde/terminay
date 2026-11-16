@@ -42,7 +42,7 @@ test('characters are typed as stored, without normalisation', () => {
 	assert.ok(typedWorkflowGoal(decomposed, 'Go.').includes(decomposed));
 });
 
-test('launch and resume instructions follow dependencies (ADR-0127)', () => {
+test('launch and resume instructions follow dependencies (ADR-0128)', () => {
 	for (const instruction of [WORKFLOW_LAUNCH_INSTRUCTION, WORKFLOW_RESUME_INSTRUCTION]) {
 		assert.match(instruction, /only once every step in its after list is done or skipped/u);
 		assert.match(instruction, /ready_step_ids/u);

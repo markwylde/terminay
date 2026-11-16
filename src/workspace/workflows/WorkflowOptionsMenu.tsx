@@ -1,5 +1,5 @@
 /**
- * The workflow options menu (ADR-0127): a ⋯ control on the expanded panel,
+ * The workflow options menu (ADR-0128): a ⋯ control on the expanded panel,
  * the collapsed rail, the expanded drawer and the collapsed strip. It chooses
  * the device's layout and is the only place a workflow is removed. Every key
  * pressed while it is open is the menu's, never the terminal's.

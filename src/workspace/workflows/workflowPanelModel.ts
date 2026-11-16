@@ -76,7 +76,7 @@ export function isSettledStatus(status: WorkflowStepStatus): boolean {
 }
 
 /**
- * Ready steps (ADR-0127): not started or failed, with every step they wait on
+ * Ready steps (ADR-0128): not started or failed, with every step they wait on
  * settled, in step order.
  */
 export function readySteps<T extends Pick<WorkflowStep, 'id' | 'status' | 'after'>>(

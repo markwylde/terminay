@@ -25,7 +25,7 @@ export const WORKFLOW_LIMITS = Object.freeze({
 	 */
 	maxSerializedBytes: 56 * 1024,
 	maxNoteChars: 200,
-	/** Dependencies across every step of one template or workflow (ADR-0127). */
+	/** Dependencies across every step of one template or workflow (ADR-0128). */
 	maxDependencies: 200,
 	/** Characters of a step id given in a request, used to name it in `after`. */
 	maxRequestIdChars: 64,
@@ -71,7 +71,7 @@ export interface WorkflowTemplateStep {
 	readonly prompt: string;
 	/** Empty for none. */
 	readonly icon: WorkflowIconName | '';
-	/** Ids of earlier steps this step waits on, in step order (ADR-0127). */
+	/** Ids of earlier steps this step waits on, in step order (ADR-0128). */
 	readonly after: readonly string[];
 }
 
@@ -98,7 +98,7 @@ export interface WorkflowStep {
 	readonly title: string;
 	readonly prompt: string;
 	readonly icon: WorkflowIconName | '';
-	/** Ids of earlier steps this step waits on, in step order (ADR-0127). */
+	/** Ids of earlier steps this step waits on, in step order (ADR-0128). */
 	readonly after: readonly string[];
 	readonly status: WorkflowStepStatus;
 	/** Empty for none. */

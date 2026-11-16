@@ -8,7 +8,7 @@ import { submitTerminalCommand } from './support/terminal';
 import { settledTerminalSessionId } from './support/terminal-session';
 
 /**
- * Workflows whose steps form a dependency graph (ADR-0127): brackets in the
+ * Workflows whose steps form a dependency graph (ADR-0128): brackets in the
  * vertical panel, capsules on the rail, the horizontal metro drawer and its
  * strip, the ⋯ options menu, tracing, and the outline template editor.
  */

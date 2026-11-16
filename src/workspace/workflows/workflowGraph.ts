@@ -1,6 +1,6 @@
 /**
  * The shape of a workflow, worked out from its steps' dependencies alone
- * (ADR-0127). Every view — the vertical panel and its rail, the horizontal
+ * (ADR-0128). Every view — the vertical panel and its rail, the horizontal
  * drawer and strip, Home's columns, and the template outline — draws from
  * these functions, so the same dependencies are always drawn the same way.
  * Pure: nothing here talks to a server or the DOM.

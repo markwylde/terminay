@@ -256,7 +256,7 @@ function latestEnd(steps: readonly WorkflowStep[]): number | undefined {
 	return latest;
 }
 
-/** The step a row names: the first of the workflow's current steps (ADR-0127). */
+/** The step a row names: the first of the workflow's current steps (ADR-0128). */
 function currentStep(steps: readonly WorkflowStep[]): WorkflowStep | undefined {
 	return currentSteps(steps)[0];
 }

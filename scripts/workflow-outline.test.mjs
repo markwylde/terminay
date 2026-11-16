@@ -20,7 +20,7 @@ import {
 	removeStep,
 } from '../src/components/workflows/workflowOutlineModel.ts';
 
-// The template outline and the dependencies it sets (ADR-0127).
+// The template outline and the dependencies it sets (ADR-0128).
 
 const s = (id, ...after) => ({ id, after });
 const after = (outline) => Object.fromEntries(dependenciesFromOutline(outline));

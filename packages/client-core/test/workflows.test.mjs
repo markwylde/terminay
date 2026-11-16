@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { validateSessionWorkflow, workflowSerializedSize } from "../dist/index.js";
 
-// Step dependencies on the client (ADR-0127).
+// Step dependencies on the client (ADR-0128).
 
 const serverId = (n) => `step-${String(n).padStart(36, "0")}`;
 const view = (steps, extra = {}) => ({

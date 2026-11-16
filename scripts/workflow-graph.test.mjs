@@ -13,7 +13,7 @@ import {
 } from '../src/workspace/workflows/workflowGraph.ts';
 import { currentStepLabel, currentSteps, currentStepTitle, readySteps } from '../src/workspace/workflows/workflowPanelModel.ts';
 
-// The shape of a workflow worked out from its dependencies (ADR-0127).
+// The shape of a workflow worked out from its dependencies (ADR-0128).
 
 const s = (id, ...after) => ({ id, after });
 const chain = (...ids) => ids.map((id, index) => s(id, ...(index === 0 ? [] : [ids[index - 1]])));
@@ -138,7 +138,7 @@ test('the metro map puts each step one column right of its furthest dependency',
 	assert.equal(full.nodes.get('pr').column, 5);
 });
 
-// Current steps named in words (ADR-0127).
+// Current steps named in words (ADR-0128).
 
 const st = (id, status, ...after) => ({ id, title: id, status, after });
 

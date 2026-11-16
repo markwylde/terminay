@@ -1,5 +1,5 @@
 /**
- * A template's steps as the editor's outline (ADR-0127): a sequence of steps
+ * A template's steps as the editor's outline (ADR-0128): a sequence of steps
  * and brackets, each bracket a set of tracks run alongside each other. The
  * outline is the plan's shape. Opening a template draws it as the vertical
  * panel would; changing the shape derives every step's dependencies from it.

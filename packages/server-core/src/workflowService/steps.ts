@@ -36,7 +36,7 @@ export function unsettledDependencies(
 }
 
 /**
- * Ready steps (ADR-0127): not started or failed, with every dependency
+ * Ready steps (ADR-0128): not started or failed, with every dependency
  * settled, in step order.
  */
 export function readyStepIds(workflow: Workflow): readonly string[] {
@@ -77,7 +77,7 @@ export function startsStep(
 
 /**
  * Apply one status report. Any status may move to any status, except that a
- * step may not start before its dependencies are settled (ADR-0127); any
+ * step may not start before its dependencies are settled (ADR-0128); any
  * number of steps may be active. Times follow design decision 4's table.
  */
 export function applyStepUpdate(

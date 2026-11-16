@@ -1,4 +1,4 @@
-# ADR-0127: Workflow steps form a dependency graph, and the plan's shape is derived from it
+# ADR-0128: Workflow steps form a dependency graph, and the plan's shape is derived from it
 
 Status: accepted, supersedes ADR-0097 in part
 Date: 2026-11-16
@@ -55,4 +55,4 @@ id. Terminay never executes, schedules or advances a step.
   template or workflow it rewrites: the older server drops `after`, and a later
   upgrade reads the record as a plain chain.
 - The approved prototype, including the reference layout code, is kept at
-  `evidence/0127-dag-run-layouts-prototype.html`.
+  `evidence/0128-dag-run-layouts-prototype.html`.

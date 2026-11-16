@@ -15,7 +15,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0127-workflow-steps-form-a-dependency-graph-and-the-plans-shape-is-derived.md - steps declare `after`, several may be active, and brackets/lanes are derived from dependencies; supersedes ADR-0097 decision 4.
+- openspec/adr/0128-workflow-steps-form-a-dependency-graph-and-the-plans-shape-is-derived.md - steps declare `after`, several may be active, and brackets/lanes are derived from dependencies; supersedes ADR-0097 decision 4.
 
 ## Notes
 

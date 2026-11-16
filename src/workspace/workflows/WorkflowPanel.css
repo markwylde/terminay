@@ -635,7 +635,7 @@
   opacity: 0.5;
 }
 
-/* ---------- Steps that run alongside each other (ADR-0127) ---------- */
+/* ---------- Steps that run alongside each other (ADR-0128) ---------- */
 
 /* A bracket's tone: red when a step needs input or failed, amber while one
    runs, green once all are settled, grey otherwise. */
@@ -917,7 +917,7 @@
   background: #da3633;
 }
 
-/* ---------- The horizontal drawer (ADR-0127) ---------- */
+/* ---------- The horizontal drawer (ADR-0128) ---------- */
 
 .workflow-drawer {
   position: absolute;

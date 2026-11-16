@@ -273,7 +273,7 @@ function deviceChoice<T extends string>(
 
 /**
  * Whether workflows show as the vertical panel at a pane's right edge or the
- * horizontal drawer along its bottom (ADR-0127). Vertical until chosen.
+ * horizontal drawer along its bottom (ADR-0128). Vertical until chosen.
  */
 export type WorkflowLayout = 'vertical' | 'horizontal';
 export const WORKFLOW_LAYOUT_STORAGE_KEY = 'terminay.workflowLayout.v1';

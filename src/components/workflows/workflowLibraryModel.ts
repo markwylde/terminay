@@ -34,7 +34,7 @@ export interface DraftStep {
 	readonly title: string;
 	readonly prompt: string;
 	readonly icon: WorkflowIconName | '';
-	/** The keys of the steps this step waits on, as stored (ADR-0127). */
+	/** The keys of the steps this step waits on, as stored (ADR-0128). */
 	readonly after: readonly string[];
 }
 

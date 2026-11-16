@@ -476,7 +476,7 @@ test("an agent skips a step with a reason, and a workflow of done and skipped st
   assert.equal(read.workflow.steps[1].status, "skipped");
 });
 
-// Step dependencies (ADR-0127)
+// Step dependencies (ADR-0128)
 
 test("an agent creates parallel steps by naming earlier steps in after", async () => {
   const { call } = service();

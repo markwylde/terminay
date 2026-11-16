@@ -43,7 +43,7 @@ export const WORKFLOW_CLIENT_LIMITS = Object.freeze({
   maxPromptBytes: 8 * 1024,
   maxSerializedBytes: 56 * 1024,
   maxCategoryChars: 64,
-  /** Dependencies across every step of one template or workflow (ADR-0127). */
+  /** Dependencies across every step of one template or workflow (ADR-0128). */
   maxDependencies: 200,
 });
 
@@ -55,7 +55,7 @@ export interface WorkflowTemplateStep {
   readonly title: string;
   readonly prompt: string;
   readonly icon: WorkflowIconName | "";
-  /** Ids of earlier steps this step waits on, in step order (ADR-0127). */
+  /** Ids of earlier steps this step waits on, in step order (ADR-0128). */
   readonly after: readonly string[];
 }
 
@@ -117,7 +117,7 @@ export interface WorkflowEventTransport extends QueryCommandTransport {
 /**
  * The serialized size the server bounds: the JSON of name, opening prompt and
  * steps, with each step's `after` counted as server ids where it is not the
- * default (the step above), as the server counts it (ADR-0127).
+ * default (the step above), as the server counts it (ADR-0128).
  */
 export function workflowSerializedSize(content: {
   readonly name: string;
@@ -367,7 +367,7 @@ function validateTemplateStep(value: unknown): Omit<WorkflowTemplateStep, "after
 
 /**
  * Steps with their dependencies: a step's `after` keeps only ids of steps
- * above it; a step without one waits on the step above (ADR-0127).
+ * above it; a step without one waits on the step above (ADR-0128).
  */
 function withDependencies<T extends { readonly id: string; readonly rawAfter: unknown }>(
   steps: readonly T[],

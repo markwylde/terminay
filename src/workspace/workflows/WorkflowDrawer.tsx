@@ -1,6 +1,6 @@
 /**
  * A terminal's workflow along the bottom of its pane: the horizontal layout
- * (ADR-0127). Expanded, a metro map with a column per depth of dependency;
+ * (ADR-0128). Expanded, a metro map with a column per depth of dependency;
  * collapsed, a 46px strip. Pane chrome like the vertical panel: the pane
  * reserves its height and the terminal fits what is left. Every piece of
  * workflow text is rendered as a text node.

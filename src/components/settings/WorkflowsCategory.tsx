@@ -354,7 +354,7 @@ type OutlineEditorActions = Pick<
 >
 
 /**
- * A template's steps as an outline (ADR-0127), drawn as the vertical panel
+ * A template's steps as an outline (ADR-0128), drawn as the vertical panel
  * draws a workflow: brackets for steps that run alongside each other. Each
  * step offers "+ then" and "+ alongside", each bracket "+ another track
  * alongside", and the outline ends with "+ Add step at the end". A step moves

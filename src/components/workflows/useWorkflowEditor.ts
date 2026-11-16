@@ -172,7 +172,7 @@ export function useWorkflowEditor(client: WorkflowClient | undefined, active: bo
 		updateTemplate(id, (template) => ({ ...template, steps: update(template.steps) }));
 	/**
 	 * A change to the outline's shape: the steps follow the outline's order,
-	 * and from now on saving derives every step's dependencies (ADR-0127).
+	 * and from now on saving derives every step's dependencies (ADR-0128).
 	 */
 	const reshape = (
 		id: string,

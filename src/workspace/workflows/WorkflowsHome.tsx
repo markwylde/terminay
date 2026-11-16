@@ -651,7 +651,7 @@ function WorkflowColumn(props: {
 	const showProject = view.group !== 'project';
 	const showName = view.group !== 'workflow';
 	const workflow = row.view.state === 'attached' ? row.view.workflow : undefined;
-	// The same arrangement as the panel: brackets from dependencies (ADR-0127).
+	// The same arrangement as the panel: brackets from dependencies (ADR-0128).
 	const stages = useMemo(
 		() =>
 			workflow === undefined

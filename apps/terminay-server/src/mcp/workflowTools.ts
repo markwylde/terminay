@@ -53,7 +53,7 @@ export type CreateWorkflowParams =
 export interface WorkflowStepContent {
 	/**
 	 * The name later steps' `after` use for this step; for a template update,
-	 * a step id of that template keeps it (ADR-0127).
+	 * a step id of that template keeps it (ADR-0128).
 	 */
 	readonly id?: string;
 	readonly title: string;
@@ -322,7 +322,7 @@ function promptOf(value: unknown, field: string): string | Failure {
 /**
  * Steps as a call gives them. An `id` names a step for later steps' `after`
  * (and, in a template update, keeps a stored step's id); `after` may name only
- * ids given to earlier steps, never one twice (ADR-0127).
+ * ids given to earlier steps, never one twice (ADR-0128).
  */
 function stepsOf(value: unknown): TemplateStepContent[] | Failure {
 	const limits = WORKFLOW_TOOL_LIMITS;
@@ -444,7 +444,7 @@ export function parseUpdateWorkflowStep(
  * The serialized size the workflow service bounds, as this call carries it:
  * the JSON encoding of the name, opening prompt and steps with their given
  * ids and `after`, escaping included. The service also bounds the same
- * content with its own ids (ADR-0127).
+ * content with its own ids (ADR-0128).
  */
 export function serializedSize(content: {
 	readonly name: string;

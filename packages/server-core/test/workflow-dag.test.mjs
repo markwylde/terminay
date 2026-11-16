@@ -19,7 +19,7 @@ import {
   workflowFileName,
 } from "../dist/index.js";
 
-// Step dependencies (ADR-0127): `after`, readiness, blocked starts, and
+// Step dependencies (ADR-0128): `after`, readiness, blocked starts, and
 // reading records written before steps had dependencies.
 
 const root = () => mkdtempSync(join(tmpdir(), "terminay-workflow-dag-"));

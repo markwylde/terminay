@@ -132,7 +132,7 @@
   border: 0;
 }
 
-/* The outline (ADR-0127): brackets of tracks for steps placed alongside each other. */
+/* The outline (ADR-0128): brackets of tracks for steps placed alongside each other. */
 .workflow-outline-group {
   position: relative;
   display: flex;

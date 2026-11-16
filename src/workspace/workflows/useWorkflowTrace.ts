@@ -1,5 +1,5 @@
 /**
- * Tracing a step's dependencies (ADR-0127): hovering or focusing a step, or
+ * Tracing a step's dependencies (ADR-0128): hovering or focusing a step, or
  * tapping it on a touch screen, highlights what it waits on and what waits on
  * it, and dims the rest. Shared by the vertical panel and the drawer.
  */

@@ -1110,7 +1110,7 @@ test('the client sends a step update with its note and expected status to update
 	]);
 });
 
-// dag-workflows (ADR-0127): layouts, the options menu, brackets, capsules, the drawer.
+// dag-workflows (ADR-0128): layouts, the options menu, brackets, capsules, the drawer.
 
 const renderDrawer = (props) =>
 	renderToStaticMarkup(
