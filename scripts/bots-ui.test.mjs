@@ -957,6 +957,8 @@ test('Environment › Files lists the home and shows credential links as locked'
 			{ name: '.codex', kind: 'dir', size: 0, mtime: NOW },
 			{ name: 'auth.json', kind: 'credential-link', size: 0, mtime: NOW },
 			{ name: 'notes.md', kind: 'file', size: 120, mtime: NOW },
+			{ name: 'shortcut', kind: 'link', size: 0, mtime: NOW },
+			{ name: 'pipe', kind: 'other', size: 0, mtime: NOW },
 		],
 	});
 	try {
@@ -964,6 +966,33 @@ test('Environment › Files lists the home and shows credential links as locked'
 		const locked = page.locator('[data-terminay-bot-file="auth.json"]');
 		assert.equal(await locked.locator('button.bots-rowbtn').isDisabled(), true);
 		assert.match(await locked.innerText(), /Locked/);
+		for (const name of ['shortcut', 'pipe']) {
+			await page
+				.getByRole('button', { name: `More actions for ${name}` })
+				.click();
+			assert.deepEqual(await page.getByRole('menuitem').allTextContents(), [
+				'Rename',
+				'Delete',
+			]);
+			await page.keyboard.press('Escape');
+		}
+		// Switching directly between two keyboard menus must focus the new
+		// menu even when autoFocus was already true on the previous one.
+		await page
+			.getByRole('button', { name: 'More actions for notes.md' })
+			.focus();
+		await page.keyboard.press('Enter');
+		await page
+			.getByRole('button', { name: 'More actions for shortcut' })
+			.focus();
+		await page.keyboard.press('Shift+F10');
+		await page.waitForFunction(
+			() => document.activeElement?.textContent === 'Rename',
+		);
+		assert.equal(
+			await page.getByRole('menu', { name: 'Actions for shortcut' }).count(),
+			1,
+		);
 	} finally {
 		await page.close();
 	}
@@ -1055,7 +1084,7 @@ const WORKLOAD = {
 test('Containers presents readable workloads without overflow or stacked actions at wide and narrow sizes', async () => {
 	const page = await environment('containers', {
 		containers: [
-			WORKLOAD,
+			{ ...WORKLOAD, createdAt: new Date(Date.now() - 120_000).toISOString() },
 			{
 				...WORKLOAD,
 				id: 'b'.repeat(64),

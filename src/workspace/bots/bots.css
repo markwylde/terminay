@@ -1138,3 +1138,52 @@ button.bots-build-step__toggle:hover {
 	gap: 2px;
 	overflow-wrap: anywhere;
 }
+
+/* Environment › Files: each row's actions open the app's context menu. */
+.bots-files__more {
+	padding: 0;
+	color: var(--bots-fg);
+	opacity: 0.75;
+}
+.bots-files__more:hover,
+.bots-files__more:focus-visible,
+.bots-files__more[aria-expanded="true"] {
+	opacity: 1;
+	background: var(--bots-hover);
+}
+.bots-files__confirm {
+	justify-content: flex-end;
+	gap: 6px;
+}
+/* Files: the name column takes the free width and truncates; size, changed
+   and actions shrink to their content, never wrap, and sit at the right. */
+.bots-files .bots-tbl th:not(:first-child),
+.bots-files .bots-tbl td:not(:first-child) {
+	width: 1%;
+	white-space: nowrap;
+}
+.bots-files .bots-tbl th:nth-child(2),
+.bots-files .bots-tbl td:nth-child(2),
+.bots-files .bots-tbl th:last-child,
+.bots-files .bots-tbl td:last-child {
+	text-align: right;
+}
+.bots-files .bots-tbl td:first-child {
+	max-width: 0;
+}
+.bots-files .bots-tbl td:first-child .bots-rowbtn {
+	max-width: 100%;
+	min-width: 0;
+}
+.bots-files .bots-tbl td:first-child .bots-rowbtn svg {
+	flex-shrink: 0;
+}
+.bots-files__name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bots-files .bots-tbl td:first-child .bots-in {
+	width: 100%;
+	box-sizing: border-box;
+}
