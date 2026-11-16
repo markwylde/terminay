@@ -1,9 +1,13 @@
 # Sourced by non-interactive Bash tool commands, including Codex exec_command.
 # Same-bot agents are cooperative peers; the container remains the trust boundary.
+# The gate refuses only an execution whose capability is no longer live.
 if [ -n "$TERMINAY_RUNTIME_SOCKET" ]; then
     /usr/local/bin/terminay-bot-mcp --check-work || exit 1
 fi
 for terminay_credential_name in $TERMINAY_CREDENTIAL_VARIABLES; do
     unset "$terminay_credential_name"
 done
-unset terminay_credential_name TERMINAY_CREDENTIAL_VARIABLES TERMINAY_RUNTIME_TOKEN TERMINAY_MCP_TOKEN BASH_ENV
+# Drop each socket with its token. Claude wraps its shell prefix in a bash that
+# sources this file first; a socket left without its token would make the
+# prefix's own gate fail every command.
+unset terminay_credential_name TERMINAY_CREDENTIAL_VARIABLES TERMINAY_RUNTIME_SOCKET TERMINAY_RUNTIME_TOKEN TERMINAY_MCP_SOCKET TERMINAY_MCP_TOKEN BASH_ENV

@@ -143,3 +143,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0123](./0123-ci-execution-budget-excludes-runner-queueing.md) | CI execution budget excludes runner queueing | accepted, supersedes 0121 in part | 2026-11-14 |
 | [0124](./0124-a-command-default-may-set-environment-on-the-integrated-shell.md) | A command default may set environment on the integrated shell, and Claude Code runs without agent view in Terminay terminals | accepted, supersedes 0105 | 2026-11-15 |
 | [0125](./0125-a-server-upgrade-attempt-is-owned-by-the-server-and-ended-by-the-upgraders-record.md) | A server upgrade attempt is owned by the server and ended by the upgrader's record | accepted | 2026-11-16 |
+| [0127](./0127-a-bots-executions-share-its-shell-and-desktop.md) | A bot's live executions share its shell and desktop without a lease | accepted, supersedes 0093 in part | 2026-11-16 |

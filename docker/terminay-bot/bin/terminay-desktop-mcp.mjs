@@ -26,19 +26,28 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+// The execution's runtime pair is kept only for the liveness check and removed
+// from this process's environment, so nothing it starts (the wrapped MCP
+// server, desktop tools) inherits the capability token.
+const RUNTIME_ENVIRONMENT = {};
+for (const name of ['TERMINAY_RUNTIME_SOCKET', 'TERMINAY_RUNTIME_TOKEN']) {
+	if (process.env[name] !== undefined) RUNTIME_ENVIRONMENT[name] = process.env[name];
+	delete process.env[name];
+}
+
 export function checkWork() {
 	return new Promise((resolve, reject) =>
 		execFile(
 			'/usr/local/bin/terminay-bot-mcp',
 			['--check-work'],
-			{ timeout: 10000, maxBuffer: 4096 },
+			{
+				timeout: 10000,
+				maxBuffer: 4096,
+				env: { ...process.env, ...RUNTIME_ENVIRONMENT },
+			},
 			(error) =>
 				error
-					? reject(
-							new Error(
-								'Acquire shared work; this execution may be revoked or no longer own the desktop.',
-							),
-						)
+					? reject(new Error('This execution is no longer active.'))
 					: resolve(),
 		),
 	);
@@ -698,7 +707,7 @@ export function runCappedServer(
 									content: [
 										{
 											type: 'text',
-											text: 'Execution does not own shared work.',
+											text: 'This execution is no longer active.',
 										},
 									],
 								},

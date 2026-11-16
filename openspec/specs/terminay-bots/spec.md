@@ -182,21 +182,31 @@ Each bot SHALL have one durable shared message log independent of executions. Ev
 #### Scenario: A correction arrives during work
 
 - **WHEN** a user asks for BBC News and then corrects that request to BBC Sport while the first execution runs
-- **THEN** the correction starts another execution with bounded recent messages and active execution summaries, and it can supersede the first execution before taking ownership of shared work
+- **THEN** the correction starts another execution with bounded recent messages and active execution summaries, and its briefing states that one other execution is active, and it can stop, steer or supersede the first execution or leave it running
 
 ### Requirement: Bounded concurrent execution admission
 
-The server SHALL admit four work executions and one reserved user-message coordination execution per bot, with at most twenty waiting executions. Each trigger SHALL have at most one pending firing. Shared shell and desktop work SHALL require exclusive bot-scoped ownership independently of admission. Instructions, pinned memories, agent, model, sign-in and approval mode SHALL be snapshotted per execution. Completed providers SHALL close rather than remaining idle for later messages.
+The server SHALL admit four work executions and one reserved user-message coordination execution per bot, with at most twenty waiting executions. Each trigger SHALL have at most one pending firing. Every admitted execution, including one in the reserved coordination slot, SHALL be able to use the bot's shell and desktop alongside the bot's other live executions, without acquiring ownership of either. When an ordinary work slot frees while an execution occupies the reserved coordination slot, the server SHALL move that execution into the ordinary slot so the reserved slot is available for the next user message. Instructions, pinned memories, agent, model, sign-in and approval mode SHALL be snapshotted per execution. Completed providers SHALL close rather than remaining idle for later messages.
 
 #### Scenario: Coordination while work capacity is full
 
 - **WHEN** four work executions run and a user posts a correction
-- **THEN** a reserved coordination execution can inspect, message or replace older work without first acquiring shared desktop ownership
+- **THEN** a reserved coordination execution can inspect, message, stop or replace older work, and can run shell commands of its own
 
 #### Scenario: Profile edited during work
 
 - **WHEN** a user edits the bot's instructions during an execution
 - **THEN** that execution retains its snapshot and subsequent executions use the revised profile
+
+#### Scenario: Reserved slot is returned
+
+- **WHEN** four work executions and a reserved-slot execution run, and one work execution ends
+- **THEN** the reserved-slot execution moves into the freed work slot, and a further user message is admitted into the reserved slot immediately
+
+#### Scenario: Unrelated work overlaps
+
+- **WHEN** a trigger execution is running shell commands and a user posts an unrelated request
+- **THEN** the new execution runs its own shell commands while the trigger execution keeps running, and neither is refused for the other's activity
 
 ### Requirement: Stopping a turn and closing an agent
 
@@ -212,7 +222,7 @@ Each turn SHALL have a maximum duration, settable per bot and 30 minutes by defa
 
 Each request to the container engine that ends a session's process group, or every process group in a bot container, SHALL be allowed 5 minutes to complete before the server treats that request as failed. The limit applies to each request, so closing an agent and its runtime relays can take longer in total.
 
-An execution's cleanup has failed when ending its agent's process group is not confirmed. A failure to end one of its runtime relays SHALL be logged with its error but SHALL NOT count as a cleanup failure. After a cleanup failure, the server SHALL still revoke the execution's capability, release any shared shell or desktop ownership it held, and durably record the execution. Except at the blocking threshold below, a cleanup failure SHALL NOT change the outcome the turn already recorded: a turn whose agent answered stays completed, and a stopped, timed-out or failed turn keeps that outcome. The server SHALL durably append the cleanup failure to that execution's runner output and log it with its error to the server diagnostics, both redacted with the bot's secrets.
+An execution's cleanup has failed when ending its agent's process group is not confirmed. A failure to end one of its runtime relays SHALL be logged with its error but SHALL NOT count as a cleanup failure. After a cleanup failure, the server SHALL still revoke the execution's capability and durably record the execution. Except at the blocking threshold below, a cleanup failure SHALL NOT change the outcome the turn already recorded: a turn whose agent answered stays completed, and a stopped, timed-out or failed turn keeps that outcome. The server SHALL durably append the cleanup failure to that execution's runner output and log it with its error to the server diagnostics, both redacted with the bot's secrets.
 
 Cleanup failures SHALL be counted per bot in the order executions finish. A bot SHALL keep admitting executions until 3 consecutive finished executions of that bot have failed cleanup. An execution that finishes with confirmed cleanup SHALL reset that count while the bot is not blocked. On the third consecutive failure, the bot SHALL be blocked: that execution SHALL be marked failed with cause `engine` and a reason saying the bot is blocked after repeated cleanup failures, waiting work SHALL be cancelled, and new executions SHALL be refused. An execution that finishes after the bot is blocked SHALL NOT unblock it. The bot SHALL be unblocked when the server's startup reconciliation confirms it has ended every session process group in the bot's container, or when the retry below confirms every unconfirmed cleanup.
 
@@ -243,7 +253,7 @@ Any other failure while finishing an execution SHALL block the bot at once, with
 #### Scenario: One cleanup failure after a completed turn
 
 - **WHEN** a trigger turn's agent answers and ending its agent's process group then fails
-- **THEN** the turn stays completed, its shared-work ownership is released, its stored runner output records the redacted cleanup failure, the failure is logged, and the trigger's next firing starts a new execution
+- **THEN** the turn stays completed, its capability is revoked, its stored runner output records the redacted cleanup failure, the failure is logged, and the trigger's next firing starts a new execution
 
 #### Scenario: Cleanup failure keeps a stopped or timed-out outcome
 

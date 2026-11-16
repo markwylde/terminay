@@ -193,7 +193,21 @@ export class BotTurnQueue {
 	private changed(id: string, lane: Lane): void {
 		this.hooks.changed(id, lane.active.size, lane.waiting.length);
 	}
+	/** Moves reserved-slot executions into free ordinary slots, oldest first,
+	 * so the reserve is free again for the next user message. A replacement's
+	 * reservation keeps its own promotion. */
+	private returnReserve(lane: Lane): void {
+		if (lane.reservation) return;
+		const active = [...lane.active.values()];
+		let work = active.filter((i) => !i.coordinationOnly).length;
+		for (const item of active.filter((i) => i.coordinationOnly)) {
+			if (work >= 4) return;
+			item.coordinationOnly = false;
+			work++;
+		}
+	}
 	private dispatch(id: string, lane: Lane): void {
+		this.returnReserve(lane);
 		if (lane.stopped || lane.reservation) return;
 		while (lane.waiting.length) {
 			const work = [...lane.active.values()].filter(

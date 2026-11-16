@@ -69,7 +69,6 @@ Failures starting a Terminay-owned MCP relay or adapter SHALL produce bounded sa
 - **WHEN** the Terminay MCP adapter cannot connect with its execution environment
 - **THEN** the session diagnostics identify that connection failure without revealing its socket capability token
 
-
 #### Scenario: Relay is launched by root
 - **WHEN** a privileged supervisor or root process launches a bot execution relay
 - **THEN** the socket belongs to the image's unprivileged bot account with mode 0600, the bot-user adapter can connect and call runtime tools, and a root-only socket causes startup to fail with its sanitized diagnostic
@@ -79,8 +78,8 @@ Failures starting a Terminay-owned MCP relay or adapter SHALL produce bounded sa
 - **THEN** a required job builds the production bot image and verifies socket ownership, distinct root/bot process identities, runtime tool calls, and permission-failure reporting without skipping the container tests
 
 #### Scenario: Claude launches the MCP server through its shell prefix
-- **WHEN** Claude starts Terminay's exact MCP stdio command before acquiring shared work
-- **THEN** the adapter starts with its execution token and without provider credentials, connects and loads tools, while shell commands and command variants remain subject to work acquisition and lose the runtime token
+- **WHEN** Claude starts Terminay's exact MCP stdio command through its shell prefix
+- **THEN** the adapter starts with its execution token and without provider credentials, connects and loads tools, while shell commands and command variants are refused unless the execution capability is live and lose the runtime token
 
 #### Scenario: Provider silently tolerates MCP startup failure
 - **WHEN** a provider completes a turn without authenticated initialization and tool catalog loading on its Terminay MCP connection

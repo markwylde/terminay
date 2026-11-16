@@ -248,8 +248,8 @@ export async function openBotRuntimeBridge(
 				return;
 			}
 			if (request.method === 'runtime/check-work') {
-				runtime.assertWork(sessionId);
-				reply({ owned: true });
+				runtime.assert(sessionId);
+				reply({ live: true });
 				return;
 			}
 			if (request.method !== 'tools/call') {
@@ -440,6 +440,13 @@ export async function openBotRuntimeBridge(
 		TERMINAY_RUNTIME_TOKEN: token,
 		...terminayRelay?.environment,
 	};
+	// The desktop MCP checks liveness before each tool call and keeps this pair
+	// out of everything it starts.
+	const liveness = Object.entries({
+		BASH_ENV: '',
+		TERMINAY_RUNTIME_SOCKET: socket,
+		TERMINAY_RUNTIME_TOKEN: token,
+	}).map(([name, value]) => ({ name, value }));
 	return {
 		servers: [
 			{
@@ -459,7 +466,7 @@ export async function openBotRuntimeBridge(
 				name: 'terminay_desktop',
 				command: '/usr/local/bin/terminay-desktop-mcp.mjs',
 				args: ['--endpoint=http://127.0.0.1:9223'],
-				env: [],
+				env: liveness,
 			},
 			{
 				name: 'terminay_browser',
@@ -470,7 +477,7 @@ export async function openBotRuntimeBridge(
 					'chrome-devtools-mcp',
 					'--browser-url=http://127.0.0.1:9223',
 				],
-				env: [],
+				env: liveness,
 			},
 			...(terminayRelay === undefined ? [] : [terminayRelay.server]),
 		],

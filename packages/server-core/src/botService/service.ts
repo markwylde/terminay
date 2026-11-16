@@ -1261,7 +1261,6 @@ export class BotService extends EventEmitter {
 		for (const item of this.queue.list(botId))
 			if (item.sessionId === id) this.queue.cancel(botId, item.id);
 		await this.closeLive(id, 'stop');
-		this.runtime.release(id);
 	}
 	async end(botId: string, id: string): Promise<void> {
 		this.ownedSession(botId, id);
@@ -1834,7 +1833,6 @@ export class BotService extends EventEmitter {
 			if (imageDriver)
 				await removeExecutionImages(imageDriver, record.botId, record.id);
 			this.runtime.revoke(record.id);
-			this.runtime.release(record.id);
 			this.runtime.changed(record.id, 'execution.finished');
 			this.sessions.commit(record.id);
 			this.sessions.retain(record.botId);
@@ -1962,11 +1960,10 @@ export class BotService extends EventEmitter {
 			try {
 				await live.runner.close(reason === 'failure' ? 'end' : reason);
 			} catch (error) {
-				// The session is still recorded and its work ownership released;
+				// The session is still recorded and its capability revoked;
 				// the caller counts the failure.
 				cleanup = error;
 			}
-			this.runtime.release(id);
 			this.live.delete(id);
 			const record = this.sessions.get(id);
 			const state =
