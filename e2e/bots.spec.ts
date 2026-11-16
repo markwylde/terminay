@@ -784,6 +784,17 @@ test.describe('Home: Bots', () => {
 			table.x + table.width - (button.x + button.width),
 		).toBeLessThanOrEqual(16);
 
+		// The name column takes the free width; size, changed and actions keep
+		// to their content on one line at the right.
+		const headers = files.locator('table.bots-tbl thead th');
+		const nameHeader = (await headers.nth(0).boundingBox())!;
+		expect(nameHeader.width).toBeGreaterThan(table.width * 0.6);
+		for (const i of [1, 2, 3]) {
+			const box = (await headers.nth(i).boundingBox())!;
+			expect(box.width).toBeLessThan(table.width * 0.2);
+			expect(box.height).toBeLessThanOrEqual(nameHeader.height + 1);
+		}
+
 		// A file's menu, from its button, with its right edge on the button's.
 		await more('hello').click();
 		await expect(menu).toBeVisible();

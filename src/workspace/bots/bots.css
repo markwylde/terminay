@@ -1155,10 +1155,35 @@ button.bots-build-step__toggle:hover {
 	justify-content: flex-end;
 	gap: 6px;
 }
-/* The actions column is as narrow as its button and sits at the table's right edge. */
-.bots-files .bots-tbl th:last-child,
-.bots-files .bots-tbl td:last-child {
+/* Files: the name column takes the free width and truncates; size, changed
+   and actions shrink to their content, never wrap, and sit at the right. */
+.bots-files .bots-tbl th:not(:first-child),
+.bots-files .bots-tbl td:not(:first-child) {
 	width: 1%;
 	white-space: nowrap;
+}
+.bots-files .bots-tbl th:nth-child(2),
+.bots-files .bots-tbl td:nth-child(2),
+.bots-files .bots-tbl th:last-child,
+.bots-files .bots-tbl td:last-child {
 	text-align: right;
+}
+.bots-files .bots-tbl td:first-child {
+	max-width: 0;
+}
+.bots-files .bots-tbl td:first-child .bots-rowbtn {
+	max-width: 100%;
+	min-width: 0;
+}
+.bots-files .bots-tbl td:first-child .bots-rowbtn svg {
+	flex-shrink: 0;
+}
+.bots-files__name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bots-files .bots-tbl td:first-child .bots-in {
+	width: 100%;
+	box-sizing: border-box;
 }

@@ -629,7 +629,7 @@ export function BotFilesView({
 																? 'A credential link. It cannot be opened, downloaded, renamed, or deleted.'
 																: entry.kind === 'link'
 																	? 'Links are never followed.'
-																	: undefined
+																	: entry.name
 														}
 													>
 														{locked ? (
@@ -641,7 +641,9 @@ export function BotFilesView({
 														) : (
 															<File size={14} aria-hidden="true" />
 														)}
-														{entry.name}
+														<span className="bots-files__name">
+															{entry.name}
+														</span>
 													</button>
 												)}
 											</td>
