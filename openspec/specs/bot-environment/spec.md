@@ -387,13 +387,17 @@ Environment › Desktop SHALL show the bot's desktop live, in either view-only o
 - **Stream binding.** Each desktop stream SHALL be bound to the authorized client connection, the bot, the mode, and a stream generation. Changing the mode SHALL open a new stream.
 - **Allowlist.** The server SHALL forward only a bounded allowlist of client messages, and SHALL close the stream on any unknown or oversized message. `ClientCutText` SHALL be admitted in its Latin-1 form and in its extended form. The payload of either form SHALL be at most 1 MiB, and an extended payload SHALL be at least its 4-byte flags.
 - **View-only enforcement.** In view-only mode, the server SHALL discard every keyboard, pointer, and clipboard message.
-- **Clipboard.** In control mode, the desktop SHALL share clipboard text with the device showing it, in both directions:
-  - **Bot to device.** When the bot's clipboard changes, the client SHALL write its text to the device's clipboard through the host's clipboard-write route. It SHALL do so only while the desktop holds keyboard focus and its window is focused and visible. The client SHALL drop the change otherwise, and SHALL NOT write it later. The client SHALL NOT write text that is empty, longer than 1 MiB of UTF-8, or that contains a control character other than tab, line feed, or carriage return.
-  - **Device to bot.** When the user presses the device's paste shortcut on the focused desktop, the client SHALL send the device's clipboard text to the bot's clipboard. In Desktop, the client SHALL cancel the shortcut and read that text through the terminal paste bridge, taking text only. Elsewhere, it SHALL take the text of the native paste that the shortcut raises. It SHALL then press the matching Linux paste chord in the bot, regardless of which host modifiers noVNC is holding there. The shortcuts are Ctrl+V, Ctrl+Shift+V and Shift+Insert, or Cmd+V and Cmd+Shift+V on macOS. The chords are Ctrl+V, Ctrl+Shift+V and Shift+Insert. The paste SHALL reach the bot even when text elsewhere in Terminay is still selected, and keyboard focus SHALL be back on the desktop once it is sent. A paste with no text, or a clipboard holding only files or images, SHALL send nothing. The client SHALL NOT read the device's clipboard any other way.
-  - **Limits.** Text whose UTF-8 encoding is longer than 1 MiB, with line endings counted as CRLF, SHALL NOT be sent to the bot. The desktop bar SHALL say that the paste was too large. The bot's desktop SHALL accept clipboard text up to that size.
-  - **Selections.** Selecting text in the bot without copying it SHALL NOT change the device's clipboard. The server SHALL ensure this on the bot's running desktop before it relays a control-mode stream.
-  - **Unicode.** Text SHALL keep characters outside Latin-1 when the client and the server both support the extended form.
-  - **View-only.** A view-only stream, including the thumbnail, SHALL neither read nor write either clipboard.
+- **Clipboard.** A Desktop host SHALL keep its clipboard text synchronized with the selected connected, visible control-mode desktop, independently of paste shortcuts:
+  - **Host to bot.** Starting sharing SHALL copy the host's current eligible text into the bot clipboard. Subsequent host copies SHALL update the bot clipboard, including copies made while another host application is focused. Synchronizing SHALL NOT press a paste key or insert text into an application.
+  - **Bot to host.** A bot clipboard change during the sharing session SHALL update the host clipboard, including while the Desktop window lacks focus. Highlighting PRIMARY alone SHALL NOT update the host clipboard.
+  - **Paste.** The bot's own context-menu Paste, Ctrl+V, Ctrl+Shift+V, and Shift+Insert SHALL use the synchronized clipboard, subject to the target application's bindings. On macOS, Cmd+V and Cmd+Shift+V SHALL also paste through the matching Linux chords. The complete chord SHALL be pressed regardless of host modifier release timing.
+  - **Ownership.** A host SHALL share with at most one bot desktop at a time: the most recently selected control desktop. Selecting another control desktop SHALL retire the prior session. Closing, disconnecting, hiding that desktop behind another view, or choosing view-only SHALL retire its sharing session. Merely switching focus to another host application SHALL NOT retire it. Sharing SHALL NOT fan clipboard text out to other bots or windows.
+  - **Ordering.** Changes SHALL be applied in observation order. Starting a sharing session SHALL use the host as the initial source; afterward the latest observed eligible change SHALL win. An echoed change SHALL NOT cause repeated clipboard writes. No result from a retired sharing session SHALL update either clipboard.
+  - **Limits.** Sharing SHALL transfer non-empty text only, at most 1 MiB of UTF-8 with host-to-bot line endings counted as CRLF and the terminating NUL counted. Bot-to-host text SHALL contain no control characters other than tab, LF, or CR. Copied files and images SHALL NOT be transferred. Too-large host text SHALL produce the desktop bar's paste-too-large notice. Clipboard contents SHALL NOT be persisted or logged.
+  - **Selections.** The server SHALL isolate PRIMARY on the running bot before admitting a control stream, including on an existing container.
+  - **Unicode.** Text SHALL retain characters outside Latin-1 when both endpoints support ExtendedClipboard.
+  - **View-only.** View-only streams, including thumbnails, SHALL neither read nor write either clipboard.
+  - **Browser hosts.** Where the host cannot provide clipboard synchronization, the focused control desktop SHALL accept the text of native paste events, keep the shortcut away from noVNC, and press the complete matching Linux chord. Unavailable continuous synchronization SHALL be presented honestly, without requesting ambient browser clipboard permission.
 - **Thumbnail.** The context rail's thumbnail SHALL be a view-only relay of the same desktop, shown only while the container runs. Activating it SHALL open Desktop.
 - **Idle stop.** Viewing the desktop SHALL count as activity for idle stop.
 
@@ -422,60 +426,90 @@ Environment › Desktop SHALL show the bot's desktop live, in either view-only o
 - **WHEN** a process on the server machine, or in another bot, tries to connect to a bot's desktop
 - **THEN** there is no published port to connect to, and inside the bot's own container the VNC service still requires the password
 
+#### Scenario: Host copy supports context-menu paste
+
+- **WHEN** sharing is active and a user copies `i have copied this from my mac` in another Mac application, then right-clicks the bot browser's address bar
+- **THEN** Paste is available and choosing it inserts that text exactly once, without first pressing Cmd+V
+
+#### Scenario: Start sharing
+
+- **WHEN** a user enters control mode with eligible text already in the host clipboard
+- **THEN** the bot clipboard receives that text without inserting it into any application
+
+#### Scenario: Linux paste shortcut on a Mac host
+
+- **WHEN** a Mac user copies text while sharing is active, then presses Ctrl+V in the bot's browser address bar
+- **THEN** the browser pastes the synchronized text exactly once
+
 #### Scenario: Copy from the bot
 
-- **WHEN** a user in control mode selects `café ✓` in an application on the bot's desktop and presses Ctrl+C there
-- **THEN** the client asks the device to write `café ✓` to its clipboard, and the device clipboard holds it unless the host refuses the write
-
-#### Scenario: Paste into the bot
-
-- **WHEN** a user copies text on their device, then focuses the bot's desktop in control mode and presses the device's paste shortcut in a bot text field
-- **THEN** that text is pasted into the bot's text field exactly once
-
-#### Scenario: Paste with text selected elsewhere
-
-- **WHEN** a user selects text elsewhere in Terminay, clicks into the bot's desktop in control mode, and presses the device's paste shortcut in a bot text field
-- **THEN** the device's clipboard text is pasted into the bot's text field exactly once, the selected text elsewhere is unchanged, and the desktop keeps keyboard focus
-
-#### Scenario: Paste on macOS
-
-- **WHEN** a macOS user in control mode presses Cmd+V on the desktop, with either Cmd key
-- **THEN** the bot receives Ctrl+V and no Alt or Super modifier with it, and the host clipboard text is pasted
-
-#### Scenario: Paste in Desktop
-
-- **WHEN** a Desktop user copies text on their device and presses the paste shortcut on the bot's focused desktop in control mode
-- **THEN** the text is read through the terminal paste bridge and pasted into the bot exactly once, and noVNC never receives the shortcut
-
-#### Scenario: Paste with nothing to paste
-
-- **WHEN** the device's clipboard holds no text, for example only an image, and the user presses the paste shortcut on the desktop
-- **THEN** nothing is sent to the bot and no key is pressed there
-
-#### Scenario: Paste too large
-
-- **WHEN** the user pastes text longer than 1 MiB onto the desktop
-- **THEN** nothing is sent to the bot and the desktop bar says the paste was too large
-
-#### Scenario: Selection alone
-
-- **WHEN** a user in control mode highlights text on the bot's desktop without copying it
-- **THEN** the user's device clipboard is unchanged, including on a bot whose container was created before this behaviour existed
+- **WHEN** a bot application copies `café ✓` while sharing is active
+- **THEN** the host clipboard holds that text, and its echo causes no further writes
 
 #### Scenario: Bot copies while the user is elsewhere
 
-- **WHEN** a process on the bot's desktop changes the bot's clipboard while the user's keyboard focus is outside the desktop, or the window is in the background or hidden
-- **THEN** the user's device clipboard is unchanged, and stays unchanged when the user returns
+- **WHEN** the Desktop window loses focus to another Mac application while its selected control desktop remains open and visible
+- **THEN** clipboard text continues to synchronize in both directions
+
+#### Scenario: Another desktop is selected
+
+- **WHEN** a user selects a different bot's control desktop, including in another window
+- **THEN** the old sharing session retires, the new desktop receives the current host text, and subsequent clipboard changes reach only the new desktop
+
+#### Scenario: Sharing ends
+
+- **WHEN** the desktop closes, disconnects, is hidden by another view, or changes to view-only
+- **THEN** clipboard observation and forwarding stop, and pending results from the retired session have no effect
+
+#### Scenario: Simultaneous changes
+
+- **WHEN** host and bot text changes are observed while a previous update is still awaiting completion
+- **THEN** writes are serialized in observation order and the latest observed eligible change wins without an echo loop
+
+#### Scenario: Paste on macOS
+
+- **WHEN** a user presses Cmd+Shift+V and releases Shift before the clipboard read completes
+- **THEN** the bot still receives the complete Ctrl+Shift+V chord without Alt or Super
+
+#### Scenario: Paste with text selected elsewhere
+
+- **WHEN** a browser host without continuous synchronization raises a native paste event on the focused control desktop, including with a stale selection elsewhere in Terminay
+- **THEN** its text reaches the bot and is pasted once, and keyboard focus returns to the desktop
+
+#### Scenario: Paste with nothing to paste
+
+- **WHEN** the clipboard contains no eligible text or only files or images
+- **THEN** no clipboard text or paste key is sent
+
+#### Scenario: Selection alone
+
+- **WHEN** a user highlights text in the bot without copying it
+- **THEN** the host clipboard remains unchanged
 
 #### Scenario: Control characters from the bot
 
-- **WHEN** the bot's clipboard changes to text containing an escape character while the user controls the focused desktop
-- **THEN** the device's clipboard is unchanged
+- **WHEN** bot clipboard text contains an escape character
+- **THEN** the host clipboard remains unchanged
 
 #### Scenario: View-only clipboard
 
-- **WHEN** a user viewing the desktop in view-only mode copies on the bot's desktop, or presses the paste shortcut on the desktop
-- **THEN** neither the device's clipboard nor the bot's clipboard changes
+- **WHEN** a desktop is view-only or a thumbnail
+- **THEN** it neither reads nor writes either clipboard
+
+#### Scenario: Paste into the bot
+
+- **WHEN** a user copies text on the host during sharing and invokes Paste in a bot text field
+- **THEN** the copied text is inserted exactly once
+
+#### Scenario: Paste in Desktop
+
+- **WHEN** a Desktop user presses Cmd+V on macOS or the host paste shortcut on the focused control desktop
+- **THEN** the current host text is published and pasted once through a complete matching Linux chord
+
+#### Scenario: Paste too large
+
+- **WHEN** host text exceeds the sharing size limit
+- **THEN** it is not sent and the desktop bar reports that it is too large
 
 ### Requirement: Build progress notice
 

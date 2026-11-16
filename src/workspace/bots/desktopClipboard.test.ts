@@ -82,15 +82,18 @@ test('macOS chords release whichever Cmd noVNC holds and restore it after', () =
 		code: 'MetaRight',
 		down: false,
 	});
-	assert.deepEqual(right.at(-1), {
-		keysym: Super_L,
-		code: 'MetaRight',
-		down: true,
-	});
-	// Shift is the user's own, already held in the bot: never touched.
+	assert.deepEqual(
+		right.find((step) => step.code === 'MetaRight' && step.down),
+		{
+			keysym: Super_L,
+			code: 'MetaRight',
+			down: true,
+		},
+	);
+	// Shift is explicitly pressed even when the host releases it during the read.
 	assert.equal(
-		right.some((s) => s.code.startsWith('Shift')),
-		false,
+		right.some((s) => s.code.startsWith('Shift') && s.down),
+		true,
 	);
 });
 
@@ -113,9 +116,11 @@ test('Ctrl chords never depend on noVNC having sent the held Ctrl', () => {
 			assert.deepEqual(steps.at(-1), { keysym, code: held[0], down: true });
 		}
 	}
-	assert.deepEqual(pasteChordKeys('shift+insert', ['ShiftLeft'], false), [
+	assert.deepEqual(pasteChordKeys('shift+insert', [], false), [
+		{ keysym: 0xffe1, code: 'ShiftLeft', down: true },
 		{ keysym: Insert, code: 'Insert', down: true },
 		{ keysym: Insert, code: 'Insert', down: false },
+		{ keysym: 0xffe1, code: 'ShiftLeft', down: false },
 	]);
 });
 
@@ -465,4 +470,51 @@ test('a bridge with no text, too much text, or a failed read sends nothing', asy
 		assert.deepEqual(rfb.keys, []);
 		assert.equal(tooLarge(), index === 1 ? 1 : 0);
 	}
+});
+
+test('a shortcut read completing after desktop retirement cannot upload or press a key', async () => {
+	let answer!: (text: string) => void;
+	const { layer, rfb, detach } = setup({
+		isMac: true,
+		readHostText: () =>
+			new Promise((resolve) => {
+				answer = resolve;
+			}),
+	});
+	layer.dispatchEvent(keyEvent('keydown', { code: 'KeyV', metaKey: true }));
+	detach();
+	answer('late host clipboard');
+	await settle();
+	assert.deepEqual(rfb.pasted, []);
+	assert.deepEqual(rfb.keys, []);
+});
+
+test('Cmd then Shift still synthesizes Ctrl+Shift+V after modifiers are released', async () => {
+	let answer!: (text: string) => void;
+	const { layer, rfb } = setup({
+		isMac: true,
+		readHostText: () =>
+			new Promise((resolve) => {
+				answer = resolve;
+			}),
+	});
+	layer.dispatchEvent(keyEvent('keydown', { code: 'MetaLeft', metaKey: true }));
+	layer.dispatchEvent(
+		keyEvent('keydown', { code: 'ShiftLeft', metaKey: true, shiftKey: true }),
+	);
+	layer.dispatchEvent(
+		keyEvent('keydown', { code: 'KeyV', metaKey: true, shiftKey: true }),
+	);
+	layer.dispatchEvent(keyEvent('keyup', { code: 'ShiftLeft', metaKey: true }));
+	layer.dispatchEvent(keyEvent('keyup', { code: 'MetaLeft' }));
+	answer('paste after key release');
+	await settle();
+	assert.deepEqual(rfb.keys, [
+		[Control_L, 'ControlLeft', true],
+		[0xffe1, 'ShiftLeft', true],
+		[v, 'KeyV', true],
+		[v, 'KeyV', false],
+		[0xffe1, 'ShiftLeft', false],
+		[Control_L, 'ControlLeft', false],
+	]);
 });

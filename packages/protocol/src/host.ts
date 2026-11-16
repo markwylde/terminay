@@ -12,6 +12,7 @@ export const TERMINAY_HOST_CAPABILITY_NAMES = [
 	'nativeMenus',
 	'filePicker',
 	'clipboardWrite',
+	'clipboardSync',
 	'notifications',
 	'updater',
 	'osIntegration',
@@ -1928,3 +1929,12 @@ function copyByteArray(value: unknown): Uint8Array | undefined {
 		value.byteLength,
 	).slice();
 }
+
+/** Transient, exact-document Desktop clipboard sharing state. */
+export type TerminayHostClipboardSnapshot = Readonly<{
+ token: string;
+ revision: number;
+ active: boolean;
+ text?: string;
+ tooLarge?: boolean;
+}>;

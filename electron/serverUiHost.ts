@@ -1,3 +1,4 @@
+import type { DesktopClipboardSync } from './desktopClipboardSync';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +50,7 @@ type ServerUiBinding = {
 		action: TerminayHostActionRequest,
 		context: TerminayHostContext,
 	) => Promise<unknown> | unknown;
+	clipboardSync?: DesktopClipboardSync;
 	readTerminalClipboard?: () => Promise<string> | string;
 	readTerminalClipboardForUpload?: () => Promise<TerminalClipboardForUpload>;
 	readTerminalClipboardFilePart?: (
@@ -69,6 +71,7 @@ export type CreateServerUiWindowOptions = {
 	initialUrl: string;
 	context: TerminayHostContext;
 	onHostAction?: ServerUiBinding['onHostAction'];
+	clipboardSync?: DesktopClipboardSync;
 	readTerminalClipboard?: ServerUiBinding['readTerminalClipboard'];
 	readTerminalClipboardForUpload?: ServerUiBinding['readTerminalClipboardForUpload'];
 	readTerminalClipboardFilePart?: ServerUiBinding['readTerminalClipboardFilePart'];
@@ -148,6 +151,52 @@ function installIpcHandlers(): void {
 	}
 	ipcInstalled = true;
 
+	const sharing = (event: IpcMainInvokeEvent) => {
+		const binding = bindingForEvent(event);
+		if (
+			!binding.clipboardSync ||
+			binding.context.capabilities.clipboardSync !== 1
+		)
+			throw new Error('Clipboard sharing is unavailable.');
+		return { binding, service: binding.clipboardSync };
+	};
+	const tokenValue = (token: unknown): string => {
+		if (typeof token !== 'string' || !/^[a-zA-Z0-9_-]{16,128}$/.test(token))
+			throw new Error('Invalid clipboard session.');
+		return token;
+	};
+	ipcMain.handle(
+		'server-ui-host:clipboard-sync:start',
+		async (event, token: unknown) => {
+			const { binding, service } = sharing(event);
+			if (!binding.window.isVisible() || binding.window.isMinimized())
+				throw new Error('Clipboard sharing requires a visible window.');
+			return service.start(binding, tokenValue(token), (snapshot) => {
+				if (!binding.window.isDestroyed())
+					binding.window.webContents.send(
+						'server-ui-host:clipboard-sync',
+						snapshot,
+					);
+			});
+		},
+	);
+	ipcMain.handle(
+		'server-ui-host:clipboard-sync:stop',
+		(event, token: unknown) => {
+			const { binding, service } = sharing(event);
+			service.stop(binding, tokenValue(token));
+		},
+	);
+	ipcMain.handle(
+		'server-ui-host:clipboard-sync:write',
+		(event, token: unknown, revision: unknown, text: unknown) => {
+			const { binding, service } = sharing(event);
+			if (typeof revision !== 'number' || typeof text !== 'string')
+				throw new Error('Invalid clipboard update.');
+			return service.write(binding, tokenValue(token), revision, text);
+		},
+	);
+
 	ipcMain.handle(SERVER_UI_GET_CONTEXT_CHANNEL, (event) => {
 		return bindingForEvent(event).context;
 	});
@@ -192,7 +241,13 @@ function installIpcHandlers(): void {
 	);
 	ipcMain.handle(
 		SERVER_UI_READ_TERMINAL_CLIPBOARD_FILE_PART_CHANNEL,
-		async (event, token: unknown, file: unknown, offset: unknown, length: unknown) => {
+		async (
+			event,
+			token: unknown,
+			file: unknown,
+			offset: unknown,
+			length: unknown,
+		) => {
 			const binding = bindingForEvent(event);
 			if (binding.readTerminalClipboardFilePart === undefined)
 				throw new Error('Clipboard file reads are unavailable.');
@@ -332,6 +387,7 @@ export function bindServerUiWindow(
 		expectedOrigin,
 		...(allowedFileRoot === undefined ? {} : { allowedFileRoot }),
 		onHostAction: options.onHostAction,
+		clipboardSync: options.clipboardSync,
 		readTerminalClipboard: options.readTerminalClipboard,
 		readTerminalClipboardForUpload: options.readTerminalClipboardForUpload,
 		readTerminalClipboardFilePart: options.readTerminalClipboardFilePart,
@@ -345,6 +401,7 @@ export function bindServerUiWindow(
 	// keeps this binding, so a replaced document gets a fresh registry and the
 	// old one's tokens and pending dialogs end with it.
 	const replaceFileSaves = () => {
+		binding.clipboardSync?.stop(binding);
 		const ended = binding.fileSaves;
 		binding.fileSaves = createFileSaves(window);
 		void ended.dispose();
@@ -359,6 +416,14 @@ export function bindServerUiWindow(
 	};
 	targetWebContents.on('did-start-navigation', onDocumentNavigation);
 	targetWebContents.on('render-process-gone', replaceFileSaves);
+	const stopClipboard = () => binding.clipboardSync?.stop(binding);
+	window.on('hide', stopClipboard);
+	window.on('minimize', stopClipboard);
+	lifecycle.add('clipboard-sync', () => {
+		stopClipboard();
+		window.off('hide', stopClipboard);
+		window.off('minimize', stopClipboard);
+	});
 	lifecycle.add('file-saves', () => {
 		void binding.fileSaves.dispose();
 		if (targetWebContentsDestroyed) return;
