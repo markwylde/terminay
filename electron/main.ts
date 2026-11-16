@@ -5781,6 +5781,22 @@ if (process.env.TERMINAY_TEST === '1') {
 		},
 	);
 
+	ipcMain.handle(
+		'test:refuse-terminal-attaches',
+		(event, sessionId: unknown) => {
+			assertBoundServerUiEvent(event);
+			if (!serverTerminalAuthority)
+				throw new Error('embedded server is unavailable');
+			if (
+				sessionId !== null &&
+				(typeof sessionId !== 'string' ||
+					!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(sessionId))
+			)
+				throw new TypeError('terminal session id is invalid');
+			serverTerminalAuthority.refuseTerminalAttachesForTest(sessionId);
+		},
+	);
+
 	ipcMain.handle('test:close-renderer-connections', async (event) => {
 		assertBoundServerUiEvent(event);
 		if (!serverTerminalAuthority)

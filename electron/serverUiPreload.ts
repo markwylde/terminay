@@ -410,6 +410,10 @@ if (
 			// the server closes its end and the window has to notice.
 			refuseProjectCreations: (count: number) =>
 				ipcRenderer.invoke('test:refuse-project-creations', count) as Promise<void>,
+			// The server refuses new terminal subscriptions for this session until
+			// called again with null, so the panel shows its retryable banner.
+			refuseTerminalAttaches: (sessionId: string | null) =>
+				ipcRenderer.invoke('test:refuse-terminal-attaches', sessionId) as Promise<void>,
 			closeServerConnection: () =>
 				ipcRenderer.invoke('test:close-renderer-connections') as Promise<number>,
 		}),

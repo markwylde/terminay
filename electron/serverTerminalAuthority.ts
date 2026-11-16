@@ -530,6 +530,8 @@ export class ServerTerminalAuthority {
 		| ServerWorkspaceTestCommandRecord[]
 		| undefined;
 	private projectCreationTestRefusals = 0;
+	/** E2E-only: the session whose terminal subscriptions the server refuses. */
+	private terminalAttachTestRefusal: string | null = null;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -1453,6 +1455,34 @@ export class ServerTerminalAuthority {
 			this.handleEvent(event),
 		);
 		this.consumers = new DetachableTerminalConsumerRegistry(this.service);
+		this.installTerminalAttachTestRefusal();
+	}
+
+	/**
+	 * E2E-only: while a session is named, the terminal service refuses new
+	 * subscriptions to it, so a panel's attach or resume fails the way a lost
+	 * server would and the panel shows its retryable recovery banner. Inert
+	 * outside TERMINAY_TEST.
+	 */
+	private installTerminalAttachTestRefusal(): void {
+		if (process.env.TERMINAY_TEST !== '1') return;
+		const service = this.service;
+		const subscribe = service.subscribe.bind(service);
+		service.subscribe = ((session, options) => {
+			const refused = this.terminalAttachTestRefusal;
+			if (
+				refused !== null &&
+				(typeof session === 'string' ? session : session.sessionId) === refused
+			) {
+				throw new Error('The server refused this terminal for the test.');
+			}
+			return subscribe(session, options);
+		}) as TerminalService['subscribe'];
+	}
+
+	/** Test-only: refuse terminal subscriptions for one session, or none. */
+	refuseTerminalAttachesForTest(sessionId: string | null): void {
+		this.terminalAttachTestRefusal = sessionId;
 	}
 
 	/**
