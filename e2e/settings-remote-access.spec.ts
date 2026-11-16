@@ -91,14 +91,19 @@ test('a saved server is renamed and forgotten from its detail', async ({
 	const renamed = page.getByRole('region', { name: 'Build box' });
 	await renamed.getByRole('button', { name: 'Forget' }).click();
 	const confirm = page.getByRole('region', { name: 'Confirm forget' });
+	// It names the saved server, not a "local profile", and offers Cancel first.
+	await expect(
+		confirm.getByRole('heading', { name: 'Forget Build box?' }),
+	).toBeVisible();
 	await expect(confirm).toContainText(
 		'Forgetting does not revoke server access.',
 	);
+	await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
 	await confirm.getByRole('button', { name: 'Cancel' }).click();
 	await expect(savedServerLabels(page)).toHaveCount(2);
 
 	await renamed.getByRole('button', { name: 'Forget' }).click();
-	await page.getByRole('button', { name: 'Confirm forget' }).click();
+	await page.getByRole('button', { name: 'Forget server' }).click();
 	await expect(savedServerLabels(page)).toHaveText(['studio.example']);
 	expect(await hostActions(page)).toEqual([
 		'rename:remote:old:Build box',
@@ -259,4 +264,63 @@ test('Empty saved-server list keeps This server and says where servers appear', 
 		page.getByText('Servers this computer connects to appear here.'),
 	).toBeVisible();
 	await expect(savedServerLabels(page)).toHaveCount(0);
+});
+
+test('A saved server says whether this window holds it, and keeps Forget in a danger zone', async ({
+	page,
+}, testInfo) => {
+	const shoot = async (name: string) => {
+		const path = testInfo.outputPath(`${name}.png`);
+		await page.screenshot({ path });
+		await testInfo.attach(name, { path, contentType: 'image/png' });
+	};
+	await page.setViewportSize({ width: 1280, height: 820 });
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.goto(fixtureUrl());
+	// An attached server shows its connection; a saved one says it is not attached.
+	await expect(listItem(page, 'studio.example')).toContainText(
+		'Connected · attached',
+	);
+	await expect(listItem(page, 'Old build box')).toContainText(
+		'Saved · not attached',
+	);
+
+	await listItem(page, 'studio.example').click();
+	const attached = page.getByRole('region', { name: 'studio.example' });
+	await expect(attached.locator('.settings-status-pill')).toHaveText(
+		'Connected',
+	);
+	await expect(attached).toContainText('Attached to this window.');
+
+	await listItem(page, 'Old build box').click();
+	const detail = page.getByRole('region', { name: 'Old build box' });
+	await expect(detail.locator('.settings-section-title')).toHaveText([
+		'Connection',
+		'Danger zone',
+	]);
+	await shoot('saved-server-detail');
+
+	await detail.getByRole('button', { name: 'Forget' }).click();
+	const confirm = page.getByRole('region', { name: 'Confirm forget' });
+	await expect(confirm).toBeVisible();
+	// The confirmation sits in the danger zone, clear of the Connection card.
+	const card = await detail.locator('.settings-group').first().boundingBox();
+	const box = await confirm.boundingBox();
+	expect(card).not.toBeNull();
+	expect(box).not.toBeNull();
+	if (card !== null && box !== null)
+		expect(box.y).toBeGreaterThanOrEqual(card.y + card.height + 16);
+	await shoot('saved-server-forget-confirm');
+
+	await page.emulateMedia({ colorScheme: 'light' });
+	await shoot('saved-server-forget-confirm-light');
+
+	// Rename swaps the actions for its form and puts the danger zone away.
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await detail.getByRole('button', { name: 'Rename' }).click();
+	await expect(confirm).toHaveCount(0);
+	await expect(detail.locator('.settings-section-title')).toHaveText([
+		'Connection',
+	]);
+	await shoot('saved-server-rename');
 });

@@ -2521,6 +2521,69 @@
   flex-wrap: wrap;
 }
 
+/* A saved server's detail: titled blocks, the last of them destructive. */
+.settings-server-detail {
+  display: grid;
+  gap: var(--settings-space-6);
+}
+
+.settings-server-rename {
+  margin-top: var(--settings-space-4);
+}
+
+.settings-section-title--danger {
+  color: var(--settings-danger);
+}
+
+.settings-group--danger {
+  border-color: color-mix(in srgb, var(--settings-danger) 40%, var(--settings-border));
+}
+
+.settings-danger-confirm {
+  display: grid;
+  gap: var(--settings-space-2);
+  padding: var(--settings-row-pad-block) var(--settings-row-pad-inline);
+  border-bottom: 1px solid var(--settings-border);
+  background: color-mix(in srgb, var(--settings-danger) 8%, transparent);
+}
+
+.settings-danger-confirm:last-child {
+  border-bottom: none;
+}
+
+.settings-danger-confirm-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--settings-text);
+}
+
+.settings-danger-confirm .settings-row-description {
+  margin: 0;
+}
+
+.settings-danger-confirm-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin-top: var(--settings-space-2);
+}
+
+.settings-danger-button--solid {
+  background: var(--settings-danger);
+  border-color: var(--settings-danger);
+  color: #fff;
+}
+
+.settings-danger-button--solid:hover {
+  background: color-mix(in srgb, var(--settings-danger) 85%, #000);
+  border-color: var(--settings-danger);
+}
+
+.settings-danger-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .settings-list-add-button {
   height: 28px;
   padding: 0 var(--settings-space-3);
