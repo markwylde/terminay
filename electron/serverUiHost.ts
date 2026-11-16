@@ -9,9 +9,11 @@ import {
 	type TerminayHostContext,
 } from '@terminay/protocol';
 import {
+	app,
 	BrowserWindow,
 	type BrowserWindowConstructorOptions,
 	type DownloadItem,
+	dialog,
 	type Event,
 	type IpcMainEvent,
 	type IpcMainInvokeEvent,
@@ -26,6 +28,7 @@ import {
 	type DesktopDocumentLifecycleDiagnostic,
 	type DesktopDocumentReleaseReason,
 } from '../apps/terminay-desktop/src/main/documentLifecycle';
+import { HostFileSaves } from './hostFileSaves';
 import type { TerminalClipboardForUpload } from './terminalClipboardUpload';
 
 const SERVER_UI_GET_CONTEXT_CHANNEL = 'server-ui-host:get-context';
@@ -56,6 +59,7 @@ type ServerUiBinding = {
 	) => Promise<Uint8Array>;
 	window: BrowserWindow;
 	lifecycle: DesktopDocumentLifecycle;
+	fileSaves: HostFileSaves;
 };
 
 export type CreateServerUiWindowOptions = {
@@ -158,6 +162,18 @@ function installIpcHandlers(): void {
 				binding.context.capabilities[capability] === undefined
 			)
 				throw new Error(`Host capability is unavailable: ${capability}`);
+			const hostAction = action.action;
+			switch (hostAction.type) {
+				case 'file.save.open':
+					return binding.fileSaves.open(hostAction.filename);
+				case 'file.save.write':
+					return binding.fileSaves.write(
+						hostAction.token,
+						Buffer.from(hostAction.bytesBase64, 'base64'),
+					);
+				case 'file.save.close':
+					return binding.fileSaves.close(hostAction.token, hostAction.commit);
+			}
 			return binding.onHostAction?.(action, binding.context);
 		},
 	);
@@ -311,8 +327,20 @@ export function bindServerUiWindow(
 		readTerminalClipboardFilePart: options.readTerminalClipboardFilePart,
 		window,
 		lifecycle,
+		// Saves belong to this document (ADR-0130): the lifecycle ends them on
+		// reload, server switch, failed launch, window close and quit.
+		fileSaves: new HostFileSaves({
+			showSaveDialog: (suggestedName) =>
+				dialog.showSaveDialog(window, {
+					defaultPath: path.join(app.getPath('downloads'), suggestedName),
+					properties: ['showOverwriteConfirmation', 'createDirectory'],
+				}),
+		}),
 	};
 	bindings.set(webContentsId, binding);
+	lifecycle.add('file-saves', () => {
+		void binding.fileSaves.dispose();
+	});
 	lifecycle.add('host-binding', () => {
 		if (bindings.get(webContentsId) === binding) bindings.delete(webContentsId);
 	});

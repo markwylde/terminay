@@ -238,6 +238,80 @@ export async function savePreviewDownload(input: {
 	window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/** Largest chunk one host save write carries (ADR-0130). */
+const SAVE_CHUNK_BYTES = 1024 * 1024;
+
+/**
+ * Save a stream of bytes as a file the user keeps. Desktop denies browser
+ * downloads, so there the host asks for a destination first (the source is
+ * not started on cancel), then receives the bytes in awaited chunks of at
+ * most 1 MiB and moves the file into place only when all of them arrived.
+ * Browser hosts use their own download flow. Resolves false on cancel.
+ */
+export async function saveDownload(input: {
+	readonly filename: string;
+	readonly chunks: () => AsyncIterable<Uint8Array>;
+}): Promise<boolean> {
+	const filename = safeSaveFilename(input.filename);
+	const host = bridge();
+	if (host === undefined) {
+		const parts: Uint8Array[] = [];
+		for await (const chunk of input.chunks()) parts.push(chunk);
+		const url = URL.createObjectURL(new Blob(parts as BlobPart[]));
+		const anchor = document.createElement('a');
+		anchor.href = url;
+		anchor.download = filename;
+		anchor.rel = 'noopener noreferrer';
+		document.body.append(anchor);
+		anchor.click();
+		anchor.remove();
+		window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+		return true;
+	}
+	const response = await request({ type: 'file.save.open', filename });
+	const opened = response.handled
+		? (response.result as { canceled?: boolean; token?: string } | undefined)
+		: undefined;
+	if (opened?.canceled !== false || typeof opened.token !== 'string') return false;
+	const token = opened.token;
+	const iterator = input.chunks()[Symbol.asyncIterator]();
+	try {
+		for (;;) {
+			const next = await iterator.next();
+			if (next.done) break;
+			for (let at = 0; at < next.value.byteLength; at += SAVE_CHUNK_BYTES)
+				await request({
+					type: 'file.save.write',
+					token,
+					bytesBase64: base64(next.value.subarray(at, at + SAVE_CHUNK_BYTES)),
+				});
+		}
+		await request({ type: 'file.save.close', token, commit: true });
+		return true;
+	} catch (error) {
+		await Promise.resolve(iterator.return?.()).catch(() => undefined);
+		await request({ type: 'file.save.close', token, commit: false }).catch(
+			() => undefined,
+		);
+		throw withoutIpcPrefix(error);
+	}
+}
+
+/** Electron wraps a host rejection as `Error invoking remote method '<channel>':
+ * Error: <message>`; only the message means anything to the user. */
+function withoutIpcPrefix(error: unknown): unknown {
+	if (!(error instanceof Error)) return error;
+	const message = error.message
+		.replace(/^Error invoking remote method '[^']+':\s*/u, '')
+		.replace(/^(?:[A-Z][A-Za-z]*)?Error:\s*/u, '');
+	return message === error.message ? error : new Error(message, { cause: error });
+}
+
+function safeSaveFilename(value: string): string {
+	const name = safeDownloadFilename(value);
+	return name === '.' || name === '..' ? 'download' : name;
+}
+
 function safeDownloadFilename(value: string): string {
 	const result = [...value].map((character) => {
 		const code = character.codePointAt(0) ?? 0;
