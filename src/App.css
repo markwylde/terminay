@@ -3867,11 +3867,41 @@ button.macro-launcher-close:focus-visible {
   background: var(--terminal-panel-surface, #111316);
 }
 
-.terminal-paste-progress {
+/* A terminal pane reserves its right edge for the workflow panel and its bottom
+ * for the workflow drawer and the minimised app-window rail. Absolute children
+ * ignore that padding, so every overlay drawn over the terminal positions from
+ * --terminal-reserved-right, --terminal-reserved-bottom and --app-window-rail
+ * to stay inside the terminal's own area. */
+.terminal-panel-bottom-overlays {
   position: absolute;
-  z-index: 5;
-  right: 10px;
-  bottom: 10px;
+  left: 12px;
+  right: calc(12px + var(--terminal-reserved-right, 0px));
+  bottom: calc(
+    12px + var(--terminal-reserved-bottom, 0px) + var(--app-window-rail, 0px)
+  );
+  z-index: 6;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  max-height: calc(
+    100% - 24px - var(--terminal-reserved-bottom, 0px) -
+      var(--app-window-rail, 0px)
+  );
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.terminal-panel-bottom-overlays > * {
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.terminal-paste-progress {
+  align-self: flex-end;
+  max-width: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3889,10 +3919,6 @@ button.macro-launcher-close:focus-visible {
 }
 
 .terminal-input-notice {
-  position: absolute;
-  inset-inline: 12px;
-  inset-block-end: 12px;
-  z-index: 12;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -3943,13 +3969,11 @@ button.macro-launcher-close:focus-visible {
 /* Server-backed panels never fall back to ambient preload terminal authority
  * after an attachment failure. Keep recovery visible and keyboard reachable. */
 .terminal-panel-connection-error {
-  position: absolute;
-  inset: auto 12px 12px 12px;
-  z-index: 2;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px 12px;
   margin: 0;
   padding: 10px 12px;
   color: #ffdbd5;
@@ -4130,11 +4154,15 @@ button.macro-launcher-close:focus-visible {
 }
 
 .terminal-panel-connection-error p {
+  flex: 1 1 16rem;
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .terminal-panel-connection-error button {
   flex: 0 0 auto;
+  margin-inline-start: auto;
 }
 
 .terminal-panel--has-note .terminal-panel-root {
@@ -4210,8 +4238,10 @@ button.macro-launcher-close:focus-visible {
 .terminal-search {
   position: absolute;
   top: 14px;
-  right: 14px;
+  right: calc(14px + var(--terminal-reserved-right, 0px));
   z-index: 9;
+  box-sizing: border-box;
+  max-width: calc(100% - 28px - var(--terminal-reserved-right, 0px));
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4224,7 +4254,9 @@ button.macro-launcher-close:focus-visible {
 }
 
 .terminal-search-input {
+  flex: 0 1 220px;
   width: 220px;
+  min-width: 0;
   padding: 7px 10px;
   color: #f5f8fb;
   background: #151b22;

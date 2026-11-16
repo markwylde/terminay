@@ -1,10 +1,14 @@
 .dictation-overlay {
 	--dictation-accent: #57b7ff;
 	position: absolute;
-	left: 50%;
-	bottom: 14px;
+	/* Centred in the terminal's own area: clear of the workflow panel, drawer
+	   and minimised app-window rail a terminal pane reserves (App.css). */
+	left: calc((100% - var(--terminal-reserved-right, 0px)) / 2);
+	bottom: calc(
+		14px + var(--terminal-reserved-bottom, 0px) + var(--app-window-rail, 0px)
+	);
 	z-index: 60;
-	width: min(560px, calc(100% - 28px));
+	width: min(560px, calc(100% - 28px - var(--terminal-reserved-right, 0px)));
 	transform: translateX(-50%);
 	pointer-events: none;
 	color: #f0f6fc;
