@@ -134,7 +134,9 @@ def prepare_desktop_dir(uid, gid):
 def start_desktop(passwd_path, uid, gid, bot_id):
     os.makedirs("/tmp/.X11-unix", mode=0o1777, exist_ok=True)
     spawn(["Xvnc", ":1", "-rfbport", "5901", "-rfbauth", passwd_path, "-SecurityTypes", "VncAuth",
-           "-geometry", "1440x900", "-depth", "24", "-AlwaysShared", "-ac", "-localhost", "yes"])
+           "-geometry", "1440x900", "-depth", "24", "-AlwaysShared", "-ac", "-localhost", "yes",
+           # Highlighting is not a copy to the user's device; accept the relay's 1 MiB.
+           "-SendPrimary=0", "-MaxCutText=1048576"])
     wait_path("/tmp/.X11-unix/X1", time.monotonic() + 10)
     env = {"HOME": HOME, "USER": "bot", "DISPLAY": ":1", "PATH": "/usr/local/bin:/usr/bin:/bin",
            "TERMINAY_BOT_ID": bot_id, "LANG": "C.UTF-8"}

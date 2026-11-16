@@ -52,12 +52,19 @@ export class BotRfbClientFilter {
 				case 5:
 					size = 6;
 					break;
-				case 6:
+				case 6: {
 					if (b.length < 8) return Buffer.concat(output);
-					if (u32(b, 4) > BOT_DESKTOP_CLIPBOARD_BYTES)
+					// A negative length is the ExtendedClipboard form: flags and a
+					// zlib payload, UTF-8 text. Either form is bounded alike.
+					const length = view(b).getInt32(4);
+					const payload = Math.abs(length);
+					if (payload > BOT_DESKTOP_CLIPBOARD_BYTES)
 						throw new Error('RFB clipboard too large');
-					size = 8 + u32(b, 4);
+					if (length < 0 && payload < 4)
+						throw new Error('invalid RFB extended clipboard');
+					size = 8 + payload;
 					break;
+				}
 				default:
 					throw new Error('unknown RFB client message');
 			}
@@ -79,11 +86,16 @@ export class BotRfbClientFilter {
 		this.pending = Buffer.alloc(0);
 	}
 }
-/** Encodings whose server messages need no client reply. Fences, continuous
- * updates and the other extensions start exchanges this filter does not
- * relay, so the server is never told the client supports them. */
+/** Encodings whose server messages need no client reply this filter blocks.
+ * Fences, continuous updates and the other extensions start exchanges this
+ * filter does not relay, so the server is never told the client supports them.
+ * ExtendedClipboard's replies are all ClientCutText: relayed in control mode;
+ * in view-only mode the client's caps are discarded, so the server treats it as
+ * a client without clipboard capabilities. */
+const EXTENDED_CLIPBOARD_ENCODING = -1063131698; // 0xC0A1E5CE
 const relayedEncodings = new Set([
 	0, 1, 2, 5, 7, 16, -223, -224, -239, -307, -308,
+	EXTENDED_CLIPBOARD_ENCODING,
 	...Array.from({ length: 10 }, (_, i) => -23 - i),
 	...Array.from({ length: 10 }, (_, i) => -247 - i),
 ]);
@@ -285,6 +297,31 @@ export class BotRfbRelay extends Duplex {
 		callback();
 	}
 }
+/** Highlighting text in the bot is never a copy to the user's device. New
+ * containers start Xvnc with -SendPrimary=0; this also covers an Xvnc started
+ * before that flag existed. vncconfig exits 0 even when a set fails, so the
+ * value is read back. */
+export async function ensureSelectionIsolated(
+	driver: Pick<EngineDriver, 'exec'>,
+	container: string,
+): Promise<void> {
+	const options = { user: 'root', deadlineMs: 10_000 } as const;
+	try {
+		await driver.exec(
+			container,
+			['vncconfig', '-display', ':1', '-set', 'SendPrimary=0'],
+			options,
+		);
+		const value = await driver.exec(
+			container,
+			['vncconfig', '-display', ':1', '-get', 'SendPrimary'],
+			options,
+		);
+		if (value.trim() !== 'off') throw new Error('PRIMARY still sent');
+	} catch {
+		throw new Error('desktop connection failed');
+	}
+}
 export interface BotDesktopHooks {
 	readonly engine: () => Promise<EngineDriver>;
 	readonly running: (id: string) => boolean;
@@ -326,6 +363,10 @@ export class BotDesktopService {
 		this.streams.get(key)?.destroy();
 		const driver = await this.hooks.engine();
 		assertBotStreamAuthority(authority);
+		if (mode === 'control') {
+			await ensureSelectionIsolated(driver, `terminay-bot-${botId}`);
+			assertBotStreamAuthority(authority);
+		}
 		const child = driver.execStream(
 			`terminay-bot-${botId}`,
 			['terminay-init', '--tunnel', '5901'],

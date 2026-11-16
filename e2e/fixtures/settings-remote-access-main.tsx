@@ -22,7 +22,12 @@ const initialServers: readonly SavedServerSummary[] =
 		? [{ id: 'local', label: 'Local', isLocal: true }]
 		: [
 				{ id: 'local', label: 'Local', isLocal: true },
-				{ id: 'remote:studio', label: 'studio.example' },
+				{
+					id: 'remote:studio',
+					label: 'studio.example',
+					attached: true,
+					status: 'connected',
+				},
 				{ id: 'remote:old', label: 'Old build box' },
 			];
 

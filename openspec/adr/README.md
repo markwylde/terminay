@@ -145,3 +145,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0125](./0125-a-server-upgrade-attempt-is-owned-by-the-server-and-ended-by-the-upgraders-record.md) | A server upgrade attempt is owned by the server and ended by the upgrader's record | accepted | 2026-11-16 |
 | [0127](./0127-a-bots-executions-share-its-shell-and-desktop.md) | A bot's live executions share its shell and desktop without a lease | accepted, supersedes 0093 in part | 2026-11-16 |
 | [0128](./0128-workflow-steps-form-a-dependency-graph-and-the-plans-shape-is-derived.md) | Workflow steps form a dependency graph, and the plan's shape is derived from it | accepted, supersedes 0097 in part | 2026-11-16 |
+| [0129](./0129-a-bot-desktop-shares-the-clipboard-only-while-the-user-controls-it.md) | A bot desktop shares the clipboard only while the user controls it | accepted | 2026-11-16 |
