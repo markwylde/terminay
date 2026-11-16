@@ -75,6 +75,74 @@ export function isSettledStatus(status: WorkflowStepStatus): boolean {
 	return status === 'done' || status === 'skipped';
 }
 
+/**
+ * Ready steps (ADR-0127): not started or failed, with every step they wait on
+ * settled, in step order.
+ */
+export function readySteps<T extends Pick<WorkflowStep, 'id' | 'status' | 'after'>>(
+	steps: readonly T[],
+): T[] {
+	const settled = new Set(
+		steps.filter((step) => isSettledStatus(step.status)).map((step) => step.id),
+	);
+	return steps.filter(
+		(step) =>
+			(step.status === 'not_started' || step.status === 'failed') &&
+			step.after.every((id) => settled.has(id)),
+	);
+}
+
+/**
+ * A workflow's current steps: those that need input, then those running,
+ * each in step order; when none is active, its first failed step; otherwise
+ * its first ready step (else its first step not settled).
+ */
+export function currentSteps<T extends Pick<WorkflowStep, 'id' | 'status' | 'after'>>(
+	steps: readonly T[],
+): T[] {
+	const active = [
+		...steps.filter((step) => step.status === 'needs_input'),
+		...steps.filter((step) => step.status === 'running'),
+	];
+	if (active.length > 0) return active;
+	const failed = steps.find((step) => step.status === 'failed');
+	if (failed !== undefined) return [failed];
+	const ready = readySteps(steps)[0];
+	if (ready !== undefined) return [ready];
+	const next = steps.find((step) => !isSettledStatus(step.status));
+	return next === undefined ? [] : [next];
+}
+
+/**
+ * The first current step's title, with how many other steps are active:
+ * "Server + 2 more". Undefined when nothing is current.
+ */
+export function currentStepTitle(
+	steps: readonly Pick<WorkflowStep, 'id' | 'title' | 'status' | 'after'>[],
+): string | undefined {
+	const current = currentSteps(steps);
+	const first = current[0];
+	if (first === undefined) return undefined;
+	const others = isActive(first.status) ? current.length - 1 : 0;
+	return others > 0 ? `${first.title} + ${others} more` : first.title;
+}
+
+/**
+ * The current step in words: as `currentStepTitle`, with "needs you" after a
+ * step that needs input: "Docs needs you + 2 more".
+ */
+export function currentStepLabel(
+	steps: readonly Pick<WorkflowStep, 'id' | 'title' | 'status' | 'after'>[],
+): string | undefined {
+	const current = currentSteps(steps);
+	const first = current[0];
+	if (first === undefined) return undefined;
+	const name =
+		first.status === 'needs_input' ? `${first.title} needs you` : first.title;
+	const others = isActive(first.status) ? current.length - 1 : 0;
+	return others > 0 ? `${name} + ${others} more` : name;
+}
+
 /** Every step is settled (and there is at least one). */
 export function isFinished(workflow: Pick<Workflow, 'steps'>): boolean {
 	return (
@@ -164,7 +232,7 @@ export function tabSummary(
 			ticking: false,
 			label: finishedLabel(steps),
 		};
-	const active = steps.find((step) => isActive(step.status));
+	const active = currentSteps(steps).find((step) => isActive(step.status));
 	const failed = steps.filter((step) => step.status === 'failed');
 	const tone: WorkflowDialTone =
 		failed.length > 0 || steps.some((step) => step.status === 'needs_input')
@@ -175,8 +243,7 @@ export function tabSummary(
 	const failures = failed.map((step) => `${step.title} failed`);
 	let parts: string[];
 	if (active !== undefined) {
-		const name =
-			active.status === 'needs_input' ? `${active.title} needs you` : active.title;
+		const name = currentStepLabel(steps) ?? active.title;
 		const time =
 			active.startedAt === null ? [] : [formatDuration(now - active.startedAt)];
 		parts = [name, count, ...time, ...failures];
@@ -184,7 +251,7 @@ export function tabSummary(
 		const [first, ...rest] = failures;
 		parts = [first as string, count, ...rest];
 	} else {
-		const next = steps.find((step) => !isSettledStatus(step.status));
+		const next = currentSteps(steps)[0];
 		parts = next === undefined ? [count] : [`Next: ${next.title}`, count];
 	}
 	return {

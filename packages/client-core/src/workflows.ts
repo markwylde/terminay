@@ -43,13 +43,20 @@ export const WORKFLOW_CLIENT_LIMITS = Object.freeze({
   maxPromptBytes: 8 * 1024,
   maxSerializedBytes: 56 * 1024,
   maxCategoryChars: 64,
+  /** Dependencies across every step of one template or workflow (ADR-0127). */
+  maxDependencies: 200,
 });
+
+/** The length of a server-assigned step id, as the size bound counts one. */
+const SERVER_STEP_ID_CHARS = 41;
 
 export interface WorkflowTemplateStep {
   readonly id: string;
   readonly title: string;
   readonly prompt: string;
   readonly icon: WorkflowIconName | "";
+  /** Ids of earlier steps this step waits on, in step order (ADR-0127). */
+  readonly after: readonly string[];
 }
 
 export interface WorkflowTemplate {
@@ -90,6 +97,8 @@ export type SessionWorkflow =
       readonly state: "attached";
       readonly workflow: Workflow;
       readonly resumeStepId: string | null;
+      /** Steps not started or failed whose dependencies are all settled. */
+      readonly readyStepIds: readonly string[];
       readonly unfinished: boolean;
     }
   | { readonly sessionId: string; readonly state: "unrestorable" };
@@ -105,19 +114,46 @@ export interface WorkflowEventTransport extends QueryCommandTransport {
   readonly subscribe?: (event: string, listener: (payload: JsonValue) => void, onResync?: () => void) => () => void;
 }
 
-/** The serialized size the server bounds: the JSON of name, opening prompt and steps. */
+/**
+ * The serialized size the server bounds: the JSON of name, opening prompt and
+ * steps, with each step's `after` counted as server ids where it is not the
+ * default (the step above), as the server counts it (ADR-0127).
+ */
 export function workflowSerializedSize(content: {
   readonly name: string;
   readonly openingPrompt: string;
-  readonly steps: readonly { readonly title: string; readonly prompt: string; readonly icon: string }[];
+  readonly steps: readonly {
+    readonly id?: string;
+    readonly title: string;
+    readonly prompt: string;
+    readonly icon: string;
+    readonly after?: readonly string[];
+  }[];
 }): number {
+  const placeholder = "s".repeat(SERVER_STEP_ID_CHARS);
   return new TextEncoder().encode(
     JSON.stringify({
       name: content.name,
       openingPrompt: content.openingPrompt,
-      steps: content.steps.map(({ title, prompt, icon }) => ({ title, prompt, icon })),
+      steps: content.steps.map(({ title, prompt, icon, after }, index) => ({
+        title,
+        prompt,
+        icon,
+        ...(isDefaultAfter(content.steps, index, after) ? {} : { after: (after ?? []).map(() => placeholder) }),
+      })),
     }),
   ).byteLength;
+}
+
+/** Whether `after` is what a step given without one gets: the step above. */
+export function isDefaultAfter(
+  steps: readonly { readonly id?: string }[],
+  index: number,
+  after: readonly string[] | undefined,
+): boolean {
+  if (after === undefined) return true;
+  if (index === 0) return after.length === 0;
+  return after.length === 1 && after[0] === steps[index - 1]?.id;
 }
 
 /** The current workflow id a `workflow_exists` refusal names, or undefined for any other error. */
@@ -282,7 +318,14 @@ export interface WorkflowTemplateInput {
   readonly description: string;
   readonly category: string;
   readonly openingPrompt: string;
-  readonly steps: readonly { readonly id?: string; readonly title: string; readonly prompt: string; readonly icon: string }[];
+  readonly steps: readonly {
+    readonly id?: string;
+    readonly title: string;
+    readonly prompt: string;
+    readonly icon: string;
+    /** Ids given to earlier steps of this input; absent means the step above. */
+    readonly after?: readonly string[];
+  }[];
 }
 
 const MAX_ID = 128;
@@ -317,9 +360,28 @@ function time(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function validateTemplateStep(value: unknown): WorkflowTemplateStep | undefined {
+function validateTemplateStep(value: unknown): Omit<WorkflowTemplateStep, "after"> & { readonly rawAfter: unknown } | undefined {
   if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return undefined;
-  return Object.freeze({ id: value.id, title: text(value.title, 256), prompt: text(value.prompt, 16 * 1024), icon: icon(value.icon) });
+  return { id: value.id, title: text(value.title, 256), prompt: text(value.prompt, 16 * 1024), icon: icon(value.icon), rawAfter: value.after };
+}
+
+/**
+ * Steps with their dependencies: a step's `after` keeps only ids of steps
+ * above it; a step without one waits on the step above (ADR-0127).
+ */
+function withDependencies<T extends { readonly id: string; readonly rawAfter: unknown }>(
+  steps: readonly T[],
+): (Omit<T, "rawAfter"> & { readonly after: readonly string[] })[] {
+  const seen: string[] = [];
+  return steps.map(({ rawAfter, ...step }, index) => {
+    const after = Array.isArray(rawAfter)
+      ? seen.filter((id) => rawAfter.includes(id))
+      : index === 0
+        ? []
+        : [seen[index - 1] as string];
+    seen.push(step.id);
+    return Object.freeze({ ...step, after: Object.freeze(after) }) as Omit<T, "rawAfter"> & { readonly after: readonly string[] };
+  });
 }
 
 function validateTemplateState(value: unknown): WorkflowTemplateState {
@@ -332,10 +394,10 @@ function validateTemplateState(value: unknown): WorkflowTemplateState {
       description: text(candidate.description, 4096),
       category: text(candidate.category, 256),
       openingPrompt: text(candidate.openingPrompt, 16 * 1024),
-      steps: Object.freeze(candidate.steps.flatMap((step) => {
+      steps: Object.freeze(withDependencies(candidate.steps.flatMap((step) => {
         const valid = validateTemplateStep(step);
         return valid === undefined ? [] : [valid];
-      })),
+      }))),
     })];
   });
   return Object.freeze({
@@ -357,17 +419,17 @@ export function validateSessionWorkflow(value: unknown): SessionWorkflow | undef
   if (value.state !== "attached" || !isRecord(value.workflow)) return undefined;
   const workflow = value.workflow;
   if (typeof workflow.id !== "string" || !Array.isArray(workflow.steps)) return undefined;
-  const steps = workflow.steps.flatMap((step): WorkflowStep[] => {
+  const steps: readonly WorkflowStep[] = withDependencies(workflow.steps.flatMap((step) => {
     const base = validateTemplateStep(step);
     if (base === undefined || !isRecord(step)) return [];
-    return [Object.freeze({
+    return [{
       ...base,
       status: validateStatus(step.status),
       note: text(step.note, 256),
       startedAt: time(step.startedAt),
       endedAt: time(step.endedAt),
-    })];
-  });
+    }];
+  }));
   return Object.freeze({
     sessionId: value.sessionId,
     state: "attached",
@@ -380,6 +442,7 @@ export function validateSessionWorkflow(value: unknown): SessionWorkflow | undef
       steps: Object.freeze(steps),
     }),
     resumeStepId: typeof value.resumeStepId === "string" ? value.resumeStepId : null,
+    readyStepIds: Object.freeze(Array.isArray(value.readyStepIds) ? value.readyStepIds.filter((id): id is string => typeof id === "string") : []),
     unfinished: value.unfinished === true,
   });
 }

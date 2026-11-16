@@ -64,6 +64,7 @@ const step = (id, status, extra = {}) => ({
 	title: `Step ${id}`,
 	prompt: '',
 	icon: '',
+	after: [],
 	status,
 	note: '',
 	startedAt: null,
