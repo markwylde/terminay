@@ -12,7 +12,10 @@ import { BotIoClient } from '@terminay/client-core';
 import type { BotDesktopMode, BotProfile } from '@terminay/protocol';
 import { Eye, Maximize2, MousePointer2, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { writeClipboardText } from '../../host/nativeActions';
+import {
+	desktopClipboardUploadRoute,
+	writeClipboardText,
+} from '../../host/nativeActions';
 import { attachDesktopClipboard } from './desktopClipboard';
 import { RfbStreamChannel } from './rfbChannel';
 import { refusalText, type ServerBots } from './useServerBots';
@@ -108,6 +111,7 @@ export function BotDesktopCanvas({
 						writeHostClipboard: writeClipboardText,
 						onPasteTooLarge: () => tooLarge.current?.(),
 						pasteRoot: document,
+						readHostText: readDesktopClipboardText(),
 						catcher: {
 							focus: () => catcher.focus({ preventScroll: true }),
 							restore: () => {
@@ -153,6 +157,19 @@ export function BotDesktopCanvas({
 			data-terminay-bot-desktop-mode={mode}
 		/>
 	);
+}
+
+/** Desktop's clipboard read for the paste shortcut: text only, never copied
+ * files or images. Undefined in a browser, which uses the native paste. */
+function readDesktopClipboardText():
+	| (() => Promise<string | undefined>)
+	| undefined {
+	const route = desktopClipboardUploadRoute();
+	if (route === undefined) return undefined;
+	return async () => {
+		const contents = await route.read();
+		return contents.kind === 'text' ? contents.text : undefined;
+	};
 }
 
 type DesktopLayer = {

@@ -180,6 +180,14 @@ export type DesktopClipboardEnvironment = Readonly<{
 	catcher: Readonly<{ focus: () => void; restore: () => void }>;
 	/** Bounds how long focus waits on the catcher for a paste that never comes. */
 	setTimer?: (callback: () => void, ms: number) => () => void;
+	/**
+	 * Desktop's clipboard read, the same narrow bridge a terminal's paste
+	 * shortcut uses. Electron does not reliably raise a native paste for a
+	 * shortcut on the desktop, so where this exists the shortcut is cancelled
+	 * and the text read here instead. Resolves to undefined when the clipboard
+	 * holds no text. Browser hosts leave it out and use the native paste.
+	 */
+	readHostText?: () => Promise<string | undefined>;
 }>;
 
 type KeyLike = Event & ShortcutEvent;
@@ -216,11 +224,36 @@ export function attachDesktopClipboard(
 		catching = false;
 		env.catcher.restore();
 	};
+	const send = (text: string, chord: LinuxPasteChord) => {
+		if (text.length === 0) return;
+		if (!pasteTextFits(text)) {
+			env.onPasteTooLarge();
+			return;
+		}
+		rfb.clipboardPasteFrom(text);
+		// The modifiers held now, not at keydown: one released meanwhile has
+		// already been released in the bot.
+		for (const step of pasteChordKeys(chord, held, env.isMac))
+			rfb.sendKey(step.keysym, step.code, step.down);
+	};
 	const keydown = (event: Event) => {
 		const e = event as KeyLike;
 		if (heldModifierKeysym(e.code, env.isMac) !== undefined) held.add(e.code);
 		const chord = pasteShortcut(e, env.isMac);
 		if (chord === null) return;
+		const readHostText = env.readHostText;
+		if (readHostText !== undefined) {
+			// Desktop: cancel the shortcut, as a terminal does, so neither
+			// noVNC nor Edit › Paste acts on it, and read the clipboard.
+			e.preventDefault();
+			e.stopPropagation();
+			diverted.add(e.code);
+			if ((e as Event & { repeat?: boolean }).repeat === true) return;
+			void readHostText()
+				.then((text) => send(text ?? '', chord))
+				.catch(() => undefined);
+			return;
+		}
 		// Keep the key from noVNC without cancelling it, so the browser or the
 		// Edit › Paste menu raises a native paste, aimed at the catcher.
 		e.stopPropagation();
@@ -263,15 +296,7 @@ export function attachDesktopClipboard(
 		const chord = pending ?? 'ctrl+v';
 		pending = null;
 		stopCatching();
-		const text = e.clipboardData?.getData('text/plain') ?? '';
-		if (text.length === 0) return;
-		if (!pasteTextFits(text)) {
-			env.onPasteTooLarge();
-			return;
-		}
-		rfb.clipboardPasteFrom(text);
-		for (const step of pasteChordKeys(chord, held, env.isMac))
-			rfb.sendKey(step.keysym, step.code, step.down);
+		send(e.clipboardData?.getData('text/plain') ?? '', chord);
 	};
 	const clipboard = (event: Event) => {
 		const detail = (event as CustomEvent<{ text?: unknown }>).detail;
