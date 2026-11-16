@@ -409,6 +409,10 @@ function AgentText({
 			imageLoader(path, controller.signal)
 				.then(({ mime, bytes }) => {
 					if (controller.signal.aborted) return;
+					// Markdown can name an arbitrary durable attachment, including
+					// an opaque file. Recheck here before giving its bytes to an img.
+					if (attachmentView(mime) !== 'image')
+						throw new Error('The attachment is not an image');
 					const url = URL.createObjectURL(
 						new Blob([bytes as BlobPart], { type: mime }),
 					);

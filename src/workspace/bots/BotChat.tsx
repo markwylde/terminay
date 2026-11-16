@@ -107,18 +107,20 @@ export function BotChat({
 		[attachError, setAttachError] = useState<string>(),
 		[dragging, setDragging] = useState(false);
 	const picker = useRef<HTMLInputElement>(null),
+		mounted = useRef(false),
 		pendingRef = useRef(pending),
 		attempt = useRef<ChatSendAttempt | undefined>(undefined),
 		tokens = useRef(new Map<string, string>()),
 		pasted = useRef(0);
 	pendingRef.current = pending;
-	useEffect(
-		() => () => {
+	useEffect(() => {
+		mounted.current = true;
+		return () => {
+			mounted.current = false;
 			for (const item of pendingRef.current)
 				if (item.url) URL.revokeObjectURL(item.url);
-		},
-		[],
-	);
+		};
+	}, []);
 	// Files are classified by their first bytes, as the server does, so a
 	// thumbnail is shown only for content the server will store as an image.
 	const addFiles = async (files: readonly File[]) => {
@@ -131,7 +133,14 @@ export function BotChat({
 					new Uint8Array(await file.slice(0, 12).arrayBuffer()),
 				),
 			})),
-		);
+		).catch(() => {
+			if (mounted.current)
+				setAttachError(
+					'The selected files could not be read. Try attaching them again.',
+				);
+			return undefined;
+		});
+		if (!mounted.current || !offered) return;
 		const { accepted, refusal } = acceptChatFiles(
 			pendingRef.current.length,
 			offered,

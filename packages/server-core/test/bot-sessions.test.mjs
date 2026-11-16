@@ -420,8 +420,9 @@ test('any file type uploads, is typed by content and is bounded by its kind', as
 });
 test('every attachment is copied into the container; only images become model input', async (t) => {
 	const execs = [];
+	let nativeImages;
 	const recordInput = join(mkdtempSync(join(tmpdir(), 'bot-input-')), 'in.jsonl');
-	const r = await setup(t, { execs, env: { FAKE_RECORD_INPUT: recordInput } });
+	const r = await setup(t, { execs, env: { FAKE_RECORD_INPUT: recordInput }, onProcess: (options) => { nativeImages = options.images; } });
 	const image = await r.service.uploadUserFile(r.bot.id, 'shot.png', pngBytes(9));
 	const zip = await r.service.uploadUserFile(r.bot.id, 'logs.zip', zipBytes());
 	const odd = await r.service.uploadUserFile(r.bot.id, 'notes.../../x y', Buffer.from('odd'));
@@ -431,6 +432,11 @@ test('every attachment is copied into the container; only images become model in
 	const writes = execs.filter((e) => e.args[2]?.includes('os.replace'));
 	assert.deepEqual(writes.map((e) => e.args[4]), ['1.png', '2.zip', '3.bin']);
 	assert.deepEqual(Buffer.from(writes[1].options.input), zipBytes());
+	assert.deepEqual(nativeImages, [`/tmp/terminay-attachments/${sent.sessionId}/1.png`]);
+	const { nativeArguments } = await import('../dist/botService/native.js');
+	const codex = nativeArguments('codex-cli', null, 'autonomous', [], false, nativeImages);
+	assert.equal(codex.filter(arg => arg === '--image').length, 1);
+	assert.ok(!codex.some(arg => arg.endsWith('.zip') || arg.endsWith('.bin')));
 	const { readFileSync } = await import('node:fs');
 	const blocks = JSON.parse(readFileSync(recordInput, 'utf8').trim().split('\n')[0]).message.content;
 	assert.equal(blocks.filter((x) => x.type === 'image').length, 1);

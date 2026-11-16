@@ -1909,6 +1909,30 @@ test.describe('Home: Bots', () => {
 		);
 
 		// The picker has no type filter; a zip shows as a chip with its size.
+		// A file that becomes unreadable reports an inline error and keeps the composer usable.
+		await form.evaluate((el) => {
+			const file = new File(['unreadable'], 'gone.zip');
+			file.slice = () => {
+				const head = new Blob();
+				head.arrayBuffer = async () => {
+					throw new Error('File is no longer available');
+				};
+				return head;
+			};
+			const data = new DataTransfer();
+			data.items.add(file);
+			el.dispatchEvent(
+				new DragEvent('drop', {
+					dataTransfer: data,
+					bubbles: true,
+					cancelable: true,
+				}),
+			);
+		});
+		await expect(tab.locator('[data-terminay-bot-attach-error]')).toContainText(
+			'could not be read',
+		);
+		await expect(pending('file')).toHaveCount(0);
 		await expect(input).not.toHaveAttribute('accept', /.+/);
 		const chooser = mainWindow.waitForEvent('filechooser');
 		await tab.locator('[data-terminay-bot-attach]').click();

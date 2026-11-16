@@ -106,3 +106,42 @@ test('staged blobs count toward the bot storage bound',t=>{
  const {store}=clocked(t);const big=n=>Buffer.concat([png(n),Buffer.alloc(2*1024*1024-9,n)]);
  for(let n=0;n<32;n++)store.stage(bot,`${n}.png`,big(n));assert.throws(()=>store.stage(bot,'over.png',big(99)),/64 MiB/);
 });
+
+test('opaque attachments round-trip exact bytes after restart, including files above the image limit', (t) => {
+	const { root, store } = setup(t);
+	for (const size of [1024, 3 * 1024 * 1024, 5 * 1024 * 1024]) {
+		const bytes = Buffer.alloc(size, 7);
+		bytes.write('PK\x03\x04');
+		const upload = store.stage(bot, 'logs.png', bytes);
+		assert.equal(upload.attachment.mime, 'application/octet-stream');
+		const message = store.post(
+			bot,
+			'user',
+			'',
+			null,
+			`zip-${size}`,
+			[],
+			[upload.token],
+		);
+		const attachment = message.attachments[0];
+		const reopened = new BotMessageStore(root);
+		assert.deepEqual(reopened.attachment(bot, attachment.id), {
+			mime: 'application/octet-stream',
+			bytes,
+		});
+		assert.throws(() => reopened.attachment(other, attachment.id), /not found/);
+	}
+});
+test('empty and oversized uploads write no attachment bytes', (t) => {
+	const { root, store } = setup(t);
+	const png = Buffer.alloc(2 * 1024 * 1024 + 1);
+	Buffer.from('89504e470d0a1a0a', 'hex').copy(png);
+	for (const bytes of [Buffer.alloc(0), png, Buffer.alloc(5 * 1024 * 1024 + 1)])
+		assert.throws(
+			() => store.stage(bot, 'offered.file', bytes),
+			/empty|2 MiB|5 MiB/,
+		);
+	assert.equal(store.count(bot), 0);
+	const files = readdirSync(join(root, bot), { recursive: true });
+	assert.ok(!files.some((file) => file.startsWith('attachments/')));
+});

@@ -5,7 +5,7 @@
 
 ## 2. Server storage
 
-- [x] 2.1 Add `botAttachmentType(bytes)` in `images.ts`: sniffed raster MIME, else `application/octet-stream`. `putAttachment` uses it and bounds images to 2 MiB and other files to 5 MiB. Verify: `bot-messages.test.mjs` stores a zip with octet-stream type and exact bytes, and refuses a 2 MiB + 1 PNG and a 5 MiB + 1 opaque file without storing anything.
+- [x] 2.1 Add shared `botAttachmentType(bytes)` in `packages/protocol/src/botMessages.ts`: sniffed raster MIME, else `application/octet-stream`. `putAttachment` uses it and bounds images to 2 MiB and other files to 5 MiB. Verify: `bot-messages.test.mjs` stores a zip with octet-stream type and exact bytes, and refuses a 2 MiB + 1 PNG and a 5 MiB + 1 opaque file without storing anything.
 - [x] 2.1a `BotMessages.attachment()` reads any stored attachment within its per-kind bound and returns its stored type (sniffed again for images, `application/octet-stream` otherwise). Verify: `bot-messages.test.mjs` reads back exact bytes of an opaque file of 1 KiB and of 3 MiB, and an image as before.
 - [x] 2.2 `BotService.uploadUserImage` becomes `uploadUserFile`, accepts any non-empty content within the per-kind limit, and `messageProtocol.ts`'s upload command and error texts say "file". Bot `chat_post` keeps requiring images. Verify: the protocol test uploads a zip claimed as `image/png` (stored as octet-stream), an empty body (refused), 5 MiB + 1 (refused) and to an unknown bot (refused).
 - [x] 2.3 The session record validator accepts `application/octet-stream` trigger attachments. Verify: a sessions test round-trips a record whose trigger attachment is octet-stream.
@@ -22,10 +22,10 @@
 - [x] 4.1 Replace `acceptChatImages` with `acceptChatFiles` in `botsModel.ts`: classify by magic bytes (`chatFileKind(head)`, shared rules with the server), raster → 2 MiB, others → 5 MiB, four maximum, first refusal reported; plus `formatFileSize`. Verify: `botsModel.test.ts` cases for a zip, a zip claiming `image/png`, a PNG with an empty type, an oversized image, an oversized file and a fifth file.
 - [x] 4.2 `BotChat` removes the picker's `accept` filter, adds any dropped or pasted file, and renders non-image pending files as chips (file icon, name, size, remove) while images keep thumbnails. Labels say "Attach files" / "Files to send". Verify: e2e (5.1).
 - [x] 4.3 `BotTranscript` renders a user message's non-image attachments as chip buttons that download via `saveDownload` from `BotMessagesClient.attachment`; only the four raster types reach the image renderer; a failed read or save shows an inline error on the chip. Images render as before. Verify: a unit test of the attachment-to-render-kind mapping (HTML/SVG/unknown types → chip), plus e2e (5.1).
-- [x] 4.4 Style the file chips in `bots.css` to match the thumbnail strip in both themes. Verify: inspect the screenshots from 5.2.
+- [x] 4.4 Style the file chips in `botPanels.css` to match the thumbnail strip in both themes. Verify: inspect the screenshots from 5.2.
 
 ## 5. Verification
 
-- [ ] 5.1 Extend `e2e/bots.spec.ts`: attach a zip with the button (chip shown), drop a PDF, attach a zip named `x.png` (chip, not thumbnail), send a message with an image and a zip (thumbnail and chip in history), activate the sent zip chip and check the saved bytes equal the original, refuse a file over 5 MiB. Verify: `npm run test:e2e -- e2e/bots.spec.ts` passes.
-- [ ] 5.2 Capture screenshots of the composer with an image thumbnail and a zip chip pending, and the sent message showing both. Verify: PNGs exist under the scratchpad `screenshots/` folder and each is opened and checked.
-- [ ] 5.3 Run `npm run lint`, `npm run typecheck`, the affected unit tests and `openspec validate --all`. Verify: all exit 0, or any failure is shown to pre-exist on main.
+- [x] 5.1 Extend `e2e/bots.spec.ts`: attach a zip with the button (chip shown), drop a PDF, attach a zip named `x.png` (chip, not thumbnail), send a message with an image and a zip (thumbnail and chip in history), activate the sent zip chip and check the saved bytes equal the original, refuse a file over 5 MiB. Verify: `npm run test:e2e -- e2e/bots.spec.ts` passes.
+- [x] 5.2 Capture screenshots of the composer with an image thumbnail and a zip chip pending, and the sent message showing both. Verify: PNGs exist under the scratchpad `screenshots/` folder and each is opened and checked.
+- [x] 5.3 Run `npm run lint`, `npm run typecheck:workspaces`, `npx tsc --noEmit`, the affected unit tests and `openspec validate --all`. Verify: all exit 0, or any failure is shown to pre-exist on main.

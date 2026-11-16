@@ -1518,7 +1518,7 @@ export class BotService extends EventEmitter {
 			} catch {
 				throw new BotError(
 					'not_found',
-					`An attached ${snapshot.every((a) => isBotImageMime(a.mime)) ? 'image' : 'file'} is no longer available; send it again.`,
+					'An attached file is no longer available; send it again.',
 				);
 			}
 			if (!live) {

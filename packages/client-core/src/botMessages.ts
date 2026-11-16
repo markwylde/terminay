@@ -95,6 +95,9 @@ export class BotMessagesClient {
 			!a ||
 			typeof a.name !== 'string' ||
 			typeof a.size !== 'number' ||
+			!Number.isSafeInteger(a.size) ||
+			a.size < 1 ||
+			a.size > botAttachmentLimit(String(a.mime)) ||
 			!knownMime(a.mime)
 		)
 			throw new TypeError('Invalid upload response');

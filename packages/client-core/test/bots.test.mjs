@@ -168,3 +168,29 @@ test('opaque file uploads and attachment reads are accepted within their bound',
  mime='image/png';size=3*1024*1024;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
  mime='text/html';size=10;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
 });
+
+test('upload responses enforce positive integer sizes and per-kind limits', async () => {
+	const { BotMessagesClient } = await import('../dist/index.js');
+	let mime = 'application/octet-stream',
+		size = 5 * 1024 * 1024;
+	const client = new BotMessagesClient({
+		commandWithBody: async () => ({
+			token: 'd'.repeat(24),
+			attachment: { name: 'file', mime, size },
+		}),
+	});
+	const upload = () => client.upload(profile.id, 'file', new Uint8Array([1]));
+	await upload();
+	for (const invalid of [0, -1, 1.5, NaN, Infinity, 5 * 1024 * 1024 + 1]) {
+		size = invalid;
+		await assert.rejects(upload(), /Invalid upload response/);
+	}
+	mime = 'image/png';
+	size = 2 * 1024 * 1024;
+	await upload();
+	size++;
+	await assert.rejects(upload(), /Invalid upload response/);
+	mime = 'text/html';
+	size = 1;
+	await assert.rejects(upload(), /Invalid upload response/);
+});
