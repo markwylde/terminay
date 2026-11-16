@@ -158,3 +158,39 @@ test('message uploads stage images and posts carry their tokens',async()=>{
  const bad=new BotMessagesClient({...wire,commandWithBody:async()=>({token:'x',attachment:{name:'a',mime:'text/plain',size:1}})});
  await assert.rejects(bad.upload(profile.id,'a',new Uint8Array([1])),/Invalid upload/);
 });
+test('opaque file uploads and attachment reads are accepted within their bound',async()=>{
+ const {BotMessagesClient}=await import('../dist/index.js');const token='d'.repeat(24);let mime='application/octet-stream',size=3*1024*1024;
+ const wire={query:async()=>null,command:async()=>null,commandWithBody:async(op,payload,body)=>({token,attachment:{name:payload.name,mime,size:body.length}}),queryWithBody:async()=>({result:{mime},body:new Uint8Array(size)}),subscribe:()=>()=>{}};
+ const client=new BotMessagesClient(wire);
+ assert.equal((await client.upload(profile.id,'logs.zip',new Uint8Array([0x50,0x4b]))).attachment.mime,'application/octet-stream');
+ assert.equal((await client.attachment(profile.id,'a'.repeat(24))).bytes.length,size);
+ size=5*1024*1024+1;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
+ mime='image/png';size=3*1024*1024;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
+ mime='text/html';size=10;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
+});
+
+test('upload responses enforce positive integer sizes and per-kind limits', async () => {
+	const { BotMessagesClient } = await import('../dist/index.js');
+	let mime = 'application/octet-stream',
+		size = 5 * 1024 * 1024;
+	const client = new BotMessagesClient({
+		commandWithBody: async () => ({
+			token: 'd'.repeat(24),
+			attachment: { name: 'file', mime, size },
+		}),
+	});
+	const upload = () => client.upload(profile.id, 'file', new Uint8Array([1]));
+	await upload();
+	for (const invalid of [0, -1, 1.5, NaN, Infinity, 5 * 1024 * 1024 + 1]) {
+		size = invalid;
+		await assert.rejects(upload(), /Invalid upload response/);
+	}
+	mime = 'image/png';
+	size = 2 * 1024 * 1024;
+	await upload();
+	size++;
+	await assert.rejects(upload(), /Invalid upload response/);
+	mime = 'text/html';
+	size = 1;
+	await assert.rejects(upload(), /Invalid upload response/);
+});

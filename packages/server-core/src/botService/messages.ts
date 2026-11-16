@@ -1,30 +1,33 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import {
-	mkdirSync,
-	rmSync,
-	readFileSync,
-	readdirSync,
-	statSync,
 	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-	botEnvironmentId,
+	BOT_MESSAGE_UPLOAD_LIMITS,
 	type BotMessage,
-	type BotMessageSummary,
-	type BotMessagePage,
+	type BotMessageAttachment,
 	type BotMessageDetail,
+	type BotMessagePage,
+	type BotMessageSummary,
 	type BotRuntimeEvent,
 	type BotRuntimeEventPage,
-	type BotMessageAttachment,
+	botAttachmentLimit,
+	botAttachmentType,
+	botEnvironmentId,
+	isBotImageMime,
 } from '@terminay/protocol';
 import {
 	loadCanonicalStateSync,
 	writeFileDurablySync,
 } from '../durableFile.js';
-import { BotError, text, object } from './store.js';
-import { botImageMime, BOT_IMAGE_BYTES } from './images.js';
+import { BotError, object, text } from './store.js';
 
 /** How long an uploaded image waits for the post that references it. */
 export const BOT_UPLOAD_STAGING_MS = 15 * 60 * 1000;
@@ -86,8 +89,7 @@ export interface MessagePageOptions {
 export function utf8(value: string, limit: number): string {
 	const bytes = Buffer.from(value);
 	let end = Math.max(0, Math.min(bytes.length, Math.floor(limit)));
-	while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80)
-		end--;
+	while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
 	return bytes.subarray(0, end).toString('utf8');
 }
 function id(value: unknown): string {
@@ -110,8 +112,7 @@ function parse(value: unknown): State {
 		typeof d.epoch !== 'string' ||
 		!Number.isSafeInteger(d.sequence) ||
 		(d.acknowledged !== undefined &&
-			(!Number.isSafeInteger(d.acknowledged) ||
-				(d.acknowledged as number) < 0))
+			(!Number.isSafeInteger(d.acknowledged) || (d.acknowledged as number) < 0))
 	)
 		throw new BotError('state_unreadable', 'Invalid bot communication state');
 	for (const raw of d.rows) {
@@ -355,7 +356,8 @@ export class BotMessageStore extends EventEmitter {
 				);
 			return this.get(botId, prior.id);
 		}
-		if (uploads.length) attachments = [...attachments, ...this.staged(botId, uploads)];
+		if (uploads.length)
+			attachments = [...attachments, ...this.staged(botId, uploads)];
 		if (this.latest(s).length >= 10000 || Object.keys(s.keys).length >= 20000)
 			throw new BotError('resource', 'Message history limit reached');
 		const next = structuredClone(s),
@@ -844,10 +846,17 @@ export class BotMessageStore extends EventEmitter {
 		bytes: Uint8Array,
 	): BotMessageAttachment {
 		text(name, 256, 'attachment name');
-		if (bytes.length > BOT_IMAGE_BYTES)
-			throw new BotError('validation', 'Attachment exceeds 2 MiB');
-		const mime = botImageMime(bytes),
-			s = this.state(botId);
+		const mime = botAttachmentType(bytes);
+		if (bytes.length < 1)
+			throw new BotError('validation', 'Attachment is empty');
+		if (bytes.length > botAttachmentLimit(mime))
+			throw new BotError(
+				'validation',
+				isBotImageMime(mime)
+					? 'Images must be 2 MiB or smaller'
+					: 'Files must be 5 MiB or smaller',
+			);
+		const s = this.state(botId);
 		const assets = new Map(
 			this.latest(s)
 				.flatMap((r) => r.attachments)
@@ -907,9 +916,12 @@ export class BotMessageStore extends EventEmitter {
 		return { token, attachment };
 	}
 	/** Resolve tokens for a post; any invalid token refuses the whole post. */
-	private staged(botId: string, uploads: readonly string[]): BotMessageAttachment[] {
+	private staged(
+		botId: string,
+		uploads: readonly string[],
+	): BotMessageAttachment[] {
 		if (new Set(uploads).size !== uploads.length)
-			throw new BotError('validation', 'An image was attached twice');
+			throw new BotError('validation', 'A file was attached twice');
 		const staged = this.live(botId);
 		return uploads.map((token) => {
 			const entry =
@@ -919,7 +931,7 @@ export class BotMessageStore extends EventEmitter {
 			if (!entry)
 				throw new BotError(
 					'validation',
-					'An attached image is no longer available; attach it again',
+					'An attached file is no longer available; attach it again',
 				);
 			return { ...entry.asset };
 		});
@@ -934,11 +946,13 @@ export class BotMessageStore extends EventEmitter {
 			.find((a) => a.id === attachmentId);
 		if (!asset) throw new BotError('not_found', 'Attachment not found');
 		const file = join(this.directory(botId), 'attachments', attachmentId);
-		if (statSync(file).size > BOT_IMAGE_BYTES)
+		if (statSync(file).size > BOT_MESSAGE_UPLOAD_LIMITS.fileBytes)
 			throw new BotError('validation', 'Attachment exceeds limit');
 		const bytes = readFileSync(file);
-		if (bytes.length > BOT_IMAGE_BYTES)
+		// The type is the content's, read again; it never comes from the record.
+		const mime = botAttachmentType(bytes);
+		if (bytes.length > botAttachmentLimit(mime))
 			throw new BotError('validation', 'Attachment exceeds limit');
-		return { mime: botImageMime(bytes), bytes };
+		return { mime, bytes };
 	}
 }

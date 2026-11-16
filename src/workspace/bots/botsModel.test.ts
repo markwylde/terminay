@@ -2,22 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { BotProfile, BotSessionRecord } from '@terminay/protocol';
 import {
+	acceptChatFiles,
+	attachmentView,
 	type BotEntry,
-	acceptChatImages,
 	botActivity,
+	chatFileKind,
 	chatSendAttempt,
 	filterCounts,
+	formatFileSize,
+	hasTerminayMcpAccess,
 	initials,
 	investigatesFailures,
-	hasTerminayMcpAccess,
 	needsYou,
 	recoveryNotice,
-	startupSummary,
 	SESSION_ORIGIN_CHIPS,
 	SESSION_ORIGIN_FILTER_LABELS,
 	sessionOriginLabel,
 	sessionTitle,
 	shortAge,
+	startupSummary,
 	visibleBots,
 } from './botsModel.ts';
 
@@ -223,34 +226,58 @@ test('failure investigations have their own filter, chip, label and title', () =
 	assert.equal(sessionOriginLabel({ kind: 'chat' }), 'Chat');
 });
 
-test('composer accepts PNG, JPEG, GIF and WebP up to 2 MiB and four per message', () => {
-	const img = (type: string, size = 10) => ({ type, size });
-	assert.deepEqual(
-		acceptChatImages(0, [
-			img('image/png'),
-			img('image/jpeg'),
-			img('image/gif'),
-			img('image/webp'),
-		]).accepted.length,
+test('composer accepts any file: images up to 2 MiB, others up to 5 MiB, four per message', () => {
+	const MiB = 1024 * 1024;
+	const image = (size = 10) => ({ kind: 'image' as const, size });
+	const file = (size = 10) => ({ kind: 'file' as const, size });
+	assert.equal(
+		acceptChatFiles(0, [image(), file(), file(3 * MiB), image()]).accepted
+			.length,
 		4,
 	);
-	const text = acceptChatImages(0, [img('text/plain'), img('image/png')]);
-	assert.equal(text.accepted.length, 1);
-	assert.match(text.refusal ?? '', /PNG, JPEG, GIF and WebP/);
-	const big = acceptChatImages(0, [img('image/png', 2 * 1024 * 1024 + 1)]);
-	assert.deepEqual(big.accepted, []);
-	assert.match(big.refusal ?? '', /2 MiB/);
-	assert.equal(
-		acceptChatImages(0, [img('image/png', 2 * 1024 * 1024)]).refusal,
-		undefined,
+	const big = acceptChatFiles(0, [image(2 * MiB + 1), file()]);
+	assert.equal(big.accepted.length, 1);
+	assert.match(big.refusal ?? '', /Images must be 2 MiB/);
+	assert.equal(acceptChatFiles(0, [image(2 * MiB)]).refusal, undefined);
+	assert.equal(acceptChatFiles(0, [file(5 * MiB)]).refusal, undefined);
+	assert.match(
+		acceptChatFiles(0, [file(5 * MiB + 1)]).refusal ?? '',
+		/Files must be 5 MiB/,
 	);
-	const fifth = acceptChatImages(4, [img('image/png')]);
+	assert.match(acceptChatFiles(0, [file(0)]).refusal ?? '', /Empty/);
+	const fifth = acceptChatFiles(4, [file()]);
 	assert.deepEqual(fifth.accepted, []);
-	assert.match(fifth.refusal ?? '', /at most 4/);
+	assert.match(fifth.refusal ?? '', /at most 4 files/);
+	assert.equal(acceptChatFiles(3, [file(), image()]).accepted.length, 1);
+});
+
+test('file kind comes from content, never the claimed type or name', () => {
+	const png = Uint8Array.from([
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0,
+	]);
+	const zip = Uint8Array.from([0x50, 0x4b, 0x03, 0x04]);
+	assert.equal(chatFileKind(png), 'image');
+	assert.equal(chatFileKind(zip), 'file');
 	assert.equal(
-		acceptChatImages(3, [img('image/png'), img('image/png')]).accepted.length,
-		1,
+		chatFileKind(new TextEncoder().encode('<svg onload=x>')),
+		'file',
 	);
+	assert.equal(chatFileKind(new Uint8Array()), 'file');
+});
+
+test('only raster images render; every other attachment is a chip', () => {
+	for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+		assert.equal(attachmentView(mime), 'image');
+	for (const mime of [
+		'application/octet-stream',
+		'text/html',
+		'image/svg+xml',
+		'',
+	])
+		assert.equal(attachmentView(mime), 'file');
+	assert.equal(formatFileSize(512), '512 B');
+	assert.equal(formatFileSize(1536), '1.5 KB');
+	assert.equal(formatFileSize(3 * 1024 * 1024), '3.0 MB');
 });
 
 test('a retry of the same content reuses its idempotency key', () => {

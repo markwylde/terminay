@@ -209,6 +209,8 @@ export async function runtime(root, options = {}) {
 				const failure = options.execFailure?.(args);
 				if (failure) throw failure;
 			}
+			const failure = options.copyFailure?.(args);
+			if (failure) throw failure;
 			return '';
 		},
 	};

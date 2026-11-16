@@ -1,15 +1,15 @@
 import {
-	BOT_MESSAGE_OPERATIONS as op,
 	assertJsonValue,
 	type JsonValue,
+	BOT_MESSAGE_OPERATIONS as op,
 } from '@terminay/protocol';
 import type {
+	CommandRequest,
 	OperationRegistries,
 	QueryRequest,
-	CommandRequest,
 } from '../types.js';
-import type { BotService } from './service.js';
 import { assertBotAuthority } from './authority.js';
+import type { BotService } from './service.js';
 import { BotError, object, text } from './store.js';
 export function createBotMessageOperations(
 	service: BotService,
@@ -82,7 +82,7 @@ export function createBotMessageOperations(
 			const p = data(r);
 			const uploads = p.uploads === undefined ? [] : p.uploads;
 			if (!Array.isArray(uploads) || uploads.length > 4)
-				throw new BotError('validation', 'At most four images per message');
+				throw new BotError('validation', 'At most four files per message');
 			const result = await service.postUserMessage(
 				p.botId,
 				text(p.text, 65536, 'message', uploads.length > 0),
@@ -130,10 +130,10 @@ export function createBotMessageOperations(
 			const p = data(r);
 			const body = r.body;
 			if (!(body instanceof Uint8Array))
-				throw new BotError('validation', 'An image body is required');
-			const result = await service.uploadUserImage(
+				throw new BotError('validation', 'A file body is required');
+			const result = await service.uploadUserFile(
 				p.botId,
-				text(p.name, 256, 'image name'),
+				text(p.name, 256, 'file name'),
 				body,
 			);
 			assertBotAuthority(r.context);

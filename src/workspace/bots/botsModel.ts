@@ -13,6 +13,11 @@ import type {
 	BotSessionRecord,
 	BotSessionState,
 } from '@terminay/protocol';
+import {
+	BOT_MESSAGE_UPLOAD_LIMITS,
+	botAttachmentType,
+	isBotImageMime,
+} from '@terminay/protocol';
 
 /** What a bot is doing, as its card and tab show it. */
 export type BotActivity =
@@ -369,36 +374,53 @@ export function shortAge(from: number, now: number): string {
 }
 
 /** What the composer accepts; the server checks the same limits again. */
-export const BOT_CHAT_IMAGE_TYPES = [
-	'image/png',
-	'image/jpeg',
-	'image/gif',
-	'image/webp',
-] as const;
-export const BOT_CHAT_IMAGE_BYTES = 2 * 1024 * 1024;
-export const BOT_CHAT_IMAGES_PER_MESSAGE = 4;
+export const BOT_CHAT_FILES_PER_MESSAGE = BOT_MESSAGE_UPLOAD_LIMITS.perMessage;
+
+/** Whether a file is an image, from its first bytes; never its type or name. */
+export function chatFileKind(head: Uint8Array): 'image' | 'file' {
+	return isBotImageMime(botAttachmentType(head)) ? 'image' : 'file';
+}
 
 /**
- * Which offered files join the pending images. Valid images are taken up to
- * the per-message limit; the first refusal is reported, and images already
- * pending are never touched.
+ * Which offered files join the pending files. Any type is accepted: images up
+ * to 2 MiB, other files up to 5 MiB, at most four per message. The first
+ * refusal is reported, and files already pending are never touched.
  */
-export function acceptChatImages<F extends { type: string; size: number }>(
-	pending: number,
-	files: readonly F[],
-): { accepted: F[]; refusal?: string } {
+export function acceptChatFiles<
+	F extends { kind: 'image' | 'file'; size: number },
+>(pending: number, files: readonly F[]): { accepted: F[]; refusal?: string } {
 	const accepted: F[] = [];
 	let refusal: string | undefined;
 	for (const file of files) {
-		if (!(BOT_CHAT_IMAGE_TYPES as readonly string[]).includes(file.type))
-			refusal ??= 'Only PNG, JPEG, GIF and WebP images can be attached.';
-		else if (file.size > BOT_CHAT_IMAGE_BYTES)
+		if (file.size < 1) refusal ??= 'Empty files cannot be attached.';
+		else if (
+			file.kind === 'image' &&
+			file.size > BOT_MESSAGE_UPLOAD_LIMITS.imageBytes
+		)
 			refusal ??= 'Images must be 2 MiB or smaller.';
-		else if (pending + accepted.length >= BOT_CHAT_IMAGES_PER_MESSAGE)
-			refusal ??= `A message can carry at most ${BOT_CHAT_IMAGES_PER_MESSAGE} images.`;
+		else if (
+			file.kind === 'file' &&
+			file.size > BOT_MESSAGE_UPLOAD_LIMITS.fileBytes
+		)
+			refusal ??= 'Files must be 5 MiB or smaller.';
+		else if (pending + accepted.length >= BOT_CHAT_FILES_PER_MESSAGE)
+			refusal ??= `A message can carry at most ${BOT_CHAT_FILES_PER_MESSAGE} files.`;
 		else accepted.push(file);
 	}
 	return refusal ? { accepted, refusal } : { accepted };
+}
+
+/** "512 B", "1.4 KB", "3.0 MB": a file chip's size. */
+export function formatFileSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** How a message attachment shows: only raster images are ever rendered;
+ * every other type, known or not, is a download-only chip. */
+export function attachmentView(mime: string): 'image' | 'file' {
+	return isBotImageMime(mime) ? 'image' : 'file';
 }
 
 /** A send attempt's idempotency key. A retry of the same content reuses it, so

@@ -126,3 +126,34 @@ test('5.5 retention keeps newest 200 or all from last 30 days, whichever is more
 	assert.ok(store.get(fresh.id));
 	assert.equal(new BotSessionStore(root).list(botId).length, 200);
 });
+
+test('opaque trigger attachment metadata survives session persistence', (t) => {
+	const { root, store } = setup(t);
+	const session = store.create(botId, { kind: 'chat' }, snapshot);
+	const attachments = [
+		{
+			id: 'a'.repeat(24),
+			name: 'logs.zip',
+			mime: 'application/octet-stream',
+			size: 3 * 1024 * 1024,
+		},
+	];
+	store.patch(session.id, {
+		runtime: {
+			revision: 1,
+			order: 0,
+			epoch: 'b'.repeat(32),
+			revoked: false,
+			triggerMessageId: null,
+			supersededBy: null,
+			inbox: [],
+			keys: {},
+			triggerAttachments: attachments,
+		},
+	});
+	store.commit(session.id);
+	assert.deepEqual(
+		new BotSessionStore(root).get(session.id).runtime.triggerAttachments,
+		attachments,
+	);
+});

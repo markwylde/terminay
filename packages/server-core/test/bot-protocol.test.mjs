@@ -315,3 +315,54 @@ test('6.1 trigger wire operations use binary bodies, expose firings/next times, 
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(events.length, count);
 });
+
+test('file upload operations sniff content, enforce bounds and preserve authority', async (t) => {
+	const r = await setup(t);
+	const { createBotMessageOperations } = await import(
+		'../dist/botService/messageProtocol.js'
+	);
+	const registry = createBotMessageOperations(r.service);
+	const upload = (body, botId = r.bot.id, auth = context) =>
+		registry.commands['bots.messages.upload']({
+			context: auth,
+			envelope: { payload: { botId, name: 'logs.png', mime: 'image/png' } },
+			body,
+		});
+	const bytes = Buffer.alloc(3 * 1024 * 1024, 7);
+	bytes.write('PK\x03\x04');
+	const result = await upload(bytes);
+	assert.equal(result.result.attachment.mime, 'application/octet-stream');
+	// Commit the staged token without starting a provider execution.
+	const message = r.service.messages.post(
+		r.bot.id,
+		'user',
+		'',
+		null,
+		'file-wire',
+		[],
+		[result.result.token],
+	);
+	const downloaded = await registry.queries['bots.messages.attachment']({
+		context,
+		envelope: {
+			payload: { botId: r.bot.id, attachmentId: message.attachments[0].id },
+		},
+	});
+	assert.equal(downloaded.result.mime, 'application/octet-stream');
+	assert.deepEqual(downloaded.body, bytes);
+	for (const body of [Buffer.alloc(0), Buffer.alloc(5 * 1024 * 1024 + 1)])
+		await assert.rejects(upload(body), (e) => e.code === 'validation');
+	await assert.rejects(
+		upload(bytes, 'z'.repeat(12)),
+		(e) => e.code === 'not_found',
+	);
+	for (const claims of [
+		{ projectId: 'p' },
+		{ sessionId: 's' },
+		{ botExecutionId: 'e' },
+	])
+		await assert.rejects(
+			upload(bytes, r.bot.id, { ...context, claims }),
+			(e) => e.code === 'forbidden',
+		);
+});

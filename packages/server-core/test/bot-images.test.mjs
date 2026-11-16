@@ -23,3 +23,85 @@ test('container image reads enforce ownership, bounds, signatures and no-follow 
  const before=calls;owned=false;await assert.rejects(readBotImage(driver,'server',id,'/tmp/screen.png'));owned=true;running=false;await assert.rejects(readBotImage(driver,'server',id,'/tmp/screen.png'));assert.equal(calls,before);
  assert.throws(()=>botImageMime(Buffer.from('<svg><script/></svg>')));
 });
+
+test('execution attachment paths use only a bounded extension from opaque names', async () => {
+	const { executionAttachmentPath } = await import(
+		'../dist/botService/images.js'
+	);
+	const execution = 'a'.repeat(24);
+	for (const [name, ext] of [
+		['logs.zip', 'zip'],
+		['Report.PDF', 'pdf'],
+		['notes.../../x y', 'bin'],
+		['archive.tar.gz', 'gz'],
+		['noext', 'bin'],
+		['file.abcdefghijkl', 'bin'],
+		['file.zip\n', 'bin'],
+	])
+		assert.equal(
+			executionAttachmentPath(execution, 0, 'application/octet-stream', name),
+			`/tmp/terminay-attachments/${execution}/1.${ext}`,
+		);
+	assert.equal(
+		executionAttachmentPath(execution, 1, 'image/png', 'fake.zip'),
+		`/tmp/terminay-attachments/${execution}/2.png`,
+	);
+});
+
+test('execution file writes preserve large opaque bytes and refuse symlink traversal', async (t) => {
+	const { writeExecutionAttachments } = await import(
+		'../dist/botService/images.js'
+	);
+	const { readFileSync, readdirSync } = await import('node:fs');
+	const root = realpathSync(mkdtempSync(join(tmpdir(), 'bot-file-write-')));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const execution = 'a'.repeat(24);
+	let owned = true;
+	const driver = {
+		inspect: async () => ({
+			State: { Running: true },
+			Config: {
+				Labels: {
+					'terminay.server': owned ? 'server' : 'other',
+					'terminay.bot': id,
+					'terminay.managed': '1',
+				},
+			},
+		}),
+		exec: async (name, args, options) => {
+			assert.equal(name, `terminay-bot-${id}`);
+			assert.equal(options.user, 'bot');
+			const source = args[2].replace(
+				"os.open('/tmp',",
+				`os.open(${JSON.stringify(root)},`,
+			);
+			return execFileSync('python3', ['-c', source, ...args.slice(3)], {
+				input: options.input,
+				timeout: 10000,
+				stdio: ['pipe', 'pipe', 'pipe'],
+			}).toString();
+		},
+	};
+	const bytes = Buffer.alloc(3 * 1024 * 1024, 7);
+	bytes.write('PK\x03\x04');
+	const files = [
+		{ name: '../../logs.zip', mime: 'application/octet-stream', bytes },
+	];
+	await writeExecutionAttachments(driver, 'server', id, execution, files);
+	const directory = join(root, 'terminay-attachments', execution);
+	assert.deepEqual(readFileSync(join(directory, '1.zip')), bytes);
+	assert.deepEqual(readdirSync(directory), ['1.zip']);
+	owned = false;
+	await assert.rejects(
+		writeExecutionAttachments(driver, 'server', id, execution, files),
+	);
+	owned = true;
+	rmSync(directory, { recursive: true });
+	const outside = join(root, 'outside');
+	mkdirSync(outside);
+	symlinkSync(outside, directory);
+	await assert.rejects(
+		writeExecutionAttachments(driver, 'server', id, execution, files),
+	);
+	assert.deepEqual(readdirSync(outside), []);
+});

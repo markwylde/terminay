@@ -4,16 +4,53 @@ export interface BotMessageAttachment {
 	readonly mime: string;
 	readonly size: number;
 }
-/** A staged user image; `token` is consumed by the post that references it. */
+/** A staged user file; `token` is consumed by the post that references it. */
 export interface BotMessageUpload {
 	readonly token: string;
 	readonly attachment: Omit<BotMessageAttachment, 'id'>;
 }
+/** The type of every attachment whose content is not a raster image. */
+export const BOT_OPAQUE_ATTACHMENT_MIME = 'application/octet-stream';
 export const BOT_MESSAGE_UPLOAD_LIMITS = Object.freeze({
-	bytes: 2 * 1024 * 1024,
+	/** Raster images: they are also sent to the model as native input. */
+	imageBytes: 2 * 1024 * 1024,
+	/** Any other file, stored and delivered as opaque bytes. */
+	fileBytes: 5 * 1024 * 1024,
 	perMessage: 4,
-	mimes: Object.freeze(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+	imageMimes: Object.freeze([
+		'image/png',
+		'image/jpeg',
+		'image/gif',
+		'image/webp',
+	] as const),
 });
+/** Raster type from magic bytes, or the opaque type. Never trusts names. */
+export function botAttachmentType(head: Uint8Array): string {
+	const at = (i: number) => head[i] ?? -1;
+	const ascii = (from: number, to: number) =>
+		String.fromCharCode(...head.subarray(from, to));
+	if (
+		[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every(
+			(b, i) => at(i) === b,
+		)
+	)
+		return 'image/png';
+	if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return 'image/jpeg';
+	if (/^GIF8[79]a$/.test(ascii(0, 6))) return 'image/gif';
+	if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+	return BOT_OPAQUE_ATTACHMENT_MIME;
+}
+export function isBotImageMime(mime: string): boolean {
+	return (BOT_MESSAGE_UPLOAD_LIMITS.imageMimes as readonly string[]).includes(
+		mime,
+	);
+}
+/** The size limit for content of this type. */
+export function botAttachmentLimit(mime: string): number {
+	return isBotImageMime(mime)
+		? BOT_MESSAGE_UPLOAD_LIMITS.imageBytes
+		: BOT_MESSAGE_UPLOAD_LIMITS.fileBytes;
+}
 export interface BotMessage {
 	readonly id: string;
 	readonly botId: string;
