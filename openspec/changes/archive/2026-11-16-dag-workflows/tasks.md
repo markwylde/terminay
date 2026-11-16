@@ -72,4 +72,4 @@
 
 - [x] 7.1 Run `npm run lint`, the server-core, protocol and MCP unit tests (`npx turbo run build --filter=...` first, then `node --test --test-force-exit --test-timeout=120000`), and `npm run test:workflow-ui`, bounded with `timeout`. Verified by all of them passing.
 - [x] 7.2 Run `npm run test:e2e` (Docker) on the workflow suites, and capture screenshots of the vertical expanded panel, the collapsed rail, the expanded drawer, the strip, the options menu and the outline editor. Verified by the suites passing and the screenshots being saved.
-- [ ] 7.3 Run `openspec validate --all`, and sync the spec deltas into `openspec/specs/` when archiving. Verified by validation passing.
+- [x] 7.3 Run `openspec validate --all`, and sync the spec deltas into `openspec/specs/` when archiving. Verified by validation passing.
