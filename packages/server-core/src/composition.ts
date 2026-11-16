@@ -2785,6 +2785,7 @@ function uniqueCapabilities(
 			// Every server says whether it has an upgrade to offer; one with no
 			// upgrader says it has none.
 			FEATURE_CAPABILITIES.serverUpgrade,
+			FEATURE_CAPABILITIES.serverUpgradeAttempts,
 			// Every server can describe its own host.
 			FEATURE_CAPABILITIES.hostStats,
 			...(options.connectionMetrics === undefined

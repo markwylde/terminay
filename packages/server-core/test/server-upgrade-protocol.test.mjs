@@ -133,7 +133,7 @@ async function served(t, { upgrader, scopeFor = () => 'admin' } = {}) {
 		for (const close of closers) await close();
 		await composition.shutdown();
 	});
-	async function connect(clientId) {
+	async function connect(clientId, { attempts = false } = {}) {
 		const pair = createInMemoryTransportPair();
 		const serverTask = composition.core.accept(pair.server).start();
 		const client = new TerminayClient({
@@ -162,7 +162,7 @@ async function served(t, { upgrader, scopeFor = () => 'admin' } = {}) {
 				if (onResync !== undefined) subscription.onResync(onResync);
 				return () => void subscription.unsubscribe().catch(() => undefined);
 			},
-		});
+		}, undefined, { attempts });
 		return {
 			client,
 			hello,
@@ -187,10 +187,16 @@ const rejectedWith = (code, reason) => (error) => {
 
 test('both sides agree on the operation names, and each belongs to the upgrade capability', () => {
 	assert.deepEqual({ ...CLIENT_OPERATIONS }, { ...SERVER_UPGRADE_OPERATIONS });
+	const attempts = [
+		SERVER_UPGRADE_OPERATIONS.attempt,
+		SERVER_UPGRADE_OPERATIONS.attemptEvent,
+	];
 	for (const operation of Object.values(SERVER_UPGRADE_OPERATIONS))
 		assert.equal(
 			capabilityOf(operation),
-			FEATURE_CAPABILITIES.serverUpgrade,
+			attempts.includes(operation)
+				? FEATURE_CAPABILITIES.serverUpgradeAttempts
+				: FEATURE_CAPABILITIES.serverUpgrade,
 			operation,
 		);
 	// The connection mechanics that share the namespace are not swept in.
@@ -279,6 +285,45 @@ test('a paired device starts the upgrade and every device sees it in progress', 
 		rejectedWith('conflict', 'in-progress'),
 	);
 	assert.equal(upgrader.handovers.length, 1);
+});
+
+test('an attempt-aware device follows its attempt by request id, and every device sees it', async (t) => {
+	const upgrader = fakeUpgrader(report());
+	const { connect, start } = await served(t, { upgrader });
+	await start();
+	const phone = await connect('phone', { attempts: true });
+	const desktop = await connect('desktop', { attempts: true });
+	assert.equal(
+		phone.hello.capabilities.includes(FEATURE_CAPABILITIES.serverUpgradeAttempts),
+		true,
+	);
+	await phone.upgrade.subscribe();
+	await desktop.upgrade.subscribe();
+	assert.equal(phone.upgrade.attempts.attempt, null);
+	const seen = new Promise((resolve) => {
+		const off = desktop.upgrade.attempts.subscribe((attempt) => {
+			if (attempt?.requestId !== 'phone-req-1') return;
+			off();
+			resolve(attempt);
+		});
+	});
+	const status = await phone.upgrade.startServerUpgrade('in-place', {
+		requestId: 'phone-req-1',
+	});
+	// The status a released client reads keeps its shape.
+	assert.deepEqual(Object.keys(status.upgrade).sort(), ['mode', 'startedAt', 'state']);
+	const attempt = await seen;
+	assert.equal(attempt.stage, 'requested');
+	assert.equal(attempt.kind, 'upgrade');
+	assert.deepEqual(await phone.upgrade.refreshAttempt(), attempt);
+	// A request id is a bounded token, not a place to put anything else.
+	await assert.rejects(
+		phone.client.command(SERVER_UPGRADE_OPERATIONS.start, {
+			mode: 'in-place',
+			requestId: '../../etc/passwd',
+		}),
+		rejectedWith('validation'),
+	);
 });
 
 test('a request that names anything but an offered mode is rejected and starts nothing', async (t) => {

@@ -1,5 +1,5 @@
 import { readFile, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { DaemonOptions } from '../args.js';
 import {
@@ -33,7 +33,7 @@ import {
 	type TargetImage,
 } from '../imageReference.js';
 import { readArchiveManifest } from '../manifest.js';
-import { writeUpgradeOutcome } from '../outcome.js';
+import { UPGRADE_LOCK, UpgradeRun, writeUpgradeOutcome } from '../outcome.js';
 import {
 	compareVersions,
 	type InstalledRelease,
@@ -101,6 +101,8 @@ export interface RecreateDependencies {
 	readonly handoverTimeoutMs?: number;
 	/** What schedules every deadline and grace period. The process's own timers by default. */
 	readonly timers?: DeadlineTimers;
+	/** Whether a lock holder still runs. Overridden by tests. */
+	readonly isRunning?: (pid: number) => boolean;
 }
 
 function reasonOf(error: unknown): string {
@@ -561,7 +563,12 @@ export function helperSpec(
 		'container' | 'socketBind' | 'dataBind' | 'socketPath' | 'dataRoot'
 	>,
 	target: TargetImage,
-	labels: { readonly from: string; readonly to: string },
+	labels: {
+		readonly from: string;
+		readonly to: string;
+		readonly run?: string;
+		readonly runStartedAt?: string;
+	},
 ): Readonly<Record<string, unknown>> {
 	const { Config: config, HostConfig: hostConfig } = self.container;
 	const user = config.User;
@@ -574,6 +581,9 @@ export function helperSpec(
 			target.reference,
 			labels.from,
 			labels.to,
+			...(labels.run === undefined
+				? []
+				: [labels.run, labels.runStartedAt ?? '']),
 		],
 		Env: [
 			`TERMINAY_DATA_ROOT=${self.dataRoot}`,
@@ -597,13 +607,20 @@ export function helperSpec(
 	});
 }
 
+/**
+ * `daemon upgrade --recreate`. Like every upgrade run it holds the install
+ * lock and records its start and one ending under its run id (ADR-0125).
+ * Once the helper is started, the helper owns both: it records the ending
+ * after the replacement's health verdict and releases the lock.
+ */
 export async function runRecreate(
 	options: DaemonOptions,
 	context: { readonly write: (line: string) => void },
 	dependencies: RecreateDependencies = {},
 ): Promise<UpgradeResult> {
-	const { write } = context;
 	const env = dependencies.env ?? process.env;
+	// Refusals that attempt nothing come before any run begins, so they leave
+	// no record.
 	if (
 		options.publicHost !== undefined ||
 		options.advertiseAddress !== undefined ||
@@ -613,9 +630,51 @@ export async function runRecreate(
 			'`--recreate` moves the container to the newer image of the reference it was created from, and takes no other upgrade flag.',
 		);
 	}
-
 	const described = await describeSelf(env, dependencies);
 	if (!described.ok) throw new UpgradeError(described.reason);
+	const { layout } = described.self;
+	const running = await runningRelease(layout);
+	const run = await UpgradeRun.begin({
+		resultPath: layout.resultPath,
+		from: {
+			channel: running.manifest.channel,
+			version: running.manifest.version,
+			revision: running.manifest.revision,
+		},
+		...(dependencies.isRunning === undefined
+			? {}
+			: { isRunning: dependencies.isRunning }),
+	});
+	const handover = { started: false };
+	try {
+		const result = await recreate(
+			described,
+			context,
+			dependencies,
+			run,
+			handover,
+		);
+		if (!handover.started) await run.end('unchanged');
+		return result;
+	} catch (error) {
+		if (!handover.started)
+			await run
+				.end('failed', { reason: `nothing was changed: ${reasonOf(error)}` })
+				.catch(() => undefined);
+		throw error;
+	} finally {
+		if (!handover.started) await run.release();
+	}
+}
+
+async function recreate(
+	described: Extract<Awaited<ReturnType<typeof describeSelf>>, { ok: true }>,
+	context: { readonly write: (line: string) => void },
+	dependencies: RecreateDependencies,
+	run: UpgradeRun,
+	handover: { started: boolean },
+): Promise<UpgradeResult> {
+	const { write } = context;
 	const { self } = described;
 	const { docker, layout, container, reference } = self;
 	const name = containerName(container);
@@ -685,12 +744,9 @@ export async function runRecreate(
 	// From here something was attempted, so a refusal is on the record for the
 	// server that keeps running to report.
 	const refuse = async (reason: string): Promise<never> => {
-		await writeUpgradeOutcome(layout.resultPath, {
-			from: fromLabel,
-			to: toLabel,
-			outcome: 'rolled-back',
-			reason,
-		}).catch(() => undefined);
+		await run
+			.end('failed', { toLabel, reason })
+			.catch(() => undefined);
 		throw new UpgradeError(reason);
 	};
 
@@ -745,9 +801,15 @@ export async function runRecreate(
 	try {
 		helper = await docker.createContainer(
 			`${name}${HELPER_SUFFIX}`,
-			helperSpec(self, target, { from: fromLabel, to: toLabel }),
+			helperSpec(self, target, {
+				from: fromLabel,
+				to: toLabel,
+				run: run.id,
+				runStartedAt: run.startedAt,
+			}),
 		);
 		await docker.startContainer(helper);
+		handover.started = true;
 	} catch (error) {
 		if (helper !== undefined)
 			await docker
@@ -928,9 +990,13 @@ export async function runContainerRecreateHelper(
 		process.stderr.write(`terminay: ${line}\n`),
 ): Promise<number> {
 	const env = dependencies.env ?? process.env;
-	const [oldId, reference, from, fallbackTo] = argv;
+	const [oldId, reference, from, fallbackTo, runId, runStartedAt] = argv;
 	if (
-		argv.length !== 4 ||
+		(argv.length !== 4 && argv.length !== 6) ||
+		(runId !== undefined && !/^[A-Za-z0-9-]{1,64}$/u.test(runId)) ||
+		(runStartedAt !== undefined &&
+			runStartedAt !== '' &&
+			Number.isNaN(Date.parse(runStartedAt))) ||
 		oldId === undefined ||
 		!/^[a-f0-9]{64}$/u.test(oldId) ||
 		reference === undefined ||
@@ -950,8 +1016,15 @@ export async function runContainerRecreateHelper(
 		createDockerClient(dockerSocketPath(env), dependencies.timers);
 	const fromLabel = label(from);
 	let toLabel = label(fallbackTo);
-	const record = (outcome: 'succeeded' | 'rolled-back', reason?: string) =>
+	const record = (
+		outcome: 'succeeded' | 'rolled-back' | 'failed',
+		reason?: string,
+	) =>
 		writeUpgradeOutcome(layout.resultPath, {
+			...(runId === undefined ? {} : { run: runId }),
+			...(runStartedAt === undefined || runStartedAt === ''
+				? {}
+				: { runStartedAt }),
 			from: fromLabel,
 			to: toLabel,
 			outcome,
@@ -959,6 +1032,11 @@ export async function runContainerRecreateHelper(
 		}).catch((error) => {
 			log(`the outcome could not be recorded: ${reasonOf(error)}`);
 		});
+	// The run that started this helper handed it the install lock.
+	const releaseLock = () =>
+		rm(join(layout.prefix, UPGRADE_LOCK), { force: true }).catch(
+			() => undefined,
+		);
 
 	let old: DockerContainer;
 	let replacement: Replacement;
@@ -990,7 +1068,8 @@ export async function runContainerRecreateHelper(
 	} catch (error) {
 		const reason = `the container was not recreated and nothing was changed: ${reasonOf(error)}`;
 		log(reason);
-		await record('rolled-back', reason);
+		await record('failed', reason);
+		await releaseLock();
 		return 1;
 	}
 
@@ -1008,13 +1087,13 @@ export async function runContainerRecreateHelper(
 		created = await docker.createContainer(name, replacement.spec);
 		for (const network of replacement.networks)
 			await docker.connectNetwork(network.name, created, network.endpoint);
-		// Written before the new server starts, because a server reads the
-		// record as it starts and would otherwise come up with nothing to
-		// report. Should the replacement not turn out healthy, the record is
-		// replaced below before the old container is started again.
-		await record('succeeded');
+		// Success is recorded only once the replacement is healthy: a server
+		// watches the record, and an ending, once written, is final
+		// (ADR-0125).
 		const unhealthy = await startAndAwaitHealthy(docker, created, dependencies);
 		if (unhealthy !== undefined) throw new Error(unhealthy);
+		await record('succeeded');
+		await releaseLock();
 	} catch (error) {
 		const failure = reasonOf(error);
 		log(`the replacement failed: ${failure}; restoring ${name}`);
@@ -1046,6 +1125,7 @@ export async function runContainerRecreateHelper(
 			problems.push(`it could not be started again (${reasonOf(problem)})`);
 			await record('rolled-back', restored());
 		}
+		await releaseLock();
 		return 1;
 	}
 

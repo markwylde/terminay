@@ -19,8 +19,11 @@ import { createEmbeddedDesktopAuthority } from '../dist/embeddedAuthority.js';
 import {
 	createReleaseUpgrader,
 	parseUpgradeCheckOutput,
+	parseUpgradeRunRecord,
+	readUpgradeRunRecord,
 	releaseUpgraderFromEnvironment,
 	upgradeArguments,
+	watchUpgradeRunRecord,
 } from '../dist/releaseUpgrader.js';
 
 const answer = (overrides = {}) => ({
@@ -161,6 +164,99 @@ test('a canary install reports its own channel and the canary build it follows',
 	assert.equal(parseUpgradeCheckOutput(JSON.stringify(current)).available, null);
 });
 
+const RELEASE_A = { channel: 'canary', version: '6.10.0', revision: 'a'.repeat(40) };
+const RELEASE_B = { channel: 'canary', version: '6.10.0', revision: 'b'.repeat(40) };
+
+test('every kind of run record is accepted, in the check and on disk', () => {
+	for (const outcome of ['started', 'succeeded', 'rolled-back', 'unchanged', 'failed']) {
+		const record = {
+			run: 'run-1',
+			runStartedAt: '2026-11-16T07:44:00.000Z',
+			from: 'canary-aaaaaaaaaaaa',
+			to: 'canary-bbbbbbbbbbbb',
+			fromRelease: RELEASE_A,
+			toRelease: RELEASE_B,
+			outcome,
+			...(outcome === 'failed' ? { reason: 'nothing was changed' } : {}),
+			at: '2026-11-16T07:44:30.000Z',
+		};
+		const report = parseUpgradeCheckOutput(
+			JSON.stringify(
+				answer({ recordPath: '/opt/terminay/upgrade-result.json', lastResult: record }),
+			),
+		);
+		assert.deepEqual(report.lastResult, record);
+		assert.equal(report.recordPath, '/opt/terminay/upgrade-result.json');
+		assert.deepEqual(
+			parseUpgradeRunRecord(JSON.stringify({ schemaVersion: 1, ...record })),
+			record,
+		);
+	}
+	// A record written before runs had ids still reads.
+	assert.equal(
+		parseUpgradeRunRecord(
+			JSON.stringify({ schemaVersion: 1, from: '5.1.0', to: '5.1.1', outcome: 'succeeded', at: 'x' }),
+		).run,
+		undefined,
+	);
+	for (const raw of [
+		'{ not json',
+		JSON.stringify({ schemaVersion: 2, from: 'a', to: 'b', outcome: 'succeeded', at: 'x' }),
+		JSON.stringify({ schemaVersion: 1, from: 'a', to: 'b', outcome: 'exploded', at: 'x' }),
+		JSON.stringify({ schemaVersion: 1, from: 'a', to: 'b', outcome: 'started', at: 'x', path: '/etc' }),
+	])
+		assert.equal(parseUpgradeRunRecord(raw), undefined, raw);
+});
+
+test('the record and the install record beside it are watched through renames', async (t) => {
+	const prefix = await mkdtemp(join(tmpdir(), 'terminay-record-'));
+	t.after(() => rm(prefix, { recursive: true, force: true }));
+	const recordPath = join(prefix, 'upgrade-result.json');
+	assert.equal(await readUpgradeRunRecord(recordPath), undefined);
+	const changes = [];
+	let notify;
+	const watch = watchUpgradeRunRecord(recordPath, (change) => {
+		changes.push(change);
+		notify?.();
+	});
+	t.after(() => watch.close());
+	const replaced = async (name, content, expected) => {
+		const seen = new Promise((resolve) => {
+			notify = () => {
+				if (changes.includes(expected)) resolve();
+			};
+		});
+		const temporary = join(prefix, `.${name}.tmp`);
+		await writeFile(temporary, content);
+		const { rename } = await import('node:fs/promises');
+		await rename(temporary, join(prefix, name));
+		await Promise.race([
+			seen,
+			new Promise((_, reject) =>
+				setTimeout(() => reject(new Error(`no ${expected} change`)), 5_000),
+			),
+		]);
+	};
+	const record = {
+		schemaVersion: 1,
+		run: 'run-1',
+		from: 'a',
+		to: 'a',
+		outcome: 'unchanged',
+		at: '2026-11-16T07:44:30.000Z',
+	};
+	await replaced('upgrade-result.json', JSON.stringify(record), 'record');
+	assert.equal((await readUpgradeRunRecord(recordPath)).outcome, 'unchanged');
+	changes.length = 0;
+	await replaced('install.json', '{}', 'install');
+	// Another file in the directory is not news.
+	changes.length = 0;
+	await writeFile(join(prefix, 'unrelated.txt'), 'x');
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	assert.deepEqual(changes, []);
+	assert.throws(() => watchUpgradeRunRecord('relative.json', () => {}));
+});
+
 test('anything else an upgrader prints is refused', () => {
 	for (const output of [
 		'',
@@ -202,6 +298,7 @@ test('anything else an upgrader prints is refused', () => {
 				},
 			}),
 		),
+		JSON.stringify(answer({ recordPath: 'relative/upgrade-result.json' })),
 		JSON.stringify(answer({ surprise: true })),
 		JSON.stringify({ ...answer(), lastResult: undefined }),
 	])

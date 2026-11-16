@@ -771,6 +771,8 @@ test('an upgrade that ends while the server is still running stops being in prog
 	const { clock, service } = served(t, upgrader);
 	await service.check();
 	await service.startUpgrade('in-place');
+	// The attempt's expiry; an upgrader without run records has no start to
+	// be heard.
 	assert.equal(clock.deadlines, 1);
 	upgrader.answer(
 		report({
@@ -803,8 +805,15 @@ test('an upgrade that ends while the server is still running stops being in prog
 	second.clock.advance(SERVER_UPGRADE_IN_PROGRESS_DEADLINE_MS - 1);
 	assert.equal(second.service.status.upgrade.state, 'in-progress');
 	second.clock.advance(1);
-	await second.service.check();
-	assert.equal(second.service.status.upgrade.state, 'none');
+	// The attempt ends, and the server looks again once.
+	await new Promise((resolve) => setImmediate(resolve));
+	await new Promise((resolve) => setImmediate(resolve));
+	// Nothing said how it ended: unknown, never success (ADR-0125).
+	assert.equal(second.service.status.upgrade.state, 'failed');
+	assert.match(
+		second.service.status.upgrade.reason,
+		/did not report how it ended; the server now runs 5\.1\.1/u,
+	);
 	assert.equal(system.checks, 2);
 });
 

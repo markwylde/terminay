@@ -22,7 +22,7 @@ import { discardDownloads } from '../download.js';
 import { probeHealth, READINESS_TIMEOUT_MS } from '../health.js';
 import { activeVersion, installArchive, retain } from '../install.js';
 import { readArchiveManifest } from '../manifest.js';
-import { releaseLabel, writeUpgradeOutcome } from '../outcome.js';
+import { type ReleaseName, releaseLabel, UpgradeRun } from '../outcome.js';
 import {
 	type InstalledRelease,
 	NoChannelError,
@@ -65,6 +65,8 @@ export interface ContainerUpgradeDependencies {
 	readonly timers?: DeadlineTimers;
 	/** See `InstallDependencies.releasePublicKeyPem`: a test seam, not a bypass. */
 	readonly releasePublicKeyPem?: string;
+	/** Whether a lock holder still runs. Overridden by tests. */
+	readonly isRunning?: (pid: number) => boolean;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -171,11 +173,74 @@ async function waitForRelease(
 	return arrival;
 }
 
+/**
+ * `daemon upgrade` inside the official image. Like every upgrade run it holds
+ * the install-wide lock and records its start and exactly one ending under its
+ * run id (ADR-0125).
+ */
 export async function runContainerUpgrade(
 	ref: string | undefined,
 	options: DaemonOptions,
 	context: { readonly write: (line: string) => void },
 	dependencies: ContainerUpgradeDependencies = {},
+): Promise<UpgradeResult> {
+	const layout = containerLayout(dependencies.env ?? process.env);
+	const running = await runningRelease(layout);
+	// A container that cannot be upgraded in place is refused before any run
+	// begins: nothing is attempted, so nothing is recorded.
+	if (
+		options.publicHost !== undefined ||
+		options.advertiseAddress !== undefined ||
+		!running.supervised ||
+		(await supervisedServerPid(layout)) === undefined
+	)
+		return upgradeContainer(ref, options, context, dependencies, undefined);
+	await mkdir(layout.prefix, { recursive: true, mode: 0o755 });
+	const run = await UpgradeRun.begin({
+		resultPath: layout.resultPath,
+		from: releaseOf(running.manifest),
+		...(dependencies.isRunning === undefined
+			? {}
+			: { isRunning: dependencies.isRunning }),
+	});
+	try {
+		const result = await upgradeContainer(
+			ref,
+			options,
+			context,
+			dependencies,
+			run,
+		);
+		await run.end(result.upToDate ? 'unchanged' : 'succeeded');
+		return result;
+	} catch (error) {
+		await run
+			.end('failed', { reason: `nothing was changed: ${reasonOf(error)}` })
+			.catch(() => undefined);
+		throw error;
+	} finally {
+		await run.release();
+	}
+}
+
+function releaseOf(manifest: {
+	readonly channel: string;
+	readonly version: string;
+	readonly revision: string;
+}): ReleaseName {
+	return {
+		channel: manifest.channel,
+		version: manifest.version,
+		revision: manifest.revision,
+	};
+}
+
+async function upgradeContainer(
+	ref: string | undefined,
+	options: DaemonOptions,
+	context: { readonly write: (line: string) => void },
+	dependencies: ContainerUpgradeDependencies,
+	run: UpgradeRun | undefined,
 ): Promise<UpgradeResult> {
 	const { write } = context;
 	const env = dependencies.env ?? process.env;
@@ -200,6 +265,8 @@ export async function runContainerUpgrade(
 			'the server in this container was not started by an entrypoint that can restart it on a new release, so it cannot be upgraded in place. Pull a newer image and recreate the container.',
 		);
 	}
+	if (run === undefined)
+		throw new UpgradeError('the upgrade run could not be recorded.');
 
 	// One upgrade at a time. A pending record whose release is the one running
 	// and ready belongs to an upgrade that finished without being confirmed;
@@ -308,12 +375,26 @@ export async function runContainerUpgrade(
 			},
 		});
 	} catch (error) {
-		await writeUpgradeOutcome(layout.resultPath, {
-			from: fromLabel,
-			to: releaseLabel(resolved.channel, resolved.version, resolved.revision),
-			outcome: 'rolled-back',
-			reason: `the new release could not be staged, so nothing was changed: ${reasonOf(error)}`,
-		}).catch(() => undefined);
+		await run
+			.end('failed', {
+				...(resolved.revision === undefined
+					? {
+							toLabel: releaseLabel(
+								resolved.channel,
+								resolved.version,
+								undefined,
+							),
+						}
+					: {
+							to: {
+								channel: resolved.channel,
+								version: resolved.version,
+								revision: resolved.revision,
+							},
+						}),
+				reason: `the new release could not be staged, so nothing was changed: ${reasonOf(error)}`,
+			})
+			.catch(() => undefined);
 		await discardDownloads(layout.prefix).catch(() => undefined);
 		throw error;
 	}
@@ -356,6 +437,10 @@ export async function runContainerUpgrade(
 		next: staged.name,
 		from: fromLabel,
 		to: toLabel,
+		run: run.id,
+		runStartedAt: run.startedAt,
+		fromRelease: run.from,
+		toRelease: releaseOf(staged.manifest),
 	});
 	await markRelease(layout, staged.name);
 
@@ -367,12 +452,9 @@ export async function runContainerUpgrade(
 		await markRelease(layout, previous);
 		await rm(layout.pendingPath, { force: true });
 		const reason = `this image would not start ${toLabel}: ${selected.skipped ?? 'it is not the release selection names'}.`;
-		await writeUpgradeOutcome(layout.resultPath, {
-			from: fromLabel,
-			to: toLabel,
-			outcome: 'rolled-back',
-			reason,
-		}).catch(() => undefined);
+		await run
+			.end('failed', { to: releaseOf(staged.manifest), reason })
+			.catch(() => undefined);
 		throw new UpgradeError(reason);
 	}
 
@@ -428,25 +510,20 @@ export async function runContainerUpgrade(
 				timers,
 			)) === 'ready';
 		const reason = `the upgrade to ${toLabel} did not become ready, so ${fromLabel} was restored and ${recovered ? 'is running again' : 'was started, but has not reported ready either'}.`;
-		await writeUpgradeOutcome(layout.resultPath, {
-			from: fromLabel,
-			to: toLabel,
-			outcome: 'rolled-back',
-			reason,
-		}).catch(() => undefined);
+		await run
+			.end('rolled-back', { to: releaseOf(staged.manifest), reason })
+			.catch(() => undefined);
 		throw new UpgradeError(reason);
 	}
 
 	// Confirmed: from here a server that exits is a server that exited, not an
-	// upgrade that failed.
+	// upgrade that failed. That is the outcome, and nothing below replaces it.
 	await rm(layout.pendingPath, { force: true });
+	await run
+		.end('succeeded', { to: releaseOf(staged.manifest) })
+		.catch(() => undefined);
 	const removed = await retain(layout, [staged.name, previous ?? '']);
 	for (const name of removed) await removeStagedRecord(layout, name);
-	await writeUpgradeOutcome(layout.resultPath, {
-		from: fromLabel,
-		to: toLabel,
-		outcome: 'succeeded',
-	});
 	write(
 		previous === null
 			? `Upgraded to ${toLabel}. The release this image carries is kept to roll back to.`

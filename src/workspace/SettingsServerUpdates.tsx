@@ -11,6 +11,7 @@ import { checkForAppUpdate } from '../host/nativeActions';
 import { ServerUpdatesPage } from '../components/settings/UpdatesPages';
 import { serverUpdatesModel } from '../components/settings/updatesPageModel';
 import type { WorkspaceConnection } from '../shared/connections/connectionRegistry';
+import { useProvidedServerUpgradeBoard } from './ServerUpgradeBoardHost.tsx';
 import { ServerUpgradeDialog } from './ServerUpgradeDialog';
 import {
 	requestServerUpgrade,
@@ -67,6 +68,18 @@ export function SettingsServerUpdates({
 }>) {
 	const client = connection.context?.serverUpgradeClient;
 	const status = useUpgradeStatus(client?.store);
+	// Every start goes through the window's board, so the ticklist follows an
+	// upgrade begun here exactly as one begun from the menu (ADR-0125).
+	const board = useProvidedServerUpgradeBoard();
+	const start = (
+		mode: Parameters<typeof requestServerUpgrade>[1],
+		details: Readonly<{ to?: string; allowOlder?: boolean }>,
+	) =>
+		board === undefined
+			? requestServerUpgrade(client, mode, {
+					...(details.allowOlder === true ? { allowOlder: true } : {}),
+				})
+			: board.startUpgrade(connection.profileId, client, mode, details);
 	const [confirming, setConfirming] = useState<'upgrade' | 'install-latest'>();
 	const [check, setCheck] = useState<{ checking: boolean; result?: string }>({
 		checking: false,
@@ -111,7 +124,13 @@ export function SettingsServerUpdates({
 							status,
 							reachable: connection.phase === 'ready',
 						},
-						start: (mode) => requestServerUpgrade(client, mode),
+						start: (mode) =>
+							start(
+								mode,
+								status.available === undefined
+									? {}
+									: { to: status.available.version },
+							),
 						close: () => setConfirming(undefined),
 					}}
 				/>
@@ -133,7 +152,10 @@ export function SettingsServerUpdates({
 						},
 						// Consent to move backwards is sent only when it does (ADR-0117).
 						start: (mode) =>
-							requestServerUpgrade(client, mode, {
+							start(mode, {
+								...(status.latest === undefined
+									? {}
+									: { to: status.latest.version }),
 								allowOlder: status.latest?.order === 'older',
 							}),
 						close: () => setConfirming(undefined),

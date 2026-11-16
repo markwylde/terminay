@@ -18,6 +18,10 @@ export const SERVER_UPGRADE_OPERATIONS = Object.freeze({
 	/** Read the server's release channel now, not at the next hourly check. */
 	check: 'server.upgrade.check',
 	event: 'server.upgrade',
+	/** The last upgrade attempt, pending or ended (ADR-0125). Both the query
+	 * and the event carry `{ attempt }`. */
+	attempt: 'server.upgrade.attempt',
+	attemptEvent: 'server.upgrade.attempt.changed',
 } as const);
 
 export const SERVER_UPGRADE_MODES = ['in-place', 'recreate'] as const;
@@ -115,6 +119,163 @@ export interface ServerUpgradeStartRequest {
 	/** Install the channel's latest release even when it is older. Only ever
 	 * `true` when present. */
 	readonly allowOlder?: true;
+	/** Chosen by the requesting device so it can find its attempt even when
+	 * the reply is lost to the restart. Sent only to a server that advertises
+	 * `server.upgrade.attempts`. */
+	readonly requestId?: string;
+}
+
+export const SERVER_UPGRADE_MAX_ID_CHARS = 64;
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
+
+export const SERVER_UPGRADE_ATTEMPT_STAGES = [
+	'requested',
+	'installing',
+	'finishing',
+] as const;
+export type ServerUpgradeAttemptStage =
+	(typeof SERVER_UPGRADE_ATTEMPT_STAGES)[number];
+
+export const SERVER_UPGRADE_ENDING_KINDS = [
+	'succeeded',
+	'rolled-back',
+	'unchanged',
+	'failed',
+] as const;
+export type ServerUpgradeEndingKind =
+	(typeof SERVER_UPGRADE_ENDING_KINDS)[number];
+
+export const SERVER_UPGRADE_ATTEMPT_KINDS = ['upgrade', 'install-latest'] as const;
+export type ServerUpgradeAttemptKind =
+	(typeof SERVER_UPGRADE_ATTEMPT_KINDS)[number];
+
+/** How an attempt ended. Versions are for people; `failed` means the running
+ * release was not changed, `rolled-back` that it was restored. */
+export interface ServerUpgradeEnding {
+	readonly kind: ServerUpgradeEndingKind;
+	readonly from: string;
+	readonly to: string;
+	readonly reason?: string;
+	readonly at: number;
+}
+
+/** One upgrade attempt as the server owns it (ADR-0125). Pending while it has
+ * a `stage`; ended once it has an `ending`. */
+export interface ServerUpgradeAttempt {
+	readonly id: string;
+	readonly requestId?: string;
+	readonly mode: ServerUpgradeMode;
+	readonly kind: ServerUpgradeAttemptKind;
+	readonly startedAt: number;
+	readonly expiresAt: number;
+	readonly stage?: ServerUpgradeAttemptStage;
+	readonly ending?: ServerUpgradeEnding;
+}
+
+export interface ServerUpgradeAttemptState {
+	readonly attempt: ServerUpgradeAttempt | null;
+}
+
+/** Validate the attempt state exactly as a server publishes it. */
+export function parseServerUpgradeAttemptState(
+	value: unknown,
+): ServerUpgradeAttemptState {
+	const record = strictRecord(value, 'server upgrade attempt state', [
+		'attempt',
+	]);
+	if (record.attempt === null) return Object.freeze({ attempt: null });
+	return Object.freeze({ attempt: parseServerUpgradeAttempt(record.attempt) });
+}
+
+export function parseServerUpgradeAttempt(value: unknown): ServerUpgradeAttempt {
+	const record = strictRecord(value, 'server upgrade attempt', [
+		'id',
+		'requestId',
+		'mode',
+		'kind',
+		'startedAt',
+		'expiresAt',
+		'stage',
+		'ending',
+	]);
+	if (!isServerUpgradeMode(record.mode))
+		throw new TypeError('server upgrade mode is invalid');
+	if (
+		!(SERVER_UPGRADE_ATTEMPT_KINDS as readonly unknown[]).includes(record.kind)
+	)
+		throw new TypeError('server upgrade attempt kind is invalid');
+	const startedAt = time(record.startedAt, 'startedAt');
+	const expiresAt = time(record.expiresAt, 'expiresAt');
+	if (expiresAt < startedAt)
+		throw new TypeError('server upgrade expiresAt is invalid');
+	if (record.stage !== undefined && record.ending !== undefined)
+		throw new TypeError('server upgrade attempt is both pending and ended');
+	if (record.stage === undefined && record.ending === undefined)
+		throw new TypeError('server upgrade attempt is neither pending nor ended');
+	if (
+		record.stage !== undefined &&
+		!(SERVER_UPGRADE_ATTEMPT_STAGES as readonly unknown[]).includes(
+			record.stage,
+		)
+	)
+		throw new TypeError('server upgrade attempt stage is invalid');
+	return Object.freeze({
+		id: identifier(record.id, 'attempt id'),
+		...(record.requestId === undefined
+			? {}
+			: { requestId: identifier(record.requestId, 'request id') }),
+		mode: record.mode,
+		kind: record.kind as ServerUpgradeAttemptKind,
+		startedAt,
+		expiresAt,
+		...(record.stage === undefined
+			? {}
+			: { stage: record.stage as ServerUpgradeAttemptStage }),
+		...(record.ending === undefined
+			? {}
+			: { ending: parseEnding(record.ending) }),
+	});
+}
+
+function parseEnding(value: unknown): ServerUpgradeEnding {
+	const record = strictRecord(value, 'server upgrade ending', [
+		'kind',
+		'from',
+		'to',
+		'reason',
+		'at',
+	]);
+	if (
+		!(SERVER_UPGRADE_ENDING_KINDS as readonly unknown[]).includes(record.kind)
+	)
+		throw new TypeError('server upgrade ending kind is invalid');
+	return Object.freeze({
+		kind: record.kind as ServerUpgradeEndingKind,
+		from: text(record.from, 'from', SERVER_UPGRADE_MAX_VERSION_CHARS),
+		to: text(record.to, 'to', SERVER_UPGRADE_MAX_VERSION_CHARS),
+		...(record.reason === undefined
+			? {}
+			: {
+					reason: text(record.reason, 'reason', SERVER_UPGRADE_MAX_TEXT_CHARS),
+				}),
+		at: time(record.at, 'at'),
+	});
+}
+
+/** Whether a string is a well-formed attempt or request id. */
+export function isServerUpgradeId(value: unknown): value is string {
+	return (
+		typeof value === 'string' &&
+		value.length > 0 &&
+		value.length <= SERVER_UPGRADE_MAX_ID_CHARS &&
+		ID_PATTERN.test(value)
+	);
+}
+
+function identifier(value: unknown, name: string): string {
+	if (!isServerUpgradeId(value))
+		throw new TypeError(`server upgrade ${name} is invalid`);
+	return value;
 }
 
 /** Validate a status exactly as a server publishes it. */
@@ -234,14 +395,16 @@ function parseUnavailable(
 	});
 }
 
-/** Validate a start request. Anything beyond the mode and `allowOlder` is a
- * rejection: the client never names what is installed. */
+/** Validate a start request. Anything beyond the mode, `allowOlder` and the
+ * device's own request id is a rejection: the client never names what is
+ * installed. */
 export function parseServerUpgradeStartRequest(
 	value: unknown,
 ): ServerUpgradeStartRequest {
 	const record = strictRecord(value, 'server upgrade request', [
 		'mode',
 		'allowOlder',
+		'requestId',
 	]);
 	if (!isServerUpgradeMode(record.mode))
 		throw new TypeError('server upgrade mode is invalid');
@@ -250,6 +413,9 @@ export function parseServerUpgradeStartRequest(
 	return Object.freeze({
 		mode: record.mode,
 		...(record.allowOlder === true ? { allowOlder: true as const } : {}),
+		...(record.requestId === undefined
+			? {}
+			: { requestId: identifier(record.requestId, 'request id') }),
 	});
 }
 

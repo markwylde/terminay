@@ -90,6 +90,13 @@ export function capabilityOf(
 	// The view mirror is negotiated apart from the windows it mirrors.
 	if (operation.startsWith('app-windows.mirror.'))
 		return FEATURE_CAPABILITIES.appWindowMirror;
+	// Attempts are negotiated apart from the status, so a client of another
+	// release reads the status alone (ADR-0125).
+	if (
+		operation === SERVER_UPGRADE_OPERATIONS.attempt ||
+		operation.startsWith(`${SERVER_UPGRADE_OPERATIONS.attempt}.`)
+	)
+		return FEATURE_CAPABILITIES.serverUpgradeAttempts;
 	// The server's own upgrade is a feature a server may not serve, so it is
 	// classified apart from the connection mechanics it shares a namespace with.
 	if (

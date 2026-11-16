@@ -1097,6 +1097,8 @@ export function projectionDeliveryKey(event: OrderedEvent): string {
 	}
 	// The server's upgrade status is current state, whole in every event.
 	if (event.event === 'server.upgrade') return 'server.upgrade:status';
+	if (event.event === 'server.upgrade.attempt.changed')
+		return 'server.upgrade:attempt';
 	// A terminal's displayed title is current state: a newer one stands in
 	// for one still waiting to be sent.
 	if (event.event === 'terminal-titles') {

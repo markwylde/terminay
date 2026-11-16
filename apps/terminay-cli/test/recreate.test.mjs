@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -698,6 +699,8 @@ test('recreate replaces the container with one of the same configuration on the 
 				`${REPOSITORY}:latest`,
 				'4.1.0',
 				'latest',
+				(await outcome()).run,
+				(await outcome()).runStartedAt,
 			]);
 			assert.equal(helper.created.User, 'terminay');
 			assert.deepEqual(helper.created.HostConfig, {
@@ -820,7 +823,35 @@ test('a replacement that is not healthy is removed and the old container started
 			assert.equal(recorded.from, '4.1.0');
 			assert.equal(recorded.to, '4.1.2');
 			assert.match(recorded.reason, /its health check failed: not ready/u);
+			// The ending names the run that handed over to the helper.
+			assert.match(recorded.run, /^[0-9a-f-]{36}$/u);
 			assert.match(recorded.reason, /previous container was restored\.$/u);
+		},
+	);
+});
+
+test('no success is recorded while the replacement is still being judged', async () => {
+	const seen = [];
+	let resultPath;
+	await withEngine(
+		{
+			health: (candidate) => {
+				if (candidate.created === undefined) return 'healthy';
+				// What a watching server would read while the replacement runs.
+				try {
+					seen.push(JSON.parse(readFileSync(resultPath, 'utf8')).outcome);
+				} catch {
+					seen.push(undefined);
+				}
+				return 'unhealthy';
+			},
+		},
+		async ({ recreate, layout, outcome }) => {
+			resultPath = layout.resultPath;
+			await assert.rejects(recreate(), UpgradeError);
+			assert.ok(seen.length > 0);
+			assert.ok(!seen.includes('succeeded'), seen.join(','));
+			assert.equal((await outcome()).outcome, 'rolled-back');
 		},
 	);
 });
@@ -1037,7 +1068,7 @@ test('when the pulled image is the one already running, nothing is done', async 
 			assert.ok(
 				!docker.calls.some((call) => call.includes('/containers/create')),
 			);
-			assert.equal(await outcome(), undefined);
+			assert.equal((await outcome()).outcome, 'unchanged');
 		},
 	);
 });
@@ -1056,7 +1087,7 @@ test('an image that cannot be pulled changes nothing and is recorded', async () 
 				!docker.calls.some((call) => call.includes('/containers/create')),
 			);
 			const recorded = await outcome();
-			assert.equal(recorded.outcome, 'rolled-back');
+			assert.equal(recorded.outcome, 'failed');
 			assert.equal(recorded.from, '4.1.0');
 			assert.equal(recorded.to, 'latest');
 		},
@@ -1136,7 +1167,7 @@ test('recreate refuses while an in-place upgrade is unconfirmed, or an earlier r
 				State: { Running: false },
 			});
 			await assert.rejects(recreate(), /left from an earlier recreate/u);
-			assert.equal((await outcome()).outcome, 'rolled-back');
+			assert.equal((await outcome()).outcome, 'failed');
 			assert.ok(docker.calls.every((call) => call.startsWith('GET ')));
 		},
 	);

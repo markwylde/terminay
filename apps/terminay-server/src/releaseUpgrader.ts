@@ -1,11 +1,14 @@
 import { type ChildProcess, spawn as spawnChild } from 'node:child_process';
-import { closeSync, mkdtempSync, openSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { closeSync, mkdtempSync, openSync, watch } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import type {
 	ServerUpgradeCheckReport,
 	ServerUpgradeHandover,
+	ServerUpgradeRecordChange,
+	ServerUpgradeRecordWatch,
+	ServerUpgradeRunRecord,
 	ServerUpgrader,
 } from '@terminay/server-core';
 import { z } from 'zod';
@@ -41,6 +44,34 @@ const requestPath = z
 		(path) => isAbsolute(path) && !path.includes('\0'),
 		'the request file must be an absolute path',
 	);
+
+const release = z.strictObject({
+	channel: z.string().min(1).max(32),
+	version,
+	revision: z.string().max(128),
+});
+
+/** One record the upgrader wrote (ADR-0125), as the check reports it and as
+ * it sits on disk. */
+const runRecordFields = {
+	run: z.string().min(1).max(64).optional(),
+	runStartedAt: z.string().min(1).max(64).optional(),
+	from: version,
+	to: version,
+	fromRelease: release.optional(),
+	toRelease: release.optional(),
+	outcome: z.enum(['started', 'succeeded', 'rolled-back', 'unchanged', 'failed']),
+	reason: prose.optional(),
+	at: z.string().min(1).max(64),
+};
+const runRecordSchema = z.strictObject(runRecordFields);
+const runRecordFileSchema = z.strictObject({
+	schemaVersion: z.literal(1),
+	...runRecordFields,
+});
+
+/** The install record the upgrader rewrites beside its run record. */
+export const INSTALL_RECORD_NAME = 'install.json';
 
 const checkReportSchema = z.strictObject({
 	schemaVersion: z.literal(1),
@@ -91,15 +122,9 @@ const checkReportSchema = z.strictObject({
 	installLatestUnavailable: z
 		.nullable(z.strictObject({ reason: prose, command: text }))
 		.optional(),
-	lastResult: z.nullable(
-		z.strictObject({
-			from: version,
-			to: version,
-			outcome: z.enum(['succeeded', 'rolled-back']),
-			reason: prose.optional(),
-			at: z.string().min(1).max(64),
-		}),
-	),
+	// Absent from an upgrader that predates run records.
+	recordPath: z.nullable(requestPath).optional(),
+	lastResult: z.nullable(runRecordSchema),
 	checkError: z.string().max(4096).optional(),
 });
 
@@ -173,22 +198,87 @@ export function parseUpgradeCheckOutput(
 		...(report.installLatestUnavailable === undefined
 			? {}
 			: { installLatestUnavailable: report.installLatestUnavailable }),
+		...(report.recordPath === undefined
+			? {}
+			: { recordPath: report.recordPath }),
 		lastResult:
-			report.lastResult === null
-				? null
-				: {
-						from: report.lastResult.from,
-						to: report.lastResult.to,
-						outcome: report.lastResult.outcome,
-						...(report.lastResult.reason === undefined
-							? {}
-							: { reason: report.lastResult.reason }),
-						at: report.lastResult.at,
-					},
+			report.lastResult === null ? null : runRecordOf(report.lastResult),
 		...(report.checkError === undefined
 			? {}
 			: { checkError: report.checkError }),
 	};
+}
+
+function runRecordOf(
+	record: z.infer<typeof runRecordSchema>,
+): ServerUpgradeRunRecord {
+	return {
+		...(record.run === undefined ? {} : { run: record.run }),
+		...(record.runStartedAt === undefined
+			? {}
+			: { runStartedAt: record.runStartedAt }),
+		from: record.from,
+		to: record.to,
+		...(record.fromRelease === undefined
+			? {}
+			: { fromRelease: record.fromRelease }),
+		...(record.toRelease === undefined ? {} : { toRelease: record.toRelease }),
+		outcome: record.outcome,
+		...(record.reason === undefined ? {} : { reason: record.reason }),
+		at: record.at,
+	};
+}
+
+/** Parse the record file's content. Anything else reads as no record. */
+export function parseUpgradeRunRecord(
+	raw: string,
+): ServerUpgradeRunRecord | undefined {
+	let value: unknown;
+	try {
+		value = JSON.parse(raw);
+	} catch {
+		return undefined;
+	}
+	const parsed = runRecordFileSchema.safeParse(value);
+	if (!parsed.success) return undefined;
+	const { schemaVersion: _schemaVersion, ...record } = parsed.data;
+	return runRecordOf(record);
+}
+
+/** Read the upgrader's record. Absent or unreadable is no record. */
+export async function readUpgradeRunRecord(
+	path: string,
+): Promise<ServerUpgradeRunRecord | undefined> {
+	if (!isAbsolute(path)) return undefined;
+	const raw = await readFile(path, 'utf8').catch(() => undefined);
+	return raw === undefined || raw.length > 64 * 1024
+		? undefined
+		: parseUpgradeRunRecord(raw);
+}
+
+/**
+ * Watch the upgrader's record and the install record beside it. Both are
+ * replaced by rename, so the directory is watched and its events filtered
+ * to those two names (ADR-0028: a watch, never a poll). Throws when the
+ * watch cannot be armed.
+ */
+export function watchUpgradeRunRecord(
+	path: string,
+	listener: (change: ServerUpgradeRecordChange) => void,
+): ServerUpgradeRecordWatch {
+	if (!isAbsolute(path)) throw new TypeError('the record path must be absolute');
+	const recordName = basename(path);
+	const watcher = watch(dirname(path), { persistent: false });
+	watcher.on('change', (_event, filename) => {
+		const name = filename?.toString();
+		// Some platforms do not name the file; then either may have changed.
+		if (name === undefined || name === recordName) listener('record');
+		if (name === undefined || name === INSTALL_RECORD_NAME) listener('install');
+	});
+	// A watch that fails later is closed; the attempt still ends at its
+	// deadlines and on a spawned upgrader's exit.
+	watcher.on('error', () => watcher.close());
+	return { close: () => watcher.close() };
 }
 
 /**
@@ -387,7 +477,12 @@ export function createReleaseUpgrader(
 		}
 	};
 
-	return { check, trigger };
+	return {
+		check,
+		trigger,
+		readRecord: readUpgradeRunRecord,
+		watchRecord: watchUpgradeRunRecord,
+	};
 }
 
 /**

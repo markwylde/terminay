@@ -809,16 +809,25 @@ test('an in-place upgrade restarts the server on the new release while the entry
 		assert.equal(alive(serverBefore), false);
 		assert.equal(alive(holder), true);
 
+		const outcome = await readUpgradeOutcome(layout.resultPath);
 		assert.deepEqual(
-			{ ...(await readUpgradeOutcome(layout.resultPath)), at: undefined },
+			{ ...outcome, run: undefined, runStartedAt: undefined, fromRelease: undefined, toRelease: undefined, at: undefined },
 			{
 				schemaVersion: 1,
+				run: undefined,
+				runStartedAt: undefined,
 				from: '4.1.0',
 				to: '4.1.1',
+				fromRelease: undefined,
+				toRelease: undefined,
 				outcome: 'succeeded',
 				at: undefined,
 			},
 		);
+		assert.match(outcome.run, /^[0-9a-f-]{36}$/u);
+		assert.equal(outcome.fromRelease.version, '4.1.0');
+		assert.equal(outcome.toRelease.version, '4.1.1');
+		assert.equal(existsSync(join(layout.prefix, 'upgrade.lock')), false);
 		assert.equal(await readPendingUpgrade(layout), undefined);
 		assert.equal(existsSync(layout.restartMarker), false);
 		assert.match(lines.join('\n'), /Upgraded to 4\.1\.1/u);

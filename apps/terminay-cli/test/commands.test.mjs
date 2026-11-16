@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
 	mkdtemp,
+	readdir,
 	readFile,
 	readlink,
 	rm,
@@ -2217,21 +2218,73 @@ test('a successful upgrade records where it moved from and to', async () => {
 		const outcome = JSON.parse(await readFile(layout.resultPath, 'utf8'));
 		assert.deepEqual(Object.keys(outcome), [
 			'schemaVersion',
+			'run',
+			'runStartedAt',
 			'from',
 			'to',
+			'fromRelease',
+			'toRelease',
 			'outcome',
 			'at',
 		]);
 		assert.equal(outcome.schemaVersion, 1);
+		assert.match(outcome.run, /^[0-9a-f-]{36}$/u);
 		assert.equal(outcome.from, '4.1.0');
 		assert.equal(outcome.to, '4.1.1');
+		assert.equal(outcome.fromRelease.version, '4.1.0');
+		assert.equal(outcome.toRelease.version, '4.1.1');
+		assert.match(outcome.toRelease.revision, /^[0-9a-f]{40}$/u);
 		assert.equal(outcome.outcome, 'succeeded');
+		// The run held the install's lock, and let it go.
+		await assert.rejects(() => stat(join(layout.prefix, 'upgrade.lock')));
 		assert.ok(Date.parse(outcome.at) >= before - 1000);
 		// Beside versions/, readable by the account the server runs as, and
 		// written whole.
 		assert.equal(layout.resultPath, join(layout.prefix, 'upgrade-result.json'));
 		assert.equal((await stat(layout.resultPath)).mode & 0o777, 0o644);
 		await assert.rejects(() => stat(`${layout.resultPath}.tmp`));
+		assert.deepEqual(
+			(await readdir(layout.prefix)).filter((name) => name.endsWith('.tmp')),
+			[],
+		);
+	});
+});
+
+test('a run refused by a held lock changes nothing and records nothing', async () => {
+	await withSystemInstall(async ({ layout, context, upgradeDependencies }) => {
+		await writeFile(
+			join(layout.prefix, 'upgrade.lock'),
+			JSON.stringify({ pid: 424242 }),
+		);
+		await assert.rejects(
+			async () =>
+				runUpgrade(undefined, OPTIONS, await context(), {
+					...upgradeDependencies,
+					isRunning: () => true,
+				}),
+			/another upgrade is running/u,
+		);
+		assert.equal(await readUpgradeOutcome(layout.resultPath), undefined);
+		assert.equal(await activeVersion(layout), '4.1.0');
+	});
+});
+
+test('a channel that cannot be reached is recorded as a failure that changed nothing', async () => {
+	await withSystemInstall(async ({ layout, context, upgradeDependencies }) => {
+		await assert.rejects(async () =>
+			runUpgrade(undefined, OPTIONS, await context(), {
+				...upgradeDependencies,
+				// Nothing listens here.
+				apiBase: 'http://127.0.0.1:1',
+				webBase: 'http://127.0.0.1:1',
+			}),
+		);
+		const outcome = await readUpgradeOutcome(layout.resultPath);
+		assert.equal(outcome.outcome, 'failed');
+		assert.match(outcome.run, /^[0-9a-f-]{36}$/u);
+		assert.match(outcome.reason, /nothing was changed/u);
+		assert.equal(await activeVersion(layout), '4.1.0');
+		await assert.rejects(() => stat(join(layout.prefix, 'upgrade.lock')));
 	});
 });
 
@@ -2288,7 +2341,7 @@ test('each attempt replaces the record of the one before', async () => {
 	);
 });
 
-test('an upgrade with nothing to do leaves no outcome, and one that cannot be staged says nothing moved', async () => {
+test('an upgrade with nothing to do records that it changed nothing, and one that cannot be staged says nothing moved', async () => {
 	await withSystemInstall(
 		async ({ layout, context, upgradeDependencies, releases }) => {
 			await runUpgrade(
@@ -2305,7 +2358,12 @@ test('an upgrade with nothing to do leaves no outcome, and one that cannot be st
 				upgradeDependencies,
 			);
 			assert.equal(again.upToDate, true);
-			assert.equal(await readUpgradeOutcome(layout.resultPath), undefined);
+			// A run that finds nothing to do still ends, under its own run id:
+			// a server waiting on it learns so at once (ADR-0125).
+			const unchanged = await readUpgradeOutcome(layout.resultPath);
+			assert.equal(unchanged.outcome, 'unchanged');
+			assert.match(unchanged.run, /^[0-9a-f-]{36}$/u);
+			assert.equal(unchanged.to, unchanged.from);
 			void releases;
 		},
 	);
@@ -2323,7 +2381,7 @@ test('an upgrade with nothing to do leaves no outcome, and one that cannot be st
 			}),
 		);
 		const outcome = await readUpgradeOutcome(layout.resultPath);
-		assert.equal(outcome.outcome, 'rolled-back');
+		assert.equal(outcome.outcome, 'failed');
 		assert.equal(outcome.from, '4.1.0');
 		assert.equal(outcome.to, '4.1.1');
 		assert.match(outcome.reason, /nothing was changed/u);
@@ -2385,7 +2443,10 @@ test('a rolling install is labelled by its commit, and learns when its build was
 				(await readInstallRecord(layout)).publishedAt,
 				'2026-10-02T00:00:00Z',
 			);
-			assert.equal(await readUpgradeOutcome(layout.resultPath), undefined);
+			const unchanged = await readUpgradeOutcome(layout.resultPath);
+			assert.equal(unchanged.outcome, 'unchanged');
+			assert.equal(unchanged.from, 'main-dddddddddddd');
+			assert.equal(unchanged.fromRelease.revision, 'd'.repeat(40));
 		},
 	);
 });
@@ -2877,7 +2938,7 @@ test('a downgrade to a release that has not declared it puts PrivateTmp back', a
 	);
 });
 
-test('an install already current repairs a faulty unit, restarts once, and leaves the outcome alone', async () => {
+test('an install already current repairs a faulty unit, restarts once, and records that it changed nothing', async () => {
 	await withMachine(
 		{ releases: UNSAFE_THEN_SAFE },
 		async ({ health, fake, layout, installDependencies, write, lines }) => {
@@ -2902,8 +2963,8 @@ test('an install already current repairs a faulty unit, restarts once, and leave
 			assert.equal(calls.filter((call) => call === RESTART).length, 1);
 			assert.ok(calls.indexOf(RELOAD) < calls.indexOf(RESTART));
 			assert.equal(
-				await readFile(layout.resultPath, 'utf8'),
-				'{"kept":true}\n',
+				(await readUpgradeOutcome(layout.resultPath)).outcome,
+				'unchanged',
 			);
 			assert.ok(lines.some((line) => /keep a working \/tmp/u.test(line)));
 		},

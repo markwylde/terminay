@@ -8,6 +8,7 @@ import {
 	NotificationClient,
 	RecordingsClient,
 	ServerUpgradeClient,
+	serverPublishesUpgradeAttempts,
 	serverPublishesUpgradeStatus,
 	TerminayClient,
 	TerminayClientFacade,
@@ -211,7 +212,10 @@ export async function createConnectedServerClientContext(
 					command: featureTransport.command.bind(featureTransport),
 					subscribe: (event, listener, onResync) =>
 						featureTransport.subscribeClientEvents(event, listener, onResync),
-				})
+				},
+				undefined,
+				{ attempts: serverPublishesUpgradeAttempts(server.capabilities) },
+			)
 			: undefined;
 		void serverUpgradeClient?.subscribe().catch((error) => {
 			console.warn('server upgrade subscription failed', error);

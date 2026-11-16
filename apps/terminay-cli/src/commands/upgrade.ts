@@ -29,7 +29,7 @@ import { activate, activeVersion, installArchive, retain } from '../install.js';
 import { installLauncher } from '../launcher.js';
 import { stagedName, versionDirectory, writeInstallRecord } from '../layout.js';
 import { readArchiveManifest, releaseSharesTmpSafely } from '../manifest.js';
-import { releaseLabel, writeUpgradeOutcome } from '../outcome.js';
+import { releaseLabel, UpgradeRun } from '../outcome.js';
 import {
 	assertChannelToFollow,
 	NoChannelError,
@@ -58,10 +58,11 @@ import { verifyArchive } from '../verify.js';
  * root is read or written, so a rollback restores the previous version against
  * the same state it was already running with.
  *
- * Every attempt that reaches the point of moving the active version leaves an
- * outcome record beside `versions/` (see `outcome.ts`), because the server
- * that asked for the upgrade is restarted by it and has no other way to learn
- * how it ended.
+ * Every run holds the install-wide lock and leaves a start record and then
+ * exactly one ending beside `versions/` (see `outcome.ts`), because the
+ * server that asked for the upgrade is restarted by it, or cannot see it at
+ * all through the helper, and has no other way to learn how it ended
+ * (ADR-0125).
  */
 
 export interface UpgradeDependencies {
@@ -82,6 +83,8 @@ export interface UpgradeDependencies {
 	 * by tests; the default executes `<release>/bin/terminay`.
 	 */
 	readonly runReleaseHostSetup?: (releaseDirectory: string) => Promise<void>;
+	/** Whether a lock holder still runs. Overridden by tests. */
+	readonly isRunning?: (pid: number) => boolean;
 }
 
 export interface UpgradeResult {
@@ -218,6 +221,18 @@ export async function runUpgrade(
 	const activeSafe = await activeReleaseSharesTmp(context.layout);
 	const repair = unit !== '' && !unitMatchesRelease(unit, activeSafe);
 	const progress = { switched: false };
+	const { record } = context;
+	const run = await UpgradeRun.begin({
+		resultPath: context.layout.resultPath,
+		from: {
+			channel: record.channel,
+			version: record.version,
+			revision: record.revision,
+		},
+		...(dependencies.isRunning === undefined
+			? {}
+			: { isRunning: dependencies.isRunning }),
+	});
 	try {
 		const result = await upgradeRelease(
 			ref,
@@ -225,14 +240,26 @@ export async function runUpgrade(
 			context,
 			dependencies,
 			progress,
+			run,
 		);
 		if (repair && !progress.switched)
 			await repairUnitInPlace(context, unit, activeSafe, dependencies);
+		// Already current: the one path that returns without an ending.
+		await run.end(result.upToDate ? 'unchanged' : 'succeeded');
 		return result;
 	} catch (error) {
 		if (repair && !progress.switched)
 			await repairUnitInPlace(context, unit, activeSafe, dependencies);
+		await run
+			.end('failed', {
+				reason: progress.switched
+					? `the upgrade stopped part-way: ${reasonOf(error)}`
+					: `nothing was changed: ${reasonOf(error)}`,
+			})
+			.catch(() => undefined);
 		throw error;
+	} finally {
+		await run.release();
 	}
 }
 
@@ -242,6 +269,7 @@ async function upgradeRelease(
 	context: CommandContext,
 	dependencies: UpgradeDependencies,
 	progress: { switched: boolean },
+	run: UpgradeRun,
 ): Promise<UpgradeResult> {
 	const { layout, record, systemd, write } = context;
 
@@ -330,12 +358,6 @@ async function upgradeRelease(
 		(await activeVersion(layout)) ??
 		stagedName(record.channel, record.version, record.revision);
 
-	const fromLabel = releaseLabel(
-		record.channel,
-		record.version,
-		record.revision,
-	);
-
 	// Staged beside the running version: nothing below this point has stopped
 	// the service yet.
 	let installed: Awaited<ReturnType<typeof installArchive>>;
@@ -365,21 +387,35 @@ async function upgradeRelease(
 		// Nothing was switched, so the release that was running still is. The
 		// record says so, because a server that asked for this upgrade through
 		// the helper sees neither this process nor its exit status.
-		await writeUpgradeOutcome(layout.resultPath, {
-			from: fromLabel,
-			to: releaseLabel(resolved.channel, resolved.version, resolved.revision),
-			outcome: 'rolled-back',
-			reason: `the new release could not be staged, so nothing was changed: ${reasonOf(error)}`,
-		}).catch(() => undefined);
+		await run
+			.end('failed', {
+				...(resolved.revision === undefined
+					? {
+							toLabel: releaseLabel(
+								resolved.channel,
+								resolved.version,
+								undefined,
+							),
+						}
+					: {
+							to: {
+								channel: resolved.channel,
+								version: resolved.version,
+								revision: resolved.revision,
+							},
+						}),
+				reason: `the new release could not be staged, so nothing was changed: ${reasonOf(error)}`,
+			})
+			.catch(() => undefined);
 		await discardDownloads(layout.prefix).catch(() => undefined);
 		throw error;
 	}
 	await discardDownloads(layout.prefix);
-	const toLabel = releaseLabel(
-		resolved.channel,
-		installed.manifest.version,
-		installed.manifest.revision,
-	);
+	const toRelease = {
+		channel: resolved.channel,
+		version: installed.manifest.version,
+		revision: installed.manifest.revision,
+	};
 
 	if (installed.name === previous) {
 		write(`Already running ${installed.manifest.version}. Nothing to do.`);
@@ -490,15 +526,15 @@ async function upgradeRelease(
 				dependencies.readinessTimeoutMs,
 			)) !== undefined;
 		const reason = `the upgrade to ${installed.manifest.version} did not become ready, so ${record.version} was restored and ${recovered ? 'is running again' : 'was started, but has not reported ready either'}.`;
-		await writeUpgradeOutcome(layout.resultPath, {
-			from: fromLabel,
-			to: toLabel,
-			outcome: 'rolled-back',
-			reason,
-		}).catch(() => undefined);
+		await run
+			.end('rolled-back', { to: toRelease, reason })
+			.catch(() => undefined);
 		write(await systemd.journal(20));
 		throw new UpgradeError(reason);
 	}
+	// Ready on the new release: that is the outcome, and nothing below may
+	// replace it (ADR-0125).
+	await run.end('succeeded', { to: toRelease }).catch(() => undefined);
 	// An install made before the launcher existed gains it here.
 	await installLauncher({
 		layout,
@@ -608,11 +644,6 @@ async function upgradeRelease(
 		installedAt: new Date().toISOString(),
 	});
 	const removed = await retain(layout, [installed.name, previous]);
-	await writeUpgradeOutcome(layout.resultPath, {
-		from: fromLabel,
-		to: toLabel,
-		outcome: 'succeeded',
-	});
 	write(
 		`Upgraded to ${installed.manifest.version}. Kept ${previous} to roll back to.`,
 	);

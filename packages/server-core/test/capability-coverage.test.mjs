@@ -137,6 +137,7 @@ test("a composed server advertises the versioned capability of every service it 
         FEATURE_CAPABILITIES.notifications,
         FEATURE_CAPABILITIES.projectStartChoice,
         FEATURE_CAPABILITIES.serverUpgrade,
+        FEATURE_CAPABILITIES.serverUpgradeAttempts,
         FEATURE_CAPABILITIES.settings,
         FEATURE_CAPABILITIES.terminal,
         FEATURE_CAPABILITIES.terminalFileDrop,
@@ -177,9 +178,17 @@ test("every stable operation name in the protocol surface maps to its own capabi
     [AI_SERVER_OPERATIONS, FEATURE_CAPABILITIES.dictation],
     [LANGUAGE_OPERATIONS, FEATURE_CAPABILITIES.language],
   ];
+  // A server's upgrade attempts are negotiated apart from its status, so a
+  // client of another release reads the status alone (ADR-0125).
+  const attempts = new Set([
+    SERVER_UPGRADE_OPERATIONS.attempt,
+    SERVER_UPGRADE_OPERATIONS.attemptEvent,
+  ]);
+  for (const operation of attempts)
+    assert.equal(capabilityOf(operation), FEATURE_CAPABILITIES.serverUpgradeAttempts, operation);
   for (const [operations, capability] of groups) {
     for (const operation of Object.values(operations)) {
-      if (typeof operation !== "string") continue;
+      if (typeof operation !== "string" || attempts.has(operation)) continue;
       assert.equal(capabilityOf(operation), capability, operation);
     }
   }

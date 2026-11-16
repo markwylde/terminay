@@ -4,6 +4,7 @@ import {
 	SERVER_UPGRADE_OPERATIONS,
 	ServerUpgradeClient,
 	ServerUpgradeStatusStore,
+	serverPublishesUpgradeAttempts,
 	serverPublishesUpgradeStatus,
 	serverUpgradeAvailable,
 } from '../dist/index.js';
@@ -203,5 +204,107 @@ test("a refused upgrade rejects with the server's error and leaves the status al
 		(error) => error.details.reason === 'in-progress',
 	);
 	assert.deepEqual(client.status.upgrade, { state: 'none' });
+	client.close();
+});
+
+/** A server that publishes attempts, reached through one transport. */
+function attemptServer() {
+	const listeners = new Map();
+	const server = {
+		status: status(),
+		attempt: null,
+		commands: [],
+		resyncs: new Map(),
+		publishAttempt(next) {
+			server.attempt = next;
+			for (const listener of listeners.get(
+				SERVER_UPGRADE_OPERATIONS.attemptEvent,
+			) ?? [])
+				listener({
+					subscriptionId: 's',
+					revision: 1,
+					cursor: '1',
+					event: SERVER_UPGRADE_OPERATIONS.attemptEvent,
+					payload: { attempt: next },
+				});
+		},
+		transport: {
+			query: async (operation) => {
+				if (operation === SERVER_UPGRADE_OPERATIONS.status) return server.status;
+				assert.equal(operation, SERVER_UPGRADE_OPERATIONS.attempt);
+				return { attempt: server.attempt };
+			},
+			command: async (operation, payload) => {
+				server.commands.push({ operation, payload });
+				return server.status;
+			},
+			subscribe: async (event, listener, onResync) => {
+				const set = listeners.get(event) ?? new Set();
+				set.add(listener);
+				listeners.set(event, set);
+				server.resyncs.set(event, onResync);
+				return () => set.delete(listener);
+			},
+		},
+	};
+	return server;
+}
+
+const pending = {
+	id: 'a1',
+	requestId: 'r1',
+	mode: 'in-place',
+	kind: 'upgrade',
+	startedAt: 1_000,
+	expiresAt: 1_801_000,
+	stage: 'requested',
+};
+
+test('a server with attempts is followed by its attempt as well as its status', async () => {
+	assert.equal(
+		serverPublishesUpgradeAttempts(['server.upgrade', 'server.upgrade.attempts']),
+		true,
+	);
+	assert.equal(serverPublishesUpgradeAttempts(['server.upgrade']), false);
+	const server = attemptServer();
+	const client = new ServerUpgradeClient(server.transport, undefined, {
+		attempts: true,
+	});
+	await client.subscribe();
+	assert.equal(client.attempts?.attempt, null);
+	const seen = [];
+	client.attempts?.subscribe((attempt) => seen.push(attempt?.stage));
+	server.publishAttempt(pending);
+	server.publishAttempt({ ...pending, stage: 'installing' });
+	// The same attempt published again is not news.
+	server.publishAttempt({ ...pending, stage: 'installing' });
+	assert.deepEqual(seen, ['requested', 'installing']);
+	// A resync reads the attempt again.
+	server.attempt = { ...pending, stage: 'finishing' };
+	server.resyncs.get(SERVER_UPGRADE_OPERATIONS.attemptEvent)?.();
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(client.attempts?.attempt?.stage, 'finishing');
+	// The request id travels to a server that publishes attempts.
+	await client.startServerUpgrade('in-place', { requestId: 'r2' });
+	assert.deepEqual(server.commands.at(-1)?.payload, {
+		mode: 'in-place',
+		requestId: 'r2',
+	});
+	client.close();
+});
+
+test('a server without attempts is never sent a request id', async () => {
+	const server = attemptServer();
+	const client = new ServerUpgradeClient(server.transport);
+	await client.subscribe();
+	assert.equal(client.attempts, undefined);
+	await client.startServerUpgrade('in-place', {
+		allowOlder: true,
+		requestId: 'r1',
+	});
+	assert.deepEqual(server.commands.at(-1)?.payload, {
+		mode: 'in-place',
+		allowOlder: true,
+	});
 	client.close();
 });
