@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<p id="text">Viewing. Your keyboard does not reach the bot.</p>
+<div id="layer"><div><canvas id="c" tabindex="-1" width="300" height="150" style="background:#333"></canvas></div></div>
+<script src="dc.js"></script>
+<script>
+	window.sent = [];
+	const layer = document.getElementById('layer');
+	const c = document.getElementById('c');
+	// noVNC: cancels mousedown, focuses its canvas, swallows every keydown.
+	c.addEventListener('mousedown', (e) => { e.preventDefault(); c.focus(); });
+	c.addEventListener('keydown', (e) => { sent.push('novnc:' + e.code); e.preventDefault(); });
+	const rfb = new EventTarget();
+	rfb.clipboardPasteFrom = (t) => sent.push('clip:' + t);
+	rfb.sendKey = (k, code, down) => sent.push((down ? '+' : '-') + code);
+	const catcher = document.createElement('textarea');
+	catcher.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none';
+	catcher.tabIndex = -1;
+	layer.appendChild(catcher);
+	window.attach = (bridge) => DC.attachDesktopClipboard(layer, rfb, {
+		isMac: false,
+		focusedInside: () => layer.contains(document.activeElement),
+		documentFocused: () => true,
+		visible: () => true,
+		writeHostClipboard: async () => {},
+		onPasteTooLarge: () => sent.push('too-large'),
+		pasteRoot: document,
+		catcher: {
+			focus: () => catcher.focus({ preventScroll: true }),
+			restore: () => { catcher.value = ''; if (document.activeElement === catcher) c.focus(); },
+		},
+		readHostText: bridge
+			? async () => { sent.push('read'); try { const r = await window.hostBridge.read(); sent.push('got:' + JSON.stringify(r)); return r.kind === 'text' ? r.text : undefined; } catch (e) { sent.push('err:' + e); throw e; } }
+			: undefined,
+	});
+</script>

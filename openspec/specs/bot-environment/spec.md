@@ -389,7 +389,7 @@ Environment › Desktop SHALL show the bot's desktop live, in either view-only o
 - **View-only enforcement.** In view-only mode, the server SHALL discard every keyboard, pointer, and clipboard message.
 - **Clipboard.** In control mode, the desktop SHALL share clipboard text with the device showing it, in both directions:
   - **Bot to device.** When the bot's clipboard changes, the client SHALL write its text to the device's clipboard through the host's clipboard-write route. It SHALL do so only while the desktop holds keyboard focus and its window is focused and visible. The client SHALL drop the change otherwise, and SHALL NOT write it later. The client SHALL NOT write text that is empty, longer than 1 MiB of UTF-8, or that contains a control character other than tab, line feed, or carriage return.
-  - **Device to bot.** When the user presses the device's paste shortcut on the focused desktop, the client SHALL send the text of that native paste to the bot's clipboard. It SHALL then press the matching Linux paste chord in the bot, regardless of which host modifiers noVNC is holding there. The shortcuts are Ctrl+V, Ctrl+Shift+V and Shift+Insert, or Cmd+V and Cmd+Shift+V on macOS. The chords are Ctrl+V, Ctrl+Shift+V and Shift+Insert. The paste SHALL reach the bot even when text elsewhere in Terminay is still selected, and keyboard focus SHALL be back on the desktop once it is sent. A paste with no text SHALL send nothing. The client SHALL NOT read the device's clipboard any other way.
+  - **Device to bot.** When the user presses the device's paste shortcut on the focused desktop, the client SHALL send the device's clipboard text to the bot's clipboard. In Desktop, the client SHALL cancel the shortcut and read that text through the terminal paste bridge, taking text only. Elsewhere, it SHALL take the text of the native paste that the shortcut raises. It SHALL then press the matching Linux paste chord in the bot, regardless of which host modifiers noVNC is holding there. The shortcuts are Ctrl+V, Ctrl+Shift+V and Shift+Insert, or Cmd+V and Cmd+Shift+V on macOS. The chords are Ctrl+V, Ctrl+Shift+V and Shift+Insert. The paste SHALL reach the bot even when text elsewhere in Terminay is still selected, and keyboard focus SHALL be back on the desktop once it is sent. A paste with no text, or a clipboard holding only files or images, SHALL send nothing. The client SHALL NOT read the device's clipboard any other way.
   - **Limits.** Text whose UTF-8 encoding is longer than 1 MiB, with line endings counted as CRLF, SHALL NOT be sent to the bot. The desktop bar SHALL say that the paste was too large. The bot's desktop SHALL accept clipboard text up to that size.
   - **Selections.** Selecting text in the bot without copying it SHALL NOT change the device's clipboard. The server SHALL ensure this on the bot's running desktop before it relays a control-mode stream.
   - **Unicode.** Text SHALL keep characters outside Latin-1 when the client and the server both support the extended form.
@@ -441,6 +441,11 @@ Environment › Desktop SHALL show the bot's desktop live, in either view-only o
 
 - **WHEN** a macOS user in control mode presses Cmd+V on the desktop, with either Cmd key
 - **THEN** the bot receives Ctrl+V and no Alt or Super modifier with it, and the host clipboard text is pasted
+
+#### Scenario: Paste in Desktop
+
+- **WHEN** a Desktop user copies text on their device and presses the paste shortcut on the bot's focused desktop in control mode
+- **THEN** the text is read through the terminal paste bridge and pasted into the bot exactly once, and noVNC never receives the shortcut
 
 #### Scenario: Paste with nothing to paste
 

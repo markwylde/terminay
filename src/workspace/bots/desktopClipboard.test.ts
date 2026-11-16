@@ -393,3 +393,76 @@ test('a modifier released while focus is on the catcher is released in the bot',
 	layer.dispatchEvent(keyEvent('keyup', { code: 'MetaRight' }));
 	assert.deepEqual(rfb.keys, [[Super_L, 'MetaRight', false]]);
 });
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('in Desktop the shortcut is cancelled and the clipboard read through the bridge', async () => {
+	let reads = 0;
+	const { layer, rfb, state } = setup({
+		isMac: true,
+		readHostText: async () => {
+			reads++;
+			return 'from mac ✓';
+		},
+	});
+	layer.dispatchEvent(keyEvent('keydown', { code: 'MetaLeft', metaKey: true }));
+	const shortcut = keyEvent('keydown', { code: 'KeyV', metaKey: true });
+	layer.dispatchEvent(shortcut);
+	assert.equal(shortcut.defaultPrevented, true);
+	assert.deepEqual(state.catcher, []);
+	await settle();
+	assert.equal(reads, 1);
+	assert.deepEqual(rfb.pasted, ['from mac ✓']);
+	assert.deepEqual(rfb.keys, [
+		[Alt_L, 'MetaLeft', false],
+		[Control_L, 'ControlLeft', true],
+		[v, 'KeyV', true],
+		[v, 'KeyV', false],
+		[Control_L, 'ControlLeft', false],
+		[Alt_L, 'MetaLeft', true],
+	]);
+	layer.dispatchEvent(keyEvent('keyup', { code: 'KeyV', metaKey: true }));
+	assert.equal(rfb.keys.length, 6);
+});
+
+test('a Cmd released before the bridge answers is not pressed again', async () => {
+	let answer: (text: string) => void = () => {};
+	const { layer, rfb } = setup({
+		isMac: true,
+		readHostText: () =>
+			new Promise<string>((resolve) => {
+				answer = resolve;
+			}),
+	});
+	layer.dispatchEvent(keyEvent('keydown', { code: 'MetaLeft', metaKey: true }));
+	layer.dispatchEvent(keyEvent('keydown', { code: 'KeyV', metaKey: true }));
+	layer.dispatchEvent(keyEvent('keyup', { code: 'KeyV' }));
+	layer.dispatchEvent(keyEvent('keyup', { code: 'MetaLeft' }));
+	answer('late');
+	await settle();
+	assert.deepEqual(rfb.pasted, ['late']);
+	assert.deepEqual(rfb.keys, [
+		[Control_L, 'ControlLeft', true],
+		[v, 'KeyV', true],
+		[v, 'KeyV', false],
+		[Control_L, 'ControlLeft', false],
+	]);
+});
+
+test('a bridge with no text, too much text, or a failed read sends nothing', async () => {
+	const reads: (() => Promise<string | undefined>)[] = [
+		async () => undefined,
+		async () => 'x'.repeat(DESKTOP_CLIPBOARD_BYTES),
+		async () => {
+			throw new Error('denied');
+		},
+	];
+	for (const [index, readHostText] of reads.entries()) {
+		const { layer, rfb, tooLarge } = setup({ readHostText });
+		layer.dispatchEvent(keyEvent('keydown', { code: 'KeyV', ctrlKey: true }));
+		await settle();
+		assert.deepEqual(rfb.pasted, []);
+		assert.deepEqual(rfb.keys, []);
+		assert.equal(tooLarge(), index === 1 ? 1 : 0);
+	}
+});
