@@ -7624,6 +7624,24 @@ function App({
 	useEffect(() => {
 		if (isRemoteMenuOpen || isActivityMenuOpen) setIsCompactSwitcherOpen(false);
 	}, [isActivityMenuOpen, isRemoteMenuOpen]);
+	// One compact drawer at a time (ADR-0125): a Home section page's View
+	// options sheet closes whenever the switcher, the Command Bar, or a header
+	// menu opens. Each opening raises the epoch the pages watch.
+	const [compactDrawerEpoch, setCompactDrawerEpoch] = useState(0);
+	useEffect(() => {
+		if (
+			isCompactSwitcherOpen ||
+			isViewCommandBarOpen ||
+			isActivityMenuOpen ||
+			isRemoteMenuOpen
+		)
+			setCompactDrawerEpoch((epoch) => epoch + 1);
+	}, [
+		isActivityMenuOpen,
+		isCompactSwitcherOpen,
+		isRemoteMenuOpen,
+		isViewCommandBarOpen,
+	]);
 	const createInitialTerminalForProject = useCallback(
 		async (projectId: string) => {
 			const terminalClient = terminalClientContext?.client;
@@ -8495,7 +8513,8 @@ function App({
 		// On Home the toggle is Home's own; the project kept as command target
 		// behind Home keeps its sidebar exactly as it was.
 		if (isHomeSelected) {
-			toggleHomeSidebar();
+			// A compact Home has no sidebar, so there is nothing to toggle.
+			if (!isCompactChrome) toggleHomeSidebar();
 			return;
 		}
 		const project = projectsRef.current.find(
@@ -8507,6 +8526,7 @@ function App({
 		});
 	}, [
 		activeProjectId,
+		isCompactChrome,
 		isHomeSelected,
 		projectsRef,
 		toggleHomeSidebar,
@@ -8713,7 +8733,7 @@ function App({
 			// The sidebar command, like the toggle, answers for Home's sidebar
 			// while Home is shown rather than for the project behind it.
 			if (command === 'toggle-file-explorer-sidebar' && isHomeSelected) {
-				toggleHomeSidebar();
+				if (!isCompactChrome) toggleHomeSidebar();
 				return Promise.resolve();
 			}
 			// With Home in front, or no project to draw it, the Command Bar is the
@@ -8771,6 +8791,7 @@ function App({
 			auxiliaryRouteController,
 			closeProject,
 			commandWorkspace,
+			isCompactChrome,
 			isHomeSelected,
 			selectHome,
 			toggleHomeSidebar,
@@ -10646,7 +10667,7 @@ function App({
 				),
 				onSelect: run(() => {
 					selectHome();
-					toggleHomeSidebar();
+					if (!isCompactChrome) toggleHomeSidebar();
 				}),
 			},
 			{
@@ -10703,6 +10724,7 @@ function App({
 		isDesktopHost,
 		auxiliaryRouteController,
 		createServerProject,
+		isCompactChrome,
 		isHomeSidebarVisible,
 		isMac,
 		isStatusBarVisible,
@@ -11237,10 +11259,9 @@ function App({
 								: { upgradeVersion: serverUpgrades.activeVersion }),
 						}}
 						isExplorerOpen={
-							isHomeSelected
-								? isHomeSidebarVisible
-								: activeProject?.isFileExplorerOpen === true
+							!isHomeSelected && activeProject?.isFileExplorerOpen === true
 						}
+						showSidebarToggle={!isHomeSelected}
 						isNotificationsOpen={isActivityMenuOpen}
 						isSwitcherOpen={isCompactSwitcherOpen}
 						notificationCount={notificationCount}
@@ -11803,7 +11824,11 @@ function App({
 						)}
 						isActive={isHomeSelected}
 						isCompact={isCompactChrome}
-						isSidebarVisible={isHomeSidebarVisible}
+						compactDrawerEpoch={compactDrawerEpoch}
+						// A compact workspace has no Home sidebar; the switcher's
+						// Home panel opens sections, and the remembered choice is
+						// left for the next wide window.
+						isSidebarVisible={!isCompactChrome && isHomeSidebarVisible}
 						onDismissSidebar={() => setHomeSidebarVisibility(false)}
 						onOpenCommandBar={() => setIsViewCommandBarOpen(true)}
 						onSectionChosenInDrawer={() => setIsHomeSidebarVisible(false)}

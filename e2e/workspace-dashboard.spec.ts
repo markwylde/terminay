@@ -154,7 +154,7 @@ test.describe('workspace dashboard', () => {
 		expect(restoredSessionId).toBe(firstSessionId);
 	});
 
-	test('rows stay one line and truncate rather than wrapping', async ({
+	test('rows stay one line and truncate rather than wrapping, wide and on a phone', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -184,19 +184,37 @@ test.describe('workspace dashboard', () => {
 			)
 			.toBeLessThan(600);
 
-		await expect(rows).toHaveCount(before);
-		const narrowed = await rows.evaluateAll((elements) =>
-			elements.map((element) => Math.round(element.getBoundingClientRect().height)),
+		// A phone-width window shows the compact Tabs page: the same tabs, each
+		// row one line, and the long project name truncated in its group header.
+		const page = mainWindow.locator('[data-compact-section="tabs"]');
+		await expect(page).toBeVisible();
+		const compactRows = page.locator('[data-terminay-dashboard-panel]');
+		await expect(compactRows.first()).toBeVisible();
+		const lineHeights = await compactRows.evaluateAll((elements) =>
+			elements.map((element) => {
+				const title = element.querySelector('.crow__title') as HTMLElement;
+				return Math.round(title.getBoundingClientRect().height);
+			}),
 		);
-		expect(narrowed).toEqual(heights);
-
-		// The title cell truncates rather than growing the row.
-		const title = mainWindow.locator('.workspace-dashboard__title').first();
+		expect(new Set(lineHeights).size).toBe(1);
+		const group = page.locator('.crow-group__label', { hasText: 'a project whose name' });
 		await expect
 			.poll(() =>
-				title.evaluate((element) => element.scrollWidth > element.clientWidth),
+				group.evaluate((element) => element.scrollWidth > element.clientWidth),
 			)
 			.toBe(true);
+
+		// Back on a wide window, the rows are as they were.
+		await electronApp.evaluate(async ({ BrowserWindow }) => {
+			const [window] = BrowserWindow.getAllWindows();
+			const [, height] = window?.getSize() ?? [1200, 800];
+			window?.setSize(1200, height ?? 800);
+		});
+		await expect(rows).toHaveCount(before);
+		const restored = await rows.evaluateAll((elements) =>
+			elements.map((element) => Math.round(element.getBoundingClientRect().height)),
+		);
+		expect(restored).toEqual(heights);
 	});
 
 	test('activating a row lands on that project and panel', async ({

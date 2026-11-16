@@ -197,6 +197,7 @@ async function seedRepository(rootDir: string): Promise<string> {
 test('forge pull requests and issues: Home sections, worktree actions, project tabs, and Settings', async ({
 	appHarness,
 	createWorkspace,
+	electronApp,
 	mainWindow,
 }, testInfo) => {
 	const workspace = await createWorkspace({ name: 'forge' });
@@ -321,6 +322,38 @@ test('forge pull requests and issues: Home sections, worktree actions, project t
 		});
 		await expect(separator).toBeVisible();
 		await expect.poll(previewWidth).toBe(496);
+	});
+
+	await test.step('On a phone, Pull Requests is a compact section page with a full-page detail', async () => {
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		const wide = await nativeWindow.evaluate((window) => window.getBounds());
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), { ...wide, width: 390, height: 780 });
+		// The selected pull request stays open, as a page of its own.
+		const page = activeHome(mainWindow).locator('[data-compact-section="pull-requests"]');
+		const detailPage = activeHome(mainWindow).locator('[data-compact-section="forge-detail"]');
+		await expect(detailPage).toBeVisible({ timeout: 30_000 });
+		await expect(detail(88)).toBeVisible();
+		await shot(mainWindow, testInfo, '01c-phone-detail');
+		await detailPage.locator('[data-forge-back]').click();
+		await expect(page).toBeVisible();
+		// Review is the selected tab, counted from the result it has.
+		const review = page.locator('[data-compact-tab="reviewRequested"]');
+		await expect(review).toHaveAttribute('aria-selected', 'true');
+		await expect(review.locator('[data-compact-tab-count]')).toHaveText('2');
+		await expect(page.locator('[data-forge-row]')).toHaveCount(2);
+		// Mine has not been fetched yet, so it shows no count.
+		await expect(page.locator('[data-compact-tab="authored"] [data-compact-tab-count]')).toHaveCount(0);
+		await shot(mainWindow, testInfo, '01d-phone-list');
+		await page.locator('[data-compact-view-options]').click();
+		const sheet = mainWindow.locator('[data-compact-sheet="true"]');
+		await expect(sheet.locator('[data-forge-refresh]')).toBeVisible();
+		await shot(mainWindow, testInfo, '01e-phone-sheet');
+		await mainWindow.keyboard.press('Escape');
+		await expect(sheet).toHaveCount(0);
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), wide);
+		await expect(pullsList()).toBeVisible({ timeout: 30_000 });
+		await pullsList().locator('[data-forge-row="88"]').click();
+		await expect(detail(88)).toBeVisible();
 	});
 
 	await test.step('Check out in new worktree creates and selects the linked folder', async () => {

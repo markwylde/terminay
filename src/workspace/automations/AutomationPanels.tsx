@@ -44,7 +44,12 @@ import {
 	isReservedWorkspaceProject,
 	type ServerWorkspaceSnapshot,
 } from '../../shared/serverWorkspaceReconciliation';
+import { useCompactHome } from '../compact/CompactHomeContext';
 import { AutomationEditor } from './AutomationEditor';
+import {
+	type AutomationsCompactTab,
+	AutomationsCompactPage,
+} from './AutomationsCompactPage';
 import { AutomationTerminalView } from './AutomationTerminalView';
 import { ExitedAutomationTerminalView } from './ExitedAutomationTerminalView';
 import {
@@ -665,6 +670,9 @@ type PanelProps = Readonly<{ data: AutomationsData; host: AutomationTabHost }>;
 export function AutomationsListPanel({ data: shared, host }: PanelProps) {
 	const { automations, now, servers, workingServerId } = shared;
 	const [requestedServer, setRequestedServer] = useState<string>();
+	// A phone's page; its tab lives here so a round trip keeps it.
+	const compact = useCompactHome();
+	const [compactTab, setCompactTab] = useState<AutomationsCompactTab>('all');
 	const selection = useMemo(
 		() => selectAutomationServer(servers, requestedServer, workingServerId),
 		[requestedServer, servers, workingServerId],
@@ -769,39 +777,7 @@ export function AutomationsListPanel({ data: shared, host }: PanelProps) {
 			data.refresh();
 		});
 
-	return (
-		<div
-			className="home-section home-automations"
-			data-terminay-automations
-			data-terminay-automations-list="true"
-		>
-			<PageHeader title="Automations" subtitle={listSubtitle}>
-				{serverSelector}
-				{list.length === 0 ? null : (
-					<button
-						type="button"
-						className="automations-button automations-button--primary"
-						data-terminay-automation-new="true"
-						onClick={() => openNew()}
-					>
-						<Plus size={13} aria-hidden="true" />
-						New automation
-					</button>
-				)}
-			</PageHeader>
-			{selection.unsupported.length > 0 ? (
-				<p
-					className="automations-banner"
-					data-terminay-automations-unsupported-note
-				>
-					{selection.unsupported.map((choice) => choice.label).join(', ')}{' '}
-					{selection.unsupported.length === 1 ? 'does' : 'do'} not support
-					automations.
-				</p>
-			) : null}
-			{errorBanner}
-			<div className="workspace-dashboard__list automations-body">
-				{list.length === 0 ? (
+	const emptyState = (
 					<div className="automations-empty-state">
 						<div className="automations-empty-state__icon" aria-hidden="true">
 							<Workflow size={20} />
@@ -854,6 +830,96 @@ export function AutomationsListPanel({ data: shared, host }: PanelProps) {
 							))}
 						</div>
 					</div>
+	);
+	const unsupportedNote =
+		selection.unsupported.length > 0 ? (
+			<p className="automations-banner" data-terminay-automations-unsupported-note>
+				{selection.unsupported.map((choice) => choice.label).join(', ')}{' '}
+				{selection.unsupported.length === 1 ? 'does' : 'do'} not support
+				automations.
+			</p>
+		) : null;
+
+	if (compact)
+		return (
+			<div
+				className="home-section home-automations cpage-section"
+				data-terminay-automations
+				data-terminay-automations-list="true"
+			>
+				<AutomationsCompactPage
+					automations={list}
+					latest={latest}
+					timeZone={data.timeZone}
+					now={now}
+					tab={compactTab}
+					onTab={setCompactTab}
+					onNew={() => openNew()}
+					onOpen={(automationId) =>
+						host.open({ kind: 'automation', serverId, automationId })
+					}
+					onSetEnabled={setEnabled}
+					terminalGroups={space === undefined ? [] : groups}
+					automationName={automationName}
+					onOpenTerminal={(panelId) =>
+						host.open({ kind: 'terminal', serverId, panelId })
+					}
+					{...(selection.showsSelector
+						? {
+								server: {
+									value: serverId,
+									choices: selection.choices,
+									onChange: setRequestedServer,
+								},
+							}
+						: {})}
+					notes={
+						unsupportedNote === null && errorBanner === null ? null : (
+							<div className="cpage__notes">
+								{unsupportedNote}
+								{errorBanner}
+							</div>
+						)
+					}
+					emptyState={<div className="cautomations-empty">{emptyState}</div>}
+				/>
+			</div>
+		);
+
+	return (
+		<div
+			className="home-section home-automations"
+			data-terminay-automations
+			data-terminay-automations-list="true"
+		>
+			<PageHeader title="Automations" subtitle={listSubtitle}>
+				{serverSelector}
+				{list.length === 0 ? null : (
+					<button
+						type="button"
+						className="automations-button automations-button--primary"
+						data-terminay-automation-new="true"
+						onClick={() => openNew()}
+					>
+						<Plus size={13} aria-hidden="true" />
+						New automation
+					</button>
+				)}
+			</PageHeader>
+			{selection.unsupported.length > 0 ? (
+				<p
+					className="automations-banner"
+					data-terminay-automations-unsupported-note
+				>
+					{selection.unsupported.map((choice) => choice.label).join(', ')}{' '}
+					{selection.unsupported.length === 1 ? 'does' : 'do'} not support
+					automations.
+				</p>
+			) : null}
+			{errorBanner}
+			<div className="workspace-dashboard__list automations-body">
+				{list.length === 0 ? (
+					emptyState
 				) : (
 					<ul className="automations-list" aria-label="Automations">
 						{list.map((automation) => {

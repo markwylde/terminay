@@ -9,7 +9,9 @@ import { BuildBanner } from './BotBuildProgress';
 
 import { MessageSquare, Plus, Search, Settings } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useCompactHome } from '../compact/CompactHomeContext';
 import { BotAvatar } from './BotAvatar';
+import { BotsCompactPage } from './BotsCompactPage';
 import { subscribeNewBot } from './botFocus';
 import {
 	BOT_ACTIVITY_LABELS,
@@ -66,6 +68,11 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 	const primary = servers.values().next().value as ServerBots | undefined;
 	const engine = useBotEngine(primary);
 	const loading = [...servers.values()].some((s) => s.status === 'loading');
+	// A phone draws the compact section page. The build page's open state
+	// lives here, so a build followed on one survives the breakpoint.
+	const compact = useCompactHome();
+	const [buildOpen, setBuildOpen] = useState(false);
+	const engineLabel = servers.size > 1 ? primary?.label : undefined;
 	const errors = [...servers.values()].filter((s) => s.status === 'error');
 
 	if (servers.size === 0)
@@ -78,6 +85,66 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 						Docker or Podman.
 					</span>
 				</div>
+			</div>
+		);
+
+	if (compact)
+		return (
+			<div className="bots-ui bots-section bots-section--compact" data-terminay-bots="dashboard">
+				<BotsCompactPage
+					servers={servers}
+					entries={entries}
+					visible={visible}
+					counts={counts}
+					waiting={waiting}
+					filter={filter}
+					onFilter={setFilter}
+					search={search}
+					onSearch={setSearch}
+					engine={engine}
+					engineLabel={engineLabel}
+					isVisible={host.isVisible}
+					buildOpen={buildOpen}
+					onBuildOpenChange={setBuildOpen}
+					now={now}
+					loading={loading}
+					onCreate={() => setCreating(true)}
+					onOpenBot={host.openBot}
+					notes={
+						<div className="cpage__notes">
+							{availabilityError ? (
+								<div role="alert" className="bots-note bots-note--error">
+									{availabilityError}
+								</div>
+							) : null}
+							{[...servers.values()]
+								.filter((s) => s.warning)
+								.map((s) => (
+									<p role="status" className="bots-note bots-note--warn" key={s.serverId}>
+										{s.warning}
+									</p>
+								))}
+							{errors.map((server) => (
+								<div className="bots-note bots-note--warn" key={server.serverId}>
+									{server.label}: {server.error}{' '}
+									<button type="button" className="bots-link" onClick={server.refresh}>
+										Try again
+									</button>
+								</div>
+							))}
+						</div>
+					}
+				/>
+				{creating ? (
+					<NewBotDialog
+						servers={servers}
+						onClose={() => setCreating(false)}
+						onCreated={(serverId, botId) => {
+							setCreating(false);
+							host.openBot({ serverId, botId, mode: 'configure' });
+						}}
+					/>
+				) : null}
 			</div>
 		);
 
@@ -229,8 +296,10 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 				<aside className="bots-rail bots-scroll" aria-label="Bots overview">
 					<EngineSummary
 						engine={engine}
-						label={servers.size > 1 ? primary?.label : undefined}
+						label={engineLabel}
 						visible={host.isVisible}
+						buildOpen={buildOpen}
+						onBuildOpenChange={setBuildOpen}
 					/>
 					<NeedsYouList
 						entries={waiting}
@@ -354,12 +423,19 @@ export function EngineSummary({
 	compact = false,
 	hideReady = false,
 	visible = true,
+	showBanner = true,
+	buildOpen,
+	onBuildOpenChange,
 }: Readonly<{
 	engine: BotEngineView;
 	label: string | undefined;
 	compact?: boolean;
 	hideReady?: boolean;
 	visible?: boolean;
+	/** False where the owner draws the build banner somewhere else. */
+	showBanner?: boolean;
+	buildOpen?: boolean;
+	onBuildOpenChange?: (open: boolean) => void;
 }>) {
 	const { status } = engine;
 	const [switching, setSwitching] = useState<string>();
@@ -373,7 +449,15 @@ export function EngineSummary({
 				: 'No engine';
 	return (
 		<section data-terminay-bots-engine={status?.available ? 'ready' : 'setup'}>
-			<BuildBanner engine={engine} label={label} visible={visible} />
+			{showBanner ? (
+				<BuildBanner
+					engine={engine}
+					label={label}
+					visible={visible}
+					open={buildOpen}
+					onOpenChange={onBuildOpenChange}
+				/>
+			) : null}
 			{!compact && !building ? (
 				<h3 className="bots-lab">
 					Container engine{label === undefined ? '' : ` · ${label}`}

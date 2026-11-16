@@ -490,9 +490,18 @@ export function CommandBarDialog({
 								spellCheck={false}
 								autoComplete="off"
 							/>
-							<div className="macro-launcher-shortcut">
-								<span>ESC</span>
-							</div>
+							{/* The Escape key cap is a control as well as a hint: a phone has
+							    no Escape key, so this is how the bar closes by touch. */}
+							<button
+								type="button"
+								className="macro-launcher-shortcut macro-launcher-close"
+								onClick={onClose}
+								aria-label="Close command bar"
+								title="Close (Esc)"
+								data-terminay-command-bar-close="true"
+							>
+								<span aria-hidden="true">ESC</span>
+							</button>
 						</div>
 
 						<div ref={listRef} className="macro-launcher-list">

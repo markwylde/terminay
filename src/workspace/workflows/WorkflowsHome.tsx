@@ -12,6 +12,8 @@
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, SlidersHorizontal } from 'lucide-react';
 import { type ReactElement, type RefObject, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { TerminalTitleStoreContext } from '../../shared/useWorkspaceProjection';
+import { useCompactHome } from '../compact/CompactHomeContext';
+import { type WorkflowsCompactTab, WorkflowsCompactPage } from './WorkflowsCompactPage';
 import { WorkflowStepMarker } from './workflowIcons';
 import { WORKFLOW_DIAL_TICK_MS, WorkflowDial } from './WorkflowTabBadge';
 import { elapsed, statusLabel, stepTime, tabSummary } from './workflowPanelModel';
@@ -162,6 +164,28 @@ export function WorkflowsHome(props: WorkflowsHomeProps): ReactElement {
 	const model = useMemo(() => applyWorkflowsHomeView(rows, view), [rows, view]);
 	const now = useSectionNow(model.shown, props.now);
 	const projectCount = new Set(model.shown.map((row) => row.projectKey)).size;
+	// A phone's page: its tab and open workflow live here, above the branch,
+	// so a round trip to another Home tab or across the breakpoint keeps them.
+	const compactHome = useCompactHome();
+	const [compactTab, setCompactTab] = useState<WorkflowsCompactTab>('all');
+	const [detailKey, setDetailKey] = useState<string>();
+	if (compactHome)
+		return (
+			<div className="home-section workflows-home cpage-section" data-terminay-home-workflows>
+				<WorkflowsCompactPage
+					rows={rows}
+					loading={props.loading}
+					view={view}
+					onChange={update}
+					tab={compactTab}
+					onTab={setCompactTab}
+					detailKey={detailKey}
+					onDetail={setDetailKey}
+					now={now}
+					onOpen={props.onOpen}
+				/>
+			</div>
+		);
 
 	let body: ReactElement;
 	if (props.loading && props.rows.length === 0) {

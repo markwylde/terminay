@@ -37,6 +37,17 @@ import {
 	flattenCrossServerDashboardGroups,
 	type ServerScopedRow,
 } from './crossServerRows';
+import { useCompactHome } from './compact/CompactHomeContext';
+import {
+	CompactEmpty,
+	CompactGroupHeader,
+	CompactRow,
+	type CompactTone,
+	StatusMark,
+} from './compact/CompactRow';
+import { SheetSegment, SheetToggle } from './compact/CompactSheet';
+import { CompactSectionPage } from './compact/CompactSectionPage';
+import { countTabs, rowsForTab } from './compact/compactSectionModel';
 import { filterDashboardGroups } from './dashboardFilter';
 import type {
 	DashboardAgent,
@@ -56,6 +67,7 @@ import {
 	type DashboardBoardItem,
 	type DashboardBoardLane,
 	type DashboardViewMode,
+	boardColumnForItem,
 	buildDashboardBoardItems,
 	buildDashboardBoardLanes,
 	groupBoardItemsByColumn,
@@ -1101,6 +1113,37 @@ export function WorkspaceDashboard({
 		rememberDashboardBoardGrouped(next);
 	};
 
+	// A phone's page. Its tab and the Untracked option live here, above the
+	// branch, so they survive a round trip and the breakpoint.
+	const compact = useCompactHome();
+	const [compactTab, setCompactTab] = useState<TabsCompactTab>('all');
+	const [showUntracked, setShowUntracked] = useState(false);
+	if (compact)
+		return (
+			<section
+				aria-label="Dashboard"
+				className="workspace-dashboard workspace-dashboard--compact cpage-host"
+				data-terminay-dashboard="true"
+				data-terminay-dashboard-view={mode === 'projects' ? 'projects' : 'list'}
+			>
+				<TabsCompactPage
+					allGroups={allGroups}
+					filter={filter}
+					onFilter={setFilter}
+					mode={mode}
+					onMode={selectMode}
+					now={now}
+					onActivate={onActivate}
+					onActivateAgent={onActivateAgent}
+					tab={compactTab}
+					onTab={setCompactTab}
+					showUntracked={showUntracked}
+					onShowUntracked={setShowUntracked}
+					namesServers={namesServers}
+				/>
+			</section>
+		);
+
 	return (
 		<section
 			aria-label="Dashboard"
@@ -1323,5 +1366,292 @@ function PanelRowTitle({ row }: { row: DashboardPanelRow }) {
 		<LiveTerminalTitle panelId={row.panelId} fallback={row.title} />
 	) : (
 		row.title
+	);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Compact section page (a phone)                                             */
+/* -------------------------------------------------------------------------- */
+
+type TabsCompactTab = 'all' | DashboardBoardColumn;
+
+const TABS_COMPACT_LABELS: Readonly<Record<TabsCompactTab, string>> = {
+	all: 'All',
+	attention: 'Needs you',
+	working: 'Working',
+	done: 'Done',
+	idle: 'Idle',
+	untracked: 'Untracked',
+};
+
+const COLUMN_TONE: Readonly<Record<DashboardBoardColumn, CompactTone>> = {
+	attention: 'attention',
+	working: 'working',
+	done: 'done',
+	idle: 'idle',
+	untracked: 'muted',
+};
+
+/** What an agent row says it is doing, in one line. */
+function agentLine(agent: DashboardAgent): string | undefined {
+	if (agent.state === 'waiting' || agent.state === 'blocked')
+		return agent.waitingReason ?? agentActivityNote(agent) ?? 'Waiting for you';
+	return agentActivityNote(agent) ?? agent.prompt ?? agent.metadata;
+}
+
+function TabsCompactRow({
+	item,
+	now,
+	showServer,
+	onActivateAgent,
+	onActivateRow,
+}: {
+	item: DashboardBoardItem;
+	now: number;
+	showServer: boolean;
+	onActivateAgent: DashboardActivateAgent;
+	onActivateRow: DashboardActivateRow;
+}) {
+	const { agent, panel, project, serverId } = item;
+	const column = boardColumnForItem(item);
+	const KindIcon = KIND_ICON[panel?.panelKind ?? 'terminal'];
+	const since =
+		agent === undefined ? undefined : formatElapsed(agent.stateStartedAt, now);
+	const title =
+		agent?.name ??
+		(panel === undefined ? '' : (
+			<>
+				{panel.emoji ? `${panel.emoji} ` : ''}
+				<PanelRowTitle row={panel} />
+			</>
+		));
+	const detail = agent === undefined ? undefined : agentLine(agent);
+	const meta = [
+		agent !== undefined && panel !== undefined ? panel.title : undefined,
+		agent?.external ? 'Running outside Terminay' : undefined,
+		agent !== undefined && agent.subagentCount > 0
+			? `${agent.subagentCount} subagent${agent.subagentCount === 1 ? '' : 's'}`
+			: undefined,
+		showServer ? item.serverLabel : undefined,
+	]
+		.filter(Boolean)
+		.join(' · ');
+	const activate =
+		agent !== undefined
+			? agent.external
+				? undefined
+				: () => onActivateAgent(serverId, project.projectId, agent)
+			: panel === undefined
+				? undefined
+				: () => onActivateRow(serverId, panel);
+	return (
+		<CompactRow
+			lead={
+				agent === undefined && column === 'idle' ? (
+					<KindIcon aria-hidden="true" size={15} />
+				) : (
+					<StatusMark
+						tone={COLUMN_TONE[column]}
+						label={DASHBOARD_BOARD_COLUMN_LABELS[column]}
+					/>
+				)
+			}
+			title={title}
+			trailing={since}
+			{...(detail === undefined ? {} : { detail })}
+			{...(column === 'attention' ? { detailTone: 'attention' as const } : {})}
+			{...(meta === '' ? {} : { meta })}
+			{...(panel?.worktree === undefined
+				? {}
+				: { chips: <WorktreeChips worktree={panel.worktree} /> })}
+			{...(activate === undefined ? {} : { onActivate: activate })}
+			rowProps={{
+				'data-terminay-dashboard-agent': agent?.entryId,
+				'data-terminay-dashboard-panel': panel?.panelId,
+				'data-terminay-dashboard-status': item.state,
+			}}
+		/>
+	);
+}
+
+function TabsCompactPage({
+	allGroups,
+	filter,
+	onFilter,
+	mode,
+	onMode,
+	now,
+	onActivate,
+	onActivateAgent,
+	tab,
+	onTab,
+	showUntracked,
+	onShowUntracked,
+	namesServers,
+}: {
+	allGroups: readonly ServerScopedRow<DashboardProjectGroup>[];
+	filter: string;
+	onFilter: (filter: string) => void;
+	mode: DashboardViewMode;
+	onMode: (mode: DashboardViewMode) => void;
+	now: number;
+	onActivate: DashboardActivateRow;
+	onActivateAgent: DashboardActivateAgent;
+	tab: TabsCompactTab;
+	onTab: (tab: TabsCompactTab) => void;
+	showUntracked: boolean;
+	onShowUntracked: (show: boolean) => void;
+	namesServers: boolean;
+}) {
+	const groups = useMemo(
+		() => filterDashboardGroups(allGroups, filter),
+		[allGroups, filter],
+	);
+	const items = useMemo(() => buildDashboardBoardItems(groups), [groups]);
+	const counted = showUntracked
+		? items
+		: items.filter((item) => item.untracked !== true);
+	const tabDefs = [
+		{ id: 'all' as TabsCompactTab, label: TABS_COMPACT_LABELS.all },
+		...(['attention', 'working', 'done', 'idle'] as const).map((column) => ({
+			id: column as TabsCompactTab,
+			label: TABS_COMPACT_LABELS[column],
+			attention: column === 'attention',
+			test: (item: DashboardBoardItem) => boardColumnForItem(item) === column,
+		})),
+		...(showUntracked
+			? [
+					{
+						id: 'untracked' as TabsCompactTab,
+						label: TABS_COMPACT_LABELS.untracked,
+						test: (item: DashboardBoardItem) => item.untracked === true,
+					},
+				]
+			: []),
+	];
+	// Untracked turned off while its tab was selected: back to All.
+	const selected = tabDefs.some((candidate) => candidate.id === tab)
+		? tab
+		: 'all';
+	const tabs = countTabs(counted, tabDefs);
+	const shown = rowsForTab(counted, tabDefs, selected);
+	const asProjects = mode === 'projects';
+	const term = filter.trim();
+
+	let body: ReactNode;
+	if (allGroups.length === 0) {
+		body = <CompactEmpty title="No projects in this workspace yet" />;
+	} else if (shown.length === 0 && (selected !== 'all' || term !== '')) {
+		body =
+			term === '' ? (
+				<CompactEmpty title={`Nothing is ${TABS_COMPACT_LABELS[selected].toLowerCase()}`} />
+			) : (
+				<CompactEmpty
+					title={`Nothing matches “${term}”`}
+					action={{ label: 'Clear search', onActivate: () => onFilter('') }}
+				>
+					The workspace is not empty — clear the search to see it.
+				</CompactEmpty>
+			);
+	} else {
+		const byGroup = new Map<string, DashboardBoardItem[]>();
+		for (const item of shown) {
+			const key = `${item.serverId}:${item.project.projectId}`;
+			const bucket = byGroup.get(key);
+			if (bucket === undefined) byGroup.set(key, [item]);
+			else bucket.push(item);
+		}
+		body = (
+			<div className={asProjects ? 'ctabs ctabs--projects' : 'ctabs'}>
+				{groups.map((scoped) => {
+					const members = byGroup.get(`${scoped.serverId}:${scoped.row.project.projectId}`);
+					const empty = scoped.row.panels.length === 0 && scoped.row.detachedAgents.length === 0;
+					// A project with no tabs still shows under All: the dashboard
+					// says what exists, not only what is busy.
+					if (members === undefined && !(empty && selected === 'all' && term === ''))
+						return null;
+					const { project } = scoped.row;
+					return (
+						<section
+							key={scoped.key}
+							className="ctabs__group"
+							aria-label={project.title}
+							data-terminay-dashboard-project={project.projectId}
+						>
+							<CompactGroupHeader
+								label={`${project.emoji ? `${project.emoji} ` : ''}${project.title}`}
+								color={project.color}
+								count={
+									namesServers && scoped.serverLabel !== undefined
+										? `${scoped.serverLabel} · ${members?.length ?? 0}`
+										: (members?.length ?? 0)
+								}
+							/>
+							{members === undefined ? (
+								<p className="ctabs__none">No tabs open</p>
+							) : (
+								members.map((item) => (
+									<TabsCompactRow
+										key={item.key}
+										item={item}
+										now={now}
+										showServer={false}
+										onActivateAgent={onActivateAgent}
+										onActivateRow={onActivate}
+									/>
+								))
+							)}
+						</section>
+					);
+				})}
+			</div>
+		);
+	}
+
+	const projectCount = allGroups.length;
+	return (
+		<CompactSectionPage
+			section="tabs"
+			title="Tabs"
+			summary={`${projectCount} project${projectCount === 1 ? '' : 's'}`}
+			search={{
+				value: filter,
+				onChange: onFilter,
+				placeholder: 'Search projects, tabs, agents',
+				label: 'Filter the dashboard',
+			}}
+			tabs={tabs}
+			selectedTab={selected}
+			onSelectTab={onTab}
+			sheet={{
+				title: 'Tabs',
+				canReset: asProjects || showUntracked,
+				onReset: () => {
+					onMode('list');
+					onShowUntracked(false);
+				},
+				content: (
+					<>
+						<SheetSegment
+							label="Layout"
+							value={asProjects ? 'projects' : 'list'}
+							options={[
+								{ value: 'list', label: 'List' },
+								{ value: 'projects', label: 'Projects' },
+							]}
+							onChange={onMode}
+						/>
+						<SheetToggle
+							label="Untracked tabs"
+							hint="Terminals with Track activity off, under a tab of their own."
+							checked={showUntracked}
+							onChange={onShowUntracked}
+						/>
+					</>
+				),
+			}}
+		>
+			{body}
+		</CompactSectionPage>
 	);
 }

@@ -87,6 +87,10 @@ import {
 	recallHomeLayout,
 	rememberHomeLayout,
 } from './localViewState.ts';
+import {
+	CompactDrawerEpochContext,
+	CompactHomeContext,
+} from './compact/CompactHomeContext';
 
 type HomeTabParams = Readonly<{
 	descriptor: HomeTabDescriptor;
@@ -468,6 +472,8 @@ export type HomeWorkspaceProps = Readonly<{
 	isActive: boolean;
 	/** No tab strip is drawn at this width. */
 	isCompact: boolean;
+	/** Raised whenever another compact drawer opens; section sheets close. */
+	compactDrawerEpoch?: number;
 	isSidebarVisible: boolean;
 	onDismissSidebar: () => void;
 	onOpenCommandBar: () => void;
@@ -515,6 +521,7 @@ export const HomeWorkspace = forwardRef<
 		commandBarShortcutLabel,
 		isActive,
 		isCompact,
+		compactDrawerEpoch = 0,
 		isSidebarVisible,
 		onDismissSidebar,
 		onOpenCommandBar,
@@ -933,6 +940,8 @@ export const HomeWorkspace = forwardRef<
 				: { onSectionChosenInDrawer })}
 		>
 			<HomeTabsContext.Provider value={context}>
+			<CompactHomeContext.Provider value={isCompact}>
+			<CompactDrawerEpochContext.Provider value={compactDrawerEpoch}>
 				{notice === undefined ? null : (
 					<div
 						className="home-notice"
@@ -1001,6 +1010,8 @@ export const HomeWorkspace = forwardRef<
 						</div>
 					</div>
 				)}
+			</CompactDrawerEpochContext.Provider>
+			</CompactHomeContext.Provider>
 			</HomeTabsContext.Provider>
 		</HomeView>
 	);

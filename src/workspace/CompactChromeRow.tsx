@@ -54,6 +54,8 @@ export type CompactChromeRowProps = Readonly<{
 	onToggleNotifications: () => void;
 	onOpenSwitcher: () => void;
 	onToggleExplorer: () => void;
+	/** False on a compact Home, which has no sidebar to toggle. */
+	showSidebarToggle?: boolean;
 	/** Present while Pixel is on: the element Pixel docks into, just before
 	 * the sidebar toggle. */
 	pixelSlotRef?: (element: HTMLSpanElement | null) => void;
@@ -107,6 +109,7 @@ export function CompactChromeRow({
 	onOpenSwitcher,
 	onToggleNotifications,
 	onToggleExplorer,
+	showSidebarToggle = true,
 	pixelSlotRef,
 	title,
 	updateAction,
@@ -248,31 +251,33 @@ export function CompactChromeRow({
 					data-compact-pixel-slot="true"
 				/>
 			)}
-			<button
-				type="button"
-				className={`compact-chrome__icon${isExplorerOpen ? ' compact-chrome__icon--active' : ''}`}
-				onClick={onToggleExplorer}
-				aria-label="Toggle file explorer"
-				aria-pressed={isExplorerOpen}
-				title="Toggle file explorer"
-				data-compact-sidebar-toggle="true"
-			>
-				<svg
-					aria-hidden="true"
-					width="14"
-					height="14"
-					viewBox="0 0 14 14"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
+			{showSidebarToggle ? (
+				<button
+					type="button"
+					className={`compact-chrome__icon${isExplorerOpen ? ' compact-chrome__icon--active' : ''}`}
+					onClick={onToggleExplorer}
+					aria-label="Toggle file explorer"
+					aria-pressed={isExplorerOpen}
+					title="Toggle file explorer"
+					data-compact-sidebar-toggle="true"
 				>
-					<path
-						d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
-						stroke="currentColor"
-						strokeWidth="1.4"
-					/>
-					<path d="M9 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
-				</svg>
-			</button>
+					<svg
+						aria-hidden="true"
+						width="14"
+						height="14"
+						viewBox="0 0 14 14"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<path
+							d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
+							stroke="currentColor"
+							strokeWidth="1.4"
+						/>
+						<path d="M9 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
+					</svg>
+				</button>
+			) : null}
 		</div>
 	);
 }

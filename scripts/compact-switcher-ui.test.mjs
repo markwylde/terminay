@@ -92,7 +92,10 @@ test('the compact row holds one control per destination, the sidebar toggle last
 		cursor = next;
 	}
 	// Home, the server, and the application menu live in the switcher.
-	assert.doesNotMatch(markup, /data-compact-home-toggle|data-compact-connection/);
+	assert.doesNotMatch(
+		markup,
+		/data-compact-home-toggle|data-compact-connection/,
+	);
 	assert.doesNotMatch(markup, /Application menu/);
 	// The toggle opens the right-hand column, and its glyph says so.
 	assert.match(
@@ -345,7 +348,7 @@ test('the drawer is a dialog holding a rail and a panel', () => {
 	assert.match(markup, /<nav class="compact-drawer__rail" aria-label="Places"/);
 });
 
-test('the rail runs server, Home, divider, projects, New project', () => {
+test('the rail runs Servers, Home, divider, projects, New project', () => {
 	const markup = switcher({});
 	const order = [
 		'data-compact-switcher-server',
@@ -360,8 +363,20 @@ test('the rail runs server, Home, divider, projects, New project', () => {
 		order,
 		[...order].sort((left, right) => left - right),
 	);
-	// The server control names its server, even with one attached.
-	assert.match(markup, /aria-label="Server Marks-MacBook-Air"/);
+	// Servers is a rail item with a label; its name says which server is
+	// current, even with one attached, and it opens no menu.
+	assert.match(
+		markup,
+		/aria-label="Servers, Marks-MacBook-Air" aria-pressed="false"/,
+	);
+	assert.match(
+		markup,
+		/compact-drawer__rail-label" aria-hidden="true">Servers</,
+	);
+	assert.doesNotMatch(
+		markup,
+		/data-compact-switcher-server="true"[^>]*aria-haspopup/,
+	);
 	// One connection: no group headings.
 	assert.doesNotMatch(markup, /compact-drawer__rail-heading/);
 });
@@ -571,8 +586,8 @@ test('the split control repeats the remembered launcher and names where it creat
 		shell,
 		/compact-drawer__create-icon"[^>]*aria-label="New project"/,
 	);
-	// Add connection lives in the server menu now.
-	assert.doesNotMatch(shell, /aria-label="Add connection"/);
+	// Add connection lives in the Servers panel's create bar, not a project's.
+	assert.doesNotMatch(shell, /Add connection/);
 
 	const codex = switcher({ rememberedLauncherId: 'codex' });
 	assert.match(codex, /compact-drawer__split-label">Codex</);
@@ -614,7 +629,7 @@ test("another server's menus offer only what needs no switch", async () => {
 	assert.match(rowLayer, /const own = row\.serverId === currentServer\.id;/);
 	const folderLayer = source.slice(
 		source.indexOf("layer?.kind === 'folder'"),
-		source.indexOf("layer?.kind === 'server'"),
+		source.indexOf("layer?.kind === 'dropup'"),
 	);
 	assert.match(
 		folderLayer,
@@ -742,7 +757,7 @@ test('the header closes the drawer, and Show folder is in the folder menu', asyn
 	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
 	const folderLayer = source.slice(
 		source.indexOf("layer?.kind === 'folder'"),
-		source.indexOf("layer?.kind === 'server'"),
+		source.indexOf("layer?.kind === 'dropup'"),
 	);
 	assert.match(
 		folderLayer,
@@ -768,30 +783,65 @@ test('rows open their menu by long press, secondary click, or the keyboard', asy
 
 test('the dismiss key closes the topmost layer first', async () => {
 	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	// The dropup's folder picker, then a menu or the dropup, then the filter,
+	// and only then the drawer.
 	assert.match(
 		source,
-		/if \(layerRef\.current !== null\) closeLayer\(\);\s*else if \(searchOpenRef\.current\) closeSearch\(\);\s*else onDismiss\(\);/,
+		/if \(current\?\.kind === 'dropup' && current\.picking === true\)\s*collapsePicker\(\{ \.\.\.current, picking: false \}\);\s*else if \(current !== null\) closeLayer\(\);\s*else if \(searchOpenRef\.current\) closeSearch\(\);\s*else onDismiss\(\);/,
 	);
-	// A press beside the drawer takes the same order as the key.
-	assert.match(source, /event\.preventDefault\(\);\s*dismissTopLayer\(\);/);
-	assert.match(source, /dismissTopLayerRef\.current\(\);/);
+	// The drawer shell routes a press beside the drawer and the key here.
+	assert.match(source, /onPressOutside=\{dismissTopLayer\}/);
+	assert.match(source, /onEscape=\{dismissTopLayer\}/);
 	// A drag in progress owns the key.
-	assert.match(source, /gripDragState\.active/);
+	assert.match(source, /isEscapeEnabled=\{\(\) => !gripDragState\.active\}/);
+	// The switcher draws no Escape listener of its own.
+	assert.doesNotMatch(source, /addEventListener\('keydown'/);
 });
 
-test('the entrance is the drawer alone, and reduced motion removes it', async () => {
-	const css = await readFile('src/workspace/CompactSwitcher.css', 'utf8');
+test('the entrance is the shared drawer shell alone, and reduced motion removes it', async () => {
+	const own = await readFile('src/workspace/CompactSwitcher.css', 'utf8');
+	// The switcher draws no entrance, scrim, or geometry of its own.
+	assert.doesNotMatch(own, /animation:|@keyframes/);
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	assert.match(source, /<CompactEdgeDrawer\s+edge="leading"/);
+	const shell = await readFile('src/workspace/CompactEdgeDrawer.css', 'utf8');
 	const animated = [
-		...css.matchAll(
-			/\n(\.[\w-]+(?:[^{]*))\{[^}]*animation:\s*compact-drawer-in/g,
-		),
+		...shell.matchAll(/\n(\.[\w-]+(?:[^{]*))\{[^}]*animation:/g),
 	];
 	assert.equal(animated.length, 1);
-	assert.match(animated[0][1], /^\.compact-drawer\s*$/);
+	assert.match(animated[0][1], /^\.compact-edge-drawer\s*$/);
 	assert.match(
-		css,
-		/@media \(prefers-reduced-motion: reduce\) \{\s*\.compact-drawer \{\s*animation: none;/,
+		shell,
+		/@media \(prefers-reduced-motion: reduce\) \{\s*\.compact-edge-drawer \{\s*animation: none;/,
 	);
+});
+
+test('the launcher dropup picks its folder with Open in, not a chip per folder', async () => {
+	const source = await readFile('src/workspace/CompactSwitcher.tsx', 'utf8');
+	assert.doesNotMatch(source, /compact-drawer__chip/);
+	assert.doesNotMatch(source, /kind: 'server'/);
+	const dropup = source.slice(source.indexOf("layer?.kind === 'dropup'"));
+	// One folder: nothing to pick, so no disclosure.
+	assert.match(dropup, /const canPick = folders\.length > 1;/);
+	assert.match(dropup, /aria-expanded=\{picking\}/);
+	assert.match(dropup, /data-compact-dropup-open-in="true"/);
+	// While picking, the filter and the list stand in for the entries.
+	assert.match(dropup, /picking \? \[\] : launcherItems\(/);
+	const picker = source.slice(
+		source.indexOf('function FolderPicker('),
+		source.indexOf(
+			'/* ---------------------------------------------------------------- shell */',
+		),
+	);
+	assert.match(picker, /aria-label="Filter folders"/);
+	assert.match(picker, /role="listbox"/);
+	assert.match(
+		picker,
+		/displayFolderName\(folder\.name\)\.toLowerCase\(\)\.includes\(needle\)/,
+	);
+	assert.match(picker, /No folders match/);
+	// The field is 16px and scaled back, like the switcher's own filter.
+	assert.match(picker, /className="compact-drawer__field"/);
 });
 
 test('a workflow step line names the step being worked on or waiting', () => {

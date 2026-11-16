@@ -2722,6 +2722,29 @@ body.project-tabbar-reordering .project-tabbar {
   letter-spacing: 0.05em;
 }
 
+/* The key cap closes the bar when pressed. Its hit area reaches past the cap
+   so a fingertip finds it, and the cap itself keeps its size. */
+button.macro-launcher-close {
+  position: relative;
+  flex: none;
+  font-family: inherit;
+  line-height: normal;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+button.macro-launcher-close::after {
+  content: "";
+  position: absolute;
+  inset: -10px -8px;
+}
+
+button.macro-launcher-close:hover,
+button.macro-launcher-close:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .macro-launcher-list {
   max-height: 380px;
   overflow-y: auto;
