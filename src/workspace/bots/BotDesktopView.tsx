@@ -12,6 +12,8 @@ import { BotIoClient } from '@terminay/client-core';
 import type { BotDesktopMode, BotProfile } from '@terminay/protocol';
 import { Eye, Maximize2, MousePointer2, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { writeClipboardText } from '../../host/nativeActions';
+import { attachDesktopClipboard } from './desktopClipboard';
 import { RfbStreamChannel } from './rfbChannel';
 import { refusalText, type ServerBots } from './useServerBots';
 
@@ -26,6 +28,7 @@ export function BotDesktopCanvas({
 	thumbnail = false,
 	attempt = 0,
 	onState,
+	onPasteTooLarge,
 }: Readonly<{
 	server: ServerBots;
 	bot: Pick<BotProfile, 'id'>;
@@ -33,6 +36,7 @@ export function BotDesktopCanvas({
 	thumbnail?: boolean;
 	attempt?: number;
 	onState?: (state: DesktopState, error?: string) => void;
+	onPasteTooLarge?: () => void;
 }>) {
 	const host = useRef<HTMLDivElement>(null);
 	const io = useMemo(
@@ -41,6 +45,8 @@ export function BotDesktopCanvas({
 	);
 	const report = useRef(onState);
 	report.current = onState;
+	const tooLarge = useRef(onPasteTooLarge);
+	tooLarge.current = onPasteTooLarge;
 	// The thumbnail is always view-only. Otherwise each mode is its own
 	// server stream, so the server enforces view-only.
 	const streamMode: BotDesktopMode = thumbnail ? 'view-only' : mode;
@@ -82,6 +88,17 @@ export function BotDesktopCanvas({
 				rfb.resizeSession = false;
 				rfb.focusOnClick = !thumbnail;
 				rfb.background = '#0d0f12';
+				// Clipboard sharing is control mode only (ADR-0128). View-only
+				// streams never read or write either clipboard.
+				if (streamMode === 'control' && !thumbnail)
+					layer.detachClipboard = attachDesktopClipboard(el, rfb, {
+						isMac: /mac|iphone|ipad|ipod/i.test(navigator.platform),
+						focusedInside: () => el.contains(document.activeElement),
+						documentFocused: () => document.hasFocus(),
+						visible: () => document.visibilityState === 'visible',
+						writeHostClipboard: writeClipboardText,
+						onPasteTooLarge: () => tooLarge.current?.(),
+					});
 				// Give noVNC a moment to paint its first frame before swapping.
 				rfb.addEventListener('connect', () => setTimeout(show, 150));
 				rfb.addEventListener('disconnect', () => {
@@ -126,6 +143,7 @@ type DesktopLayer = {
 	retired?: boolean;
 	rfb?: RFB;
 	channel?: RfbStreamChannel;
+	detachClipboard?: () => void;
 };
 
 function retire(list: DesktopLayer[], layer: DesktopLayer): void {
@@ -133,6 +151,7 @@ function retire(list: DesktopLayer[], layer: DesktopLayer): void {
 	layer.retired = true;
 	const at = list.indexOf(layer);
 	if (at >= 0) list.splice(at, 1);
+	layer.detachClipboard?.();
 	try {
 		layer.rfb?.disconnect();
 	} catch {
@@ -151,6 +170,12 @@ export function BotDesktopView({
 	const [state, setState] = useState<DesktopState>('connecting');
 	const [error, setError] = useState<string>();
 	const [attempt, setAttempt] = useState(0);
+	const [pasteTooLarge, setPasteTooLarge] = useState(false);
+	useEffect(() => {
+		if (!pasteTooLarge) return;
+		const clear = setTimeout(() => setPasteTooLarge(false), 5_000);
+		return () => clearTimeout(clear);
+	}, [pasteTooLarge]);
 	const frame = useRef<HTMLDivElement>(null);
 	const environment = server.environments.get(bot.id);
 
@@ -171,7 +196,10 @@ export function BotDesktopView({
 						type="button"
 						className={mode === 'control' ? 'bots-seg--on' : ''}
 						aria-pressed={mode === 'control'}
-						onClick={() => setMode('control')}
+						onClick={() => {
+							setPasteTooLarge(false);
+							setMode('control');
+						}}
 						data-terminay-bot-desktop-mode-button="control"
 					>
 						<MousePointer2 size={12} aria-hidden="true" /> Control
@@ -183,7 +211,9 @@ export function BotDesktopView({
 						: state === 'open'
 							? mode === 'view-only'
 								? 'Viewing. Your keyboard and mouse do not reach the bot.'
-								: 'Controlling the bot’s desktop.'
+								: pasteTooLarge
+									? 'Too large to paste into the bot.'
+									: 'Controlling the bot’s desktop. Copy and paste work both ways.'
 							: state === 'closed'
 								? 'Disconnected.'
 								: 'The desktop could not open.'}
@@ -222,6 +252,7 @@ export function BotDesktopView({
 							setState(next);
 							setError(why);
 						}}
+						onPasteTooLarge={() => setPasteTooLarge(true)}
 					/>
 				) : null}
 			</div>

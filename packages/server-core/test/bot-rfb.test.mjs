@@ -73,6 +73,62 @@ test('4.11 unknown message types, encoding count, clipboard size, pixel bounds a
 	assert.equal(f.push(Buffer.from([6, 0, 0, 0])).length, 0);
 	assert.throws(() => f.push(word(1024 * 1024 + 1)));
 });
+const extendedClipboard = (payload) =>
+	Buffer.concat([
+		Buffer.from([6, 0, 0, 0]),
+		word(-payload.length >>> 0),
+		payload,
+	]);
+test('extended ClientCutText passes in control, is dropped in view-only, and reassembles at every split', () => {
+	// Flags (Notify | text) followed by nothing: the smallest extended message.
+	const notify = extendedClipboard(word(0x08000001));
+	const provide = extendedClipboard(
+		Buffer.concat([word(0x10000001), Buffer.from('zlib-bytes')]),
+	);
+	const input = Buffer.concat([notify, provide, update]);
+	for (let split = 0; split <= input.length; split++) {
+		const control = new BotRfbClientFilter('control');
+		assert.deepEqual(
+			Buffer.concat([
+				control.push(input.subarray(0, split)),
+				control.push(input.subarray(split)),
+			]),
+			input,
+		);
+		const viewOnly = new BotRfbClientFilter('view-only');
+		assert.deepEqual(
+			Buffer.concat([
+				viewOnly.push(input.subarray(0, split)),
+				viewOnly.push(input.subarray(split)),
+			]),
+			update,
+		);
+	}
+});
+test('extended ClientCutText over 1 MiB or without its flags closes the stream', () => {
+	for (const payload of [1024 * 1024 + 1, 3, 0x7fffffff]) {
+		const header = Buffer.concat([
+			Buffer.from([6, 0, 0, 0]),
+			word(-payload >>> 0),
+		]);
+		assert.throws(() => new BotRfbClientFilter('control').push(header));
+	}
+	const exact = extendedClipboard(Buffer.alloc(1024 * 1024));
+	assert.equal(
+		new BotRfbClientFilter('control').push(exact).length,
+		exact.length,
+	);
+});
+test('SetEncodings keeps ExtendedClipboard and still strips fences', () => {
+	const encodings = [0, -1063131698, -312];
+	const message = Buffer.alloc(4 + encodings.length * 4);
+	message[0] = 2;
+	message.writeUInt16BE(encodings.length, 2);
+	for (const [i, e] of encodings.entries()) message.writeInt32BE(e, 4 + i * 4);
+	const out = new BotRfbClientFilter('view-only').push(message);
+	assert.equal(out.readUInt16BE(2), 2);
+	assert.deepEqual([out.readInt32BE(4), out.readInt32BE(8)], [0, -1063131698]);
+});
 function fakeVnc({ badAuth = false } = {}) {
 	const source = new PassThrough(),
 		writes = [];
@@ -159,9 +215,14 @@ function fakeVnc({ badAuth = false } = {}) {
 }
 async function connect(t, options = {}) {
 	const tunnels = [],
-		activity = [];
+		activity = [],
+		execs = [];
 	const service = new BotDesktopService({
 		engine: async () => ({
+			exec: async (name, command, opts) => {
+				execs.push({ name, command, user: opts?.user });
+				return command.includes('-get') ? (options.primary ?? 'off\n') : '';
+			},
 			execStream: (_name, command, opts) => {
 				assert.deepEqual(command, ['terminay-init', '--tunnel', '5901']);
 				assert.equal(opts.user, 'root');
@@ -175,7 +236,7 @@ async function connect(t, options = {}) {
 		activity: (_id, delta) => activity.push(delta),
 	});
 	t.after(() => service.close());
-	return { service, tunnels, activity };
+	return { service, tunnels, activity, execs };
 }
 async function clientHandshake(relay) {
 	const chunks = [];
@@ -321,8 +382,38 @@ test('SetEncodings relays only encodings the relay can carry (no fence or contin
 		const out = new BotRfbClientFilter(mode).push(message);
 		assert.equal(out[0], 2);
 		const count = out.readUInt16BE(2);
-		const kept = Array.from({ length: count }, (_, i) => out.readInt32BE(4 + i * 4));
+		const kept = Array.from({ length: count }, (_, i) =>
+			out.readInt32BE(4 + i * 4),
+		);
 		assert.deepEqual(kept, [7, 0, -224]);
 		assert.equal(out.length, 4 + count * 4);
 	}
+});
+
+test('a control-mode open turns PRIMARY sending off on the running desktop first; view-only never does', async (t) => {
+	const f = await connect(t);
+	await f.service.open(authority(), id, 1);
+	await f.service.open(authority(), id, 1, 'view-only', true);
+	assert.deepEqual(f.execs, []);
+	await f.service.open(authority(), id, 2, 'control');
+	assert.deepEqual(f.execs, [
+		{
+			name: `terminay-bot-${id}`,
+			command: ['vncconfig', '-display', ':1', '-set', 'SendPrimary=0'],
+			user: 'root',
+		},
+		{
+			name: `terminay-bot-${id}`,
+			command: ['vncconfig', '-display', ':1', '-get', 'SendPrimary'],
+			user: 'root',
+		},
+	]);
+});
+test('a control-mode open fails when PRIMARY sending cannot be confirmed off', async (t) => {
+	const f = await connect(t, { primary: 'on\n' });
+	await assert.rejects(
+		f.service.open(authority(), id, 1, 'control'),
+		/connection failed/,
+	);
+	assert.equal(f.tunnels.length, 0);
 });

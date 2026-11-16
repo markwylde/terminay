@@ -15,5 +15,14 @@ declare module '@novnc/novnc' {
 		background: string;
 		disconnect(): void;
 		focus(): void;
+		/** Sends `text` to the server's clipboard (ExtendedClipboard when offered). */
+		clipboardPasteFrom(text: string): void;
+		/** Presses and releases, or with `down` only presses or releases. */
+		sendKey(keysym: number, code: string | null, down?: boolean): void;
+		addEventListener(
+			type: 'clipboard',
+			listener: (event: CustomEvent<{ text: string }>) => void,
+		): void;
+		addEventListener(type: string, listener: (event: Event) => void): void;
 	}
 }
