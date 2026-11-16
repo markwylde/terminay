@@ -136,6 +136,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			queuedSessions: number;
 			shells: number;
 			desktops: number;
+			previews: number;
 		}
 	>();
 	const activity = (
@@ -145,6 +146,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			queuedSessions: number;
 			shells: number;
 			desktops: number;
+			previews: number;
 		}>,
 	) => {
 		const value = {
@@ -152,6 +154,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 			queuedSessions: 0,
 			shells: 0,
 			desktops: 0,
+			previews: 0,
 			...activities.get(id),
 			...update,
 		};
@@ -160,7 +163,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	};
 	const streamActivity = (
 		id: string,
-		key: 'shells' | 'desktops',
+		key: 'shells' | 'desktops' | 'previews',
 		delta: number,
 	) =>
 		activity(id, {
@@ -263,7 +266,8 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		engine: () => images.driver(),
 		running: (id) => environment.state(id) === 'running',
 		withPassword: (id, fn) => options.vault.withSecret(passwordId(id), fn),
-		activity: (id, delta) => streamActivity(id, 'desktops', delta),
+		activity: (id, delta, preview) =>
+			streamActivity(id, preview ? 'previews' : 'desktops', delta),
 	});
 	const memories = new BotMemories(memoryHelper(files), bots);
 	const detachEnvironment = environment.follow(engine);

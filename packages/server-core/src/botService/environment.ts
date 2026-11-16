@@ -16,7 +16,7 @@ import {
 } from '@terminay/protocol';
 import { BOT_BROWSER_SECURITY_OPT } from './browserSandbox.js';
 import type { BotEngine, EngineDriver, EngineResource } from './engine.js';
-import { ownedResource } from './engine.js';
+import { ownedResource, removeContainer } from './engine.js';
 import {
 	type BotActivity,
 	type BotDeadlineClock,
@@ -248,7 +248,7 @@ export class BotEnvironmentService extends EventEmitter {
 		await this.hooks.closeHelper(id);
 		const name = nameFor(id);
 		if (await this.owned(driver, 'container', name, id))
-			await driver.run(['container', 'rm', '-f', name]);
+			await removeContainer(driver, name, { timers: this.hooks.timers });
 		if (await this.owned(driver, 'network', name, id))
 			await driver.run(['network', 'rm', name]);
 		if (deleteHome && (await this.owned(driver, 'volume', `${name}-home`, id)))
@@ -488,12 +488,41 @@ export class BotEnvironmentService extends EventEmitter {
 	start(id: string): Promise<void> {
 		return this.enqueue(id, () => this.startNow(id));
 	}
-	private async startNow(id: string): Promise<void> {
+	private async startNow(id: string, updateIfIdle = false): Promise<void> {
 		try {
 			const driver = await this.hooks.engine();
 			const bot = this.definition(id);
 			const name = nameFor(id);
 			let container = await this.owned(driver, 'container', name, id);
+			let built: string | undefined;
+			if (
+				updateIfIdle &&
+				container?.State?.Running &&
+				(await this.outdatedWhileIdle(driver, id, container))
+			) {
+				// Nothing else is using the machine: apply the update before the
+				// run instead of asking the user to recreate it (home is kept).
+				// Build first, so a failed build leaves the working container.
+				try {
+					built = await this.hooks.ensureImage(driver, () =>
+						this.emit('changed', { botId: id }),
+					);
+				} catch {
+					this.setState(id, 'running');
+					return;
+				}
+				this.setState(id, 'starting');
+				const appArmor = await this.appArmorDecision(driver);
+				if (
+					botContainerCurrent(container, built, appArmor?.profile) ||
+					!(await this.outdatedWhileIdle(driver, id, container))
+				) {
+					this.setState(id, 'running');
+					return;
+				}
+				await this.removeResources(driver, id, false);
+				container = undefined;
+			}
 			if (
 				container &&
 				!container.State?.Running &&
@@ -509,11 +538,13 @@ export class BotEnvironmentService extends EventEmitter {
 				return;
 			}
 			this.setState(id, 'building');
-			const fingerprint = await this.hooks
-				.ensureImage(driver, () => this.emit('changed', { botId: id }))
-				.catch(() => {
-					throw new BotImageBuildError();
-				});
+			const fingerprint =
+				built ??
+				(await this.hooks
+					.ensureImage(driver, () => this.emit('changed', { botId: id }))
+					.catch(() => {
+						throw new BotImageBuildError();
+					}));
 			const appArmor = await this.appArmorDecision(driver);
 			if (
 				container &&
@@ -547,6 +578,26 @@ export class BotEnvironmentService extends EventEmitter {
 			this.setState(id, 'failed');
 			throw error;
 		}
+	}
+	/** A running container is updated on its own only when it is out of date
+	 * and idle: the session being prepared is the only one, and no shell or
+	 * desktop is open. An unknown image fingerprint never counts as out of date. */
+	private async outdatedWhileIdle(
+		driver: EngineDriver,
+		id: string,
+		container: EngineResource,
+	): Promise<boolean> {
+		const fingerprint = this.hooks.currentFingerprint();
+		if (!fingerprint) return false;
+		const activity = this.activity.get(id) ?? noActivity;
+		if (
+			activity.runningSessions > 1 ||
+			activity.shells > 0 ||
+			activity.desktops > 0
+		)
+			return false;
+		const appArmor = await this.appArmorDecision(driver);
+		return !botContainerCurrent(container, fingerprint, appArmor?.profile);
 	}
 	stop(id: string): Promise<void> {
 		return this.enqueue(id, () => this.stopNow(id));
@@ -621,7 +672,7 @@ export class BotEnvironmentService extends EventEmitter {
 	 * own config files are in place. */
 	prepareSession(id: string): Promise<Readonly<Record<string, string>>> {
 		return this.enqueue(id, async () => {
-			await this.startNow(id);
+			await this.startNow(id, true);
 			const driver = await this.hooks.engine();
 			await this.restoreConfig(driver, this.definition(id));
 			return {};

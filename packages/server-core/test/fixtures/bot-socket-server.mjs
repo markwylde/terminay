@@ -339,6 +339,23 @@ export async function startBotSocketServer(root, options = {}) {
 				const resource =
 					kind === 'container' ? await read(kind, p[1]) : undefined;
 				await invoke([kind, 'rm', '-f', p[1]]);
+				// `helper-rm-race`: like Docker for a `--rm` helper whose process
+				// just ended, refuse the forced removal with 409 because the
+				// engine's own removal is under way, and report it shortly after.
+				const racing =
+					kind === 'container' &&
+					p[1].startsWith('terminay-files-') &&
+					(await readFile(path.join(root, 'helper-rm-race')).then(
+						() => true,
+						() => false,
+					));
+				if (racing) {
+					setTimeout(() => lifecycleEvent('destroy', p[1], resource), 50);
+					return send(
+						{ message: `removal of container ${p[1]} is already in progress` },
+						409,
+					);
+				}
 				if (kind === 'container') lifecycleEvent('destroy', p[1], resource);
 				return send(undefined, 204);
 			}

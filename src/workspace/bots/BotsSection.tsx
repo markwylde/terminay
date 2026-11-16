@@ -91,7 +91,10 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 
 	if (compact)
 		return (
-			<div className="bots-ui bots-section bots-section--compact" data-terminay-bots="dashboard">
+			<div
+				className="bots-ui bots-section bots-section--compact"
+				data-terminay-bots="dashboard"
+			>
 				<BotsCompactPage
 					servers={servers}
 					entries={entries}
@@ -121,14 +124,25 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 							{[...servers.values()]
 								.filter((s) => s.warning)
 								.map((s) => (
-									<p role="status" className="bots-note bots-note--warn" key={s.serverId}>
+									<p
+										role="status"
+										className="bots-note bots-note--warn"
+										key={s.serverId}
+									>
 										{s.warning}
 									</p>
 								))}
 							{errors.map((server) => (
-								<div className="bots-note bots-note--warn" key={server.serverId}>
+								<div
+									className="bots-note bots-note--warn"
+									key={server.serverId}
+								>
 									{server.label}: {server.error}{' '}
-									<button type="button" className="bots-link" onClick={server.refresh}>
+									<button
+										type="button"
+										className="bots-link"
+										onClick={server.refresh}
+									>
 										Try again
 									</button>
 								</div>
@@ -431,6 +445,9 @@ export function EngineSummary({
 	engine: BotEngineView;
 	label: string | undefined;
 	compact?: boolean;
+	/** Hide the card while the engine is available: the owner has decided
+	 * the image state needs no engine card (an out-of-date image is a routine
+	 * update, built on the next start). */
 	hideReady?: boolean;
 	visible?: boolean;
 	/** False where the owner draws the build banner somewhere else. */
@@ -466,10 +483,7 @@ export function EngineSummary({
 			) : null}
 			<div
 				className="bots-card bots-engine"
-				hidden={
-					building ||
-					(hideReady && status?.available && status.image.state === 'current')
-				}
+				hidden={building || (hideReady && status?.available)}
 			>
 				<div className="bots-kv">
 					<span>Engine</span>

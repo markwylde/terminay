@@ -1,11 +1,10 @@
 import type { Writable } from 'node:stream';
 import { botEnvironmentId } from '@terminay/protocol';
 import type { EngineDriver } from './engine.js';
-import { ownedResource } from './engine.js';
+import { ownedResource, removeContainer } from './engine.js';
 import { botFolderArchive } from './fileArchive.js';
 import { type BotDeadlineClock, BotHelperIdleDeadline } from './idle.js';
 import { BOT_IMAGE } from './image.js';
-import { EngineCommandError } from './process.js';
 
 export const BOT_FILE_CHUNK_BYTES = 1024 * 1024;
 export const BOT_FILE_UPLOAD_BYTES = 1024 ** 3;
@@ -500,15 +499,11 @@ export class BotFilesService {
 		const helper = await pending;
 		helper.idle.close();
 		helper.connection.close();
-		await helper.driver
-			.run(['container', 'rm', '-f', helper.name])
-			.catch((error: unknown) => {
-				if (
-					!(error instanceof EngineCommandError) ||
-					error.code !== 'not-found'
-				)
-					throw error;
-			});
+		// Closing the connection ends the `--rm` helper, so the engine is
+		// usually already removing it: wait for that rather than fail.
+		await removeContainer(helper.driver, helper.name, {
+			timers: this.hooks.timers,
+		});
 	}
 	/** Startup reconciliation never adopts helpers left by a previous process. */
 	async reconcile(): Promise<void> {

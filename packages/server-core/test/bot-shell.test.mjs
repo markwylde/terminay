@@ -144,3 +144,31 @@ test('4.10 opt-in real PTY whoami, resize and shell process teardown', {
 	const processes = run(['exec', '-u', 'root', name, 'ps', '-eo', 'args']);
 	assert.ok(!processes.includes('/bin/bash -i'));
 });
+
+test('shell opening reserves activity before start and releases it when start fails', async () => {
+	const activity = [];
+	let fail;
+	const service = new BotShellService({
+		engine: async () => {
+			throw new Error('unexpected engine');
+		},
+		start: () =>
+			new Promise((_resolve, reject) => {
+				fail = reject;
+			}),
+		activity: (_id, delta) => activity.push(delta),
+	});
+	const pending = service.open(
+		authority(),
+		id,
+		1,
+		{ cols: 80, rows: 24 },
+		() => {},
+		() => {},
+	);
+	assert.deepEqual(activity, [1]);
+	await new Promise((resolve) => setImmediate(resolve));
+	fail(new Error('start failed'));
+	await assert.rejects(pending, /start failed/);
+	assert.deepEqual(activity, [1, -1]);
+});

@@ -119,6 +119,93 @@ export function ownedResource(
 	);
 }
 
+export const CONTAINER_REMOVAL_DEADLINE_MS = 15_000;
+
+export interface RemovalTimers {
+	setTimeout(callback: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+}
+const realTimers: RemovalTimers = {
+	setTimeout: (callback, ms) => setTimeout(callback, ms),
+	clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+};
+
+async function forceRemove(driver: EngineDriver, name: string) {
+	try {
+		await driver.run(['container', 'rm', '-f', name]);
+		return 'removed' as const;
+	} catch (error) {
+		if (!(error instanceof EngineCommandError)) throw error;
+		if (error.code === 'not-found') return 'removed' as const;
+		if (error.code === 'conflict') return 'in-progress' as const;
+		throw error;
+	}
+}
+
+/** Force-remove a container and return once it is gone. A container started
+ * with `--rm` is removed by the engine itself as soon as its process ends, so
+ * a force-remove that races it is refused with 409 ("removal already in
+ * progress"), and one that arrives after it finds nothing (404). Both mean the
+ * container is going away: wait for the engine's `destroy` event, under a
+ * one-shot deadline, instead of failing. State is never re-checked on a timer
+ * (ADR-0028); the deadline ends in one more forced removal that reports why. */
+export async function removeContainer(
+	driver: EngineDriver,
+	name: string,
+	options: {
+		readonly deadlineMs?: number;
+		readonly timers?: RemovalTimers;
+	} = {},
+): Promise<void> {
+	if ((await forceRemove(driver, name)) === 'removed') return;
+	const timers = options.timers ?? realTimers;
+	let unsubscribe: (() => void) | undefined;
+	let timer: unknown;
+	try {
+		const gone = new Promise<'gone' | 'deadline'>((resolve) => {
+			timer = timers.setTimeout(
+				() => resolve('deadline'),
+				options.deadlineMs ?? CONTAINER_REMOVAL_DEADLINE_MS,
+			);
+			unsubscribe = driver.events?.(
+				(event) => {
+					const actor = event.Actor as
+						| { Attributes?: Record<string, string> }
+						| undefined;
+					const attributes =
+						actor?.Attributes ??
+						(event.Attributes as Record<string, string> | undefined);
+					const eventName = String(
+						attributes?.name ?? event.Name ?? event.name ?? '',
+					).replace(/^\//, '');
+					const action = String(event.Action ?? event.status ?? '');
+					if (eventName === name && action === 'destroy') resolve('gone');
+				},
+				() => {
+					/* A closed stream leaves the deadline to decide. */
+				},
+			);
+		});
+		// Subscribed first, so a removal that ends now is either seen here or
+		// delivered as an event.
+		const outcome = await Promise.race([
+			gone,
+			driver
+				.inspect('container', name)
+				.then((container) => (container ? gone : ('gone' as const))),
+		]);
+		if (outcome === 'gone') return;
+	} finally {
+		if (timer !== undefined) timers.clearTimeout(timer);
+		unsubscribe?.();
+	}
+	if ((await forceRemove(driver, name)) === 'in-progress')
+		throw new EngineCommandError(
+			'conflict',
+			'the engine did not finish removing the container',
+		);
+}
+
 export type EngineAvailability =
 	| { readonly available: true; readonly details: EngineDetails }
 	| { readonly available: false; readonly reason: EngineUnavailableReason };
