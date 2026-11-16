@@ -131,7 +131,7 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
 			id,
 			stat: {
 				name: m.path,
-				kind: 'file',
+				kind: home.get(m.path) ?? 'file',
 				size: files.get(m.path)?.length ?? 0,
 				mtime: 1,
 			},

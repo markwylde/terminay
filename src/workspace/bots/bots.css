@@ -1155,3 +1155,10 @@ button.bots-build-step__toggle:hover {
 	justify-content: flex-end;
 	gap: 6px;
 }
+/* The actions column is as narrow as its button and sits at the table's right edge. */
+.bots-files .bots-tbl th:last-child,
+.bots-files .bots-tbl td:last-child {
+	width: 1%;
+	white-space: nowrap;
+	text-align: right;
+}

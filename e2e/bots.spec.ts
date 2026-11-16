@@ -741,6 +741,7 @@ test.describe('Home: Bots', () => {
 	});
 
 	test('Files row actions live in the app context menu, by button, right-click and keyboard', async ({
+		electronApp,
 		mainWindow,
 		tempDir,
 	}, testInfo) => {
@@ -777,10 +778,20 @@ test.describe('Home: Bots', () => {
 		const icon = (await more('hello').locator('svg').boundingBox())!;
 		expect(icon.width).toBe(16);
 		expect(icon.height).toBe(16);
+		// The button sits at the table's right edge, inside the cell padding.
+		const table = (await files.locator('table.bots-tbl').boundingBox())!;
+		expect(
+			table.x + table.width - (button.x + button.width),
+		).toBeLessThanOrEqual(16);
 
-		// A file's menu, from its button.
+		// A file's menu, from its button, with its right edge on the button's.
 		await more('hello').click();
 		await expect(menu).toBeVisible();
+		const opened = (await menu.boundingBox())!;
+		expect(opened.x).toBeLessThan(button.x);
+		expect(
+			Math.abs(opened.x + opened.width - (button.x + button.width)),
+		).toBeLessThanOrEqual(2);
 		await expect(more('hello')).toHaveAttribute('aria-expanded', 'true');
 		expect(await labels()).toEqual(['Preview', 'Download', 'Rename', 'Delete']);
 		await expect(
@@ -796,6 +807,31 @@ test.describe('Home: Bots', () => {
 		// A press on the open menu's own button closes it.
 		await more('hello').click();
 		await expect(menu).toHaveCount(0);
+
+		// Download goes through the Desktop host save (ADR-0130): the user picks
+		// the destination, then the bytes stream from the Files helper.
+		const saves = path.join(tempDir, 'saves');
+		await mkdir(saves, { recursive: true });
+		await electronApp.evaluate(({ dialog }, dir) => {
+			dialog.showSaveDialog = (async (
+				_window: unknown,
+				options: { defaultPath?: string },
+			) => ({
+				canceled: false,
+				filePath: `${dir}/${String(options?.defaultPath).split('/').pop()}`,
+			})) as typeof dialog.showSaveDialog;
+		}, saves);
+		await more('hello').click();
+		await menu.locator('.context-menu__item', { hasText: 'Download' }).click();
+		await expect
+			.poll(() => readFile(path.join(saves, 'hello'), 'utf8').catch(() => ''))
+			.toBe('hello');
+		await row('notes').click({ button: 'right' });
+		await menu.locator('.context-menu__item', { hasText: 'Download' }).click();
+		await expect
+			.poll(() => existsSync(path.join(saves, 'notes.tar')))
+			.toBe(true);
+		await expect(files.locator('.bots-note--error')).toHaveCount(0);
 
 		// A folder's menu, by right-click at the pointer.
 		await row('notes').click({ button: 'right', position: { x: 60, y: 8 } });

@@ -128,6 +128,15 @@ function belowElement(element: Element): { x: number; y: number } {
 	return { x: box.left, y: box.bottom };
 }
 
+/** The context menu's minimum width (`.context-menu` in App.css). */
+const MENU_WIDTH = 180;
+
+/** Below a right-aligned trigger, with the menu's right edge on the trigger's. */
+function belowRightEdge(element: Element): { x: number; y: number } {
+	const box = element.getBoundingClientRect();
+	return { x: Math.max(8, box.right - MENU_WIDTH), y: box.bottom };
+}
+
 export function BotFilesView({
 	server,
 	bot,
@@ -703,7 +712,7 @@ export function BotFilesView({
 															}
 															openMenu(
 																entry,
-																belowElement(event.currentTarget),
+																belowRightEdge(event.currentTarget),
 																event.detail === 0,
 															);
 														}}
