@@ -437,12 +437,20 @@ export class ServerUpgradeService {
 	 * next occasion; it never rejects, so it cannot disturb a connection.
 	 */
 	check(): Promise<void> {
+		return this.checkInstall(false);
+	}
+
+	private checkInstall(duringAttempt: boolean): Promise<void> {
 		const upgrader = this.upgrader;
 		if (this.disposed || upgrader === undefined) return Promise.resolve();
 		// The upgrader is busy replacing this server; it is asked again when
 		// the attempt ends. A server that took the attempt up asks once, to
 		// learn where the upgrader's record is.
-		if (this.pending() !== undefined && this.report !== undefined)
+		if (
+			!duringAttempt &&
+			this.pending() !== undefined &&
+			this.report !== undefined
+		)
 			return Promise.resolve();
 		if (this.checking !== undefined) return this.checking;
 		this.lastCheckAt = this.now();
@@ -764,6 +772,10 @@ export class ServerUpgradeService {
 	/** A spawned upgrader exited while this server still runs. */
 	private async upgraderExited(id: string): Promise<void> {
 		await this.readAndApply();
+		// An upgrader that keeps no run records says how it ended only in its
+		// check report.
+		if (this.pending()?.id === id && !this.canHearRuns())
+			await this.checkInstall(true);
 		if (this.pending()?.id !== id) return;
 		const attempt = this.pending() as Attempt;
 		await this.end(id, {
@@ -991,6 +1003,18 @@ export class ServerUpgradeService {
 			this.outcome = previous.outcome;
 			throw error;
 		}
+		// An upgrader that keeps no run records cannot be bound to an attempt;
+		// its last outcome, written after the attempt began, is how it ended.
+		const legacy = this.pending();
+		const result = report.lastResult;
+		if (
+			legacy !== undefined &&
+			!this.canHearRuns() &&
+			result !== null &&
+			result.outcome !== 'started' &&
+			timeOf(result.at) >= legacy.startedAt
+		)
+			void this.end(legacy.id, endingOf(result, this.now()));
 		// A server that took an attempt up learns only now whether it can hear
 		// the upgrader start.
 		const pending = this.pending();
@@ -1066,6 +1090,13 @@ export class ServerUpgradeService {
 	 * run that began before this process: finishing, as the server it
 	 * restarted is this one. */
 	private stageOf(attempt: Attempt): ServerUpgradeAttemptStage {
+		// An upgrader that keeps no run records is never heard to start: once
+		// handed over, the attempt is installing, and finishing on a server
+		// that took it up.
+		if (attempt.run === undefined && this.report !== undefined && !this.canHearRuns())
+			return attempt.startedAt < this.processStartedAt
+				? 'finishing'
+				: 'installing';
 		if (attempt.run === undefined) return 'requested';
 		return attempt.run.startedAt < this.processStartedAt
 			? 'finishing'

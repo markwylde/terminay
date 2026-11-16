@@ -313,7 +313,8 @@ test('an attempt-aware device follows its attempt by request id, and every devic
 	// The status a released client reads keeps its shape.
 	assert.deepEqual(Object.keys(status.upgrade).sort(), ['mode', 'startedAt', 'state']);
 	const attempt = await seen;
-	assert.equal(attempt.stage, 'requested');
+	// This upgrader keeps no run records, so it is installing once handed over.
+	assert.equal(attempt.stage, 'installing');
 	assert.equal(attempt.kind, 'upgrade');
 	assert.deepEqual(await phone.upgrade.refreshAttempt(), attempt);
 	// A request id is a bounded token, not a place to put anything else.

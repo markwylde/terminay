@@ -41,6 +41,13 @@ While an attempt is pending, the server SHALL report its stage:
 
 While an attempt is pending, the server SHALL watch the install's upgrade record and SHALL NOT poll it. The first run whose start record is stamped at or after the attempt's start SHALL be bound to the attempt. Only an ending from the bound run SHALL end the attempt, whichever server reads it. The attempt SHALL take the ending's kind: succeeded, rolled back, unchanged, or failed with nothing changed. The server SHALL refuse a new attempt while the record shows a run that started within the last thirty minutes and has not ended.
 
+An upgrader whose check names no record path cannot be bound. The server SHALL report such an attempt as `installing` once handed over, or `finishing` on a server that took it up. It SHALL end the attempt with that upgrader's last outcome stamped at or after the attempt's start, read when the upgrader exits or when the server checks after starting.
+
+#### Scenario: An upgrader without run records
+
+- **WHEN** a server's upgrader reports no record path, and after a handed-over attempt began it records a rolled-back outcome and restarts the server
+- **THEN** the restarted server ends the attempt as rolled back with that outcome's reason
+
 #### Scenario: Nothing to install
 
 - **WHEN** a system-scope server hands an attempt to the helper and the helper finds the build is already installed

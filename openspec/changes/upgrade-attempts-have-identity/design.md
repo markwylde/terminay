@@ -90,6 +90,8 @@ A spawned upgrader's exit triggers one `readRecord()`. If the bound run (or, wit
 
 A new start is refused (`in-progress`) while the record holds a `started` younger than 30 minutes with no ending. A run is then in flight on the host, possibly an operator's.
 
+An upgrader whose check names no `recordPath` (one built before run records, or a test stand-in) cannot be bound. Its attempt reads `installing` once handed over, or `finishing` on a server that took it up. It has no bind deadline. It ends on the check report's `lastResult` when that is an ending stamped at or after the attempt's start. That report is read at a spawned upgrader's exit, which runs a check even while the attempt is pending, and by the first check of a server that took the attempt up. Otherwise it ends at its expiry.
+
 If the watch cannot be armed, a diagnostic is logged, and the attempt still ends at its deadlines and on a spawned upgrader's exit. This follows ADR-0028 (which supersedes ADR-0022): a file change is observed by a watch, and nothing is polled.
 
 At startup, the record's path is known only after the first check. The service runs that check at once when it has a pending attempt or a stale record, and arms the watch from its report. Until then it reports the attempt as persisted.

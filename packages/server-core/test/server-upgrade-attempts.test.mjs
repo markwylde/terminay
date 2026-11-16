@@ -564,3 +564,81 @@ test('the file store keeps an attempt in the data root, durably, and ignores gar
 		await rm(dataRoot, { recursive: true, force: true });
 	}
 });
+
+/** An upgrader from before run records: its check names no record, and its
+ * last outcome carries no run. */
+function legacyUpgrader(machine) {
+	return {
+		async check() {
+			const report = await machine.upgrader.check();
+			const { recordPath: _recordPath, ...rest } = report;
+			return { ...rest, lastResult: machine.legacyResult ?? null };
+		},
+		trigger: (handover) => machine.upgrader.trigger(handover),
+	};
+}
+
+test('an upgrader that keeps no run records is followed by its outcome', async (t) => {
+	const machine = host();
+	machine.spawn = true;
+	const { service } = machine.serve(t, REV_A, {
+		upgrader: legacyUpgrader(machine),
+	});
+	await service.check();
+	await service.startUpgrade('in-place', { requestId: 'r1' });
+	// It is never heard to start, so once handed over it is installing, and
+	// no bind deadline fails it.
+	assert.equal(service.attemptState.attempt.stage, 'installing');
+	await machine.clock.advance(BIND + 1_000);
+	assert.equal(service.attemptState.attempt.ending, undefined);
+	// It exits having written its outcome: the exit asks for it.
+	machine.legacyResult = {
+		from: '6.10.0-main.3493.canary',
+		to: '6.10.0-main.3494.canary',
+		outcome: 'succeeded',
+		at: machine.iso(),
+	};
+	machine.exits[0]();
+	await settle();
+	const { ending } = service.attemptState.attempt;
+	assert.equal(ending.kind, 'succeeded');
+	assert.equal(ending.to, '6.10.0-main.3494.canary');
+});
+
+test('a server restarted by an upgrader without run records ends the attempt on its outcome', async (t) => {
+	const machine = host();
+	const before = machine.serve(t, REV_A, { upgrader: legacyUpgrader(machine) });
+	await before.service.check();
+	await before.service.startUpgrade('in-place', { requestId: 'r1' });
+	const { id } = before.service.attemptState.attempt;
+	before.service.dispose();
+	// An outcome from before the attempt is not its.
+	machine.legacyResult = {
+		from: '6.10.0-main.3492.canary',
+		to: '6.10.0-main.3493.canary',
+		outcome: 'succeeded',
+		at: machine.iso(-60_000),
+	};
+	await machine.clock.advance(30_000);
+	const old = machine.serve(t, REV_A, { upgrader: legacyUpgrader(machine) });
+	old.service.start();
+	await settle();
+	assert.equal(old.service.attemptState.attempt.id, id);
+	assert.equal(old.service.attemptState.attempt.stage, 'finishing');
+	old.service.dispose();
+	// The one written after it is.
+	machine.legacyResult = {
+		from: '6.10.0-main.3493.canary',
+		to: '6.10.0-main.3494.canary',
+		outcome: 'rolled-back',
+		reason: 'the new release did not become ready',
+		at: machine.iso(),
+	};
+	const after = machine.serve(t, REV_A, { upgrader: legacyUpgrader(machine) });
+	after.service.start();
+	await settle();
+	const attempt = after.service.attemptState.attempt;
+	assert.equal(attempt.id, id);
+	assert.equal(attempt.ending.kind, 'rolled-back');
+	assert.equal(attempt.ending.reason, 'the new release did not become ready');
+});
