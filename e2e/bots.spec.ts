@@ -814,6 +814,121 @@ test.describe('Home: Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('a narrow bot tab keeps its header to the avatar, name and a settings menu', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(
+			mainWindow,
+			'Codexia with a rather long name that cannot fit on a phone',
+		);
+		await chat(tab);
+		await mainWindow.setViewportSize({ width: 390, height: 800 });
+		// A phone-width Home opens its sidebar as a drawer over the tab; close it.
+		const sidebar = mainWindow.locator('[data-compact-sidebar-toggle="true"]');
+		if ((await sidebar.getAttribute('aria-pressed')) === 'true') {
+			await sidebar.click();
+			await expect(sidebar).toHaveAttribute('aria-pressed', 'false');
+		}
+
+		const botTab = tab.locator('[data-terminay-bot-tab]');
+		const header = botTab.locator('.bots-ahead');
+		const name = header.locator('.bots-ahead__name b');
+		const settings = header.locator('[data-terminay-bot-settings]');
+		await expect(settings).toBeVisible();
+		await expect(header.locator('.bots-ahead__name span')).toBeHidden();
+		await expect(
+			header.locator('[data-terminay-bot-mode-button="configure"]'),
+		).toBeHidden();
+		await expect(
+			header.getByRole('button', { name: 'Disable bot' }),
+		).toBeHidden();
+		// The chip is hidden from sight but still read out.
+		const chip = header.locator('.bots-chip');
+		expect((await chip.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
+		await expect(chip).toHaveText(/\S/);
+		// The name ends before the settings control and never overlaps it.
+		const nameBox = (await name.boundingBox())!;
+		const gearBox = (await settings.boundingBox())!;
+		expect(nameBox.x + nameBox.width).toBeLessThanOrEqual(gearBox.x);
+		expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+			true,
+		);
+		expect(
+			await header.evaluate((el) => el.scrollWidth <= el.clientWidth),
+		).toBe(true);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-header-narrow.png'),
+		});
+
+		// The menu marks Chat, focuses it, and switches to Configure.
+		await settings.click();
+		const menu = header.getByRole('menu', { name: 'Bot settings' });
+		await expect(menu).toBeVisible();
+		await expect(settings).toHaveAttribute('aria-expanded', 'true');
+		const chatItem = menu.getByRole('menuitemradio', { name: 'Chat' });
+		await expect(chatItem).toHaveAttribute('aria-checked', 'true');
+		await expect(chatItem).toBeFocused();
+		await expect(
+			menu.getByRole('menuitem', { name: 'Disable bot' }),
+		).toBeVisible();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-header-narrow-menu.png'),
+		});
+		await mainWindow.keyboard.press('ArrowDown');
+		await expect(
+			menu.getByRole('menuitemradio', { name: 'Configure' }),
+		).toBeFocused();
+		await mainWindow.keyboard.press('Enter');
+		await expect(menu).toHaveCount(0);
+		await expect(botTab).toHaveAttribute('data-terminay-bot-mode', 'configure');
+		await expect(settings).toBeFocused();
+
+		// Escape closes the menu and returns focus to the control.
+		await settings.click();
+		await expect(
+			menu.getByRole('menuitemradio', { name: 'Configure' }),
+		).toHaveAttribute('aria-checked', 'true');
+		await mainWindow.keyboard.press('Escape');
+		await expect(menu).toHaveCount(0);
+		await expect(settings).toBeFocused();
+
+		// Disabling from the menu shows a Disabled chip; enabling hides it again.
+		await settings.click();
+		await menu.getByRole('menuitem', { name: 'Disable bot' }).click();
+		await expect(chip).toHaveText('Disabled');
+		await expect(chip).toBeVisible();
+		expect((await chip.boundingBox())!.width).toBeGreaterThan(1);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-header-narrow-disabled.png'),
+		});
+		await settings.click();
+		await menu.getByRole('menuitem', { name: 'Enable bot' }).click();
+		await expect(chip).not.toHaveText('Disabled');
+		expect((await chip.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
+
+		// Back to Chat from the menu.
+		await settings.click();
+		await menu.getByRole('menuitemradio', { name: 'Chat' }).click();
+		await expect(botTab).toHaveAttribute('data-terminay-bot-mode', 'chat');
+
+		// A wide tab keeps the full header and no settings control.
+		await mainWindow.setViewportSize({ width: 1280, height: 850 });
+		await expect(settings).toBeHidden();
+		await expect(
+			header.locator('[data-terminay-bot-mode-button="configure"]'),
+		).toBeVisible();
+		await expect(
+			header.getByRole('button', { name: 'Disable bot' }),
+		).toBeVisible();
+		await expect(header.locator('.bots-ahead__name span')).toBeVisible();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-header-wide.png'),
+		});
+	});
+
 	test('a trigger status says Disabled only when the trigger or its bot is off', async ({
 		mainWindow,
 		tempDir,
@@ -917,7 +1032,9 @@ test.describe('Home: Bots', () => {
 		await expect(needsYou).toContainText('refused the login');
 		await expect(needsYou).toContainText('Add the support portal password');
 		// Its firings are skipped while it waits, so nothing is coming up.
-		await expect(row.locator('.bots-trigrow__when.bots-mono')).toHaveText('Paused');
+		await expect(row.locator('.bots-trigrow__when.bots-mono')).toHaveText(
+			'Paused',
+		);
 		await expect(tab.locator('[data-terminay-bot-upcoming-strip]')).toHaveCount(
 			0,
 		);
@@ -956,7 +1073,9 @@ test.describe('Home: Bots', () => {
 		await row.locator(`[data-terminay-bot-trigger-resume="${id}"]`).click();
 		await expect(status).toHaveText('Waiting');
 		await expect(needsYou).toHaveCount(0);
-		await expect(row.locator('.bots-trigrow__when.bots-mono')).not.toHaveText('Paused');
+		await expect(row.locator('.bots-trigrow__when.bots-mono')).not.toHaveText(
+			'Paused',
+		);
 		await mainWindow.screenshot({
 			path: testInfo.outputPath('trigger-resumed.png'),
 		});
