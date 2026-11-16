@@ -30,5 +30,5 @@
 
 ## 6. Ship
 
-- [ ] 6.1 Commit, push the branch to `origin` (Gitea), and open the pull request with `tea`. Verify: the PR exists on Gitea and links this change.
+- [x] 6.1 Commit, push the branch to `origin` (Gitea), and open the pull request with `tea`. Verify: the PR exists on Gitea and links this change.
 - [ ] 6.2 Read back every commit status on the PR head SHA. Verify: each is `success` or `skipped`, including the real bot-container job.
