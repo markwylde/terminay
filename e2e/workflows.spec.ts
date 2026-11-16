@@ -157,10 +157,10 @@ async function createTemplate(settings: Page): Promise<void> {
 	await settings.getByLabel('Opening prompt').fill('Ship the e2e workflow.\n\nTyped, not pasted.');
 	await settings.getByLabel('Step 1 title').fill('Explore');
 	await settings.getByLabel('Step 1 icon').selectOption('eye');
-	await settings.getByRole('button', { name: 'Add step', exact: true }).click();
+	await settings.getByRole('button', { name: '+ Add step at the end', exact: true }).click();
 	await settings.getByLabel('Step 2 title').fill('Build');
 	await settings.getByLabel('Step 2 icon').selectOption('wrench');
-	await settings.getByRole('button', { name: 'Add step', exact: true }).click();
+	await settings.getByRole('button', { name: '+ Add step at the end', exact: true }).click();
 	await settings.getByLabel('Step 3 title').fill('Verify');
 	// The third step moves up from the keyboard, and its handle keeps the focus.
 	const handle = settings.getByRole('button', { name: 'Move step 3', exact: true });

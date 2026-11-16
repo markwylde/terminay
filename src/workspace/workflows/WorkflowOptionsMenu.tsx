@@ -136,6 +136,8 @@ export function WorkflowOptionsMenu(props: WorkflowOptionsMenuProps) {
 				aria-expanded={open}
 				aria-controls={open ? menuId : undefined}
 				onKeyDown={(event) => {
+					// With the menu closed, Escape belongs to whatever holds the button (an overlay closes).
+					if (event.key === 'Escape' && !open) return;
 					event.stopPropagation();
 					if (event.key === 'ArrowDown' && !open) {
 						event.preventDefault();
