@@ -21,8 +21,14 @@ export type TranscriptItem =
 			kind: 'user';
 			key: string;
 			text: string;
-			/** Durable message images, shown after the plain text. */
-			attachments?: readonly Readonly<{ id: string; name: string }>[];
+			/** Durable message attachments, shown after the plain text: images
+			 * inline, every other type as a download-only file chip. */
+			attachments?: readonly Readonly<{
+				id: string;
+				name: string;
+				mime: string;
+				size: number;
+			}>[];
 	  }>
 	| Readonly<{ kind: 'agent'; key: string; text: string }>
 	| Readonly<{ kind: 'thought'; key: string; text: string }>

@@ -22,8 +22,11 @@ import type {
 } from '@terminay/protocol';
 import {
 	BOT_STARTUP_RETRIES_DEFAULT,
+	botAttachmentLimit,
+	botAttachmentType,
 	botTriggerOrigin,
 	foldTranscript,
+	isBotImageMime,
 } from '@terminay/protocol';
 import type { OperationRegistries, RequestContext } from '../types.js';
 import {
@@ -45,11 +48,10 @@ import { BotFailureFollowUps } from './failureFollowUps.js';
 /** Shown while a blocked bot's earlier process cleanup is still unconfirmed. */
 const BOT_CLEANUP_UNCONFIRMED =
 	"An earlier execution's processes could not be cleaned up in the bot container. Check the container engine, then send a new message.";
+
 import {
-	BOT_IMAGE_BYTES,
-	botImageMime,
-	removeExecutionImages,
-	writeExecutionImages,
+	removeExecutionAttachments,
+	writeExecutionAttachments,
 } from './images.js';
 import type { BotMemories } from './memories.js';
 import { BotMessageStore } from './messages.js';
@@ -799,27 +801,27 @@ export class BotService extends EventEmitter {
 			lease?.release();
 		}
 	}
-	/** Stage one user-supplied image; its bytes are untrusted and sniffed by the store. */
-	async uploadUserImage(
+	/** Stage one user-supplied file of any type. Its bytes are untrusted: the
+	 * store types them by content and bounds them by that type. */
+	async uploadUserFile(
 		botId: string,
 		name: string,
 		bytes: Uint8Array,
 	): Promise<{ token: string; attachment: Omit<BotMessageAttachment, 'id'> }> {
 		this.assertEnabled(botId);
-		if (bytes.length < 1 || bytes.length > BOT_IMAGE_BYTES)
-			throw new BotError('validation', 'Images must be 2 MiB or smaller');
+		if (bytes.length < 1)
+			throw new BotError('validation', 'Empty files cannot be attached');
+		if (bytes.length > botAttachmentLimit(botAttachmentType(bytes)))
+			throw new BotError(
+				'validation',
+				isBotImageMime(botAttachmentType(bytes))
+					? 'Images must be 2 MiB or smaller'
+					: 'Files must be 5 MiB or smaller',
+			);
 		return this.serialize(botId, async () => {
 			if (this.deleting.has(botId))
 				throw new BotError('conflict', 'This bot is being deleted.');
 			const safe = await this.redactMessage(botId, name);
-			try {
-				botImageMime(bytes);
-			} catch {
-				throw new BotError(
-					'validation',
-					'Only PNG, JPEG, GIF and WebP images can be attached',
-				);
-			}
 			return this.messages.stage(botId, safe, bytes);
 		});
 	}
@@ -1379,7 +1381,9 @@ export class BotService extends EventEmitter {
 		// Run now has no next firing to make way for; only a scheduled firing does.
 		const origin = this.sessions.get(id).origin;
 		const next =
-			origin.kind === 'trigger' ? this.triggers.nextDue(origin.triggerId) : null;
+			origin.kind === 'trigger'
+				? this.triggers.nextDue(origin.triggerId)
+				: null;
 		const window = firstAttemptAt + BOT_STARTUP_WINDOW_MS;
 		return next === null ? window : Math.min(window, next);
 	}
@@ -1495,21 +1499,26 @@ export class BotService extends EventEmitter {
 		/** Where startup is, for an honest final failure before hand-over. */
 		let stage: BotStartupStage = 'prepare';
 		this.starting.add(record.id);
-		// The trigger message's images, as snapshotted at dispatch.
+		// The trigger message's attachments, as snapshotted at dispatch. Every
+		// one is copied into the container; images also go in as model input.
+		let files: { name: string; mime: string; bytes: Uint8Array }[] = [];
 		let images: { mime: string; bytes: Uint8Array }[] = [];
+		let filePaths: string[] = [];
 		let imagePaths: string[] = [];
-		let imageDriver: EngineDriver | undefined;
+		let fileDriver: EngineDriver | undefined;
 		try {
 			this.requireSignIn(this.bots.get(record.botId).signIn);
 			const snapshot = record.runtime?.triggerAttachments ?? [];
 			try {
-				images = snapshot.map((a) =>
-					this.messages.attachment(record.botId, a.id),
-				);
+				files = snapshot.map((a) => ({
+					name: a.name,
+					...this.messages.attachment(record.botId, a.id),
+				}));
+				images = files.filter((f) => isBotImageMime(f.mime));
 			} catch {
 				throw new BotError(
 					'not_found',
-					'An attached image is no longer available; send it again.',
+					`An attached ${snapshot.every((a) => isBotImageMime(a.mime)) ? 'image' : 'file'} is no longer available; send it again.`,
 				);
 			}
 			if (!live) {
@@ -1572,16 +1581,21 @@ export class BotService extends EventEmitter {
 						if (record.snapshot.signIn.kind === 'device')
 							await this.requireDeviceLogin(driver, record.botId, agent);
 						stage = 'prepare';
-						if (images.length && !imagePaths.length) {
+						if (files.length && !filePaths.length) {
 							failureReason =
-								'The attached images could not be copied into the bot container.';
-							imageDriver = driver;
-							imagePaths = await writeExecutionImages(
+								'The attached files could not be copied into the bot container.';
+							// Set before writing, so a part-way failure still removes
+							// the copies already made.
+							fileDriver = driver;
+							filePaths = await writeExecutionAttachments(
 								driver,
 								this.hooks.serverId ?? 'server',
 								record.botId,
 								record.id,
-								images,
+								files,
+							);
+							imagePaths = filePaths.filter((_, index) =>
+								isBotImageMime(files[index]!.mime),
 							);
 						}
 						credential = await this.hooks.credentials.acquire(
@@ -1830,8 +1844,8 @@ export class BotService extends EventEmitter {
 				if (!(error instanceof BotCleanupError)) throw error;
 				cleanupFailure = error;
 			}
-			if (imageDriver)
-				await removeExecutionImages(imageDriver, record.botId, record.id);
+			if (fileDriver)
+				await removeExecutionAttachments(fileDriver, record.botId, record.id);
 			this.runtime.revoke(record.id);
 			this.runtime.changed(record.id, 'execution.finished');
 			this.sessions.commit(record.id);

@@ -1715,11 +1715,12 @@ test.describe('Home: Bots', () => {
 		const composer = tab.locator('[data-terminay-bot-composer]');
 		const form = tab.locator('[data-terminay-bot-composer-form]');
 		const thumbs = tab.locator(
-			'[data-terminay-bot-pending-images] .bots-composer__image',
+			'[data-terminay-bot-pending-images] [data-terminay-bot-pending-kind="image"]',
 		);
 		const refusal = tab.locator('[data-terminay-bot-attach-error]');
 		const shot = async (name: string) =>
 			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+		const pngHeader = Buffer.from('89504e470d0a1a0a', 'hex');
 		// Real PNGs, drawn in the renderer, so thumbnails have something to show.
 		const png = async (color: string): Promise<Buffer> =>
 			Buffer.from(
@@ -1803,21 +1804,22 @@ test.describe('Home: Bots', () => {
 		await expect(thumbs).toHaveCount(3);
 		await shot('composer-pending-images');
 
-		// A non-image and an oversized image are refused; pending stay unchanged.
+		// An oversized image and an oversized file are refused; pending stay unchanged.
 		const input = tab.locator('[data-terminay-bot-attach-input]');
-		await input.setInputFiles({
-			name: 'notes.txt',
-			mimeType: 'text/plain',
-			buffer: Buffer.from('not an image'),
-		});
-		await expect(refusal).toContainText('PNG, JPEG, GIF and WebP');
-		await expect(thumbs).toHaveCount(3);
 		await input.setInputFiles({
 			name: 'huge.png',
 			mimeType: 'image/png',
-			buffer: Buffer.alloc(2 * 1024 * 1024 + 1),
+			buffer: Buffer.concat([pngHeader, Buffer.alloc(2 * 1024 * 1024)]),
 		});
-		await expect(refusal).toContainText('2 MiB');
+		await expect(refusal).toContainText('Images must be 2 MiB');
+		await expect(thumbs).toHaveCount(3);
+		await input.setInputFiles({
+			name: 'huge.zip',
+			mimeType: 'application/zip',
+			buffer: Buffer.alloc(5 * 1024 * 1024 + 1),
+		});
+		await expect(refusal).toContainText('Files must be 5 MiB');
+		await expect(thumbs).toHaveCount(3);
 		await input.setInputFiles({
 			name: 'red.png',
 			mimeType: 'image/png',
@@ -1838,20 +1840,22 @@ test.describe('Home: Bots', () => {
 			await tab.getByRole('button', { name: `Remove ${name}` }).click();
 		await expect(thumbs).toHaveCount(1);
 
-		// A send the server refuses keeps the draft and the pending images.
+		// A send the server refuses (its name is too long to store) keeps the
+		// draft and the pending images.
+		const longName = `${'n'.repeat(300)}.png`;
 		await input.setInputFiles({
-			name: 'fake.png',
+			name: longName,
 			mimeType: 'image/png',
-			buffer: Buffer.from('this is not really a png'),
+			buffer: await png('#a3abb9'),
 		});
 		await expect(thumbs).toHaveCount(2);
 		await tab.locator('[data-terminay-bot-send]').click();
 		await expect(tab.locator('[data-terminay-bot-chat-error]')).toContainText(
-			'PNG, JPEG, GIF and WebP',
+			'file name',
 		);
 		await expect(composer).toHaveValue('typed text');
 		await expect(thumbs).toHaveCount(2);
-		await tab.getByRole('button', { name: 'Remove fake.png' }).click();
+		await tab.getByRole('button', { name: `Remove ${longName}` }).click();
 
 		// An image-only message posts with Enter and shows the image inline.
 		await composer.fill('');
@@ -1865,6 +1869,122 @@ test.describe('Home: Bots', () => {
 		await expect(transcript).toContainText('secret', { timeout: 30_000 });
 		await expect(tab.locator('[data-terminay-bot-send]')).toBeDisabled();
 		await shot('chat-image-sent');
+	});
+
+	test('any file is attached as a chip, sent beside an image and downloaded intact', async ({
+		electronApp,
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Jackdaw'));
+		const composer = tab.locator('[data-terminay-bot-composer]');
+		const form = tab.locator('[data-terminay-bot-composer-form]');
+		const pending = (kind: 'image' | 'file') =>
+			tab.locator(
+				`[data-terminay-bot-pending-images] [data-terminay-bot-pending-kind="${kind}"]`,
+			);
+		const input = tab.locator('[data-terminay-bot-attach-input]');
+		const shot = async (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+		const zip = Buffer.concat([
+			Buffer.from('504b0304', 'hex'),
+			Buffer.from('terminay zip payload '.repeat(4000)),
+		]);
+		const image = Buffer.from(
+			await mainWindow.evaluate(() => {
+				const canvas = document.createElement('canvas');
+				canvas.width = 160;
+				canvas.height = 100;
+				const g = canvas.getContext('2d')!;
+				g.fillStyle = '#7c5cff';
+				g.fillRect(0, 0, 160, 100);
+				g.fillStyle = '#fff';
+				g.font = 'bold 28px sans-serif';
+				g.fillText('IMG', 50, 60);
+				return canvas.toDataURL('image/png').split(',')[1]!;
+			}),
+			'base64',
+		);
+
+		// The picker has no type filter; a zip shows as a chip with its size.
+		await expect(input).not.toHaveAttribute('accept', /.+/);
+		const chooser = mainWindow.waitForEvent('filechooser');
+		await tab.locator('[data-terminay-bot-attach]').click();
+		await (await chooser).setFiles({
+			name: 'logs.zip',
+			mimeType: 'application/zip',
+			buffer: zip,
+		});
+		await expect(pending('file')).toHaveCount(1);
+		await expect(pending('file')).toContainText('logs.zip');
+		await expect(pending('file')).toContainText('KB');
+		// A dropped PDF is a chip too.
+		await form.evaluate((el) => {
+			const data = new DataTransfer();
+			data.items.add(
+				new File(['%PDF-1.7 report'], 'report.pdf', {
+					type: 'application/pdf',
+				}),
+			);
+			for (const type of ['dragenter', 'dragover', 'drop'])
+				el.dispatchEvent(
+					new DragEvent(type, {
+						dataTransfer: data,
+						bubbles: true,
+						cancelable: true,
+					}),
+				);
+		});
+		await expect(pending('file')).toHaveCount(2);
+		// A zip claiming to be a PNG is still a chip: content decides.
+		await input.setInputFiles({
+			name: 'x.png',
+			mimeType: 'image/png',
+			buffer: zip,
+		});
+		await expect(pending('file')).toHaveCount(3);
+		await tab.getByRole('button', { name: 'Remove x.png' }).click();
+		await tab.getByRole('button', { name: 'Remove report.pdf' }).click();
+		await input.setInputFiles({
+			name: 'purple.png',
+			mimeType: 'image/png',
+			buffer: image,
+		});
+		await expect(pending('image')).toHaveCount(1);
+		await expect(pending('file')).toHaveCount(1);
+		await composer.fill('Here are the logs');
+		await shot('composer-image-and-zip');
+
+		// Sent: the image inline and the zip as a download chip.
+		await composer.press('Enter');
+		await expect(pending('file')).toHaveCount(0);
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await expect(transcript.locator('img[alt="purple.png"]')).toBeVisible({
+			timeout: 30_000,
+		});
+		const chip = transcript.locator('[data-terminay-bot-file-chip="logs.zip"]');
+		await expect(chip).toBeVisible();
+		await expect(chip).toContainText('KB');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		await shot('chat-image-and-zip-sent');
+
+		// Activating the chip saves the exact bytes through the host save.
+		const target = path.join(tempDir, 'saved-logs.zip');
+		await electronApp.evaluate(({ dialog }, filePath) => {
+			dialog.showSaveDialog = (async () => ({
+				canceled: false,
+				filePath,
+			})) as typeof dialog.showSaveDialog;
+		}, target);
+		await chip.click();
+		await expect
+			.poll(async () =>
+				existsSync(target) ? (await readFile(target)).length : 0,
+			)
+			.toBe(zip.length);
+		expect((await readFile(target)).equals(zip)).toBe(true);
 	});
 
 	test('a turn running when Terminay is killed comes back interrupted', async ({

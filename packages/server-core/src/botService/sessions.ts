@@ -4,6 +4,7 @@ import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	assertJsonValue,
+	BOT_OPAQUE_ATTACHMENT_MIME,
 	type BotFailureCause,
 	type BotFailureRef,
 	type BotSession,
@@ -12,6 +13,7 @@ import {
 	type BotSessionSnapshot,
 	botEnvironmentId,
 	botTriggerOrigin,
+	isBotImageMime,
 	type JsonValue,
 } from '@terminay/protocol';
 import {
@@ -284,8 +286,9 @@ function parseRecord(value: unknown): BotSessionRecord {
 				if (
 					typeof a.id !== 'string' ||
 					!/^[a-f0-9]{24}$/.test(a.id) ||
-					!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
-						String(a.mime),
+					!(
+						isBotImageMime(String(a.mime)) ||
+						a.mime === BOT_OPAQUE_ATTACHMENT_MIME
 					) ||
 					!Number.isSafeInteger(a.size)
 				)

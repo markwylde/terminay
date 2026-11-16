@@ -307,15 +307,15 @@ test('uploaded images reach only the triggering execution, in the container and 
 	const recordInput = join(mkdtempSync(join(tmpdir(), 'bot-input-')), 'in.jsonl');
 	const r = await setup(t, { execs, env: { FAKE_RECORD_INPUT: recordInput } });
 	await assert.rejects(
-		r.service.uploadUserImage(r.bot.id, 'notes.txt', Buffer.from('hello')),
-		/PNG, JPEG, GIF and WebP/,
-	);
-	await assert.rejects(
-		r.service.uploadUserImage(r.bot.id, 'big.png', Buffer.alloc(2 * 1024 * 1024 + 1)),
+		r.service.uploadUserFile(
+			r.bot.id,
+			'big.png',
+			Buffer.concat([pngBytes(0), Buffer.alloc(2 * 1024 * 1024)]),
+		),
 		/2 MiB/,
 	);
-	const a = await r.service.uploadUserImage(r.bot.id, 'my shot.png', pngBytes(1));
-	const b = await r.service.uploadUserImage(r.bot.id, '../../etc/passwd.png', pngBytes(2));
+	const a = await r.service.uploadUserFile(r.bot.id, 'my shot.png', pngBytes(1));
+	const b = await r.service.uploadUserFile(r.bot.id, '../../etc/passwd.png', pngBytes(2));
 	const sent = await r.service.postUserMessage(r.bot.id, '', 'image-post', [a.token, b.token]);
 	assert.equal(sent.error, undefined, JSON.stringify(sent));
 	assert.deepEqual(sent.message.attachments.map((x) => x.name), ['my shot.png', '../../etc/passwd.png']);
@@ -360,7 +360,7 @@ for (const [ending, options, text] of [
 	test(`image copies are removed when an execution is ${ending}`, async (t) => {
 		const execs = [];
 		const r = await setup(t, { ...options, execs });
-		const a = await r.service.uploadUserImage(r.bot.id, 'x.png', pngBytes(5));
+		const a = await r.service.uploadUserFile(r.bot.id, 'x.png', pngBytes(5));
 		const sent = await r.service.postUserMessage(r.bot.id, text, `end-${ending}`, [a.token]);
 		if (ending === 'stopped') {
 			await until(r.service, 'changed', () => r.sessions.get(sent.sessionId).state === 'running');
@@ -374,12 +374,12 @@ for (const [ending, options, text] of [
 	});
 test('uploads to an unknown or deleted bot are refused', async (t) => {
 	const r = await setup(t);
-	await assert.rejects(r.service.uploadUserImage('zzzzzzzzzzzz', 'a.png', pngBytes(1)));
+	await assert.rejects(r.service.uploadUserFile('zzzzzzzzzzzz', 'a.png', pngBytes(1)));
 	assert.equal(r.service.messages.count(r.bot.id), 0);
 });
 test('an execution whose snapshotted image disappeared fails explicitly and keeps the message', async (t) => {
 	const r = await setup(t);
-	const a = await r.service.uploadUserImage(r.bot.id, 'gone.png', pngBytes(3));
+	const a = await r.service.uploadUserFile(r.bot.id, 'gone.png', pngBytes(3));
 	const original = r.service.messages.attachment.bind(r.service.messages);
 	r.service.messages.attachment = () => {
 		throw new Error('Attachment not found');
@@ -391,5 +391,88 @@ test('an execution whose snapshotted image disappeared fails explicitly and keep
 	assert.equal(record.state, 'failed');
 	assert.match(record.reason, /no longer available; send it again/);
 	assert.equal(r.service.messages.get(r.bot.id, sent.message.id).attachments.length, 1);
+});
+const zipBytes = (size = 64) => {
+	const bytes = Buffer.alloc(size, 7);
+	Buffer.from('504b0304', 'hex').copy(bytes);
+	return bytes;
+};
+test('any file type uploads, is typed by content and is bounded by its kind', async (t) => {
+	const r = await setup(t);
+	await assert.rejects(r.service.uploadUserFile(r.bot.id, 'empty.txt', Buffer.alloc(0)), /Empty/);
+	await assert.rejects(
+		r.service.uploadUserFile(r.bot.id, 'huge.zip', zipBytes(5 * 1024 * 1024 + 1)),
+		/5 MiB/,
+	);
+	assert.equal(r.service.messages.count(r.bot.id), 0);
+	// A claimed image name never makes opaque content an image.
+	const zip = zipBytes(3 * 1024 * 1024);
+	const a = await r.service.uploadUserFile(r.bot.id, 'logs.png', zip);
+	assert.equal(a.attachment.mime, 'application/octet-stream');
+	const small = await r.service.uploadUserFile(r.bot.id, 'notes.txt', Buffer.from('hello'));
+	const sent = await r.service.postUserMessage(r.bot.id, 'files', 'zip-post', [a.token, small.token]);
+	assert.equal(sent.error, undefined, JSON.stringify(sent));
+	const [first, second] = sent.message.attachments;
+	assert.deepEqual([first.name, first.mime, first.size], ['logs.png', 'application/octet-stream', zip.length]);
+	assert.deepEqual(Buffer.from(r.service.messages.attachment(r.bot.id, first.id).bytes), zip);
+	assert.equal(Buffer.from(r.service.messages.attachment(r.bot.id, second.id).bytes).toString(), 'hello');
+	await settled(r, sent.sessionId);
+});
+test('every attachment is copied into the container; only images become model input', async (t) => {
+	const execs = [];
+	const recordInput = join(mkdtempSync(join(tmpdir(), 'bot-input-')), 'in.jsonl');
+	const r = await setup(t, { execs, env: { FAKE_RECORD_INPUT: recordInput } });
+	const image = await r.service.uploadUserFile(r.bot.id, 'shot.png', pngBytes(9));
+	const zip = await r.service.uploadUserFile(r.bot.id, 'logs.zip', zipBytes());
+	const odd = await r.service.uploadUserFile(r.bot.id, 'notes.../../x y', Buffer.from('odd'));
+	const sent = await r.service.postUserMessage(r.bot.id, 'look', 'mixed-post', [image.token, zip.token, odd.token]);
+	await settled(r, sent.sessionId);
+	assert.equal(r.sessions.get(sent.sessionId).state, 'completed');
+	const writes = execs.filter((e) => e.args[2]?.includes('os.replace'));
+	assert.deepEqual(writes.map((e) => e.args[4]), ['1.png', '2.zip', '3.bin']);
+	assert.deepEqual(Buffer.from(writes[1].options.input), zipBytes());
+	const { readFileSync } = await import('node:fs');
+	const blocks = JSON.parse(readFileSync(recordInput, 'utf8').trim().split('\n')[0]).message.content;
+	assert.equal(blocks.filter((x) => x.type === 'image').length, 1);
+	const briefing = JSON.parse(blocks[0].text.split('\n').find((line) => line.startsWith('{"executionId":')));
+	assert.deepEqual(
+		briefing.triggerMessage.attachments.map((x) => [x.name, x.mime, x.path]),
+		[
+			['shot.png', 'image/png', `/tmp/terminay-attachments/${sent.sessionId}/1.png`],
+			['logs.zip', 'application/octet-stream', `/tmp/terminay-attachments/${sent.sessionId}/2.zip`],
+			['notes.../../x y', 'application/octet-stream', `/tmp/terminay-attachments/${sent.sessionId}/3.bin`],
+		],
+	);
+});
+test('a part-way copy failure fails the execution and removes the copies made', async (t) => {
+	const execs = [];
+	let writes = 0;
+	const r = await setup(t, {
+		execs,
+		copyFailure: (args) =>
+			args[2]?.includes('os.replace') && ++writes === 2 ? new Error('disk full') : undefined,
+	});
+	const image = await r.service.uploadUserFile(r.bot.id, 'shot.png', pngBytes(4));
+	const zip = await r.service.uploadUserFile(r.bot.id, 'logs.zip', zipBytes());
+	const sent = await r.service.postUserMessage(r.bot.id, 'look', 'copy-fail', [image.token, zip.token]);
+	await settled(r, sent.sessionId);
+	const record = r.sessions.get(sent.sessionId);
+	assert.equal(record.state, 'failed');
+	assert.match(record.reason, /could not be copied/);
+	await until(r.service, 'changed', () =>
+		execs.some((e) => e.args[2]?.includes('rmtree') && e.args[3] === sent.sessionId),
+	);
+});
+test('an execution whose snapshotted file disappeared says a file is gone', async (t) => {
+	const r = await setup(t);
+	const a = await r.service.uploadUserFile(r.bot.id, 'gone.zip', zipBytes());
+	const original = r.service.messages.attachment.bind(r.service.messages);
+	r.service.messages.attachment = () => {
+		throw new Error('Attachment not found');
+	};
+	t.after(() => (r.service.messages.attachment = original));
+	const sent = await r.service.postUserMessage(r.bot.id, 'look', 'gone-zip', [a.token]);
+	await settled(r, sent.sessionId);
+	assert.match(r.sessions.get(sent.sessionId).reason, /attached file is no longer available/);
 });
 

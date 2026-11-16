@@ -1,17 +1,88 @@
 import {
 	BotIoClient,
-	BotMessagesClient,
 	type BotIoTransport,
+	BotMessagesClient,
 } from '@terminay/client-core';
 /**
  * A session's transcript: messages, collapsible tool entries, and the plan as
  * a checklist. Shared by Chat and the Sessions tab.
  */
 
-import type { BotProfile } from '@terminay/protocol';
-import { Check, ChevronRight, Circle, LoaderCircle, X } from 'lucide-react';
-import { Fragment, memo, useEffect, useMemo, useState, type Ref } from 'react';
+import type { BotMessageAttachment, BotProfile } from '@terminay/protocol';
+import {
+	Check,
+	ChevronRight,
+	Circle,
+	Download,
+	FileText,
+	LoaderCircle,
+	X,
+} from 'lucide-react';
+import { Fragment, memo, type Ref, useEffect, useMemo, useState } from 'react';
+import { saveDownload } from '../../host/nativeActions';
 import { BotAvatar } from './BotAvatar';
+import { attachmentView, formatFileSize } from './botsModel';
+
+/** A sent non-image attachment. It is never rendered: activating it saves
+ * its bytes through the host save (ADR-0130). */
+function FileChip({
+	attachment,
+	download,
+}: Readonly<{
+	attachment: Pick<BotMessageAttachment, 'name' | 'size'>;
+	download: (() => Promise<{ bytes: Uint8Array }>) | undefined;
+}>) {
+	const [busy, setBusy] = useState(false),
+		[error, setError] = useState<string>();
+	return (
+		<>
+			<button
+				type="button"
+				className="bots-file-chip"
+				disabled={!download || busy}
+				title={`Download ${attachment.name}`}
+				aria-label={`Download ${attachment.name}`}
+				data-terminay-bot-file-chip={attachment.name}
+				onClick={() => {
+					if (!download) return;
+					setBusy(true);
+					setError(undefined);
+					void saveDownload({
+						filename: attachment.name,
+						chunks: async function* () {
+							yield (await download()).bytes;
+						},
+					})
+						.catch((cause: unknown) =>
+							setError(
+								cause instanceof Error ? cause.message : 'Download failed',
+							),
+						)
+						.finally(() => setBusy(false));
+				}}
+			>
+				<FileText size={18} aria-hidden="true" />
+				<span className="bots-file-chip__text">
+					<span className="bots-file-chip__name">{attachment.name}</span>
+					<span className="bots-file-chip__size">
+						{formatFileSize(attachment.size)}
+					</span>
+				</span>
+				{busy ? (
+					<LoaderCircle size={14} className="bots-spin" aria-hidden="true" />
+				) : (
+					<Download size={14} aria-hidden="true" />
+				)}
+			</button>
+			{error ? (
+				<span className="bots-file-chip__error" role="status">
+					{error}
+				</span>
+			) : null}
+		</>
+	);
+}
+
 import {
 	botMarkdownImagePaths,
 	handleBotMarkdownClick,
@@ -124,9 +195,12 @@ export const BotTranscript = memo(function BotTranscript({
 								{block.item.text}
 							</div>
 						) : null}
-						{block.item.attachments?.length ? (
+						{block.item.attachments?.some(
+							(a) => attachmentView(a.mime) === 'image',
+						) ? (
 							<AgentText
 								text={block.item.attachments
+									.filter((a) => attachmentView(a.mime) === 'image')
 									.map(
 										(a) =>
 											`![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
@@ -134,6 +208,29 @@ export const BotTranscript = memo(function BotTranscript({
 									.join('\n\n')}
 								imageLoader={imageLoader}
 							/>
+						) : null}
+						{block.item.attachments?.some(
+							(a) => attachmentView(a.mime) === 'file',
+						) ? (
+							<ul className="bots-msg__files" aria-label="Attached files">
+								{block.item.attachments
+									.filter((a) => attachmentView(a.mime) === 'file')
+									.map((a) => (
+										<li key={a.id}>
+											<FileChip
+												attachment={a}
+												download={
+													transport
+														? () =>
+																new BotMessagesClient(
+																	transport as never,
+																).attachment(bot.id, a.id)
+														: undefined
+												}
+											/>
+										</li>
+									))}
+							</ul>
 						) : null}
 					</div>
 				</div>

@@ -2396,6 +2396,74 @@
 .bots-composer__remove:hover {
 	background: rgba(0, 0, 0, 0.9);
 }
+/* A pending non-image file: the same tile height as a thumbnail, wider. */
+.bots-composer__file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: auto;
+	max-width: 220px;
+	padding: 0 30px 0 10px;
+	color: var(--bots-muted);
+}
+.bots-composer__file-text,
+.bots-file-chip__text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	text-align: left;
+}
+.bots-composer__file-name,
+.bots-file-chip__name {
+	overflow: hidden;
+	color: var(--bots-fg);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bots-composer__file-size,
+.bots-file-chip__size {
+	color: var(--bots-faint);
+	font-size: 11px;
+}
+.bots-msg__files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 6px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.bots-file-chip {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 260px;
+	padding: 8px 10px;
+	border: 1px solid var(--bots-line2);
+	border-radius: 8px;
+	background: var(--bots-card2);
+	color: var(--bots-muted);
+	font: inherit;
+	cursor: pointer;
+}
+.bots-file-chip:hover:not(:disabled) {
+	background: var(--bots-hover);
+	color: var(--bots-fg);
+}
+.bots-file-chip:disabled {
+	cursor: default;
+	opacity: 0.7;
+}
+.bots-file-chip__error {
+	display: block;
+	margin-top: 4px;
+	color: var(--bots-need);
+	font-size: 12px;
+}
+.bots-spin {
+	animation: bots-build-spin 1.5s linear infinite;
+}
 .bots-composer__refusal {
 	margin: 0 0 8px;
 	font-size: 12px;
