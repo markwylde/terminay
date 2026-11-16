@@ -9,9 +9,11 @@ import {
 	type TerminayHostContext,
 } from '@terminay/protocol';
 import {
+	app,
 	BrowserWindow,
 	type BrowserWindowConstructorOptions,
 	type DownloadItem,
+	dialog,
 	type Event,
 	type IpcMainEvent,
 	type IpcMainInvokeEvent,
@@ -26,6 +28,7 @@ import {
 	type DesktopDocumentLifecycleDiagnostic,
 	type DesktopDocumentReleaseReason,
 } from '../apps/terminay-desktop/src/main/documentLifecycle';
+import { HostFileSaves } from './hostFileSaves';
 import type { TerminalClipboardForUpload } from './terminalClipboardUpload';
 
 const SERVER_UI_GET_CONTEXT_CHANNEL = 'server-ui-host:get-context';
@@ -56,6 +59,7 @@ type ServerUiBinding = {
 	) => Promise<Uint8Array>;
 	window: BrowserWindow;
 	lifecycle: DesktopDocumentLifecycle;
+	fileSaves: HostFileSaves;
 };
 
 export type CreateServerUiWindowOptions = {
@@ -158,6 +162,18 @@ function installIpcHandlers(): void {
 				binding.context.capabilities[capability] === undefined
 			)
 				throw new Error(`Host capability is unavailable: ${capability}`);
+			const hostAction = action.action;
+			switch (hostAction.type) {
+				case 'file.save.open':
+					return binding.fileSaves.open(hostAction.filename);
+				case 'file.save.write':
+					return binding.fileSaves.write(
+						hostAction.token,
+						Buffer.from(hostAction.bytesBase64, 'base64'),
+					);
+				case 'file.save.close':
+					return binding.fileSaves.close(hostAction.token, hostAction.commit);
+			}
 			return binding.onHostAction?.(action, binding.context);
 		},
 	);
@@ -220,6 +236,16 @@ function denyDownloadForWindow(
 	}
 	event.preventDefault();
 	item.cancel();
+}
+
+function createFileSaves(window: BrowserWindow): HostFileSaves {
+	return new HostFileSaves({
+		showSaveDialog: (suggestedName) =>
+			dialog.showSaveDialog(window, {
+				defaultPath: path.join(app.getPath('downloads'), suggestedName),
+				properties: ['showOverwriteConfirmation', 'createDirectory'],
+			}),
+	});
 }
 
 export function createServerUiPartitionKey(): string {
@@ -311,8 +337,34 @@ export function bindServerUiWindow(
 		readTerminalClipboardFilePart: options.readTerminalClipboardFilePart,
 		window,
 		lifecycle,
+		fileSaves: createFileSaves(window),
 	};
 	bindings.set(webContentsId, binding);
+	// Saves belong to one document (ADR-0130). The lifecycle ends them on server
+	// switch, failed launch, window close and quit; a reload or a lost renderer
+	// keeps this binding, so a replaced document gets a fresh registry and the
+	// old one's tokens and pending dialogs end with it.
+	const replaceFileSaves = () => {
+		const ended = binding.fileSaves;
+		binding.fileSaves = createFileSaves(window);
+		void ended.dispose();
+	};
+	const onDocumentNavigation = (
+		_event: unknown,
+		_url: string,
+		isInPlace: boolean,
+		isMainFrame: boolean,
+	) => {
+		if (isMainFrame && !isInPlace) replaceFileSaves();
+	};
+	targetWebContents.on('did-start-navigation', onDocumentNavigation);
+	targetWebContents.on('render-process-gone', replaceFileSaves);
+	lifecycle.add('file-saves', () => {
+		void binding.fileSaves.dispose();
+		if (targetWebContentsDestroyed) return;
+		targetWebContents.off('did-start-navigation', onDocumentNavigation);
+		targetWebContents.off('render-process-gone', replaceFileSaves);
+	});
 	lifecycle.add('host-binding', () => {
 		if (bindings.get(webContentsId) === binding) bindings.delete(webContentsId);
 	});
