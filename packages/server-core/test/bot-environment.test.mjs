@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter, once } from 'node:events';
 import test from 'node:test';
+import { botFailure } from '../dist/botService/failure.js';
 import {
 	BotEnvironmentService,
 	BotHelperIdleDeadline,
@@ -8,9 +9,9 @@ import {
 	BotLogTail,
 	createBotEnvironmentOperations,
 	EngineCommandError,
+	removeContainer,
 	SocketDriver,
 } from '../dist/botService/index.js';
-import { botFailure } from '../dist/botService/failure.js';
 import { botId, fakeClock, fakeDriver, name } from './fixtures/bot-driver.mjs';
 
 const setup = (t, options = {}) => {
@@ -686,7 +687,10 @@ test('a bot name held by storage a removed container left behind is cleared by i
 	// An engine that cannot say fails the same way as one with no leftover.
 	before = await restart();
 	driver.leftover = async () => {
-		throw new EngineCommandError('deadline', 'engine operation deadline exceeded');
+		throw new EngineCommandError(
+			'deadline',
+			'engine operation deadline exceeded',
+		);
 	};
 	await assert.rejects(service.start(botId), refused);
 	assert.equal(creates() - before.creates, 1);
@@ -695,7 +699,7 @@ test('a bot name held by storage a removed container left behind is cleared by i
 		new EngineCommandError('conflict', 'engine API request failed'),
 	);
 	assert.equal(failure.code, 'conflict');
-	assert.match(failure.message, /another container already uses the bot’s name/);
+	assert.match(failure.message, /its name was still in use\. Try again/);
 });
 
 test('only Podman storage listed under exactly the bot name, with no container behind it, counts as a leftover', async () => {
@@ -711,12 +715,20 @@ test('only Podman storage listed under exactly the bot name, with no container b
 				},
 			},
 		);
-	const entry = (extra = {}) => ({ Id: id, Names: [name], State: 'storage', ...extra });
+	const entry = (extra = {}) => ({
+		Id: id,
+		Names: [name],
+		State: 'storage',
+		...extra,
+	});
 	assert.equal(await driver('podman', [entry()]).leftover(name), id);
 	const [method, route] = routes[0];
 	assert.equal(method, 'GET');
 	assert.match(route, /^\/v4\.0\.0\/libpod\/containers\/json\?/);
-	assert.equal(new URLSearchParams(route.split('?')[1]).get('external'), 'true');
+	assert.equal(
+		new URLSearchParams(route.split('?')[1]).get('external'),
+		'true',
+	);
 	// The engine's name filter matches substrings.
 	assert.equal(
 		await driver('podman', [entry({ Names: [`${name}-old`] })]).leftover(name),
@@ -734,4 +746,257 @@ test('only Podman storage listed under exactly the bot name, with no container b
 	const asked = routes.length;
 	assert.equal(await driver('docker', [entry()]).leftover(name), undefined);
 	assert.equal(routes.length, asked);
+});
+
+const idle = { runningSessions: 1, queuedSessions: 0, shells: 0, desktops: 0 };
+const creates = (driver) =>
+	driver.calls.filter((a) => a[0] === 'container' && a[1] === 'create').length;
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('an out-of-date running container updates itself before a run only while idle', async (t) => {
+	const { service, driver, fingerprint } = setup(t);
+	await service.start(botId);
+	fingerprint('fingerprint-2');
+	// Anything else using the machine keeps the old container.
+	for (const busy of [{ shells: 1 }, { desktops: 1 }, { runningSessions: 2 }]) {
+		service.setActivity(botId, { ...idle, ...busy });
+		await service.prepareSession(botId);
+		assert.equal((await service.overview(botId)).current, false);
+	}
+	// The desktop preview beside Chat is not a desktop in use.
+	service.setActivity(botId, { ...idle, previews: 1 });
+	await service.prepareSession(botId);
+	assert.equal((await service.overview(botId)).current, true);
+	fingerprint('fingerprint-2b');
+	// A plain start never replaces a running container.
+	service.setActivity(botId, idle);
+	await service.start(botId);
+	assert.equal((await service.overview(botId)).current, false);
+	// Nothing else uses the machine: the run gets the current image first.
+	const volume = driver.resources.get(`volume:${name}-home`);
+	driver.calls.length = 0;
+	await service.prepareSession(botId);
+	assert.equal((await service.overview(botId)).current, true);
+	assert.equal(service.state(botId), 'running');
+	assert.equal(driver.resources.get(`volume:${name}-home`), volume);
+	// The update never stops the session it is preparing.
+	assert.equal(
+		driver.calls.some((args) => args[0] === 'sessions-stop'),
+		false,
+	);
+	assert.equal(creates(driver), 1);
+});
+
+test('an unknown fingerprint never updates; an AppArmor-only change does', async (t) => {
+	const { service, driver, fingerprint } = setup(t);
+	await service.start(botId);
+	service.setActivity(botId, idle);
+	fingerprint('');
+	driver.calls.length = 0;
+	await service.prepareSession(botId);
+	assert.equal(creates(driver), 0);
+	fingerprint('fingerprint-1');
+	// Made under another AppArmor choice than a new container would get.
+	driver.resources.get(`container:${name}`).Config.Labels['terminay.apparmor'] =
+		'terminay-bot';
+	await service.prepareSession(botId);
+	assert.equal(creates(driver), 1);
+	assert.equal((await service.overview(botId)).current, true);
+});
+
+test('a failed build during an idle update keeps the running container and the run', async (t) => {
+	const { service, driver, hooks, fingerprint } = setup(t);
+	await service.start(botId);
+	service.setActivity(botId, idle);
+	fingerprint('fingerprint-2');
+	hooks.ensureImage = async () => {
+		throw new Error('build failed');
+	};
+	driver.calls.length = 0;
+	await service.prepareSession(botId);
+	assert.equal(service.state(botId), 'running');
+	assert.equal(
+		driver.calls.some((a) => a[1] === 'rm' || a[0] === 'helper-close'),
+		false,
+	);
+	assert.equal(driver.resources.get(`container:${name}`).State.Running, true);
+});
+
+test('restart applies an update, and any recreation applies pending limits', async (t) => {
+	const { service, driver, fingerprint } = setup(t);
+	await service.start(botId);
+	fingerprint('fingerprint-2');
+	await service.restart(botId);
+	assert.equal((await service.overview(botId)).current, true);
+	const limits = { cpus: 1, memoryBytes: 2 * 1024 ** 3, pids: 512 };
+	service.register({ id: botId, limits });
+	assert.equal((await service.overview(botId)).limitsChangePending, true);
+	fingerprint('fingerprint-3');
+	service.setActivity(botId, idle);
+	await service.prepareSession(botId);
+	const overview = await service.overview(botId);
+	assert.equal(overview.current, true);
+	assert.equal(overview.limitsChangePending, false);
+	const create = driver.calls.filter(
+		(a) => a[0] === 'container' && a[1] === 'create',
+	);
+	assert.ok(create.at(-1).includes(String(2 * 1024 ** 3)));
+});
+
+test('a recreate whose old container cannot be removed fails before creating one', async (t) => {
+	const { service, driver, clock } = setup(t);
+	await service.start(botId);
+	const run = driver.run;
+	driver.run = async (args, options) => {
+		if (args[0] === 'container' && args[1] === 'rm')
+			throw new EngineCommandError('conflict', 'engine API request failed');
+		return run(args, options);
+	};
+	driver.calls.length = 0;
+	const pending = service.recreate(botId, true);
+	const removalDeadline = () =>
+		[...clock.timers.values()].some((t) => t.at === clock.now + 15_000);
+	for (let i = 0; i < 1000 && !removalDeadline(); i++) await settle();
+	assert.ok(removalDeadline());
+	clock.tick(15_000);
+	await assert.rejects(
+		pending,
+		(error) => error instanceof EngineCommandError && error.code === 'conflict',
+	);
+	assert.equal(creates(driver), 0);
+});
+
+test('a force-remove that races the engine’s own removal waits for its destroy event', async () => {
+	const engine = (inspectResult, rmErrors) => {
+		const calls = [];
+		let listener;
+		let closed = 0;
+		const driver = {
+			run: async (args) => {
+				calls.push(args);
+				const error = rmErrors.shift();
+				if (error) throw new EngineCommandError(error, error);
+				return '';
+			},
+			inspect: async () => {
+				if (inspectResult instanceof Error) throw inspectResult;
+				return inspectResult;
+			},
+			events: (onEvent) => {
+				listener = onEvent;
+				return () => {
+					closed++;
+				};
+			},
+		};
+		return {
+			driver,
+			calls,
+			emit: (event) => listener?.(event),
+			get closed() {
+				return closed;
+			},
+		};
+	};
+	const destroy = (container) => ({
+		Type: 'container',
+		Action: 'destroy',
+		Actor: { Attributes: { name: container } },
+	});
+
+	// 409, then the engine's own removal finishes.
+	let e = engine({ Id: 'x' }, ['conflict']);
+	let timers = fakeClock();
+	let pending = removeContainer(e.driver, 'helper', { timers });
+	await settle();
+	e.emit(destroy('other'));
+	e.emit(destroy('helper'));
+	await pending;
+	assert.equal(e.calls.length, 1);
+	assert.equal(e.closed, 1);
+	assert.equal(timers.timers.size, 0);
+
+	// 409, but it is already gone: no waiting at all.
+	e = engine(undefined, ['conflict']);
+	await removeContainer(e.driver, 'helper', { timers: fakeClock() });
+	assert.equal(e.closed, 1);
+
+	// 404 means already gone.
+	e = engine({ Id: 'x' }, ['not-found']);
+	await removeContainer(e.driver, 'helper');
+	assert.equal(e.calls.length, 1);
+
+	// Deadline: the final forced removal finding nothing counts as done…
+	e = engine({ Id: 'x' }, ['conflict', 'not-found']);
+	timers = fakeClock();
+	pending = removeContainer(e.driver, 'helper', { timers });
+	await settle();
+	timers.tick(15_000);
+	await pending;
+	assert.equal(e.calls.length, 2);
+
+	// …and a removal still refused is reported.
+	e = engine({ Id: 'x' }, ['conflict', 'conflict']);
+	timers = fakeClock();
+	pending = removeContainer(e.driver, 'helper', { timers });
+	await settle();
+	timers.tick(15_000);
+	await assert.rejects(pending, /did not finish removing/);
+	assert.equal(e.closed, 1);
+
+	// Inspection failures and other errors pass through.
+	e = engine(new Error('inspect failed'), ['conflict']);
+	await assert.rejects(
+		removeContainer(e.driver, 'helper', { timers: fakeClock() }),
+		/inspect failed/,
+	);
+	assert.equal(e.closed, 1);
+	e = engine({ Id: 'x' }, ['not-running']);
+	await assert.rejects(removeContainer(e.driver, 'helper'), /not-running/);
+});
+
+test('activity admitted while an idle update builds keeps the existing container', async (t) => {
+	for (const busy of [{ shells: 1 }, { desktops: 1 }, { runningSessions: 2 }]) {
+		const { service, driver, hooks, fingerprint } = setup(t);
+		await service.start(botId);
+		service.setActivity(botId, idle);
+		fingerprint('fingerprint-2');
+		hooks.ensureImage = async () => {
+			service.setActivity(botId, { ...idle, ...busy });
+			return 'fingerprint-2';
+		};
+		driver.calls.length = 0;
+		await service.prepareSession(botId);
+		assert.equal(creates(driver), 0);
+		assert.equal(service.state(botId), 'running');
+		assert.equal(
+			driver.calls.some((a) => a[1] === 'rm'),
+			false,
+		);
+	}
+});
+test('the removal deadline also bounds a stalled inspection', async () => {
+	const timers = fakeClock();
+	let calls = 0;
+	let closed = false;
+	const pending = removeContainer(
+		{
+			run: async () => {
+				if (++calls === 1) throw new EngineCommandError('conflict', 'busy');
+				return '';
+			},
+			inspect: () => new Promise(() => {}),
+			events: () => () => {
+				closed = true;
+			},
+		},
+		'helper',
+		{ timers },
+	);
+	await settle();
+	timers.tick(15_000);
+	await pending;
+	assert.equal(calls, 2);
+	assert.equal(closed, true);
+	assert.equal(timers.timers.size, 0);
 });

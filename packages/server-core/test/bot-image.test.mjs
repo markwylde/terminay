@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+	chmod,
+	cp,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
 	agentLayer,
 	buildBotImage,
+	dockerfileSources,
 	planBotImage,
 } from '../dist/botService/index.js';
 
@@ -96,7 +106,85 @@ test('4.2 fingerprint covers shipped scripts, sorted manifests, uid and new agen
 	assert.match(
 		first.dockerfile,
 		new RegExp(`LABEL terminay.fingerprint="${first.fingerprint}"`),
+	); // Tests and notes beside the Dockerfile are not built into the image.
+	const settled = (await planBotImage(directory, [agent], 1000, 1000))
+		.fingerprint;
+	await writeFile(path.join(directory, 'test_extra.py'), 'print(1)');
+	await writeFile(path.join(directory, 'PORTING.md'), '# notes');
+	assert.equal(
+		settled,
+		(await planBotImage(directory, [agent], 1000, 1000)).fingerprint,
 	);
+	const plan = async () =>
+		(await planBotImage(directory, [agent], 1000, 1000)).fingerprint;
+	// A copied script's executable bit is built into the image.
+	await chmod(path.join(directory, 'bin/terminay-init'), 0o644);
+	const plain = await plan();
+	assert.notEqual(plain, settled);
+	await chmod(path.join(directory, 'bin/terminay-init'), 0o755);
+	assert.equal(await plan(), settled);
+	// So is the ignore file, which decides what the build context holds.
+	await writeFile(path.join(directory, '.dockerignore'), '*.md\n');
+	assert.notEqual(await plan(), settled);
+	await rm(path.join(directory, '.dockerignore'));
+	// A copied path that is a link is refused, never followed.
+	await rm(path.join(directory, 'bin/terminay-run'));
+	await symlink('terminay-init', path.join(directory, 'bin/terminay-run'));
+	await assert.rejects(plan(), /links/);
+});
+
+test('the fingerprint reads exactly the context paths the Dockerfile copies', () => {
+	assert.deepEqual(
+		dockerfileSources(
+			[
+				'FROM debian AS base',
+				'COPY bin/b bin/a /usr/local/bin/',
+				'COPY --chown=bot:bot conf \\',
+				'  /etc/conf',
+				'COPY --from=base /x /y',
+				'ADD bin/a /opt/',
+			].join('\n'),
+		),
+		['bin/a', 'bin/b', 'conf'],
+	);
+	for (const refused of [
+		'COPY bin/* /x/',
+		'COPY /etc/passwd /x',
+		'COPY ../outside /x',
+		'COPY bin/../outside /x',
+		'COPY $SOURCES /x',
+		'COPY --from /x /y',
+		'COPY --fromage=1 bin/* /x',
+		'COPY --chown=bot ["a", "/b"]',
+		'ADD https://example.invalid/a /x',
+	])
+		assert.throws(() => dockerfileSources(refused), /literal/, refused);
+	assert.throws(() => dockerfileSources('COPY ["a", "/b"]'), /JSON-form/);
+	assert.throws(
+		() => dockerfileSources('COPY <<EOF /x\nhello\nEOF'),
+		/heredoc/,
+	);
+});
+
+test('copied directories include empty entries and refuse linked parent paths', async (t) => {
+	const directory = await mkdtemp(path.join(tmpdir(), 'bot-image-paths-'));
+	t.after(() => rm(directory, { force: true, recursive: true }));
+	await mkdir(path.join(directory, 'files'));
+	await writeFile(path.join(directory, 'files/a'), 'input');
+	await writeFile(
+		path.join(directory, 'Dockerfile'),
+		'FROM scratch\nCOPY files /files',
+	);
+	const plan = () => planBotImage(directory, [], 1000, 1000);
+	const first = await plan();
+	await mkdir(path.join(directory, 'files/empty'));
+	assert.notEqual((await plan()).fingerprint, first.fingerprint);
+	await symlink('files', path.join(directory, 'linked'));
+	await writeFile(
+		path.join(directory, 'Dockerfile'),
+		'FROM scratch\nCOPY linked/a /a',
+	);
+	await assert.rejects(plan(), /links/);
 });
 
 test('4.2 failed image build preserves published tag and success publishes only after build', async () => {

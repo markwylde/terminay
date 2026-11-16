@@ -2,22 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { BotProfile, BotSessionRecord } from '@terminay/protocol';
 import {
-	type BotEntry,
 	acceptChatImages,
+	type BotEntry,
 	botActivity,
 	chatSendAttempt,
 	filterCounts,
+	hasTerminayMcpAccess,
 	initials,
 	investigatesFailures,
-	hasTerminayMcpAccess,
 	needsYou,
 	recoveryNotice,
-	startupSummary,
 	SESSION_ORIGIN_CHIPS,
 	SESSION_ORIGIN_FILTER_LABELS,
 	sessionOriginLabel,
 	sessionTitle,
 	shortAge,
+	startupSummary,
 	visibleBots,
 } from './botsModel.ts';
 
@@ -262,33 +262,23 @@ test('a retry of the same content reuses its idempotency key', () => {
 });
 
 test('an environment that needs the user names the bot, the tone and the action', () => {
-	const missing = recoveryNotice('Codexia', 'not-created', false);
+	const missing = recoveryNotice('Codexia', 'not-created');
 	assert.equal(missing?.kind, 'not-created');
 	assert.equal(missing?.tone, 'warn');
 	assert.equal(missing?.create, 'Create environment');
 	assert.equal(missing?.recreate, undefined);
 	assert.match(missing?.title ?? '', /^Codexia’s environment is not created$/);
 
-	const failed = recoveryNotice('Codexia', 'failed', false);
+	const failed = recoveryNotice('Codexia', 'failed');
 	assert.equal(failed?.tone, 'error');
 	assert.equal(failed?.create, 'Try again');
 	assert.equal(failed?.recreate, true);
 
-	// A missing container is created from the current image, so an outdated
-	// image changes nothing about what a not-created bot offers.
-	assert.equal(
-		recoveryNotice('Codexia', 'not-created', true)?.kind,
-		'not-created',
-	);
-
-	const outdated = recoveryNotice('Codexia', 'stopped', true);
-	assert.equal(outdated?.kind, 'outdated');
-	assert.equal(outdated?.create, undefined);
-	assert.equal(outdated?.recreate, true);
-
+	// Container updates are shown on the Overview from the bot's own
+	// container, never here from the shared image's state.
 	for (const state of ['running', 'stopped', 'starting', 'building'] as const)
-		assert.equal(recoveryNotice('Codexia', state, false), undefined);
-	assert.equal(recoveryNotice('Codexia', undefined, false), undefined);
+		assert.equal(recoveryNotice('Codexia', state), undefined);
+	assert.equal(recoveryNotice('Codexia', undefined), undefined);
 });
 
 test('startup attempts read as plain words', () => {

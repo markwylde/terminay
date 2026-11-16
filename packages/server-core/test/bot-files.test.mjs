@@ -6,6 +6,7 @@ import {
 	BOT_FILE_CHUNK_BYTES,
 	BotFilesImageRequired,
 	BotFilesService,
+	EngineCommandError,
 } from '../dist/botService/index.js';
 import { botId, fakeClock, fakeDriver } from './fixtures/bot-driver.mjs';
 
@@ -302,4 +303,27 @@ test('4.9 opt-in stopped-volume helper ownership, limits, watch and symlink conf
 	await event;
 	stop();
 	view.close();
+});
+
+test('closing a helper the engine is already auto-removing waits for it instead of failing', async (t) => {
+	const f = await fixture(t);
+	const view = await f.service.acquire(botId);
+	view.close();
+	// The `--rm` helper exits when its connection closes: the engine refuses a
+	// second removal with 409 while its own is in progress.
+	const run = f.driver.run;
+	f.driver.run = async (args, options) => {
+		if (args[0] === 'container' && args[1] === 'rm')
+			throw new EngineCommandError('conflict', 'engine API request failed');
+		return run(args, options);
+	};
+	await f.service.closeBot(botId);
+	assert.ok(
+		f.driver.calls.some(
+			(a) =>
+				a[0] === 'inspect' &&
+				a[1] === 'container' &&
+				/^terminay-files-/.test(a[2]),
+		),
+	);
 });

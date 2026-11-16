@@ -417,3 +417,24 @@ test('a control-mode open fails when PRIMARY sending cannot be confirmed off', a
 	);
 	assert.equal(f.tunnels.length, 0);
 });
+
+test('desktop opening reserves activity before awaits and releases it on failure', async () => {
+	const activity = [];
+	let fail;
+	const service = new BotDesktopService({
+		running: () => true,
+		engine: () =>
+			new Promise((_resolve, reject) => {
+				fail = reject;
+			}),
+		withPassword: async () => {
+			throw new Error('unexpected password');
+		},
+		activity: (_id, delta) => activity.push(delta),
+	});
+	const pending = service.open(authority(), id, 1);
+	assert.deepEqual(activity, [1]);
+	fail(new Error('engine unavailable'));
+	await assert.rejects(pending, /engine unavailable/);
+	assert.deepEqual(activity, [1, -1]);
+});

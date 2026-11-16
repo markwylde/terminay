@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
 	cp,
+	lstat,
 	mkdtemp,
 	readdir,
 	readFile,
@@ -91,6 +92,43 @@ export function agentLayer(agents: readonly BotAgentInstall[]): string {
 	].join('\n');
 }
 
+/** The build-context paths a Dockerfile's COPY and ADD instructions read,
+ * sorted and de-duplicated. Copies from another stage read no context. */
+export function dockerfileSources(dockerfile: string): string[] {
+	const sources = new Set<string>();
+	const lines = dockerfile.replace(/\\\r?\n/g, ' ').split(/\r?\n/);
+	for (const line of lines) {
+		const words = line.trim().split(/\s+/);
+		const instruction = words[0]?.toUpperCase();
+		if (instruction !== 'COPY' && instruction !== 'ADD') continue;
+		const args = words.slice(1);
+		if (args.some((word) => /^--from=.+/.test(word))) continue;
+		// Forms whose sources cannot be read reliably fail the plan, so no
+		// built input can quietly escape the fingerprint.
+		if (args[0]?.startsWith('['))
+			throw new TypeError('JSON-form COPY is not supported in the bot image');
+		if (args.some((word) => word.startsWith('<<')))
+			throw new TypeError('heredoc COPY is not supported in the bot image');
+		const paths = args.filter((word) => !word.startsWith('--'));
+		if (paths.length < 2 || args.some((word) => word === '--from'))
+			throw new TypeError('bot image COPY sources must be literal paths');
+		for (const source of paths.slice(0, -1)) {
+			const name = path.normalize(source);
+			if (
+				/[*?[\]$'"\\]/.test(source) ||
+				source.split(/[\\/]/).includes('..') ||
+				/^[a-z][a-z0-9+.-]*:\/\//i.test(source) ||
+				name === '..' ||
+				name.startsWith(`..${path.sep}`) ||
+				path.isAbsolute(name)
+			)
+				throw new TypeError('bot image COPY sources must be literal paths');
+			sources.add(name);
+		}
+	}
+	return [...sources].sort((a, b) => a.localeCompare(b));
+}
+
 export interface BotImagePlan {
 	readonly dockerfile: string;
 	readonly fingerprint: string;
@@ -108,23 +146,42 @@ export async function planBotImage(
 	const layer = agentLayer(agents);
 	const hash = createHash('sha256');
 	hash.update(JSON.stringify(BOT_BROWSER_SECCOMP));
-	async function hashDirectory(relative: string): Promise<void> {
-		const entries = await readdir(path.join(contextPath, relative), {
-			withFileTypes: true,
-		});
-		for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-			const name = path.join(relative, entry.name);
-			if (entry.isSymbolicLink())
+	const base = await readFile(path.join(contextPath, 'Dockerfile'), 'utf8');
+	async function hashEntry(name: string): Promise<void> {
+		// lstat on the leaf alone follows links in parent components.
+		let parent = path.dirname(name);
+		while (parent !== '.') {
+			if ((await lstat(path.join(contextPath, parent))).isSymbolicLink())
 				throw new TypeError('image context must not contain links');
-			if (entry.isDirectory()) await hashDirectory(name);
-			else if (entry.isFile()) {
-				const bytes = await readFile(path.join(contextPath, name));
-				hash.update(JSON.stringify([name, bytes.length]));
-				hash.update(bytes);
-			} else throw new TypeError('unsupported image context entry');
+			parent = path.dirname(parent);
 		}
+		const entry = await lstat(path.join(contextPath, name));
+		if (entry.isSymbolicLink())
+			throw new TypeError('image context must not contain links');
+		if (entry.isDirectory()) {
+			hash.update(JSON.stringify([name, 'directory', entry.mode & 0o111]));
+			const entries = await readdir(path.join(contextPath, name));
+			for (const child of entries.sort((a, b) => a.localeCompare(b)))
+				await hashEntry(path.join(name, child));
+		} else if (entry.isFile()) {
+			const bytes = await readFile(path.join(contextPath, name));
+			const executable = (entry.mode & 0o111) !== 0;
+			hash.update(JSON.stringify([name, bytes.length, executable]));
+			hash.update(bytes);
+		} else throw new TypeError('unsupported image context entry');
 	}
-	await hashDirectory('');
+	// Only what the image is built from: the Dockerfile, its ignore file and
+	// the context files it copies. Tests and notes beside it never make
+	// containers out of date.
+	const ignore = await lstat(path.join(contextPath, '.dockerignore')).then(
+		() => ['.dockerignore'],
+		(error: NodeJS.ErrnoException) => {
+			if (error.code === 'ENOENT') return [];
+			throw error;
+		},
+	);
+	for (const name of ['Dockerfile', ...ignore, ...dockerfileSources(base)])
+		await hashEntry(name);
 	hash.update(
 		JSON.stringify({
 			layer,
@@ -134,7 +191,6 @@ export async function planBotImage(
 		}),
 	);
 	const fingerprint = hash.digest('hex');
-	const base = await readFile(path.join(contextPath, 'Dockerfile'), 'utf8');
 	return {
 		dockerfile: `${base}\n${layer}LABEL terminay.fingerprint="${fingerprint}"\n`,
 		fingerprint,

@@ -559,3 +559,34 @@ test('stderr is bounded while read and a partial first line is dropped', async (
 	assert.match(error.diagnostics.stderr, /^línea \d+ — ünïcödé\n/);
 	assert.match(error.diagnostics.stderr, /línea 119999/);
 });
+
+test('source opening reserves activity until a failed environment start finishes', async () => {
+	const activity = [];
+	let fail;
+	const runner = containerSourceRunner({
+		start: () =>
+			new Promise((_resolve, reject) => {
+				fail = reject;
+			}),
+		driver: async () => {
+			throw new Error('unexpected driver');
+		},
+		vault: {},
+		activity: (_id, delta) => activity.push(delta),
+	});
+	const pending = runner.run(
+		botId,
+		{
+			kind: 'command',
+			command: 'true',
+			intervalMs: 60000,
+			match: { kind: 'items', items: '', identity: '/id' },
+		},
+		{ signal: new AbortController().signal },
+		async () => {},
+	);
+	assert.deepEqual(activity, [1]);
+	fail(new Error('start failed'));
+	await assert.rejects(pending, /start failed/);
+	assert.deepEqual(activity, [1, -1]);
+});

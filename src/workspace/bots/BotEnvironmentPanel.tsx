@@ -361,18 +361,20 @@ function OverviewView({
 				</div>
 			</div>
 			{error ? <div className="bots-note bots-note--error">{error}</div> : null}
-			{!overview.current && state !== 'not-created' ? (
+			{!overview.current && up ? (
 				<div
 					className="bots-note bots-note--warn"
 					data-terminay-bot-env-outdated="true"
 				>
-					The container was made from an older image or settings.{' '}
+					An update is ready. It installs before the next run, while no shell or
+					desktop is open.{' '}
 					<button
 						type="button"
 						className="bots-link"
 						onClick={() => ask('recreate')}
+						data-terminay-bot-env-update="true"
 					>
-						Recreate to update
+						Update now
 					</button>
 					. The home volume is kept.
 				</div>

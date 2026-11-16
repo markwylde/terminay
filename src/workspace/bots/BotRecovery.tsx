@@ -2,8 +2,8 @@ import { BotEnvironmentClient } from '@terminay/client-core';
 import { TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { EngineSummary } from './BotsSection';
-import { useBotEngine } from './useBotEngine';
 import { recoveryNotice } from './botsModel';
+import { useBotEngine } from './useBotEngine';
 import { refusalText, type ServerBots } from './useServerBots';
 
 /** Shared recovery stays visible above Chat and every Configure panel. */
@@ -21,20 +21,19 @@ export function BotRecovery({
 	const [busy, setBusy] = useState<'start' | 'recreate'>();
 	const [confirm, setConfirm] = useState(false);
 	const state = server.environments.get(botId);
+	// An out-of-date image is a routine update, built on the next start: only a
+	// missing or failed image, or an engine fault, needs the engine card.
 	const problem =
-		!engine.status?.available || engine.status.image.state !== 'current';
+		!engine.status?.available ||
+		engine.status.image.state === 'missing' ||
+		engine.status.image.state === 'failed';
 	const name = server.bots.find((bot) => bot.id === botId)?.name ?? 'This bot';
 	const usable =
 		engine.status?.available === true &&
 		engine.status.image.state !== 'building';
-	const notice = usable
-		? recoveryNotice(
-				name,
-				state,
-				engine.status?.image.state === 'outdated' &&
-					(state === 'running' || state === 'stopped'),
-			)
-		: undefined;
+	// Container updates are told on Environment › Overview from the bot's own
+	// container; the shared image's state says nothing about this bot.
+	const notice = usable ? recoveryNotice(name, state) : undefined;
 	const action = async (recreate: boolean) => {
 		setBusy(recreate ? 'recreate' : 'start');
 		setError(undefined);

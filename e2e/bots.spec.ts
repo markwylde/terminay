@@ -1029,6 +1029,112 @@ test.describe('Home: Bots', () => {
 		await expect(row('hello')).toHaveCount(0);
 	});
 
+	test('an out-of-date container offers Update now even with Files open, and updates itself before the next run', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Wren'));
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await send(tab, 'hello');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		const shot = (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+
+		// The bot's container, as the fake engine stores it.
+		// Absent while a recreate is between removal and creation.
+		const containerFile = async () => {
+			const names = (await readdir(fakeRoot(tempDir))).filter((name) =>
+				/^container-terminay-bot-[a-z0-9]+\.json$/.test(name),
+			);
+			return names.length === 1
+				? path.join(fakeRoot(tempDir), names[0]!)
+				: undefined;
+		};
+		const fingerprint = async () => {
+			const file = await containerFile();
+			if (!file) return undefined;
+			try {
+				return JSON.parse(await readFile(file, 'utf8')).Config.Labels[
+					'terminay.fingerprint'
+				] as string;
+			} catch {
+				return undefined;
+			}
+		};
+		// A release changed the image: the running container is now out of date.
+		const makeStale = async () => {
+			const file = await containerFile();
+			if (!file) throw new Error('the bot has no container');
+			const container = JSON.parse(await readFile(file, 'utf8'));
+			container.Config.Labels['terminay.fingerprint'] = 'stale';
+			if (container.Labels) container.Labels['terminay.fingerprint'] = 'stale';
+			await writeFile(file, JSON.stringify(container));
+		};
+		const current = await fingerprint();
+		expect(current).toBeTruthy();
+		await makeStale();
+
+		// Above Chat, an update is not an engine problem: no engine card.
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await chat(tab);
+		await expect(
+			tab.locator('[data-terminay-bot-recovery] .bots-engine'),
+		).toBeHidden();
+		await expect(tab.getByRole('button', { name: 'Check again' })).toBeHidden();
+
+		// The Overview says an update is ready, in plain words.
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="environment"]').click();
+		await tab.locator('[data-terminay-bot-env-tab="overview"]').click();
+		const outdated = tab.locator('[data-terminay-bot-env-outdated]');
+		await expect(outdated).toContainText(
+			'An update is ready. It installs before the next run, while no shell or desktop is open.',
+		);
+		await shot('update-ready-overview');
+
+		// With Files open, the engine is already removing the helper when the
+		// update asks it to: Update now still succeeds, with no conflict.
+		await writeFile(path.join(fakeRoot(tempDir), 'helper-rm-race'), '');
+		await tab.locator('[data-terminay-bot-env-tab="files"]').click();
+		await expect(
+			tab.locator('[data-terminay-bot-files] [data-terminay-bot-file="hello"]'),
+		).toBeVisible({ timeout: 30_000 });
+		await tab.locator('[data-terminay-bot-env-tab="overview"]').click();
+		await outdated.locator('[data-terminay-bot-env-update]').click();
+		await expect(outdated).toHaveCount(0, { timeout: 30_000 });
+		await expect(tab.locator('.bots-note--error')).toHaveCount(0);
+		await expect(
+			tab.locator('[data-terminay-bot-env-state="running"]'),
+		).toBeVisible();
+		await expect.poll(fingerprint, { timeout: 30_000 }).toBe(current);
+		await expect(
+			tab.locator('[data-terminay-bot-env-state="running"]'),
+		).toBeVisible({ timeout: 30_000 });
+		await expect(outdated).toHaveCount(0);
+		await shot('updated-overview');
+		await rm(path.join(fakeRoot(tempDir), 'helper-rm-race'), { force: true });
+
+		// Out of date again: the next run applies the update by itself.
+		await makeStale();
+		await chat(tab);
+		await send(tab, 'again');
+		await expect(tab.locator('.bots-sess')).toHaveCount(2, {
+			timeout: 30_000,
+		});
+		await expect(transcript).toContainText('again');
+		await expect.poll(fingerprint, { timeout: 30_000 }).toBe(current);
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="environment"]').click();
+		await tab.locator('[data-terminay-bot-env-tab="overview"]').click();
+		await expect(
+			tab.locator('[data-terminay-bot-env-state="running"]'),
+		).toBeVisible();
+		await expect(outdated).toHaveCount(0);
+	});
+
 	test('deleting a bot can keep its home', async ({ mainWindow, tempDir }) => {
 		await setEngineDown(tempDir, false);
 		await engineReady(mainWindow);

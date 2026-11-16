@@ -329,7 +329,7 @@ export interface BotDesktopHooks {
 		id: string,
 		callback: (value: Uint8Array) => Promise<T>,
 	) => Promise<T>;
-	readonly activity: (id: string, delta: 1 | -1) => void;
+	readonly activity: (id: string, delta: 1 | -1, preview?: boolean) => void;
 }
 export class BotDesktopService {
 	private readonly streams = new Map<string, BotRfbRelay>();
@@ -361,105 +361,114 @@ export class BotDesktopService {
 			throw new Error('stale desktop generation');
 		this.generations.set(key, generation);
 		this.streams.get(key)?.destroy();
-		const driver = await this.hooks.engine();
-		assertBotStreamAuthority(authority);
-		if (mode === 'control') {
-			await ensureSelectionIsolated(driver, `terminay-bot-${botId}`);
-			assertBotStreamAuthority(authority);
-		}
-		const child = driver.execStream(
-			`terminay-bot-${botId}`,
-			['terminay-init', '--tunnel', '5901'],
-			{ user: 'root' },
-		);
-		const source = child.stdout as unknown as Readable,
-			sink = child.stdin as unknown as Writable;
-		child.stderr.on('data', () => undefined);
-		source.on('error', () => undefined);
-		sink.on('error', () => undefined);
-		let shuttingDown = false;
-		const shutdown = () => {
-			if (shuttingDown) return;
-			shuttingDown = true;
-			// EOF reaches the container-side tunnel before retiring its CLI.
-			// This closes the VNC connection rather than orphaning an exec.
-			sink.end();
-			const deadline = setTimeout(() => child.kill('SIGKILL'), 5_000);
-			deadline.unref();
-			child.once('close', () => clearTimeout(deadline));
-		};
-		// One absolute handshake deadline, also unblocks an EOF mid-message.
-		const timeout = setTimeout(() => {
-			source.destroy(new Error('RFB handshake deadline'));
-			shutdown();
-		}, 10_000);
-		const abort = () => {
-			source.destroy(new Error('desktop authority revoked'));
-			shutdown();
-		};
-		authority.signal.addEventListener('abort', abort, { once: true });
-		child.once('error', abort);
-		child.once('close', abort);
+		let reserved = true;
+		this.hooks.activity(botId, 1, thumbnail);
 		try {
-			if ((await readExact(source, 12)).toString() !== banner.toString())
-				throw new Error('RFB 3.8 required');
-			await write(sink, banner);
-			const count = (await readExact(source, 1))[0]!;
-			if (!count || !(await readExact(source, count)).includes(2))
-				throw new Error('VNC authentication required');
-			await write(sink, Buffer.from([2]));
-			const challenge = await readExact(source, 16);
-			await this.hooks.withPassword(botId, async (password) => {
-				const response = botVncChallengeResponse(password, challenge);
-				try {
-					await write(sink, response);
-				} finally {
-					response.fill(0);
-				}
-			});
-			if (u32(await readExact(source, 4), 0) !== 0)
-				throw new Error('desktop authentication failed');
-			await write(sink, Buffer.from([1]));
-			const header = await readExact(source, 24);
-			if (u32(header, 20) > 1024 * 1024)
-				throw new Error('desktop server name too large');
-			validatePixelFormat(header.subarray(4, 20));
-			const init = Buffer.concat([
-				header,
-				await readExact(source, u32(header, 20)),
-			]);
+			const driver = await this.hooks.engine();
 			assertBotStreamAuthority(authority);
-			if (this.generations.get(key) !== generation)
-				throw new Error('stale desktop generation');
-			clearTimeout(timeout);
-			this.hooks.activity(botId, 1);
-			const relay = new BotRfbRelay(
-				{
-					connectionId: authority.connectionId,
-					clientId: authority.clientId,
-					botId,
-					generation,
-					mode,
-					slot: thumbnail ? 'thumbnail' : 'desktop',
-				},
-				authority,
-				source,
-				sink,
-				init,
-				() => {
-					shutdown();
-					if (this.streams.get(key) === relay) this.streams.delete(key);
-					this.hooks.activity(botId, -1);
-				},
+			if (mode === 'control') {
+				await ensureSelectionIsolated(driver, `terminay-bot-${botId}`);
+				assertBotStreamAuthority(authority);
+			}
+			const child = driver.execStream(
+				`terminay-bot-${botId}`,
+				['terminay-init', '--tunnel', '5901'],
+				{ user: 'root' },
 			);
-			this.streams.set(key, relay);
-			return relay;
-		} catch {
-			shutdown();
-			throw new Error('desktop connection failed');
-		} finally {
-			clearTimeout(timeout);
-			authority.signal.removeEventListener('abort', abort);
+			const source = child.stdout as unknown as Readable,
+				sink = child.stdin as unknown as Writable;
+			child.stderr.on('data', () => undefined);
+			source.on('error', () => undefined);
+			sink.on('error', () => undefined);
+			let shuttingDown = false;
+			const shutdown = () => {
+				if (shuttingDown) return;
+				shuttingDown = true;
+				// EOF reaches the container-side tunnel before retiring its CLI.
+				// This closes the VNC connection rather than orphaning an exec.
+				sink.end();
+				const deadline = setTimeout(() => child.kill('SIGKILL'), 5_000);
+				deadline.unref();
+				child.once('close', () => clearTimeout(deadline));
+			};
+			// One absolute handshake deadline, also unblocks an EOF mid-message.
+			const timeout = setTimeout(() => {
+				source.destroy(new Error('RFB handshake deadline'));
+				shutdown();
+			}, 10_000);
+			const abort = () => {
+				source.destroy(new Error('desktop authority revoked'));
+				shutdown();
+			};
+			authority.signal.addEventListener('abort', abort, { once: true });
+			child.once('error', abort);
+			child.once('close', abort);
+			try {
+				if ((await readExact(source, 12)).toString() !== banner.toString())
+					throw new Error('RFB 3.8 required');
+				await write(sink, banner);
+				const count = (await readExact(source, 1))[0]!;
+				if (!count || !(await readExact(source, count)).includes(2))
+					throw new Error('VNC authentication required');
+				await write(sink, Buffer.from([2]));
+				const challenge = await readExact(source, 16);
+				await this.hooks.withPassword(botId, async (password) => {
+					const response = botVncChallengeResponse(password, challenge);
+					try {
+						await write(sink, response);
+					} finally {
+						response.fill(0);
+					}
+				});
+				if (u32(await readExact(source, 4), 0) !== 0)
+					throw new Error('desktop authentication failed');
+				await write(sink, Buffer.from([1]));
+				const header = await readExact(source, 24);
+				if (u32(header, 20) > 1024 * 1024)
+					throw new Error('desktop server name too large');
+				validatePixelFormat(header.subarray(4, 20));
+				const init = Buffer.concat([
+					header,
+					await readExact(source, u32(header, 20)),
+				]);
+				assertBotStreamAuthority(authority);
+				if (this.generations.get(key) !== generation)
+					throw new Error('stale desktop generation');
+				clearTimeout(timeout);
+
+				const relay = new BotRfbRelay(
+					{
+						connectionId: authority.connectionId,
+						clientId: authority.clientId,
+						botId,
+						generation,
+						mode,
+						slot: thumbnail ? 'thumbnail' : 'desktop',
+					},
+					authority,
+					source,
+					sink,
+					init,
+					() => {
+						shutdown();
+						if (this.streams.get(key) === relay) this.streams.delete(key);
+						if (reserved) this.hooks.activity(botId, -1, thumbnail);
+						reserved = false;
+					},
+				);
+				this.streams.set(key, relay);
+				return relay;
+			} catch {
+				shutdown();
+				throw new Error('desktop connection failed');
+			} finally {
+				clearTimeout(timeout);
+				authority.signal.removeEventListener('abort', abort);
+			}
+		} catch (error) {
+			if (reserved) this.hooks.activity(botId, -1, thumbnail);
+			reserved = false;
+			throw error;
 		}
 	}
 	closeBot(id: string): void {

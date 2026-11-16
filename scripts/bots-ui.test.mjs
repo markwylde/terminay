@@ -855,7 +855,7 @@ async function environment(sub, patch = {}) {
 	return page;
 }
 
-test('Environment › Overview shows state, image, limits and usage, with Recreate to update', async () => {
+test('Environment › Overview shows state, image, limits and usage, with Update now for an out-of-date container', async () => {
 	const page = await environment('overview');
 	try {
 		await page.locator('[data-terminay-bot-env-state="running"]').waitFor();
@@ -865,7 +865,19 @@ test('Environment › Overview shows state, image, limits and usage, with Recrea
 		assert.match(text, /terminay-bot-birdbot00001-home/);
 		assert.match(text, /2 CPU/);
 		assert.match(text, /12\.5%/);
-		await page.locator('[data-terminay-bot-env-outdated]').waitFor();
+		const outdated = page.locator('[data-terminay-bot-env-outdated]');
+		await outdated.waitFor();
+		assert.match(
+			await outdated.innerText(),
+			/An update is ready\. It installs before the next run, while no shell or desktop is open\./,
+		);
+		await outdated.locator('[data-terminay-bot-env-update]').click();
+		await page.getByRole('alertdialog').waitFor();
+		assert.match(
+			await page.getByRole('alertdialog').innerText(),
+			/home volume is kept/,
+		);
+		await page.getByRole('button', { name: 'Cancel' }).click();
 		const before = (await calls(page, 'overview')).length;
 		await page.locator('[data-terminay-bot-env-refresh]').click();
 		await page.waitForFunction(
@@ -873,6 +885,59 @@ test('Environment › Overview shows state, image, limits and usage, with Recrea
 			before,
 		);
 		await shot(page, 'environment-overview');
+	} finally {
+		await page.close();
+	}
+});
+
+test('a stopped out-of-date bot shows no update notice: it updates when it starts', async () => {
+	const page = await environment('overview', {
+		environments: { [BIRD]: 'stopped' },
+	});
+	try {
+		await page.locator('[data-terminay-bot-env-state="stopped"]').waitFor();
+		assert.equal(
+			await page.locator('[data-terminay-bot-env-outdated]').count(),
+			0,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('an out-of-date image alone shows no engine card or update notice above Chat', async () => {
+	const page = await open(
+		TAB({
+			engine: {
+				engine: 'docker',
+				available: true,
+				reason: null,
+				detail: '',
+				pinned: { kind: 'docker', address: 'unix:///var/run/docker.sock' },
+				candidates: [],
+				runningContainers: 1,
+				botContainers: 1,
+				image: {
+					state: 'outdated',
+					fingerprint: 'abc',
+					builtAt: 1,
+					error: null,
+				},
+			},
+		}),
+	);
+	try {
+		await page.getByText('Looking now.', { exact: true }).waitFor();
+		const recovery = page.locator('[data-terminay-bot-recovery]');
+		assert.equal(await recovery.locator('.bots-engine').isVisible(), false);
+		assert.equal(
+			await recovery.locator('[data-terminay-bot-recovery-notice]').count(),
+			0,
+		);
+		assert.equal(
+			await recovery.getByRole('button', { name: 'Check again' }).isVisible(),
+			false,
+		);
 	} finally {
 		await page.close();
 	}
@@ -1870,30 +1935,46 @@ test('bot summary refresh source uses the cheap state API and no overview measur
 });
 
 test('generic source editor groups fields, preserves a narrow draft, and tests without starting AI', async () => {
- const page=await configure('triggers');
- try {
-  await page.setViewportSize({width:760,height:900});
-  await page.locator('[data-terminay-bot-trigger-new]').click();
-  const editor=page.locator('[data-terminay-bot-trigger-editor]');
-  await editor.getByLabel('Name',{exact:true}).fill('Incoming items');
-  await pick(editor,'Source','command');
-  await editor.getByLabel('Command / shell script').fill('list --json');
-  await editor.getByLabel('Check every',{exact:true}).fill('1');await pick(editor,'Unit','minutes');
-  await pick(editor,'Fire when','items');
-  await editor.getByLabel('Prompt',{exact:true}).fill('Inspect risks in this item.');
-  assert.equal(await picked(editor,'If Terminay Server was offline'),'once');
-  assert.equal(await picked(editor,'First successful check'),'process');
-  await editor.getByRole('button',{name:'Close editor'}).click();
-  await page.locator('[data-terminay-bot-trigger-new]').click();
-  assert.equal(await editor.getByLabel('Command / shell script').inputValue(),'list --json');
-  await editor.getByRole('button',{name:'Test source',exact:true}).click();
-  await page.getByText('1 event would fire',{exact:true}).waitFor();
-  assert.equal((await calls(page,'send')).length,0);
-  await shot(page,'command-source');
-  await editor.locator('[data-terminay-bot-trigger-save]').click();
-  const created=(await calls(page,'createTrigger'))[0].args[1];
-  assert.equal(created.condition.kind,'command');assert.equal(created.condition.intervalMs,60000);assert.equal(created.condition.match.identity,'/id');assert.equal(created.recovery,'once');
- } finally {await page.close();}
+	const page = await configure('triggers');
+	try {
+		await page.setViewportSize({ width: 760, height: 900 });
+		await page.locator('[data-terminay-bot-trigger-new]').click();
+		const editor = page.locator('[data-terminay-bot-trigger-editor]');
+		await editor.getByLabel('Name', { exact: true }).fill('Incoming items');
+		await pick(editor, 'Source', 'command');
+		await editor.getByLabel('Command / shell script').fill('list --json');
+		await editor.getByLabel('Check every', { exact: true }).fill('1');
+		await pick(editor, 'Unit', 'minutes');
+		await pick(editor, 'Fire when', 'items');
+		await editor
+			.getByLabel('Prompt', { exact: true })
+			.fill('Inspect risks in this item.');
+		assert.equal(
+			await picked(editor, 'If Terminay Server was offline'),
+			'once',
+		);
+		assert.equal(await picked(editor, 'First successful check'), 'process');
+		await editor.getByRole('button', { name: 'Close editor' }).click();
+		await page.locator('[data-terminay-bot-trigger-new]').click();
+		assert.equal(
+			await editor.getByLabel('Command / shell script').inputValue(),
+			'list --json',
+		);
+		await editor
+			.getByRole('button', { name: 'Test source', exact: true })
+			.click();
+		await page.getByText('1 event would fire', { exact: true }).waitFor();
+		assert.equal((await calls(page, 'send')).length, 0);
+		await shot(page, 'command-source');
+		await editor.locator('[data-terminay-bot-trigger-save]').click();
+		const created = (await calls(page, 'createTrigger'))[0].args[1];
+		assert.equal(created.condition.kind, 'command');
+		assert.equal(created.condition.intervalMs, 60000);
+		assert.equal(created.condition.match.identity, '/id');
+		assert.equal(created.recovery, 'once');
+	} finally {
+		await page.close();
+	}
 });
 
 const blockerFor = (id) => ({
@@ -1920,7 +2001,10 @@ const waitingTrigger = (id, patch = {}) => ({
 
 test('a trigger waiting for the user shows Needs you with the action and Resume, also when disabled', async () => {
 	const page = await configure('triggers', {
-		extraTriggers: [waitingTrigger('tr2'), waitingTrigger('tr3', { enabled: false })],
+		extraTriggers: [
+			waitingTrigger('tr2'),
+			waitingTrigger('tr3', { enabled: false }),
+		],
 	});
 	try {
 		const row = page.locator('[data-terminay-bot-trigger="tr2"]');
@@ -1930,26 +2014,43 @@ test('a trigger waiting for the user shows Needs you with the action and Resume,
 			'Needs you',
 		);
 		assert.equal(
-			await row.locator('[data-terminay-bot-trigger-status]').getAttribute('data-terminay-bot-trigger-status'),
+			await row
+				.locator('[data-terminay-bot-trigger-status]')
+				.getAttribute('data-terminay-bot-trigger-status'),
 			'need',
 		);
 		assert.match(await row.innerText(), /Add the support portal password/);
 		assert.match(await row.innerText(), /refused the login/);
 		// Disabled takes precedence in the status; Resume is still offered.
 		const off = page.locator('[data-terminay-bot-trigger="tr3"]');
-		assert.equal(await off.locator('[data-terminay-bot-trigger-status]').innerText(), 'Disabled');
+		assert.equal(
+			await off.locator('[data-terminay-bot-trigger-status]').innerText(),
+			'Disabled',
+		);
 		await off.locator('[data-terminay-bot-trigger-resume="tr3"]').waitFor();
 		await shot(page, 'triggers-needs-you');
 		await row.locator('[data-terminay-bot-trigger-resume="tr2"]').click();
 		await page.waitForFunction(() =>
-			window.__calls.some((c) => c.op === 'resumeTrigger' && c.args[1] === 'tr2'),
+			window.__calls.some(
+				(c) => c.op === 'resumeTrigger' && c.args[1] === 'tr2',
+			),
 		);
 		// The editor sheet shows the same, with Resume.
 		await row.locator('.bots-trigrow__name').click();
-		const sheet = page.locator('[data-terminay-bot-trigger-needs-you="tr2"]').first();
-		await page.locator('[data-terminay-bot-trigger-editor] [data-terminay-bot-trigger-needs-you="tr2"]').waitFor();
+		const sheet = page
+			.locator('[data-terminay-bot-trigger-needs-you="tr2"]')
+			.first();
+		await page
+			.locator(
+				'[data-terminay-bot-trigger-editor] [data-terminay-bot-trigger-needs-you="tr2"]',
+			)
+			.waitFor();
 		assert.match(
-			await page.locator('[data-terminay-bot-trigger-editor] [data-terminay-bot-trigger-needs-you="tr2"]').innerText(),
+			await page
+				.locator(
+					'[data-terminay-bot-trigger-editor] [data-terminay-bot-trigger-needs-you="tr2"]',
+				)
+				.innerText(),
 			/paused until you choose Resume/,
 		);
 		assert.ok(await sheet.count());
@@ -1966,18 +2067,28 @@ test('the trigger editor offers Startup retries and When the bot needs you, with
 		const editor = page.locator('[data-terminay-bot-trigger-editor]');
 		assert.equal(await picked(editor, 'Startup retries'), '3');
 		assert.equal(await picked(editor, 'When the bot needs you'), 'pause');
-		await editor.locator('[data-terminay-bot-trigger-field="name"]').fill('Tickets');
-		await editor.locator('[data-terminay-bot-trigger-field="prompt"]').fill('Check tickets');
+		await editor
+			.locator('[data-terminay-bot-trigger-field="name"]')
+			.fill('Tickets');
+		await editor
+			.locator('[data-terminay-bot-trigger-field="prompt"]')
+			.fill('Check tickets');
 		await pick(editor, 'Source', 'every');
 		await editor.locator('[data-terminay-bot-trigger-field="every"]').fill('5');
 		await pick(editor, 'Startup retries', '1');
 		await pick(editor, 'When the bot needs you', 'keep-running');
-		await editor.locator('section[aria-label="If something goes wrong"]').scrollIntoViewIfNeeded();
+		await editor
+			.locator('section[aria-label="If something goes wrong"]')
+			.scrollIntoViewIfNeeded();
 		await shot(page, 'trigger-editor-failure-settings');
 		await editor.locator('[data-terminay-bot-trigger-save]').click();
-		await page.waitForFunction(() => window.__calls.some((c) => c.op === 'createTrigger'));
+		await page.waitForFunction(() =>
+			window.__calls.some((c) => c.op === 'createTrigger'),
+		);
 		const [created] = await calls(page, 'createTrigger');
-		const draft = created.args.find((a) => a && typeof a === 'object' && 'condition' in a);
+		const draft = created.args.find(
+			(a) => a && typeof a === 'object' && 'condition' in a,
+		);
 		assert.equal(draft.startupRetries, 1);
 		assert.equal(draft.onNeedsHuman, 'keep-running');
 	} finally {
@@ -1991,7 +2102,8 @@ test('Sessions shows startup attempts and the outcome the bot reported', async (
 		temporary: true,
 		code: 'adapter-timeout',
 		at: NOW - 300_000 + i * 30_000,
-		cause: 'The terminay_bot adapter check timed out. The host may be overloaded.',
+		cause:
+			'The terminay_bot adapter check timed out. The host may be overloaded.',
 	});
 	const page = await configure('sessions', {
 		sessions: {
@@ -2000,11 +2112,16 @@ test('Sessions shows startup attempts and the outcome the bot reported', async (
 					state: 'failed',
 					open: false,
 					canLoad: false,
-					reason: 'The terminay_bot adapter check timed out. The host may be overloaded.',
+					reason:
+						'The terminay_bot adapter check timed out. The host may be overloaded.',
 					dispatchedAt: null,
 					retryLimit: 3,
 					attempts: [0, 1, 2, 3].map(attempt),
-					startupFailure: { stage: 'adapter-check', temporary: true, code: 'adapter-timeout' },
+					startupFailure: {
+						stage: 'adapter-check',
+						temporary: true,
+						code: 'adapter-timeout',
+					},
 				}),
 				session('s1', BIRD, {
 					state: 'completed',
@@ -2030,7 +2147,9 @@ test('Sessions shows startup attempts and the outcome the bot reported', async (
 		assert.equal(await attempts.locator('li').count(), 4);
 		await shot(page, 'session-retry-attempts');
 		await page.locator('[data-terminay-bot-session-row="s1"]').click();
-		await page.locator('[data-terminay-bot-session-outcome="needs-human"]').waitFor();
+		await page
+			.locator('[data-terminay-bot-session-outcome="needs-human"]')
+			.waitFor();
 		assert.match(
 			await page.locator('[data-terminay-bot-session-attempts]').innerText(),
 			/Started on attempt 2 of 4\./,

@@ -418,7 +418,7 @@ export function chatSendAttempt(
 }
 
 export type RecoveryNotice = Readonly<{
-	kind: 'not-created' | 'failed' | 'outdated';
+	kind: 'not-created' | 'failed';
 	tone: 'warn' | 'error';
 	title: string;
 	detail: string;
@@ -431,7 +431,6 @@ export type RecoveryNotice = Readonly<{
 export function recoveryNotice(
 	name: string,
 	state: BotEnvironmentSummary | undefined,
-	imageOutdated: boolean,
 ): RecoveryNotice | undefined {
 	if (state === 'failed')
 		return {
@@ -451,14 +450,6 @@ export function recoveryNotice(
 			detail:
 				'Sessions create it when they start. Create it now to use the shell and desktop.',
 			create: 'Create environment',
-		};
-	if (imageOutdated)
-		return {
-			kind: 'outdated',
-			tone: 'warn',
-			title: `${name}’s container uses an older image`,
-			detail: 'Recreate it to pick up the current image. The bot home is kept.',
-			recreate: true,
 		};
 	return undefined;
 }

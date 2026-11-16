@@ -17,6 +17,9 @@ export interface BotActivity {
 	readonly queuedSessions: number;
 	readonly shells: number;
 	readonly desktops: number;
+	/** Desktop previews, such as the thumbnail beside Chat. They keep a bot
+	 * from idling like a desktop, but never hold back a container update. */
+	readonly previews?: number;
 }
 
 /** Event-driven inactivity deadline. An unchanged idle state never rearms it. */
