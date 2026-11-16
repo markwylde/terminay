@@ -70,6 +70,7 @@ declare global {
 			failActiveConnection: () => Promise<{ connectionId: string }>;
 			closeServerConnection: () => Promise<number>;
 			refuseProjectCreations: (count: number) => Promise<void>;
+			refuseTerminalAttaches: (sessionId: string | null) => Promise<void>;
 		};
 		terminayAgentStatusTest?: {
 			publishSessions: (payload: {

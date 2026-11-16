@@ -3468,6 +3468,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			props.params.color,
 		).background,
 		'--terminal-note-color': props.params.color || settings.theme.cursor,
+		// What the workflow panel and drawer reserve, for overlays that must stay
+		// inside the terminal's own area (absolute children ignore the padding).
+		'--terminal-reserved-right': `${workflowReserved}px`,
+		'--terminal-reserved-bottom': `${workflowReservedHeight}px`,
 		...(workflowReserved > 0
 			? { paddingRight: `${workflowReserved}px`, boxSizing: 'border-box' }
 			: {}),
@@ -3725,67 +3729,93 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					Copy
 				</button>
 			) : null}
-			{terminalInputNotice ? (
-				<div className="terminal-input-notice" role="alert">
-					<span>{terminalInputNotice.message}</span>
-					<button type="button" disabled={!terminalInputNotice.canContinue} onClick={() => {
-						if (!resumeTerminalInputRef.current()) return;
-						setTerminalInputNotice(null);
-						terminalRef.current?.focus();
-					}}>{!terminalInputNotice.canContinue ? 'Waiting for terminal' : terminalInputNotice.kind === 'overflow' ? 'Continue typing' : 'Dismiss'}</button>
-				</div>
-			) : null}
-			{fileDropProgress ? (
-				<div className="terminal-paste-progress">
-					<span
-						role="status"
-						aria-live="polite"
-						aria-label={`Copying files to the server: ${dropPercent(fileDropProgress)}%`}
-					>
-						Uploading {dropPercent(fileDropProgress)}%
-					</span>
-					<progress
-						max={Math.max(fileDropProgress.totalBytes, 1)}
-						value={fileDropProgress.sentBytes}
-					/>
-					<button
-						type="button"
-						onMouseDown={(event) => event.preventDefault()}
-						onClick={() => {
-							fileDropAbortRef.current?.abort();
-							terminalRef.current?.focus();
-						}}
-					>
-						Stop
-					</button>
-				</div>
-			) : null}
-			{terminalPasteProgress ? (
-				<div className="terminal-paste-progress">
-					<span
-						role="status"
-						aria-live="polite"
-						aria-label={`Pasting into terminal: ${Math.round((terminalPasteProgress.completedBytes / terminalPasteProgress.totalBytes) * 100)}%`}
-					>
-						Pasting{' '}
-						{Math.round(
-							(terminalPasteProgress.completedBytes /
-								terminalPasteProgress.totalBytes) *
-								100,
-						)}
-						%
-					</span>
-					<progress
-						max={terminalPasteProgress.totalBytes}
-						value={terminalPasteProgress.completedBytes}
-					/>
-					<button
-						type="button"
-						onMouseDown={(event) => event.preventDefault()}
-						onClick={() => cancelTerminalPasteRef.current()}
-					>
-						Stop
-					</button>
+			{/* Bottom overlays share one stack inside the terminal's area (beside the
+			    workflow panel, above the drawer and app-window rail), so none covers
+			    another; the recovery banner sits nearest the edge. */}
+			{terminalInputNotice ||
+			fileDropProgress ||
+			terminalPasteProgress ||
+			(serverTerminalError && !connectionReconnecting) ? (
+				<div className="terminal-panel-bottom-overlays">
+					{fileDropProgress ? (
+						<div className="terminal-paste-progress">
+							<span
+								role="status"
+								aria-live="polite"
+								aria-label={`Copying files to the server: ${dropPercent(fileDropProgress)}%`}
+							>
+								Uploading {dropPercent(fileDropProgress)}%
+							</span>
+							<progress
+								max={Math.max(fileDropProgress.totalBytes, 1)}
+								value={fileDropProgress.sentBytes}
+							/>
+							<button
+								type="button"
+								onMouseDown={(event) => event.preventDefault()}
+								onClick={() => {
+									fileDropAbortRef.current?.abort();
+									terminalRef.current?.focus();
+								}}
+							>
+								Stop
+							</button>
+						</div>
+					) : null}
+					{terminalPasteProgress ? (
+						<div className="terminal-paste-progress">
+							<span
+								role="status"
+								aria-live="polite"
+								aria-label={`Pasting into terminal: ${Math.round((terminalPasteProgress.completedBytes / terminalPasteProgress.totalBytes) * 100)}%`}
+							>
+								Pasting{' '}
+								{Math.round(
+									(terminalPasteProgress.completedBytes /
+										terminalPasteProgress.totalBytes) *
+										100,
+								)}
+								%
+							</span>
+							<progress
+								max={terminalPasteProgress.totalBytes}
+								value={terminalPasteProgress.completedBytes}
+							/>
+							<button
+								type="button"
+								onMouseDown={(event) => event.preventDefault()}
+								onClick={() => cancelTerminalPasteRef.current()}
+							>
+								Stop
+							</button>
+						</div>
+					) : null}
+					{terminalInputNotice ? (
+						<div className="terminal-input-notice" role="alert">
+							<span>{terminalInputNotice.message}</span>
+							<button type="button" disabled={!terminalInputNotice.canContinue} onClick={() => {
+								if (!resumeTerminalInputRef.current()) return;
+								setTerminalInputNotice(null);
+								terminalRef.current?.focus();
+							}}>{!terminalInputNotice.canContinue ? 'Waiting for terminal' : terminalInputNotice.kind === 'overflow' ? 'Continue typing' : 'Dismiss'}</button>
+						</div>
+					) : null}
+					{serverTerminalError && !connectionReconnecting ? (
+						<div className="terminal-panel-connection-error" role="alert">
+							<p>{serverTerminalError}</p>
+							{isTerminalRetryActionable({
+								presentationUnavailable,
+								sessionEnded: terminalSessionEnded,
+							}) ? (
+								<button
+									type="button"
+									onClick={() => retryServerAttachmentRef.current()}
+								>
+									Retry connection
+								</button>
+							) : null}
+						</div>
+					) : null}
 				</div>
 			) : null}
 			{isClipboardFallbackOpen ? (
@@ -3969,22 +3999,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 						Enter
 					</button>
 				</fieldset>
-			) : null}
-			{serverTerminalError && !connectionReconnecting ? (
-				<div className="terminal-panel-connection-error" role="alert">
-					<p>{serverTerminalError}</p>
-					{isTerminalRetryActionable({
-						presentationUnavailable,
-						sessionEnded: terminalSessionEnded,
-					}) ? (
-						<button
-							type="button"
-							onClick={() => retryServerAttachmentRef.current()}
-						>
-							Retry connection
-						</button>
-					) : null}
-				</div>
 			) : null}
 			{isTerminalHydrating && serverTerminalError === null ? (
 				<div
