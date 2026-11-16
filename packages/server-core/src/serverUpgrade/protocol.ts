@@ -32,10 +32,18 @@ export function createServerUpgradeOperationRegistry(options: {
 	readonly eventJournal: OrderedEventJournalLike;
 }): ServerUpgradeOperationRegistry {
 	const { service } = options;
-	const unsubscribe = service.subscribe((status) => {
+	const unsubscribeStatus = service.subscribe((status) => {
 		options.eventJournal.append(
 			SERVER_UPGRADE_OPERATIONS.event,
 			status as unknown as JsonValue,
+		);
+	});
+	// The attempt is its own surface, so a client that predates attempts keeps
+	// reading the status it knows (ADR-0125).
+	const unsubscribeAttempt = service.subscribeAttempt((state) => {
+		options.eventJournal.append(
+			SERVER_UPGRADE_OPERATIONS.attemptEvent,
+			state as unknown as JsonValue,
 		);
 	});
 	return {
@@ -48,6 +56,14 @@ export function createServerUpgradeOperationRegistry(options: {
 							'server upgrade status requires read access',
 						);
 					return service.status as unknown as JsonValue;
+				},
+				[SERVER_UPGRADE_OPERATIONS.attempt]: (request: QueryRequest) => {
+					if (request.context.authScope === 'none')
+						throw protocolError(
+							'forbidden',
+							'server upgrade attempts require read access',
+						);
+					return service.attemptState as unknown as JsonValue;
 				},
 			},
 			commands: {
@@ -65,13 +81,15 @@ export function createServerUpgradeOperationRegistry(options: {
 					} catch {
 						throw protocolError(
 							'validation',
-							'a server upgrade request names a mode, optionally allowOlder, and nothing else',
+							'a server upgrade request names a mode, optionally allowOlder and a request id, and nothing else',
 						);
 					}
-					return (await service.startUpgrade(
-						parsed.mode,
-						parsed.allowOlder === true ? { allowOlder: true } : {},
-					)) as unknown as JsonValue;
+					return (await service.startUpgrade(parsed.mode, {
+						...(parsed.allowOlder === true ? { allowOlder: true } : {}),
+						...(parsed.requestId === undefined
+							? {}
+							: { requestId: parsed.requestId }),
+					})) as unknown as JsonValue;
 				},
 				[SERVER_UPGRADE_OPERATIONS.check]: async (request: CommandRequest) => {
 					// Asking the server to reach its release channel is the
@@ -98,12 +116,14 @@ export function createServerUpgradeOperationRegistry(options: {
 			},
 			policies: {
 				[SERVER_UPGRADE_OPERATIONS.status]: { scope: 'read' },
+				[SERVER_UPGRADE_OPERATIONS.attempt]: { scope: 'read' },
 				[SERVER_UPGRADE_OPERATIONS.start]: { scope: 'admin' },
 				[SERVER_UPGRADE_OPERATIONS.check]: { scope: 'admin' },
 			},
 		},
 		close: () => {
-			unsubscribe();
+			unsubscribeStatus();
+			unsubscribeAttempt();
 		},
 	};
 }

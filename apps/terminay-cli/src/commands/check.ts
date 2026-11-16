@@ -97,6 +97,11 @@ export interface UpgradeCheckReport {
 		readonly reason: string;
 		readonly command: string;
 	};
+	/**
+	 * Where the upgrader writes its run records, so the server can watch it
+	 * (ADR-0125). Null when this install has none.
+	 */
+	readonly recordPath: string | null;
 	readonly lastResult: null | Omit<UpgradeOutcome, 'schemaVersion'>;
 	readonly checkError?: string;
 }
@@ -324,17 +329,28 @@ export async function findAvailable(
 			}
 			return identity;
 		};
-		const versionOf = async () =>
-			rolling
-				? ((await peek().catch(() => undefined))?.version ?? resolved.version)
-				: resolved.version;
+		// A rolling build is named by its revision as well: every build on the
+		// channel can share one version string (ADR-0125).
+		const nameOf = async (): Promise<{
+			readonly version: string;
+			readonly revision?: string;
+		}> => {
+			if (!rolling) return { version: resolved.version };
+			const peekedIdentity = await peek().catch(() => undefined);
+			return {
+				version: peekedIdentity?.version ?? resolved.version,
+				...(peekedIdentity?.revision === undefined
+					? {}
+					: { revision: peekedIdentity.revision }),
+			};
+		};
 		const order = orderAgainstInstalled(resolved, installed);
 		if (order === 'newer') {
-			const version = await versionOf();
+			const name = await nameOf();
 			return {
-				available: Object.freeze({ version, ...published }),
+				available: Object.freeze({ ...name, ...published }),
 				latest: Object.freeze({
-					version,
+					...name,
 					...published,
 					order: 'newer',
 				}),
@@ -344,7 +360,9 @@ export async function findAvailable(
 			return {
 				available: null,
 				latest: Object.freeze({
-					version: order === 'same' ? installed.version : await versionOf(),
+					...(order === 'same'
+						? { version: installed.version, revision: installed.revision }
+						: await nameOf()),
 					...published,
 					order,
 				}),
@@ -485,12 +503,23 @@ export async function runUpgradeCheck(
 		unavailable: described.unavailable,
 		latest,
 		installLatestUnavailable: installLatestBlocked(described, latest),
+		recordPath: described.resultPath,
 		lastResult:
 			last === undefined
 				? null
 				: Object.freeze({
+						...(last.run === undefined ? {} : { run: last.run }),
+						...(last.runStartedAt === undefined
+							? {}
+							: { runStartedAt: last.runStartedAt }),
 						from: last.from,
 						to: last.to,
+						...(last.fromRelease === undefined
+							? {}
+							: { fromRelease: last.fromRelease }),
+						...(last.toRelease === undefined
+							? {}
+							: { toRelease: last.toRelease }),
 						outcome: last.outcome,
 						...(last.reason === undefined ? {} : { reason: last.reason }),
 						at: last.at,

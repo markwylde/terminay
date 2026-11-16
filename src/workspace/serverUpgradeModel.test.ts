@@ -1193,3 +1193,414 @@ test('a followed upgrade can never wait for ever once the server is back', () =>
 	board.closeProgress('vps');
 	assert.equal(board.snapshot.progress.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Servers that publish their attempts (ADR-0125).
+
+type Attempt = NonNullable<
+	import('@terminay/client-core').ServerUpgradeAttempt
+>;
+
+/** A connection's client on a server that publishes attempts. */
+function attemptClient(initial: ServerUpgradeStatus = status(AVAILABLE)) {
+	const base = fakeClient(initial);
+	const listeners = new Set<(next: Attempt | null | undefined) => void>();
+	const sent: { mode: string; options: unknown }[] = [];
+	let reply: (() => Promise<unknown>) | undefined;
+	const attempts = {
+		attempt: null as Attempt | null | undefined,
+		subscribe(listener: (next: Attempt | null | undefined) => void) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+	};
+	return {
+		...base,
+		attempts,
+		sent,
+		/** What the next start replies with. */
+		replyWith(next: () => Promise<unknown>) {
+			reply = next;
+		},
+		async startServerUpgrade(mode: string, options?: unknown) {
+			sent.push({ mode, options });
+			return reply === undefined ? base.store.status : reply();
+		},
+		publishAttempt(next: Attempt | null) {
+			attempts.attempt = next;
+			for (const listener of [...listeners]) listener(next);
+		},
+	};
+}
+
+const pendingAttempt = (overrides: Partial<Attempt> = {}): Attempt => ({
+	id: 'attempt-1',
+	requestId: 'req-1',
+	mode: 'in-place',
+	kind: 'upgrade',
+	startedAt: 1_000,
+	expiresAt: 1_801_000,
+	stage: 'requested',
+	...overrides,
+});
+
+const endedAttempt = (
+	ending: Attempt['ending'],
+	overrides: Partial<Attempt> = {},
+): Attempt => {
+	const { stage: _stage, ...rest } = pendingAttempt(overrides);
+	return { ...rest, ending };
+};
+
+const stepStates = (board: ServerUpgradeBoard) =>
+	board.snapshot.progress[0]?.steps.map((step) => `${step.id}:${step.state}`);
+
+test('the attempt that finds nothing to install ends the ticklist at once', async () => {
+	// What left a phone on Installing: the helper ran, found the build already
+	// installed, and the card waited for an ending nobody would send.
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	const refusal = await board.startUpgrade('pop', client, 'in-place', {
+		to: '5.2.0',
+	});
+	assert.equal(refusal, undefined);
+	assert.deepEqual(client.sent, [
+		{ mode: 'in-place', options: { requestId: 'req-1' } },
+	]);
+	assert.deepEqual(stepStates(board), [
+		'start:running',
+		'install:waiting',
+		'restart:waiting',
+		'running:waiting',
+	]);
+	client.publishAttempt(pendingAttempt());
+	client.publishAttempt(pendingAttempt({ stage: 'installing' }));
+	assert.deepEqual(stepStates(board), [
+		'start:done',
+		'install:running',
+		'restart:waiting',
+		'running:waiting',
+	]);
+	client.publishAttempt(
+		endedAttempt({ kind: 'unchanged', from: '5.1.1', to: '5.1.1', at: 2_000 }),
+	);
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	assert.deepEqual(
+		board.snapshot.notices.map((notice) => notice.text),
+		['Pop was already on 5.1.1. Nothing was installed.'],
+	);
+	// The status a released client would read changes nothing here.
+	client.publish(status(AVAILABLE));
+	assert.equal(board.snapshot.notices.length, 1);
+});
+
+test('a reply lost to the restart loses nothing: the attempt is found by its request id', async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const before = attemptClient();
+	board.sync([source('pop', before, { serverId: 'pop', label: 'Pop' })]);
+	before.replyWith(async () => {
+		throw Object.assign(new Error('gone'), { code: 'disconnected' });
+	});
+	assert.equal(
+		await board.startUpgrade('pop', before, 'in-place', { to: '5.2.0' }),
+		undefined,
+	);
+	// The connection drops before any attempt was read.
+	board.sync([
+		source('pop', undefined, {
+			serverId: 'pop',
+			label: 'Pop',
+			phase: 'reconnecting',
+		}),
+	]);
+	assert.equal(board.snapshot.progress[0]?.restarting, true);
+	// The server that comes back has the attempt, already over.
+	const after = attemptClient(status({ version: '5.2.0' }));
+	after.attempts.attempt = endedAttempt({
+		kind: 'succeeded',
+		from: '5.1.1',
+		to: '5.2.0',
+		at: 3_000,
+	});
+	board.sync([source('pop', after, { serverId: 'pop', label: 'Pop' })]);
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	assert.deepEqual(
+		board.snapshot.notices.map((notice) => notice.text),
+		['Pop is now on 5.2.0.'],
+	);
+});
+
+test('a reload while the restarted server finishes keeps the same attempt', () => {
+	const storage = fakeStorage();
+	const first = new ServerUpgradeBoard({
+		...fakeTimers(),
+		memory: createServerUpgradeMemory(storage),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	first.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	void first.startUpgrade('pop', client, 'in-place', { to: '5.2.0' });
+	client.publishAttempt(pendingAttempt({ stage: 'installing' }));
+	first.dispose();
+
+	const second = new ServerUpgradeBoard({
+		...fakeTimers(),
+		memory: createServerUpgradeMemory(storage),
+	});
+	const back = attemptClient(status({ version: '5.2.0' }));
+	back.attempts.attempt = pendingAttempt({ stage: 'finishing' });
+	second.sync([source('pop', back, { serverId: 'pop', label: 'Pop' })]);
+	assert.deepEqual(stepStates(second), [
+		'start:done',
+		'install:done',
+		'restart:done',
+		'running:running',
+	]);
+	assert.equal(second.snapshot.progress[0]?.initiatedHere, true);
+	assert.equal(second.snapshot.progress[0]?.to, '5.2.0');
+	back.publishAttempt(
+		endedAttempt({ kind: 'succeeded', from: '5.1.1', to: '5.2.0', at: 3_000 }),
+	);
+	assert.equal(second.snapshot.progress[0]?.outcome, 'success');
+	assert.equal(second.snapshot.notices.length, 1);
+});
+
+test("another attempt's ending does not end the one followed", async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	await board.startUpgrade('pop', client, 'in-place');
+	client.publishAttempt(pendingAttempt({ stage: 'installing' }));
+	client.publishAttempt(
+		endedAttempt(
+			{ kind: 'failed', from: '5.1.1', to: '5.1.1', reason: 'x', at: 2_000 },
+			{ id: 'attempt-0', requestId: 'someone-else' },
+		),
+	);
+	assert.equal(board.snapshot.progress[0]?.outcome, undefined);
+	assert.equal(board.snapshot.notices.length, 0);
+});
+
+test('an upgrader that never starts fails the first step, with what to run', async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	await board.startUpgrade('pop', client, 'in-place');
+	client.publishAttempt(pendingAttempt());
+	client.publishAttempt(
+		endedAttempt({
+			kind: 'failed',
+			from: '5.1.1',
+			to: '5.1.1',
+			reason:
+				'the upgrader did not start. Run `sudo terminay daemon upgrade --system` on the server\'s host to upgrade it.',
+			at: 121_000,
+		}),
+	);
+	const view = board.snapshot.progress[0];
+	assert.equal(view?.outcome, 'failure');
+	assert.equal(view?.steps[0]?.state, 'failed');
+	assert.match(view?.steps[0]?.detail ?? '', /sudo terminay daemon upgrade --system/u);
+});
+
+test('a late reply for an attempt that has ended changes nothing', async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	let answer: (value: unknown) => void = () => {};
+	client.replyWith(
+		() =>
+			new Promise((resolve) => {
+				answer = resolve;
+			}),
+	);
+	const started = board.startUpgrade('pop', client, 'in-place');
+	client.publishAttempt(pendingAttempt());
+	client.publishAttempt(
+		endedAttempt({ kind: 'unchanged', from: '5.1.1', to: '5.1.1', at: 2_000 }),
+	);
+	const before = board.snapshot;
+	answer(status(AVAILABLE));
+	assert.equal(await started, undefined);
+	assert.equal(board.snapshot, before);
+});
+
+test('a refused start leaves nothing followed, and says why', async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	client.replyWith(async () => {
+		throw Object.assign(new Error('busy'), {
+			code: 'conflict',
+			details: { reason: 'in-progress' },
+		});
+	});
+	assert.equal(
+		await board.startUpgrade('pop', client, 'in-place'),
+		'An upgrade is already running.',
+	);
+	assert.deepEqual(board.snapshot.progress, []);
+});
+
+test('Install latest goes through the board with its consent and request id', async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-7',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	await board.startUpgrade('pop', client, 'in-place', {
+		to: '5.0.9',
+		allowOlder: true,
+	});
+	assert.deepEqual(client.sent, [
+		{ mode: 'in-place', options: { allowOlder: true, requestId: 'req-7' } },
+	]);
+	assert.equal(board.snapshot.progress[0]?.to, '5.0.9');
+	// A server without attempts is sent no request id, and followed as before.
+	const legacy = fakeClient(status(AVAILABLE));
+	const sent: unknown[] = [];
+	const plain = {
+		...legacy,
+		startServerUpgrade: async (_mode: string, options?: unknown) => {
+			sent.push(options);
+			return legacy.store.status;
+		},
+	};
+	const other = new ServerUpgradeBoard({ ...fakeTimers() });
+	other.sync([source('old', plain, { serverId: 'old', label: 'Old' })]);
+	await other.startUpgrade('old', plain, 'in-place', { to: '5.2.0' });
+	assert.deepEqual(sent, [undefined]);
+	assert.equal(other.snapshot.progress[0]?.initiatedHere, true);
+});
+
+test('a server that comes back without attempts is followed by the old rules', async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	await board.startUpgrade('pop', client, 'in-place', { to: '5.2.0' });
+	client.publishAttempt(pendingAttempt({ stage: 'installing' }));
+	board.sync([
+		source('pop', undefined, {
+			serverId: 'pop',
+			label: 'Pop',
+			phase: 'reconnecting',
+		}),
+	]);
+	// Install latest moved it to a release that predates attempts.
+	const older = fakeClient(
+		status({
+			version: '5.0.9',
+			upgrade: {
+				state: 'succeeded',
+				from: '5.1.1',
+				to: '5.0.9',
+				at: 2_000,
+			},
+		}),
+	);
+	board.sync([source('pop', older, { serverId: 'pop', label: 'Pop' })]);
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	assert.deepEqual(
+		board.snapshot.notices.map((notice) => notice.text),
+		['Pop is now on 5.0.9.'],
+	);
+});
+
+test('another device follows a pending attempt it reads, and opens nothing for an ending', () => {
+	const board = new ServerUpgradeBoard({ ...fakeTimers() });
+	const client = attemptClient();
+	client.attempts.attempt = endedAttempt({
+		kind: 'succeeded',
+		from: '5.1.0',
+		to: '5.1.1',
+		at: 500,
+	});
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	assert.equal(board.snapshot.progress.length, 0);
+	client.publishAttempt(pendingAttempt({ requestId: 'phone' }));
+	assert.equal(board.snapshot.progress[0]?.initiatedHere, false);
+	client.publishAttempt(
+		endedAttempt(
+			{ kind: 'succeeded', from: '5.1.1', to: '5.2.0', at: 3_000 },
+			{ requestId: 'phone' },
+		),
+	);
+	// A device that only watched keeps no ticklist, and is told once.
+	assert.deepEqual(board.snapshot.progress, []);
+	assert.equal(board.snapshot.notices.length, 1);
+});
+
+test('a rolled-back attempt fails the last step with its reason', async () => {
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	await board.startUpgrade('pop', client, 'in-place', { to: '5.2.0' });
+	client.publishAttempt(pendingAttempt({ stage: 'finishing' }));
+	client.publishAttempt(
+		endedAttempt({
+			kind: 'rolled-back',
+			from: '5.1.1',
+			to: '5.2.0',
+			reason: 'the new release did not become ready',
+			at: 3_000,
+		}),
+	);
+	const view = board.snapshot.progress[0];
+	assert.equal(view?.outcome, 'failure');
+	assert.equal(view?.steps[3]?.state, 'failed');
+	assert.deepEqual(
+		board.snapshot.notices.map((notice) => notice.text),
+		[
+			'Upgrading Pop failed: the new release did not become ready. 5.1.1 is running again.',
+		],
+	);
+});
+
+test('an attempt server that does not come back fails the restart once', async () => {
+	const timers = fakeTimers();
+	const board = new ServerUpgradeBoard({ ...timers, randomId: () => 'req-1' });
+	const client = attemptClient();
+	board.sync([source('pop', client, { serverId: 'pop', label: 'Pop' })]);
+	await board.startUpgrade('pop', client, 'in-place', { to: '5.2.0' });
+	client.publishAttempt(pendingAttempt({ stage: 'installing' }));
+	board.sync([
+		source('pop', undefined, {
+			serverId: 'pop',
+			label: 'Pop',
+			phase: 'reconnecting',
+		}),
+	]);
+	timers.fire();
+	const view = board.snapshot.progress[0];
+	assert.equal(view?.outcome, 'failure');
+	assert.equal(view?.steps[2]?.state, 'failed');
+	assert.equal(board.snapshot.notices.length, 1);
+});

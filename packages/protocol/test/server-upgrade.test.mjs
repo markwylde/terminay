@@ -5,6 +5,7 @@ import {
 	encodeFrame,
 	evaluateServerCompatibility,
 	FEATURE_CAPABILITIES,
+	parseServerUpgradeAttemptState,
 	parseServerUpgradeStartRequest,
 	parseServerUpgradeStatus,
 	SERVER_UPGRADE_CAPABILITY,
@@ -46,7 +47,9 @@ test('server upgrade is a capability a client can do without', () => {
 		capabilities: [
 			...CLIENT_SERVER_COMPATIBILITY.requiredCapabilities,
 			...CLIENT_SERVER_COMPATIBILITY.optionalCapabilities.filter(
-				(capability) => capability !== SERVER_UPGRADE_CAPABILITY,
+				(capability) =>
+					capability !== SERVER_UPGRADE_CAPABILITY &&
+					capability !== FEATURE_CAPABILITIES.serverUpgradeAttempts,
 			),
 		],
 		limits: {},
@@ -55,6 +58,7 @@ test('server upgrade is a capability a client can do without', () => {
 	assert.equal(older.state, 'degraded');
 	assert.deepEqual(older.missingOptionalCapabilities, [
 		SERVER_UPGRADE_CAPABILITY,
+		FEATURE_CAPABILITIES.serverUpgradeAttempts,
 	]);
 });
 
@@ -66,12 +70,15 @@ test('every server upgrade operation name can be encoded on the wire', () => {
 			start: 'server.upgrade.start',
 			check: 'server.upgrade.check',
 			event: 'server.upgrade',
+			attempt: 'server.upgrade.attempt',
+			attemptEvent: 'server.upgrade.attempt.changed',
 		},
 	);
 	for (const operation of [
 		SERVER_UPGRADE_OPERATIONS.status,
 		SERVER_UPGRADE_OPERATIONS.start,
 		SERVER_UPGRADE_OPERATIONS.check,
+		SERVER_UPGRADE_OPERATIONS.attempt,
 	])
 		assert.doesNotThrow(() =>
 			encodeFrame({ type: 'query', queryId: 'q1', operation, payload: {} }),
@@ -178,6 +185,14 @@ test('a start request names a mode and nothing else', () => {
 	assert.deepEqual(parseServerUpgradeStartRequest({ mode: 'recreate' }), {
 		mode: 'recreate',
 	});
+	// The device's own request id, so it can find its attempt (ADR-0125).
+	assert.deepEqual(
+		parseServerUpgradeStartRequest({
+			mode: 'in-place',
+			requestId: 'req-0b6c2f2e',
+		}),
+		{ mode: 'in-place', requestId: 'req-0b6c2f2e' },
+	);
 	for (const bad of [
 		null,
 		[],
@@ -192,6 +207,10 @@ test('a start request names a mode and nothing else', () => {
 		{ mode: 'in-place', allowOlder: false },
 		{ mode: 'in-place', allowOlder: '5.1.0' },
 		{ mode: 'in-place', allowOlder: true, version: '5.1.0' },
+		{ mode: 'in-place', requestId: '' },
+		{ mode: 'in-place', requestId: 'has space' },
+		{ mode: 'in-place', requestId: 'x'.repeat(65) },
+		{ mode: 'in-place', requestId: 7 },
 	])
 		assert.throws(
 			() => parseServerUpgradeStartRequest(bad),
@@ -235,4 +254,117 @@ test("a status may name the channel's latest release, whichever way it orders", 
 		{ version: '5.2.0', order: 'older', canInstall: true, url: 'https://example.test' },
 	])
 		assert.throws(() => parseServerUpgradeStatus({ ...base, latest }), TypeError, JSON.stringify(latest));
+});
+
+const attempt = (overrides = {}) => ({
+	id: '6f1c9a52-41d5-4c5c-9d0e-5e1f00c0ffee',
+	requestId: 'req-1',
+	mode: 'in-place',
+	kind: 'upgrade',
+	startedAt: 1_000,
+	expiresAt: 1_801_000,
+	stage: 'requested',
+	...overrides,
+});
+
+test('an attempt is accepted exactly as a server publishes it', () => {
+	assert.deepEqual(parseServerUpgradeAttemptState({ attempt: null }), {
+		attempt: null,
+	});
+	for (const stage of ['requested', 'installing', 'finishing'])
+		assert.equal(
+			parseServerUpgradeAttemptState({ attempt: attempt({ stage }) }).attempt
+				?.stage,
+			stage,
+		);
+	for (const kind of ['succeeded', 'rolled-back', 'unchanged', 'failed']) {
+		const ended = attempt({
+			stage: undefined,
+			ending: {
+				kind,
+				from: '6.10.0-main.3493.canary',
+				to: '6.10.0-main.3493.canary',
+				...(kind === 'succeeded' || kind === 'unchanged'
+					? {}
+					: { reason: 'the channel could not be read' }),
+				at: 2_000,
+			},
+		});
+		delete ended.stage;
+		assert.equal(
+			parseServerUpgradeAttemptState({ attempt: ended }).attempt?.ending?.kind,
+			kind,
+		);
+	}
+	// An attempt without a request id is one another device or a server start
+	// began.
+	const { requestId: _omitted, ...bare } = attempt();
+	assert.equal(
+		parseServerUpgradeAttemptState({ attempt: bare }).attempt?.requestId,
+		undefined,
+	);
+});
+
+test('a malformed attempt is refused', () => {
+	const ended = {
+		kind: 'succeeded',
+		from: '5.1.1',
+		to: '5.2.0',
+		at: 2_000,
+	};
+	for (const bad of [
+		{},
+		{ attempt: undefined },
+		{ attempt: attempt(), extra: true },
+		{ attempt: attempt({ stage: 'downloading' }) },
+		{ attempt: attempt({ id: 'x'.repeat(65) }) },
+		{ attempt: attempt({ id: '' }) },
+		{ attempt: attempt({ requestId: 'has space' }) },
+		{ attempt: attempt({ mode: 'sideways' }) },
+		{ attempt: attempt({ kind: 'downgrade' }) },
+		{ attempt: attempt({ expiresAt: 500 }) },
+		{ attempt: attempt({ ending: ended }) },
+		{ attempt: { ...attempt(), stage: undefined } },
+		{
+			attempt: {
+				...attempt({ ending: { ...ended, kind: 'maybe' } }),
+				stage: undefined,
+			},
+		},
+		{
+			attempt: {
+				...attempt({ ending: { ...ended, path: '/opt' } }),
+				stage: undefined,
+			},
+		},
+	]) {
+		const value = JSON.parse(JSON.stringify(bad));
+		assert.throws(
+			() => parseServerUpgradeAttemptState(value),
+			TypeError,
+			JSON.stringify(bad),
+		);
+	}
+});
+
+test('a released client reads every status a server with attempts publishes', () => {
+	// The status keeps its shape: attempts travel on their own surface, so a
+	// client that predates them never meets a field it would refuse.
+	for (const upgrade of [
+		{ state: 'none' },
+		{ state: 'in-progress', mode: 'in-place', startedAt: 1_000 },
+		{ state: 'succeeded', from: '5.1.1', to: '5.2.0', at: 2_000 },
+		// An unchanged ending is a success from and to the running release.
+		{ state: 'succeeded', from: '5.2.0', to: '5.2.0', at: 2_000 },
+		// A failure that changed nothing has the running release "again".
+		{
+			state: 'failed',
+			from: '5.1.1',
+			to: '5.1.1',
+			reason: 'the channel could not be read',
+			restored: true,
+			at: 2_000,
+		},
+	])
+		assert.doesNotThrow(() => parseServerUpgradeStatus(status({ upgrade })));
 });

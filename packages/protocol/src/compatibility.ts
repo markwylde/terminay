@@ -61,6 +61,10 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	/** The server's own upgrade: whether its channel carries a newer release,
 	 * and a paired device asking for it to be installed (ADR-0062). */
 	serverUpgrade: 'server.upgrade',
+	/** Each upgrade is an attempt with an identity, published apart from the
+	 * status so that a client which predates attempts reads the status as it
+	 * always has (ADR-0125). */
+	serverUpgradeAttempts: 'server.upgrade.attempts',
 	/** A project created without a root waits for a start choice, and the
 	 * server keeps recent project folders and browses its own folders for a
 	 * root (ADR-0066). A connection that does not negotiate it gets a project
@@ -104,6 +108,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			FEATURE_CAPABILITIES.notifications,
 			FEATURE_CAPABILITIES.push,
 			FEATURE_CAPABILITIES.serverUpgrade,
+			FEATURE_CAPABILITIES.serverUpgradeAttempts,
 			FEATURE_CAPABILITIES.agents,
 			FEATURE_CAPABILITIES.git,
 			FEATURE_CAPABILITIES.forge,

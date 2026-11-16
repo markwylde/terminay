@@ -8,7 +8,11 @@ import {
 	readArchiveManifest,
 	validateUnpackedArchive,
 } from './manifest.js';
-import { releaseLabel, writeUpgradeOutcome } from './outcome.js';
+import {
+	type ReleaseName,
+	releaseLabel,
+	writeUpgradeOutcome,
+} from './outcome.js';
 import { compareVersions } from './plan.js';
 
 /**
@@ -240,6 +244,12 @@ export interface PendingUpgrade {
 	readonly next: string;
 	readonly from: string;
 	readonly to: string;
+	/** The upgrade run this belongs to, so an undo by the entrypoint is
+	 * recorded as that run's ending (ADR-0125). */
+	readonly run?: string;
+	readonly runStartedAt?: string;
+	readonly fromRelease?: ReleaseName;
+	readonly toRelease?: ReleaseName;
 	readonly startedAt: string;
 }
 
@@ -293,8 +303,18 @@ export async function rollBackPending(
 		await rm(layout.currentLink, { force: true });
 	});
 	await writeUpgradeOutcome(layout.resultPath, {
+		...(pending.run === undefined ? {} : { run: pending.run }),
+		...(pending.runStartedAt === undefined
+			? {}
+			: { runStartedAt: pending.runStartedAt }),
 		from: pending.from,
 		to: pending.to,
+		...(pending.fromRelease === undefined
+			? {}
+			: { fromRelease: pending.fromRelease }),
+		...(pending.toRelease === undefined
+			? {}
+			: { toRelease: pending.toRelease }),
 		outcome: 'rolled-back',
 		reason,
 	}).catch(() => undefined);

@@ -18,7 +18,6 @@ import {
 import {
 	activeServerUpgradeVersion,
 	createServerUpgradeMemory,
-	requestServerUpgrade,
 	requestServerUpgradeCheck,
 	ServerUpgradeBoard,
 	type ServerUpgradeEntry,
@@ -124,15 +123,14 @@ export function useServerUpgrades(
 		return {
 			entry,
 			close: () => setConfirmingProfileId(undefined),
-			start: async (mode) => {
-				const refusal = await requestServerUpgrade(
+			start: (mode) =>
+				board.startUpgrade(
+					profileId,
 					connections.find((connection) => connection.profileId === profileId)
 						?.context?.serverUpgradeClient,
 					mode,
-				);
-				if (refusal === undefined) board.markStarted(profileId, { mode, to });
-				return refusal;
-			},
+					{ to },
+				),
 		};
 	}, [board, confirmingProfileId, connections, snapshot.entries]);
 	// A confirmation that lost its server, or its upgrade, is over: it must not

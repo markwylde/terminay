@@ -859,9 +859,13 @@ test.describe('Home: Bots', () => {
 		);
 		await chat(tab);
 		await mainWindow.setViewportSize({ width: 390, height: 800 });
-		// A phone-width Home opens its sidebar as a drawer over the tab; close it.
+		// A phone-width Home may open its sidebar as a drawer over the tab;
+		// close it. A compact Home has no sidebar toggle at all.
 		const sidebar = mainWindow.locator('[data-compact-sidebar-toggle="true"]');
-		if ((await sidebar.getAttribute('aria-pressed')) === 'true') {
+		if (
+			(await sidebar.count()) > 0 &&
+			(await sidebar.getAttribute('aria-pressed')) === 'true'
+		) {
 			await sidebar.click();
 			await expect(sidebar).toHaveAttribute('aria-pressed', 'false');
 		}

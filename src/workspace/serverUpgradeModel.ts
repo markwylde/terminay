@@ -11,9 +11,16 @@
  * this window was following therefore lives here rather than beside a client,
  * so the outcome that arrives on the new connection is recognised as the end
  * of the upgrade the old one watched begin, and is told once.
+ *
+ * A server that publishes its attempts (ADR-0125) is followed by the attempt
+ * it owns: found by the request id this device sent, then by its id, with its
+ * steps and its ending read from the attempt. Nothing about how it ended is
+ * inferred from versions or times. A server that does not is followed by the
+ * rules in `receiveStatus`, which exist only for it.
  */
 
 import type {
+	ServerUpgradeAttempt,
 	ServerUpgradeMode,
 	ServerUpgradeStatus,
 } from '@terminay/client-core';
@@ -34,6 +41,20 @@ type UpgradeStatusStore = Readonly<{
 	) => () => void;
 }>;
 
+type UpgradeAttemptStore = Readonly<{
+	attempt: ServerUpgradeAttempt | null | undefined;
+	subscribe: (
+		listener: (attempt: ServerUpgradeAttempt | null | undefined) => void,
+	) => () => void;
+}>;
+
+/** What the board reads from a connection's upgrade client. `attempts` is
+ * present only for a server that publishes them. */
+type UpgradeClient = Readonly<{
+	store: UpgradeStatusStore;
+	attempts?: UpgradeAttemptStore | undefined;
+}>;
+
 /** One attached server the window may show an upgrade for. */
 export type ServerUpgradeSource = Readonly<{
 	profileId: string;
@@ -43,7 +64,7 @@ export type ServerUpgradeSource = Readonly<{
 	phase: ConnectionPhase;
 	/** Absent while the connection is down, or when the server publishes no
 	 * upgrade status at all. */
-	client?: Readonly<{ store: UpgradeStatusStore }>;
+	client?: UpgradeClient;
 	/** The connection's own words for why it cannot be used, when it says. */
 	error?: string;
 }>;
@@ -97,7 +118,7 @@ export function serverUpgradeSources(
 			error?: string;
 			compatibility?: Readonly<{ state: string; message?: string }>;
 			context?: Readonly<{
-				serverUpgradeClient?: Readonly<{ store: UpgradeStatusStore }>;
+				serverUpgradeClient?: UpgradeClient;
 			}>;
 		}>)[],
 	profiles: Parameters<typeof isLocalConnection>[1],
@@ -213,6 +234,19 @@ export function upgradeSilentText(label: string): string {
 	return `${label} came back but did not say how the upgrade ended.`;
 }
 
+export function upgradeUnchangedText(label: string, version: string): string {
+	return `${label} was already on ${version}. Nothing was installed.`;
+}
+
+export function upgradeNotDoneText(
+	label: string,
+	reason: string | undefined,
+): string {
+	const why =
+		reason === undefined ? '' : `: ${reason.trim().replace(/[.\s]+$/, '')}`;
+	return `Upgrading ${label} failed${why}.`;
+}
+
 /** The labels of a followed upgrade's steps, in order. */
 export function upgradeStepLabels(
 	to: string | undefined,
@@ -250,6 +284,10 @@ export type RememberedServerUpgrade = Readonly<{
 		mode?: ServerUpgradeMode;
 		/** This device asked for it. */
 		initiated?: true;
+		/** The id this device sent with its request (ADR-0125). */
+		requestId?: string;
+		/** The server's id for the attempt, once read. */
+		attemptId?: string;
 	}>;
 	/** The times of the outcomes this device has already been shown. */
 	seen: readonly number[];
@@ -315,6 +353,8 @@ export function createServerUpgradeMemory(
 							to?: unknown;
 							mode?: unknown;
 							initiated?: unknown;
+							requestId?: unknown;
+							attemptId?: unknown;
 						})
 					: undefined;
 			const live =
@@ -341,6 +381,12 @@ export function createServerUpgradeMemory(
 									: {}),
 								...(marker.initiated === true
 									? { initiated: true as const }
+									: {}),
+								...(typeof marker.requestId === 'string'
+									? { requestId: marker.requestId }
+									: {}),
+								...(typeof marker.attemptId === 'string'
+									? { attemptId: marker.attemptId }
 									: {}),
 							},
 						}
@@ -390,6 +436,10 @@ type Tracked = {
 	client: ServerUpgradeSource['client'];
 	unsubscribe: (() => void) | undefined;
 	status: ServerUpgradeStatus | undefined;
+	/** The request id this device sent for the attempt it follows. */
+	requestId: string | undefined;
+	/** The server's id for the attempt followed, once read. */
+	attemptId: string | undefined;
 	/** This window saw the upgrade begin, or began it. */
 	following: boolean;
 	followedFrom: string | undefined;
@@ -416,13 +466,25 @@ type Attempt = {
 	initiatedHere: boolean;
 	/** A status arrived on the connection that replaced the dropped one. */
 	returned: boolean;
+	/** Where the server says its attempt stands, on a server that publishes
+	 * attempts. */
+	stage: ServerUpgradeAttempt['stage'];
 	end:
 		| Readonly<{
-				failed?: 'restart' | 'running';
+				failed?: 'start' | 'install' | 'restart' | 'running';
 				detail?: string;
 		  }>
 		| undefined;
 };
+
+/** What a start is sent through: a connection's upgrade client. */
+export type StartClient = Readonly<{
+	attempts?: unknown;
+	startServerUpgrade: (
+		mode: ServerUpgradeMode,
+		options?: { readonly allowOlder?: boolean; readonly requestId?: string },
+	) => Promise<unknown>;
+}>;
 
 const EMPTY_BOARD: ServerUpgradeBoardSnapshot = Object.freeze({
 	entries: Object.freeze([]),
@@ -443,6 +505,7 @@ export class ServerUpgradeBoard {
 	private readonly clearTimer: (handle: unknown) => void;
 	private readonly memory: ServerUpgradeMemory | undefined;
 	private readonly now: () => number;
+	private readonly randomId: () => string;
 
 	constructor(
 		options: Readonly<{
@@ -453,9 +516,13 @@ export class ServerUpgradeBoard {
 			setTimer?: (run: () => void, delayMs: number) => unknown;
 			clearTimer?: (handle: unknown) => void;
 			now?: () => number;
+			/** Makes the request id sent with a start. */
+			randomId?: () => string;
 		}> = {},
 	) {
 		this.now = options.now ?? Date.now;
+		this.randomId =
+			options.randomId ?? (() => globalThis.crypto.randomUUID());
 		this.deadlineMs = options.deadlineMs ?? SERVER_UPGRADE_RETURN_DEADLINE_MS;
 		this.memory = options.memory;
 		this.setTimer =
@@ -499,6 +566,8 @@ export class ServerUpgradeBoard {
 					client: undefined,
 					unsubscribe: undefined,
 					status: undefined,
+					requestId: undefined,
+					attemptId: undefined,
 					following: false,
 					followedFrom: undefined,
 					startedAt: undefined,
@@ -544,6 +613,56 @@ export class ServerUpgradeBoard {
 		this.publish();
 	}
 
+	/**
+	 * Ask a server to begin, from any place a person can: the menu's
+	 * confirmation, Settings, or Install latest. On a server that publishes
+	 * attempts, what is followed is recorded before the request is sent, under
+	 * a request id the attempt will carry, so a reply lost to the restart loses
+	 * nothing (ADR-0125). Resolves with the words for a refusal, or
+	 * `undefined` once the upgrade is under way.
+	 */
+	async startUpgrade(
+		profileId: string,
+		client: StartClient | undefined,
+		mode: ServerUpgradeMode,
+		details: Readonly<{ to?: string; allowOlder?: boolean }> = {},
+	): Promise<string | undefined> {
+		const record = this.tracked.get(profileId);
+		const attempts = client?.attempts !== undefined;
+		const requestId = attempts ? this.randomId() : undefined;
+		if (record !== undefined && requestId !== undefined) {
+			this.expect(record, requestId, mode, details.to);
+			this.publish();
+		}
+		const refusal = await requestServerUpgrade(client, mode, {
+			...(details.allowOlder === true ? { allowOlder: true } : {}),
+			...(requestId === undefined ? {} : { requestId }),
+		});
+		if (refusal !== undefined) {
+			// Refused: nothing began under this request.
+			if (
+				record !== undefined &&
+				requestId !== undefined &&
+				record.requestId === requestId &&
+				record.attemptId === undefined
+			) {
+				record.attempt = undefined;
+				this.unfollow(record);
+				// Whatever the server is doing instead is still worth showing.
+				this.receiveAttempt(record, record.client?.attempts?.attempt);
+				this.publish();
+			}
+			return refusal;
+		}
+		// A server without attempts is followed from its reply, as before.
+		if (!attempts)
+			this.markStarted(profileId, {
+				mode,
+				...(details.to === undefined ? {} : { to: details.to }),
+			});
+		return undefined;
+	}
+
 	/** Close a ticklist whose upgrade has ended. */
 	closeProgress(profileId: string): void {
 		const record = this.tracked.get(profileId);
@@ -577,6 +696,8 @@ export class ServerUpgradeBoard {
 			// about the last one describes it.
 			this.settleConnection(record);
 			record.status = undefined;
+			record.requestId = undefined;
+			record.attemptId = undefined;
 			record.following = false;
 			record.followedFrom = undefined;
 			record.startedAt = undefined;
@@ -593,12 +714,15 @@ export class ServerUpgradeBoard {
 		record.startedAt = remembered.following.startedAt;
 		record.dropped = true;
 		record.droppedClient = undefined;
+		record.requestId = remembered.following.requestId;
+		record.attemptId = remembered.following.attemptId;
 		record.attempt = {
 			mode: remembered.following.mode,
 			from: remembered.following.from,
 			to: remembered.following.to,
 			initiatedHere: remembered.following.initiated === true,
 			returned: false,
+			stage: undefined,
 			end: undefined,
 		};
 	}
@@ -625,6 +749,12 @@ export class ServerUpgradeBoard {
 							...(record.attempt?.initiatedHere === true
 								? { initiated: true as const }
 								: {}),
+							...(record.requestId === undefined
+								? {}
+								: { requestId: record.requestId }),
+							...(record.attemptId === undefined
+								? {}
+								: { attemptId: record.attemptId }),
 						},
 					}
 				: {}),
@@ -642,14 +772,119 @@ export class ServerUpgradeBoard {
 			if (!record.following) record.status = undefined;
 			return;
 		}
-		record.unsubscribe = client.store.subscribe((status) => {
+		const offStatus = client.store.subscribe((status) => {
 			if (record.client !== client) return;
 			this.receive(record, status);
 			this.publish();
 		});
+		const offAttempt = client.attempts?.subscribe((attempt) => {
+			if (record.client !== client) return;
+			this.receiveAttempt(record, attempt);
+			this.publish();
+		});
+		record.unsubscribe = () => {
+			offStatus();
+			offAttempt?.();
+		};
 		if (client.store.status === undefined) {
 			if (!record.following) record.status = undefined;
 		} else this.receive(record, client.store.status);
+		if (client.attempts !== undefined)
+			this.receiveAttempt(record, client.attempts.attempt);
+	}
+
+	/**
+	 * Any word from the connection that replaced the dropped one means the
+	 * server came back, whatever it goes on to say.
+	 */
+	private noteReturn(record: Tracked): boolean {
+		const returned = record.dropped && record.client !== record.droppedClient;
+		if (returned) {
+			this.settleConnection(record);
+			if (record.attempt !== undefined && record.following)
+				record.attempt.returned = true;
+		}
+		return returned;
+	}
+
+	/**
+	 * The attempt a server publishes (ADR-0125). The one followed is found by
+	 * the request id this device sent, or by its id; a pending attempt this
+	 * device did not ask for is followed as one it watches. Its ending is how
+	 * the upgrade ended, and nothing else is.
+	 */
+	private receiveAttempt(
+		record: Tracked,
+		attempt: ServerUpgradeAttempt | null | undefined,
+	): void {
+		if (record.client?.attempts === undefined) return;
+		this.noteReturn(record);
+		if (attempt === undefined || attempt === null) return;
+		if (record.following) {
+			const ours =
+				attempt.id === record.attemptId ||
+				(record.attemptId === undefined &&
+					(record.requestId === undefined
+						? attempt.ending === undefined
+						: attempt.requestId === record.requestId));
+			if (!ours) return;
+			if (record.attemptId === undefined) {
+				record.attemptId = attempt.id;
+				record.startedAt = attempt.startedAt;
+				this.remember(record);
+			}
+		} else {
+			// An ending this device was not following opens nothing.
+			if (attempt.ending !== undefined) return;
+			this.follow(record, attempt.startedAt);
+			record.attemptId = attempt.id;
+			if (record.attempt !== undefined) record.attempt.mode = attempt.mode;
+			this.remember(record);
+		}
+		if (attempt.ending === undefined) {
+			if (record.attempt !== undefined) record.attempt.stage = attempt.stage;
+			return;
+		}
+		this.endAttempt(record, attempt.ending);
+	}
+
+	private endAttempt(
+		record: Tracked,
+		ending: NonNullable<ServerUpgradeAttempt['ending']>,
+	): void {
+		const label = record.source.label;
+		const stage = record.attempt?.stage;
+		const key = `attempt:${record.attemptId ?? ending.at}`;
+		switch (ending.kind) {
+			case 'succeeded':
+				this.unfollow(record, {});
+				this.tell(record, key, 'success', upgradeSucceededText(label, ending.to));
+				return;
+			case 'unchanged':
+				this.unfollow(record, {});
+				this.tell(record, key, 'success', upgradeUnchangedText(label, ending.to));
+				return;
+			case 'rolled-back': {
+				const text = upgradeFailedText(label, ending.from, ending.reason);
+				this.unfollow(record, { failed: 'running', detail: text });
+				this.tell(record, key, 'failure', text);
+				return;
+			}
+			case 'failed': {
+				const text = upgradeNotDoneText(label, ending.reason);
+				this.unfollow(record, {
+					failed:
+						stage === undefined || stage === 'requested'
+							? 'start'
+							: stage === 'installing'
+								? 'install'
+								: 'running',
+					detail: text,
+				});
+				this.tell(record, key, 'failure', text);
+				return;
+			}
+		}
 	}
 
 	private receive(
@@ -661,14 +896,24 @@ export class ServerUpgradeBoard {
 			return;
 		}
 		record.status = status;
-		// Any status from the connection that replaced the dropped one means the
-		// server came back, whatever it goes on to say.
-		const returned = record.dropped && record.client !== record.droppedClient;
-		if (returned) {
-			this.settleConnection(record);
-			if (record.attempt !== undefined && record.following)
-				record.attempt.returned = true;
+		// A server that publishes attempts is followed by them alone.
+		if (record.client?.attempts !== undefined) {
+			this.noteReturn(record);
+			return;
 		}
+		this.receiveStatus(record, status, this.noteReturn(record));
+	}
+
+	/**
+	 * How a server that publishes no attempts is followed: by its status, the
+	 * versions it reports, and the times of its outcomes. These rules exist
+	 * only for such a server, including one that came back without attempts.
+	 */
+	private receiveStatus(
+		record: Tracked,
+		status: ServerUpgradeStatus,
+		returned: boolean,
+	): void {
 		const progress = status.upgrade;
 		const cameBack = returned || record.attempt?.returned === true;
 		if (progress.state === 'in-progress') {
@@ -783,8 +1028,35 @@ export class ServerUpgradeBoard {
 			to: record.status?.available?.version,
 			initiatedHere: false,
 			returned: false,
+			stage: undefined,
 			end: undefined,
 		};
+		this.remember(record);
+	}
+
+	/**
+	 * This device is about to ask for an upgrade on a server that publishes
+	 * attempts: follow it now, by the request id the attempt will carry.
+	 */
+	private expect(
+		record: Tracked,
+		requestId: string,
+		mode: ServerUpgradeMode,
+		to: string | undefined,
+	): void {
+		if (record.following) this.unfollow(record);
+		// A finished ticklist still on screen belongs to the last attempt.
+		record.attempt = undefined;
+		this.follow(record);
+		record.requestId = requestId;
+		record.attemptId = undefined;
+		const attempt = record.attempt as Attempt | undefined;
+		if (attempt !== undefined) {
+			attempt.initiatedHere = true;
+			attempt.mode = mode;
+			attempt.stage = 'requested';
+			if (to !== undefined) attempt.to = to;
+		}
 		this.remember(record);
 	}
 
@@ -803,6 +1075,8 @@ export class ServerUpgradeBoard {
 		record.expectsRestart = false;
 		record.followedFrom = undefined;
 		record.startedAt = undefined;
+		record.requestId = undefined;
+		record.attemptId = undefined;
 		this.settleConnection(record);
 		this.remember(record);
 	}
@@ -856,6 +1130,9 @@ export class ServerUpgradeBoard {
 			if (!record.following) return;
 			const connected =
 				record.source.phase === 'ready' && record.client !== undefined;
+			// A server that publishes attempts ends each one by its own
+			// deadlines; while it is connected there is nothing to hold it to.
+			if (connected && record.client?.attempts !== undefined) return;
 			if (connected || !record.expectsRestart) {
 				this.unfollow(record, {
 					failed: 'running',
@@ -974,7 +1251,21 @@ function progressView(
 	let states: Record<ServerUpgradeStepId, ServerUpgradeStepState>;
 	if (end !== undefined) {
 		states =
-			end.failed === 'restart'
+			end.failed === 'start'
+				? {
+						start: 'failed',
+						install: 'waiting',
+						restart: 'waiting',
+						running: 'waiting',
+					}
+				: end.failed === 'install'
+				? {
+						start: 'done',
+						install: 'failed',
+						restart: 'waiting',
+						running: 'waiting',
+					}
+				: end.failed === 'restart'
 				? {
 						start: 'done',
 						install: 'done',
@@ -1001,7 +1292,26 @@ function progressView(
 			restart: 'running',
 			running: 'waiting',
 		};
-	} else if (attempt.returned || !record.expectsRestart) {
+	} else if (attempt.stage === 'requested') {
+		// Accepted, and waiting for the upgrader to pick it up.
+		states = {
+			start: 'running',
+			install: 'waiting',
+			restart: 'waiting',
+			running: 'waiting',
+		};
+	} else if (attempt.stage === 'installing') {
+		states = {
+			start: 'done',
+			install: 'running',
+			restart: 'waiting',
+			running: 'waiting',
+		};
+	} else if (
+		attempt.stage === 'finishing' ||
+		attempt.returned ||
+		!record.expectsRestart
+	) {
 		states = {
 			start: 'done',
 			install: 'done',
@@ -1287,19 +1597,28 @@ export async function requestServerUpgrade(
 		| Readonly<{
 				startServerUpgrade: (
 					mode: ServerUpgradeMode,
-					options?: { readonly allowOlder?: boolean },
+					options?: {
+						readonly allowOlder?: boolean;
+						readonly requestId?: string;
+					},
 				) => Promise<unknown>;
 		  }>
-		| undefined,
-	mode: ServerUpgradeMode,
-	options: { readonly allowOlder?: boolean } = {},
+	| undefined,
+mode: ServerUpgradeMode,
+options: { readonly allowOlder?: boolean; readonly requestId?: string } = {},
 ): Promise<string | undefined> {
-	if (client === undefined) return 'This server is not connected.';
-	try {
-		if (options.allowOlder === true)
-			await client.startServerUpgrade(mode, { allowOlder: true });
-		else await client.startServerUpgrade(mode);
-	} catch (cause) {
+if (client === undefined) return 'This server is not connected.';
+try {
+	const sent = {
+		...(options.allowOlder === true ? { allowOlder: true } : {}),
+		...(options.requestId === undefined
+			? {}
+			: { requestId: options.requestId }),
+	};
+	if (Object.keys(sent).length > 0)
+		await client.startServerUpgrade(mode, sent);
+	else await client.startServerUpgrade(mode);
+} catch (cause) {
 		if (!upgradeStartOutcomeUnknown(cause)) return upgradeStartErrorText(cause);
 	}
 	return undefined;

@@ -143,7 +143,7 @@ test('--check is an upgrade flag, takes no reference, and stands alone', () => {
 });
 
 test('a newer tagged release is reported as available, in the documented shape', async () => {
-	await withInstall({}, async ({ check }) => {
+	await withInstall({}, async ({ check, layout }) => {
 		const report = await check();
 		assert.deepEqual(report, {
 			schemaVersion: 1,
@@ -164,6 +164,7 @@ test('a newer tagged release is reported as available, in the documented shape',
 				order: 'newer',
 			},
 			installLatestUnavailable: null,
+			recordPath: layout.resultPath,
 			lastResult: null,
 		});
 		// The contract fixes the order as well as the members.
@@ -178,6 +179,7 @@ test('a newer tagged release is reported as available, in the documented shape',
 			'unavailable',
 			'latest',
 			'installLatestUnavailable',
+			'recordPath',
 			'lastResult',
 		]);
 	});
@@ -351,8 +353,11 @@ test('the rolling channel is ordered by when its archive was published', async (
 		},
 		async ({ check }) => {
 			const report = await check();
+			// Every build on a rolling channel can share a version string, so the
+			// one offered is named by its revision too.
 			assert.deepEqual(report.available, {
 				version: 'main',
+				revision: 'd'.repeat(40),
 				publishedAt: '2026-10-02T00:00:00Z',
 			});
 		},
@@ -422,6 +427,7 @@ test('a canary install checks the canary prerelease for a newer revision', async
 			// name: a client compares it with what the server runs afterwards.
 			assert.deepEqual(report.available, {
 				version: '6.10.0-main.3428.canary',
+				revision: 'e'.repeat(40),
 				publishedAt: '2026-10-03T00:00:00Z',
 			});
 			assert.equal(report.latest.version, '6.10.0-main.3428.canary');
@@ -468,10 +474,34 @@ test('the last upgrade outcome is reported, and nothing private with it', async 
 			at: '2026-09-02T00:00:00.000Z',
 		});
 		// Nothing in the whole line names where the server keeps its state or
-		// which account it runs as.
-		const line = JSON.stringify(report);
+		// which account it runs as. The record's path stays with the server
+		// that watches it and is never published.
+		const line = JSON.stringify({ ...report, recordPath: undefined });
 		assert.doesNotMatch(line, /"runAs"|"dataRoot"|"projectRoot"|ada/u);
 	});
+});
+
+test('every kind of run record is reported, and a check neither locks nor writes', async () => {
+	const release = { channel: 'tag', version: '4.1.0', revision: 'a'.repeat(40) };
+	for (const outcome of ['started', 'unchanged', 'failed', 'succeeded']) {
+		await withInstall({}, async ({ check, layout }) => {
+			await writeUpgradeOutcome(layout.resultPath, {
+				run: 'run-1',
+				from: '4.1.0',
+				to: '4.1.0',
+				fromRelease: release,
+				...(outcome === 'started' ? {} : { toRelease: release }),
+				outcome,
+				...(outcome === 'failed' ? { reason: 'nothing was changed' } : {}),
+				at: '2026-09-02T00:00:00.000Z',
+			});
+			const report = await check();
+			assert.equal(report.lastResult.outcome, outcome);
+			assert.equal(report.lastResult.run, 'run-1');
+			assert.deepEqual(report.lastResult.fromRelease, release);
+			assert.equal(existsSync(join(dirname(layout.resultPath), 'upgrade.lock')), false);
+		});
+	}
 });
 
 test('an unreadable outcome record reads as no attempt', async () => {

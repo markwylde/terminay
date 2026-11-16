@@ -92,6 +92,7 @@ import {
 	type ServerRuntimeServices,
 	ServerSettingsRepository,
 	ServerUpgradeService,
+	createFileServerUpgradeAttemptStore,
 	type SessionHolderObservationReport,
 	SessionSourceBridge,
 	SessionSourceSupervisor,
@@ -1173,7 +1174,19 @@ async function createServerComposition(
 			: undefined;
 	const serverUpgrade = new ServerUpgradeService({
 		serverVersion: options.serverVersion,
-		...(upgrader === undefined ? {} : { upgrader }),
+		// The build this process is, so a build is told apart by its commit
+		// rather than its version string (ADR-0125).
+		...(options.serverRevision === undefined
+			? {}
+			: { serverRevision: options.serverRevision }),
+		...(upgrader === undefined
+			? {}
+			: {
+					upgrader,
+					attemptStore: createFileServerUpgradeAttemptStore(
+						options.dataRoot,
+					),
+				}),
 		// Clients are never shown a failed check; the operator's log is.
 		onDiagnostic: (diagnostic) => {
 			process.stderr.write(
