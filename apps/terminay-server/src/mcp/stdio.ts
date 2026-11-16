@@ -87,7 +87,7 @@ const CONTROL_ERROR_CODES: ReadonlySet<ControlErrorCode> = new Set([
 	'workflow_exists',
 	'no_workflow',
 	'step_not_found',
-	'step_active',
+	'step_blocked',
 	'template_not_found',
 	'internal',
 ]);
@@ -1003,6 +1003,12 @@ const TEMPLATE_NOUN =
 const ICON_NOTE =
 	'icon is one of lightbulb, eye, wrench, code, flask, archive, pull-request, terminal, checklist, bug, camera, flag; anything else shows none';
 const ICONS = z.string().max(64).optional();
+const DEPENDENCY_NOTE =
+	'A step may give an id (at most 64 characters) and an after list naming the ids given to earlier steps of the same call that it waits on; a step without after waits on the step above it, and after: [] waits on nothing, so steps with met dependencies can run at the same time. after may name only earlier steps, never one twice, with at most 200 dependencies in all. The server assigns every step its own id and rewrites after to those ids.';
+const STEP_DEPENDENCIES = {
+	id: z.string().regex(ID_PATTERN).optional(),
+	after: z.array(z.string().regex(ID_PATTERN)).max(49).optional(),
+};
 
 /**
  * Workflows (ADR-0097): a checklist attached to a terminal that you work
@@ -1022,7 +1028,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'get_workflow',
 		{
-			description: `${WORKFLOW_NOUN} Read the workflow attached to a terminal: its id, name, opening prompt, template_id (the workflow template it was copied from, or null), and each step's id, title, prompt, icon, status, note, started_at and ended_at, plus resume_step_id, the step to continue from (the step left running or waiting on the user if there is one, otherwise the first step that is not done or skipped; null when every step is done or skipped). Fails with no_workflow when the terminal has none. ${WORKFLOW_TERMINAL_NOTE}`,
+			description: `${WORKFLOW_NOUN} Read the workflow attached to a terminal: its id, name, opening prompt, template_id (the workflow template it was copied from, or null), and each step's id, title, prompt, icon, after (the ids of the steps it waits on), status, note, started_at and ended_at, plus ready_step_ids, the steps not started or failed whose after steps are all done or skipped, which may be worked at the same time, and resume_step_id, the step to continue from (the first step left running or waiting on the user if there is one, otherwise the first ready step, otherwise the first step that is not done or skipped; null when every step is done or skipped). Fails with no_workflow when the terminal has none. ${WORKFLOW_TERMINAL_NOTE}`,
 			inputSchema: { terminal },
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
@@ -1031,7 +1037,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'create_workflow',
 		{
-			description: `${WORKFLOW_NOUN} Attach a new workflow to a terminal. Either give template_id to copy that workflow template's name, opening prompt and steps (nothing is typed into the terminal; later edits to the template do not change this workflow), or give a name, an optional opening prompt, and 1 to 50 steps, each a title with an optional prompt and icon (${ICON_NOTE}); not both. Every step starts not_started and the server assigns each an id. A terminal holds one workflow; one that is unfinished is replaced only when replace_workflow_id names it, otherwise this fails with workflow_exists carrying its id. An unknown template_id fails with template_not_found. Names and titles are at most 120 characters, prompts at most 8 KiB, and the whole workflow at most 56 KiB as JSON. This never saves a workflow template; use create_workflow_template for that. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
+			description: `${WORKFLOW_NOUN} Attach a new workflow to a terminal. Either give template_id to copy that workflow template's name, opening prompt and steps (nothing is typed into the terminal; later edits to the template do not change this workflow), or give a name, an optional opening prompt, and 1 to 50 steps, each a title with an optional prompt and icon (${ICON_NOTE}); not both. ${DEPENDENCY_NOTE} Every step starts not_started. A terminal holds one workflow; one that is unfinished is replaced only when replace_workflow_id names it, otherwise this fails with workflow_exists carrying its id. An unknown template_id fails with template_not_found. Names and titles are at most 120 characters, prompts at most 8 KiB, and the whole workflow at most 56 KiB as JSON. This never saves a workflow template; use create_workflow_template for that. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
 			inputSchema: {
 				terminal,
 				template_id: templateId.optional(),
@@ -1043,6 +1049,7 @@ function registerWorkflowTools(
 							title: z.string().min(1).max(120),
 							prompt: z.string().optional(),
 							icon: ICONS,
+							...STEP_DEPENDENCIES,
 						}),
 					)
 					.min(1)
@@ -1056,7 +1063,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'update_workflow_step',
 		{
-			description: `${WORKFLOW_NOUN} Report a workflow step's status: not_started, running, done, failed, needs_input (you need the user to decide or do something), or skipped (a step you were told to drop, or that does not apply; give the reason as the note). A workflow is finished when every step is done or skipped. Set a step to running before you work on it. Any status may follow any other, but at most one step is running or needs_input at a time; starting another fails with step_active naming the active step's id. note is one line of at most 200 characters: given, it replaces the step's note; empty, it clears it; left out, it keeps it. not_started clears the note. This never changes a workflow template. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
+			description: `${WORKFLOW_NOUN} Report a workflow step's status: not_started, running, done, failed, needs_input (you need the user to decide or do something), or skipped (a step you were told to drop, or that does not apply; give the reason as the note). A workflow is finished when every step is done or skipped. Set a step to running before you work on it. Any number of steps may be running or needs_input at once. A step may start (move to running or needs_input, or straight from not_started to done) only once every step in its after list is done or skipped; otherwise this fails with step_blocked naming those steps' ids. Every other change of status is allowed, so a step already under way can always report and finish. note is one line of at most 200 characters: given, it replaces the step's note; empty, it clears it; left out, it keeps it. not_started clears the note. This never changes a workflow template. ${WORKFLOW_TERMINAL_NOTE} ${APPROVAL_NOTE}`,
 			inputSchema: {
 				terminal,
 				step_id: z.string().regex(ID_PATTERN),
@@ -1078,6 +1085,7 @@ function registerWorkflowTools(
 		title: z.string().min(1).max(120),
 		prompt: z.string().optional(),
 		icon: ICONS,
+		...STEP_DEPENDENCIES,
 	});
 	server.registerTool(
 		'list_workflow_templates',
@@ -1092,7 +1100,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'get_workflow_template',
 		{
-			description: `${TEMPLATE_NOUN} Read one workflow template: its id, name, description, category, opening prompt, and each step's id, title, prompt, and icon. Fails with template_not_found for an unknown id.`,
+			description: `${TEMPLATE_NOUN} Read one workflow template: its id, name, description, category, opening prompt, and each step's id, title, prompt, icon, and after (the ids of the steps it waits on). Fails with template_not_found for an unknown id.`,
 			inputSchema: { template_id: templateId },
 			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
@@ -1102,7 +1110,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'create_workflow_template',
 		{
-			description: `${TEMPLATE_NOUN} Save a new reusable workflow template: a name, an optional description (at most 1024 characters), an optional category, an optional opening prompt, and 1 to 50 steps, each a title with an optional prompt and icon (${ICON_NOTE}). category is a name: one matching an existing category ignoring case uses it, a new name adds that category, and empty or left out means none. The server assigns the template's id and every step's id, adds it after the existing templates, and returns it. This attaches nothing to any terminal; use create_workflow for that. ${APPROVAL_NOTE}`,
+			description: `${TEMPLATE_NOUN} Save a new reusable workflow template: a name, an optional description (at most 1024 characters), an optional category, an optional opening prompt, and 1 to 50 steps, each a title with an optional prompt and icon (${ICON_NOTE}). ${DEPENDENCY_NOTE} category is a name: one matching an existing category ignoring case uses it, a new name adds that category, and empty or left out means none. The server assigns the template's id and every step's id, adds it after the existing templates, and returns it. This attaches nothing to any terminal; use create_workflow for that. ${APPROVAL_NOTE}`,
 			inputSchema: {
 				name: z.string().min(1).max(120),
 				description: z.string().max(1024).optional(),
@@ -1117,7 +1125,7 @@ function registerWorkflowTools(
 	server.registerTool(
 		'update_workflow_template',
 		{
-			description: `${TEMPLATE_NOUN} Change a workflow template. Give its template_id and any of name, description, category, opening_prompt, and steps: each field given replaces that field, and each left out is kept. steps replaces the whole list in the order given; to keep a step's id, pass the id get_workflow_template returned for it, and any other step gets a new id. category works as in create_workflow_template. Workflows already copied from this template do not change. Fails with template_not_found for an unknown id. ${APPROVAL_NOTE}`,
+			description: `${TEMPLATE_NOUN} Change a workflow template. Give its template_id and any of name, description, category, opening_prompt, and steps: each field given replaces that field, and each left out is kept. steps replaces the whole list in the order given; to keep a step's id, pass the id get_workflow_template returned for it, and any other step gets a new id. ${DEPENDENCY_NOTE} category works as in create_workflow_template. Workflows already copied from this template do not change. Fails with template_not_found for an unknown id. ${APPROVAL_NOTE}`,
 			inputSchema: {
 				template_id: templateId,
 				name: z.string().min(1).max(120).optional(),
@@ -1125,7 +1133,7 @@ function registerWorkflowTools(
 				category: z.string().max(64).optional(),
 				opening_prompt: z.string().optional(),
 				steps: z
-					.array(templateStep.extend({ id: z.string().regex(ID_PATTERN).optional() }))
+					.array(templateStep)
 					.min(1)
 					.max(50)
 					.optional(),

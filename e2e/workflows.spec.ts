@@ -261,8 +261,8 @@ test('a workflow made in Settings is launched, driven by MCP, survives a relaunc
 		expect(await update(ids[0], 'running')).toBe('running,not_started,not_started');
 		expect(await update(ids[0], 'done', 'looked around')).toBe('done,not_started,not_started');
 		expect(await update(ids[1], 'running')).toBe('done,running,not_started');
-		// One step at a time: another step cannot start while one is running.
-		expect(await update(ids[2], 'running')).toBe('step_active');
+		// A plain list runs in order: step 3 waits on step 2, so it cannot start yet.
+		expect(await update(ids[2], 'running')).toBe('step_blocked');
 		await expect
 			.poll(async () =>
 				markers(mainWindow, sessionId).evaluateAll((elements) => elements.map((element) => element.getAttribute('data-status'))),

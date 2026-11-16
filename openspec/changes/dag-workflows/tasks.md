@@ -23,12 +23,12 @@
 
 ## 2. MCP surface
 
-- [ ] 2.1 Add per-step `id` and `after` to the `create_workflow`, `create_workflow_template` and `update_workflow_template` schemas, return `after` and `ready_step_ids` from `get_workflow`, and return `after` (no readiness) from `get_workflow_template` (`apps/terminay-server/src/mcp/workflowTools.ts`, `workflowAdapter.ts`, `stdio.ts`). Update tool descriptions to explain dependencies and `step_blocked`. Verified by `apps/terminay-server/test/workflow-tools.test.mjs`:
+- [x] 2.1 Add per-step `id` and `after` to the `create_workflow`, `create_workflow_template` and `update_workflow_template` schemas, return `after` and `ready_step_ids` from `get_workflow`, and return `after` (no readiness) from `get_workflow_template` (`apps/terminay-server/src/mcp/workflowTools.ts`, `workflowAdapter.ts`, `stdio.ts`). Update tool descriptions to explain dependencies and `step_blocked`. Verified by `apps/terminay-server/test/workflow-tools.test.mjs`:
   - the parallel create scenario;
   - the unknown `after` id;
   - repeated given ids in template create;
   - a round-trip update keeping ids and `after`.
-- [ ] 2.2 Thread `step_blocked` through `controlEndpoint.ts`, `dispatcher.ts`, `appControlAdapter.ts` and `stdio.ts`, and remove `step_active`. Verified by `apps/terminay-server/test/stdio.test.mjs`:
+- [x] 2.2 Thread `step_blocked` through `controlEndpoint.ts`, `dispatcher.ts`, `appControlAdapter.ts` and `stdio.ts`, and remove `step_active`. Verified by `apps/terminay-server/test/stdio.test.mjs`:
   - `step_blocked` with the dependency id arrives through stdio;
   - a 50-step request at the size bound with 64-character aliases succeeds;
   - one just over the bound is refused, with both requests inside the frame.

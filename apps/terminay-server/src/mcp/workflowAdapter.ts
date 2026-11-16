@@ -106,7 +106,7 @@ export function createWorkflowControlAdapter(
 							workflow: {
 								name: params.name,
 								openingPrompt: params.openingPrompt,
-								steps: params.steps.map((step) => ({ ...step })),
+								steps: params.steps.map(stepPayload),
 							},
 							...replace,
 						};
@@ -165,7 +165,7 @@ export function createWorkflowControlAdapter(
 							description: params.description,
 							category: params.category,
 							openingPrompt: params.openingPrompt,
-							steps: params.steps.map((step) => ({ ...step })),
+							steps: params.steps.map(stepPayload),
 						},
 					} as JsonValue,
 					signal,
@@ -189,7 +189,7 @@ export function createWorkflowControlAdapter(
 					category: params.category ?? stored.category,
 					openingPrompt: params.openingPrompt ?? stored.openingPrompt,
 					steps: (params.steps ?? stored.steps).map(
-						(step: TemplateStepContent) => ({ ...step }),
+						(step: TemplateStepContent) => stepPayload(step),
 					),
 				};
 				const next = (await options.command(
@@ -279,6 +279,7 @@ function describeTemplate(template: WorkflowTemplate): unknown {
 				title: step.title,
 				...(step.prompt === '' ? {} : { prompt: step.prompt }),
 				...(step.icon === '' ? {} : { icon: step.icon }),
+				after: step.after,
 			})),
 		},
 	};
@@ -303,6 +304,7 @@ function describe(
 		terminal,
 		workflow: describeWorkflow(view.workflow),
 		resume_step_id: view.resumeStepId,
+		ready_step_ids: view.readyStepIds,
 		unfinished: view.unfinished,
 	};
 }
@@ -320,6 +322,7 @@ function describeWorkflow(workflow: Workflow): unknown {
 			title: step.title,
 			...(step.prompt === '' ? {} : { prompt: step.prompt }),
 			...(step.icon === '' ? {} : { icon: step.icon }),
+			after: step.after,
 			status: step.status,
 			...(step.note === '' ? {} : { note: step.note }),
 			started_at: isoTime(step.startedAt),
@@ -330,4 +333,15 @@ function describeWorkflow(workflow: Workflow): unknown {
 
 function isoTime(time: number | null): string | null {
 	return time === null ? null : new Date(time).toISOString();
+}
+
+/** A step as a command carries it, with its own copy of `after`. */
+function stepPayload(step: TemplateStepContent): JsonValue {
+	return {
+		...(step.id === undefined ? {} : { id: step.id }),
+		title: step.title,
+		prompt: step.prompt,
+		icon: step.icon,
+		...(step.after === undefined ? {} : { after: [...step.after] }),
+	};
 }

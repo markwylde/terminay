@@ -378,7 +378,7 @@ export type ControlErrorCode =
 	| 'workflow_exists'
 	| 'no_workflow'
 	| 'step_not_found'
-	| 'step_active'
+	| 'step_blocked'
 	| 'template_not_found'
 	| 'internal';
 
@@ -564,7 +564,7 @@ const controlErrorCodes = new Set<ControlErrorCode>([
 	'workflow_exists',
 	'no_workflow',
 	'step_not_found',
-	'step_active',
+	'step_blocked',
 	'template_not_found',
 	'internal',
 ]);

@@ -129,7 +129,7 @@ test("the tools default to the calling terminal and drive a workflow through its
   assert.deepEqual(created.workflow.steps.map((step) => step.status), ["not_started", "not_started"]);
   const [first, second] = created.workflow.steps;
   await call("update_workflow_step", { step_id: first.id, status: "running" });
-  const active = failure(await call("update_workflow_step", { step_id: second.id, status: "running" }), "step_active");
+  const active = failure(await call("update_workflow_step", { step_id: second.id, status: "running" }), "step_blocked");
   assert.deepEqual(active.candidates, [first.id]);
   failure(await call("update_workflow_step", { step_id: "step-missing", status: "done" }), "step_not_found");
   const done = await call("update_workflow_step", { step_id: first.id, status: "done", note: "proposal written" });
@@ -282,8 +282,8 @@ test("a workflow refusal reaches the agent through stdio with its code and id", 
     await client.callTool({ name: "update_workflow_step", arguments: { step_id: first.id, status: "needs_input", note: "Which branch?" } });
     const refused = await client.callTool({ name: "update_workflow_step", arguments: { step_id: second.id, status: "running" } });
     assert.equal(refused.isError, true);
-    assert.match(refused.content[0].text, /^step_active: /);
-    assert.deepEqual(refused.structuredContent.error, { code: "step_active", message: refused.structuredContent.error.message, candidates: [first.id] });
+    assert.match(refused.content[0].text, /^step_blocked: /);
+    assert.deepEqual(refused.structuredContent.error, { code: "step_blocked", message: refused.structuredContent.error.message, candidates: [first.id] });
     const exists = await client.callTool({ name: "create_workflow", arguments: { name: "Other", steps } });
     assert.match(exists.content[0].text, /^workflow_exists: /);
     assert.deepEqual(exists.structuredContent.error.candidates, [created.workflow.id]);
@@ -474,4 +474,82 @@ test("an agent skips a step with a reason, and a workflow of done and skipped st
   assert.equal(skipped.resume_step_id, null);
   const read = await call("get_workflow");
   assert.equal(read.workflow.steps[1].status, "skipped");
+});
+
+// Step dependencies (ADR-0127)
+
+test("an agent creates parallel steps by naming earlier steps in after", async () => {
+  const { call } = service();
+  const created = await call("create_workflow", {
+    name: "Reviews",
+    steps: [
+      { id: "a", title: "Propose" },
+      { id: "b", title: "Codex review", after: ["a"] },
+      { id: "c", title: "Spec review", after: ["a"] },
+      { title: "Amend", after: ["b", "c"] },
+    ],
+  });
+  const [propose, codex, spec, amend] = created.workflow.steps;
+  for (const item of created.workflow.steps) assert.match(item.id, /^step-/u);
+  assert.deepEqual(codex.after, [propose.id]);
+  assert.deepEqual(spec.after, [propose.id]);
+  assert.deepEqual(amend.after, [codex.id, spec.id]);
+  assert.deepEqual(created.ready_step_ids, [propose.id]);
+  await call("update_workflow_step", { step_id: propose.id, status: "done" });
+  await call("update_workflow_step", { step_id: codex.id, status: "running" });
+  await call("update_workflow_step", { step_id: spec.id, status: "running" });
+  const blocked = failure(await call("update_workflow_step", { step_id: amend.id, status: "running" }), "step_blocked");
+  assert.deepEqual(blocked.candidates, [codex.id, spec.id]);
+  const read = await call("get_workflow");
+  assert.deepEqual(read.workflow.steps.filter((item) => item.status === "running").map((item) => item.id), [codex.id, spec.id]);
+});
+
+test("after naming a step that is not earlier in the call, or repeating an id, is bad_request", async () => {
+  const { call } = service();
+  failure(await call("create_workflow", { name: "Bad", steps: [{ id: "a", title: "A" }, { title: "B", after: ["z"] }] }), "bad_request");
+  failure(await call("create_workflow", { name: "Bad", steps: [{ id: "a", title: "A", after: ["b"] }, { id: "b", title: "B" }] }), "bad_request");
+  failure(await call("create_workflow", { name: "Bad", steps: [{ id: "a", title: "A" }, { title: "B", after: ["a", "a"] }] }), "bad_request");
+  failure(await call("create_workflow_template", { name: "Bad", steps: [{ id: "review", title: "A" }, { id: "review", title: "B" }] }), "bad_request");
+  failure(await call("get_workflow"), "no_workflow");
+  assert.equal(parseCreateWorkflow({ name: "Flow", steps: [{ id: "x".repeat(65), title: "A" }] }).ok, false);
+});
+
+test("a template keeps its dependencies through get and an update of one title", async () => {
+  const { call } = service();
+  const created = await call("create_workflow_template", {
+    name: "Reviews",
+    steps: [{ id: "p", title: "Propose" }, { id: "r1", title: "Review one", after: ["p"] }, { id: "r2", title: "Review two", after: ["p"] }],
+  });
+  const read = await call("get_workflow_template", { template_id: created.template.id });
+  const [propose, one, two] = read.template.steps;
+  assert.deepEqual([one.after, two.after], [[propose.id], [propose.id]]);
+  assert.equal("ready_step_ids" in read, false);
+  const retitled = read.template.steps.map((item, index) => (index === 1 ? { ...item, title: "First review" } : item));
+  const updated = await call("update_workflow_template", { template_id: created.template.id, steps: retitled });
+  assert.deepEqual(updated.template.steps, retitled);
+});
+
+test("long request ids count against the 56 KiB bound through stdio, inside the frame", async () => {
+  await withStdio(async (client) => {
+    const limit = WORKFLOW_TOOL_LIMITS.maxSerializedBytes;
+    const alias = (index) => `${"a".repeat(60)}${String(index).padStart(4, "0")}`;
+    const build = (bytes) => ({
+      name: "Aliases",
+      steps: Array.from({ length: 50 }, (_, index) => ({
+        id: alias(index),
+        title: `S${index}`,
+        prompt: "p".repeat(bytes),
+        after: index < 4 ? [] : [alias(index - 1), alias(index - 2), alias(index - 3), alias(index - 4)],
+      })),
+    });
+    const size = (args) => Buffer.byteLength(JSON.stringify({ name: args.name, openingPrompt: "", steps: args.steps.map(({ id, title, prompt, after }) => ({ id, title, prompt, icon: "", after })) }));
+    let bytes = 0;
+    while (size(build(bytes + 1)) <= limit) bytes += 1;
+    const fits = await client.callTool({ name: "create_workflow", arguments: build(bytes) });
+    assert.notEqual(fits.isError, true, fits.content[0].text);
+    assert.equal(parsed(fits).workflow.steps[49].after.length, 4);
+    const over = await client.callTool({ name: "create_workflow", arguments: { ...build(bytes + 1), replace_workflow_id: parsed(fits).workflow.id } });
+    assert.equal(over.isError, true);
+    assert.match(over.content[0].text, /^bad_request: .*bytes/u);
+  });
 });
