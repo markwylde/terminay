@@ -146,7 +146,9 @@ export function analyzeStages(steps: readonly GraphStep[]): StageAnalysis {
 		const layers: string[][] = [];
 		for (const id of set) {
 			const level = rank.get(id) ?? 0;
-			(layers[level] ??= []).push(id);
+			const layer = layers[level] ?? [];
+			layer.push(id);
+			layers[level] = layer;
 		}
 		return layers
 			.filter((layer) => layer.length > 0)
@@ -293,7 +295,8 @@ export function metroLayout(steps: readonly GraphStep[]): MetroLayout {
 			waits.length === 0
 				? 0
 				: Math.max(...waits.map((id) => nodes.get(id)?.column ?? 0)) + 1;
-		const taken = (occupied[column] ??= new Set());
+		const taken = occupied[column] ?? new Set<number>();
+		occupied[column] = taken;
 		const preferred = waits
 			.map((id) => nodes.get(id)?.lane ?? 0)
 			.sort((a, b) => a - b);

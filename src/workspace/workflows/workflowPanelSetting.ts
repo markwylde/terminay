@@ -216,3 +216,88 @@ export function useWorkflowPanelNotes(): WorkflowPanelNotes {
 		() => 'full',
 	);
 }
+
+/**
+ * A device-local choice of one of `values`, kept exactly as the collapse
+ * choice is: shared by every terminal and window of this device through
+ * storage, never sent to a server, and read as `fallback` when the stored
+ * value is unreadable or unknown.
+ */
+function deviceChoice<T extends string>(
+	key: string,
+	values: readonly T[],
+	fallback: T,
+) {
+	const listeners = new Set<() => void>();
+	let current: T | undefined;
+	const parse = (raw: string | null | undefined): T =>
+		(values as readonly (string | null | undefined)[]).includes(raw)
+			? (raw as T)
+			: fallback;
+	const read = (): T => {
+		if (current !== undefined) return current;
+		try {
+			current = parse(globalThis.localStorage?.getItem(key));
+		} catch {
+			current = fallback;
+		}
+		return current;
+	};
+	const set = (next: T): void => {
+		const value = parse(next);
+		if (read() === value) return;
+		current = value;
+		try {
+			globalThis.localStorage?.setItem(key, value);
+		} catch {
+			// Storage may be unavailable; the choice still holds for this session.
+		}
+		for (const listener of [...listeners]) listener();
+	};
+	const subscribe = (listener: () => void): (() => void) => {
+		listeners.add(listener);
+		const onStorage = (event: StorageEvent) => {
+			if (event.key !== key) return;
+			current = undefined;
+			listener();
+		};
+		globalThis.addEventListener?.('storage', onStorage);
+		return () => {
+			listeners.delete(listener);
+			globalThis.removeEventListener?.('storage', onStorage);
+		};
+	};
+	const use = (): T => useSyncExternalStore(subscribe, read, () => fallback);
+	return { read, set, subscribe, use };
+}
+
+/**
+ * Whether workflows show as the vertical panel at a pane's right edge or the
+ * horizontal drawer along its bottom (ADR-0127). Vertical until chosen.
+ */
+export type WorkflowLayout = 'vertical' | 'horizontal';
+export const WORKFLOW_LAYOUT_STORAGE_KEY = 'terminay.workflowLayout.v1';
+const layoutChoice = deviceChoice<WorkflowLayout>(
+	WORKFLOW_LAYOUT_STORAGE_KEY,
+	['vertical', 'horizontal'],
+	'vertical',
+);
+export const workflowLayout = layoutChoice.read;
+export const setWorkflowLayout = layoutChoice.set;
+export const subscribeWorkflowLayout = layoutChoice.subscribe;
+export const useWorkflowLayout = layoutChoice.use;
+
+/**
+ * Whether the horizontal drawer shows collapsed or expanded: its own choice,
+ * apart from the vertical panel's. Collapsed until the user expands it.
+ */
+export const WORKFLOW_DRAWER_STORAGE_KEY = 'terminay.workflowDrawer.v1';
+const drawerChoice = deviceChoice<WorkflowPanelSetting>(
+	WORKFLOW_DRAWER_STORAGE_KEY,
+	['collapsed', 'expanded'],
+	'collapsed',
+);
+export const workflowDrawerSetting = drawerChoice.read;
+export const setWorkflowDrawerSetting = drawerChoice.set;
+export const subscribeWorkflowDrawerSetting = drawerChoice.subscribe;
+export const useWorkflowDrawerSetting = drawerChoice.use;

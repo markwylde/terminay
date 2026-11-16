@@ -52,7 +52,15 @@ const step = (id, status, extra = {}) => ({
 const attached = (sessionId, name, steps, openingPrompt = '') => ({
 	sessionId,
 	state: 'attached',
-	workflow: { id: `wf-${sessionId}`, name, openingPrompt, templateId: null, createdAt: 0, steps },
+	workflow: {
+		id: `wf-${sessionId}`,
+		name,
+		openingPrompt,
+		templateId: null,
+		createdAt: 0,
+		// Steps given without dependencies run in order.
+		steps: steps.map((item, index) => ({ after: index === 0 ? [] : [steps[index - 1].id], ...item })),
+	},
 	resumeStepId: null,
 	unfinished: true,
 });
@@ -269,4 +277,21 @@ test('4.1 no badge when nothing needs you', () => {
 		),
 	);
 	assert.doesNotMatch(html, /data-terminay-home-section-badge/);
+});
+
+// dag-workflows 5.6: Home's columns draw the panel's arrangement.
+test('a column draws steps that run alongside each other as a bracket, as the panel does', () => {
+	const reviews = attached('session-a1', 'Reviews', [
+		step('propose', 'done', { title: 'Propose', after: [] }),
+		step('codex', 'running', { title: 'Codex review', after: ['propose'], startedAt: NOW - MIN }),
+		step('specs', 'needs_input', { title: 'Spec review', after: ['propose'], startedAt: NOW - MIN }),
+		step('amend', 'not_started', { title: 'Amend', after: ['codex', 'specs'] }),
+	]);
+	const html = render({
+		rows: rowsFor([['a', 'Alpha', [terminal('a1', 'claude · pairing')]]], [reviews]),
+	});
+	assert.equal(count(html, 'class="workflow-group '), 1);
+	assert.match(html, /class="workflow-group workflow-group--alert"/);
+	assert.equal(count(html, 'class="workflow-track"'), 2);
+	assert.doesNotMatch(html, /workflow-step-after/);
 });

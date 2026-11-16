@@ -363,9 +363,12 @@ export function panelLayout(
 }
 
 /** Pixels the pane reserves at its right edge for the panel. */
-export function reservedWidth(layout: WorkflowPanelLayout | undefined): number {
+export function reservedWidth(
+	layout: WorkflowPanelLayout | undefined,
+	railWidth: number = WORKFLOW_RAIL_WIDTH,
+): number {
 	if (layout === undefined) return 0;
-	return layout.mode === 'expanded' ? layout.width : WORKFLOW_RAIL_WIDTH;
+	return layout.mode === 'expanded' ? layout.width : railWidth;
 }
 
 /** The narrow-pane overlay: the chosen width, or most of the pane. */
@@ -403,4 +406,99 @@ export function showsStepNote(
 ): boolean {
 	if (step.note === '') return false;
 	return notes !== 'current' || isCurrentStep(step.status);
+}
+
+/** The horizontal drawer's collapsed strip height. */
+export const WORKFLOW_STRIP_HEIGHT = 46;
+/** The expanded drawer's height cap. */
+export const WORKFLOW_DRAWER_MAX_HEIGHT = 240;
+/** The expanded drawer's header, above the map. */
+export const WORKFLOW_DRAWER_HEADER_HEIGHT = 36;
+/** One lane of the metro map, and the map's padding above and below. */
+export const WORKFLOW_DRAWER_LANE_HEIGHT = 56;
+export const WORKFLOW_DRAWER_MAP_PADDING = 8;
+/** A terminal shorter than this above the expanded drawer keeps the strip. */
+export const WORKFLOW_MIN_TERMINAL_ROWS = 10;
+
+/** How tall the expanded drawer is for a map of `lanes` lanes: header plus map, capped. */
+export function drawerHeight(lanes: number): number {
+	return Math.min(
+		WORKFLOW_DRAWER_MAX_HEIGHT,
+		WORKFLOW_DRAWER_HEADER_HEIGHT +
+			WORKFLOW_DRAWER_MAP_PADDING * 2 +
+			Math.max(1, lanes) * WORKFLOW_DRAWER_LANE_HEIGHT,
+	);
+}
+
+export interface WorkflowDrawerLayout {
+	readonly mode: WorkflowPanelMode;
+	/** The expanded drawer's height in this pane. */
+	readonly height: number;
+	/** The short-pane overlay's height: the drawer's, at most 85% of the pane. */
+	readonly overlayHeight: number;
+}
+
+/**
+ * How the horizontal drawer shows. It expands only when the terminal keeps at
+ * least ten rows above it; otherwise the pane keeps the strip, and expanding
+ * opens an overlay that does not resize the terminal.
+ */
+export function drawerLayout(
+	setting: 'collapsed' | 'expanded',
+	lanes: number,
+	paneHeight: number | undefined,
+	rowHeight: number | undefined,
+): WorkflowDrawerLayout {
+	const height = drawerHeight(lanes);
+	const overlayHeight =
+		paneHeight === undefined || !(paneHeight > 0)
+			? height
+			: Math.min(height, Math.floor(paneHeight * 0.85));
+	const fits =
+		paneHeight === undefined ||
+		rowHeight === undefined ||
+		!(rowHeight > 0) ||
+		paneHeight - height >= WORKFLOW_MIN_TERMINAL_ROWS * rowHeight;
+	return { mode: fits ? setting : 'forced-collapsed', height, overlayHeight };
+}
+
+/** Pixels the pane reserves at its bottom edge for the drawer. */
+export function reservedHeight(layout: WorkflowDrawerLayout | undefined): number {
+	if (layout === undefined) return 0;
+	return layout.mode === 'expanded' ? layout.height : WORKFLOW_STRIP_HEIGHT;
+}
+
+/**
+ * The expanded panel's and drawer's progress line: "5 of 11 done · 2 running ·
+ * 1 needs you · 12m elapsed", leaving out counts of nothing and the time
+ * before any step has started.
+ */
+export function progressLabel(workflow: Workflow, now: number): string {
+	const running = workflow.steps.filter((step) => step.status === 'running').length;
+	const needs = workflow.steps.filter((step) => step.status === 'needs_input').length;
+	const since = elapsed(workflow, now);
+	return [
+		`${doneCount(workflow)} of ${workflow.steps.length} done`,
+		...(running > 0 ? [`${running} running`] : []),
+		...(needs > 0 ? [`${needs} ${needs === 1 ? 'needs' : 'need'} you`] : []),
+		...(since === undefined ? [] : [`${since} elapsed`]),
+	].join(' · ');
+}
+
+/**
+ * What the collapsed strip says: every running or needs-input step in step
+ * order, "Finished" once every step is settled, and "Waiting" otherwise.
+ */
+export function stripWords(
+	steps: readonly Pick<WorkflowStep, 'title' | 'status'>[],
+): readonly { readonly title: string; readonly needsYou: boolean }[] | 'Finished' | 'Waiting' {
+	const active = steps.filter((step) => isActive(step.status));
+	if (active.length > 0)
+		return active.map((step) => ({
+			title: step.title,
+			needsYou: step.status === 'needs_input',
+		}));
+	return steps.length > 0 && steps.every((step) => isSettledStatus(step.status))
+		? 'Finished'
+		: 'Waiting';
 }
