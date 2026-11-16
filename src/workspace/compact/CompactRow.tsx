@@ -6,6 +6,8 @@
  */
 
 import type { ReactNode } from 'react';
+// The shared status colours and breathing keyframes the row marks use.
+import '../../components/AgentStatusIndicator.css';
 
 export type CompactTone = 'attention' | 'working' | 'done' | 'idle' | 'muted';
 

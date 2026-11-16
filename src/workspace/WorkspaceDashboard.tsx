@@ -42,8 +42,6 @@ import {
 	CompactEmpty,
 	CompactGroupHeader,
 	CompactRow,
-	type CompactTone,
-	StatusMark,
 } from './compact/CompactRow';
 import { SheetSegment, SheetToggle } from './compact/CompactSheet';
 import { CompactSectionPage } from './compact/CompactSectionPage';
@@ -1384,14 +1382,6 @@ const TABS_COMPACT_LABELS: Readonly<Record<TabsCompactTab, string>> = {
 	untracked: 'Untracked',
 };
 
-const COLUMN_TONE: Readonly<Record<DashboardBoardColumn, CompactTone>> = {
-	attention: 'attention',
-	working: 'working',
-	done: 'done',
-	idle: 'idle',
-	untracked: 'muted',
-};
-
 /** What an agent row says it is doing, in one line. */
 function agentLine(agent: DashboardAgent): string | undefined {
 	if (agent.state === 'waiting' || agent.state === 'blocked')
@@ -1447,12 +1437,19 @@ function TabsCompactRow({
 	return (
 		<CompactRow
 			lead={
-				agent === undefined && column === 'idle' ? (
+				// The same indicator a dashboard card shows on a wide window, so a
+				// phone and a desktop never disagree about a status colour.
+				column === 'untracked' ||
+				(agent === undefined && column === 'idle') ? (
 					<KindIcon aria-hidden="true" size={15} />
 				) : (
-					<StatusMark
-						tone={COLUMN_TONE[column]}
-						label={DASHBOARD_BOARD_COLUMN_LABELS[column]}
+					<AgentStatusIndicator
+						showIdle
+						size="medium"
+						state={item.state}
+						{...(agent !== undefined || panel === undefined
+							? {}
+							: { label: `${KIND_LABEL[panel.panelKind]} ${item.state}` })}
 					/>
 				)
 			}

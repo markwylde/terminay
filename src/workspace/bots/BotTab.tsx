@@ -20,6 +20,7 @@ import { subscribeBotFocus } from './botFocus';
 import { BOT_ACTIVITY_LABELS, botActivity } from './botsModel';
 import type { BotTabHost } from './botTabHost';
 import type { ServerBots } from './useServerBots';
+import '../../components/AgentStatusIndicator.css';
 import './bots.css';
 import './botPanels.css';
 
