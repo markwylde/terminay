@@ -156,6 +156,11 @@ Every state SHALL reach an ending within the reconnect deadline once the server 
 - **WHEN** a device upgrades a server that does not advertise `server.upgrade.attempts` from `5.1.1` to `5.2.0`, and it returns running `5.2.0`
 - **THEN** every step is done
 
+#### Scenario: Upgraded into a server with attempts
+
+- **WHEN** an upgrade begun on a server without `server.upgrade.attempts` installs a release that advertises it, and the server returns with no attempt and the upgrade's outcome in its status
+- **THEN** the card ends by these rules with that outcome, and the next upgrade of that server is followed by its attempt
+
 #### Scenario: Installed back to a server without attempts
 
 - **WHEN** a followed install-latest attempt moves the server to a release that does not advertise `server.upgrade.attempts`, and it returns running that release
