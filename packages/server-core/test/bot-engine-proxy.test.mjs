@@ -125,6 +125,18 @@ test('interactive exec preserves HTTP upgrade bytes and output after stdin half-
 	assert.deepEqual(Buffer.concat(chunks), Buffer.from([0, 1, 2, 3, 255, 0, 128]));
 });
 
+test('wait response headers reach the client before the engine sends a body', { timeout: 10000 }, async t => {
+	// The Docker CLI blocks on /wait headers before it sends /start, so buffered headers deadlock `docker run`.
+	let finish;
+	const r = await setup(t, (_request, response) => { response.writeHead(200, { 'content-type': 'application/json' }); response.flushHeaders(); finish = () => response.end('{"StatusCode":0}'); });
+	const request = http.request({ socketPath: r.socketPath, path: '/v1.45/containers/x/wait?condition=next-exit', method: 'POST', agent: false }); request.end();
+	const [response] = await once(request, 'response');
+	assert.equal(response.statusCode, 200);
+	finish();
+	const pieces = []; for await (const piece of response) pieces.push(piece);
+	assert.equal(Buffer.concat(pieces).toString(), '{"StatusCode":0}');
+});
+
 test('shutdown cancels outstanding streams and releases the owned socket', { timeout: 10000 }, async t => {
 	const r = await setup(t, (_request, response) => { response.writeHead(200); response.write('streaming'); });
 	const request = http.request({ socketPath: r.socketPath, path: '/events', method: 'GET', agent: false }); request.end();

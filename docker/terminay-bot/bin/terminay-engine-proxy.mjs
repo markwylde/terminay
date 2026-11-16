@@ -116,6 +116,8 @@ export async function startEngineProxy({
 		);
 		upstream.on('response', (incoming) => {
 			response.writeHead(incoming.statusCode, incoming.headers);
+			// Docker flushes /wait headers before the body; the CLI blocks on them before /start.
+			response.flushHeaders();
 			pipeline(incoming, response, () => {});
 		});
 		request.once('aborted', () => upstream.destroy());
