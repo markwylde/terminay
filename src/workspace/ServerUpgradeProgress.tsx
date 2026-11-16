@@ -68,10 +68,20 @@ export function ServerUpgradeProgress({
 			data-server-upgrade-outcome={progress.outcome ?? 'running'}
 		>
 			<header className="server-upgrade-progress__header">
-				<h2 className="server-upgrade-progress__title">{title}</h2>
+				{/* One line, cut with an ellipsis; the tooltip and the card's
+				    name carry the whole of a long server name. */}
+				<h2 className="server-upgrade-progress__title" title={title}>
+					{title}
+				</h2>
 				{progress.from === undefined || progress.to === undefined ? null : (
 					<p className="server-upgrade-progress__versions">
-						{progress.from} → {progress.to}
+						<span className="server-upgrade-progress__version">
+							{progress.from}
+						</span>
+						<span className="server-upgrade-progress__arrow"> → </span>
+						<span className="server-upgrade-progress__version">
+							{progress.to}
+						</span>
 					</p>
 				)}
 			</header>

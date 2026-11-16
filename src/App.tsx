@@ -6790,6 +6790,9 @@ function App({
 	const serverUpgrades = useServerUpgrades({
 		connections,
 		profiles: connectionProfiles,
+		...(windowProfileId === undefined
+			? {}
+			: { currentProfileId: windowProfileId }),
 		activeProfileId: activeConnection?.profileId,
 	});
 	// A pending activation survives the remount that switching servers causes:
