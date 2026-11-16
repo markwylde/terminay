@@ -15,6 +15,7 @@ import {
 import { BotMemoriesPanel } from './BotMemoriesPanel';
 import { BotProfilePanel } from './BotProfilePanel';
 import { BotSessionsPanel, type SessionsTrigger } from './BotSessionsPanel';
+import { BotSettingsMenu } from './BotSettingsMenu';
 import { BotTriggersPanel } from './BotTriggersPanel';
 import { subscribeBotFocus } from './botFocus';
 import { BOT_ACTIVITY_LABELS, botActivity } from './botsModel';
@@ -131,6 +132,19 @@ export function BotTab({
 
 	const activity = botActivity(sessions, environment);
 	const agent = server.agents.find((a) => a.id === bot.agentId);
+	const toggleAvailability =
+		server.sourcesSupported === false
+			? undefined
+			: () =>
+					void server.client
+						.enableBot(bot.id, bot.enabled === false)
+						.catch((e) =>
+							setAvailabilityError(
+								e instanceof Error
+									? e.message
+									: 'Could not change bot availability',
+							),
+						);
 	return (
 		<div
 			className="bots-ui bots-tab"
@@ -151,29 +165,21 @@ export function BotTab({
 						<code>{`terminay-bot-${bot.id}`}</code>
 					</span>
 				</div>
-				<span className={`bots-chip bots-chip--small bots-chip--${activity}`}>
+				<span
+					className={`bots-chip bots-chip--small bots-chip--${activity}${bot.enabled === false ? ' bots-ahead__chip--disabled' : ''}`}
+				>
 					{bot.enabled === false ? 'Disabled' : BOT_ACTIVITY_LABELS[activity]}
 				</span>
-				{server.sourcesSupported !== false ? (
+				{toggleAvailability === undefined ? null : (
 					<button
 						type="button"
-						className="bots-btn bots-btn--sm"
-						onClick={() =>
-							void server.client
-								.enableBot(bot.id, bot.enabled === false)
-								.catch((e) =>
-									setAvailabilityError(
-										e instanceof Error
-											? e.message
-											: 'Could not change bot availability',
-									),
-								)
-						}
+						className="bots-btn bots-btn--sm bots-ahead__wide"
+						onClick={toggleAvailability}
 					>
 						{bot.enabled === false ? 'Enable bot' : 'Disable bot'}
 					</button>
-				) : null}
-				<fieldset className="bots-seg" aria-label="Bot view">
+				)}
+				<fieldset className="bots-seg bots-ahead__wide" aria-label="Bot view">
 					<button
 						type="button"
 						className={mode === 'chat' ? 'bots-seg--on' : ''}
@@ -193,6 +199,13 @@ export function BotTab({
 						Configure
 					</button>
 				</fieldset>
+				<BotSettingsMenu
+					mode={mode}
+					onMode={setMode}
+					enabled={bot.enabled !== false}
+					onToggleEnabled={toggleAvailability}
+					visible={host.isVisible}
+				/>
 			</header>
 			<BotRecovery server={server} botId={bot.id} visible={host.isVisible} />
 			{availabilityError ? (
