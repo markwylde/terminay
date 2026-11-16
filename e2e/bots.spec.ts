@@ -1251,6 +1251,191 @@ test.describe('Home: Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('Quote puts any message into the composer as a blockquote, by pointer and keyboard', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Quill'));
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		const composer = tab.locator('[data-terminay-bot-composer]');
+		const menu = mainWindow.locator('.context-menu');
+		const item = (name: string) =>
+			menu.getByRole('menuitem', { name, exact: true });
+		const labels = () =>
+			menu
+				.locator('.context-menu__item .context-menu__label')
+				.allTextContents();
+		const shot = (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+		const caretAtEnd = () =>
+			composer.evaluate(
+				(el: HTMLTextAreaElement) =>
+					el.selectionStart === el.value.length &&
+					el.selectionEnd === el.value.length,
+			);
+		const select = (target: Locator, word: string) =>
+			target.evaluate((el, text) => {
+				const walker = el.ownerDocument.createTreeWalker(
+					el,
+					NodeFilter.SHOW_TEXT,
+				);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+					const at = node.textContent?.indexOf(text) ?? -1;
+					if (at < 0) continue;
+					const range = el.ownerDocument.createRange();
+					range.setStart(node, at);
+					range.setEnd(node, at + text.length);
+					const selection = el.ownerDocument.getSelection()!;
+					selection.removeAllRanges();
+					selection.addRange(range);
+					return;
+				}
+				throw new Error(`no ${text}`);
+			}, word);
+		const clearSelection = () =>
+			mainWindow.evaluate(() => document.getSelection()?.removeAllRanges());
+
+		await send(tab, 'Build passed.\r\n\r\nDeployed to staging.');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		await expect(transcript.locator('.bots-msg')).toHaveCount(2);
+		const mine = transcript.locator('.bots-msg--user').first();
+		const reply = transcript
+			.locator('.bots-md[data-terminay-message-key]')
+			.filter({ hasText: 'secret' });
+
+		// Right-click a bot message: Quote comes first, above Edit and Delete.
+		await reply.click({ button: 'right' });
+		await expect(menu).toBeVisible();
+		expect(await labels()).toEqual(['Quote', 'Edit message', 'Delete message']);
+		await shot('bot-message-quote-menu');
+		await item('Quote').click();
+		await expect(menu).toHaveCount(0);
+		await expect(composer).toHaveValue('> secret\n\n');
+		await expect(composer).toBeFocused();
+		expect(await caretAtEnd()).toBe(true);
+		await mainWindow.keyboard.type('Thanks');
+		await expect(composer).toHaveValue('> secret\n\nThanks');
+
+		// The user's own multi-line message is appended after the draft.
+		await mine.click({ button: 'right' });
+		await item('Quote').click();
+		await expect(composer).toHaveValue(
+			'> secret\n\nThanks\n\n> Build passed.\n>\n> Deployed to staging.\n\n',
+		);
+		await expect(composer).toBeFocused();
+		expect(await caretAtEnd()).toBe(true);
+		await mainWindow.keyboard.type('Which staging?');
+		// Quoting sends nothing.
+		await expect(transcript.locator('.bots-msg')).toHaveCount(2);
+
+		// A selection inside the message quotes only that; Edit still edits all of it.
+		await composer.fill('');
+		await select(mine, 'Deployed');
+		await mine.click({ button: 'right' });
+		await item('Quote').click();
+		await expect(composer).toHaveValue('> Deployed\n\n');
+		await select(mine, 'Deployed');
+		await mine.click({ button: 'right' });
+		await item('Edit message').click();
+		const editor = mainWindow.getByRole('dialog', { name: 'Edit message' });
+		await expect(editor.getByLabel('Message text')).toHaveValue(
+			'Build passed.\n\nDeployed to staging.',
+		);
+		await mainWindow.keyboard.press('Escape');
+		await expect(editor).toHaveCount(0);
+
+		// A selection in another message is ignored: the whole reply is quoted.
+		await composer.fill('');
+		await select(mine, 'Build');
+		await reply.click({ button: 'right' });
+		await item('Quote').click();
+		await expect(composer).toHaveValue('> secret\n\n');
+		await clearSelection();
+
+		// Keyboard: Shift+F10 opens the menu at the message with Quote focused.
+		await composer.fill('');
+		await reply.focus();
+		await mainWindow.keyboard.press('Shift+F10');
+		await expect(item('Quote')).toBeFocused();
+		const box = (await reply.boundingBox())!;
+		expect(
+			Math.abs((await menu.boundingBox())!.y - (box.y + box.height)),
+		).toBeLessThanOrEqual(2);
+		await mainWindow.keyboard.press('ArrowDown');
+		await expect(item('Edit message')).toBeFocused();
+		await mainWindow.keyboard.press('End');
+		await expect(item('Delete message')).toBeFocused();
+		await mainWindow.keyboard.press('ArrowDown');
+		await expect(item('Quote')).toBeFocused();
+		await mainWindow.keyboard.press('ArrowUp');
+		await expect(item('Delete message')).toBeFocused();
+		await mainWindow.keyboard.press('Home');
+		await expect(item('Quote')).toBeFocused();
+		await mainWindow.keyboard.press('Escape');
+		await expect(menu).toHaveCount(0);
+		await expect(reply).toBeFocused();
+		await mainWindow.keyboard.press('Shift+F10');
+		await expect(item('Quote')).toBeFocused();
+		await mainWindow.keyboard.press('Enter');
+		await expect(composer).toHaveValue('> secret\n\n');
+		await expect(composer).toBeFocused();
+
+		// Pending files are kept; a message with no text offers no Quote.
+		const input = tab.locator('[data-terminay-bot-attach-input]');
+		const image = Buffer.from(
+			await mainWindow.evaluate(() => {
+				const canvas = document.createElement('canvas');
+				canvas.width = 40;
+				canvas.height = 40;
+				const g = canvas.getContext('2d')!;
+				g.fillStyle = '#3a7';
+				g.fillRect(0, 0, 40, 40);
+				return canvas.toDataURL('image/png').split(',')[1]!;
+			}),
+			'base64',
+		);
+		await input.setInputFiles({
+			name: 'pic.png',
+			mimeType: 'image/png',
+			buffer: image,
+		});
+		const thumbs = tab.locator('[data-terminay-bot-pending-images] li');
+		await expect(thumbs).toHaveCount(1);
+		await reply.click({ button: 'right' });
+		await item('Quote').click();
+		await expect(composer).toHaveValue('> secret\n\n> secret\n\n');
+		await expect(thumbs).toHaveCount(1);
+		await composer.fill('');
+		await tab.locator('[data-terminay-bot-send]').click();
+		await expect(thumbs).toHaveCount(0);
+		const imageOnly = transcript.locator('.bots-msg--user').nth(1);
+		await expect(imageOnly.locator('img')).toBeVisible({ timeout: 30_000 });
+		await imageOnly.click({ button: 'right' });
+		await expect(menu).toBeVisible();
+		expect(await labels()).toEqual(['Edit message', 'Delete message']);
+		await mainWindow.keyboard.press('Escape');
+
+		// A quoted reply, in the composer and once sent.
+		await mine.click({ button: 'right' });
+		await item('Quote').click();
+		await mainWindow.keyboard.type('Which staging?');
+		await composer.evaluate((el) => {
+			el.scrollTop = 0;
+		});
+		await shot('bot-message-quote-composer');
+		await tab.locator('[data-terminay-bot-send]').click();
+		await expect(
+			transcript
+				.locator('.bots-msg--user')
+				.filter({ hasText: 'Which staging?' }),
+		).toContainText('> Build passed.');
+		await expect(composer).toHaveValue('');
+		await shot('bot-message-quote-sent');
+	});
+
 	test('a narrow bot tab keeps its header to the avatar, name and a settings menu', async ({
 		mainWindow,
 		tempDir,

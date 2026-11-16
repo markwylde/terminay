@@ -18,7 +18,15 @@ import {
 	LoaderCircle,
 	X,
 } from 'lucide-react';
-import { Fragment, memo, type Ref, useEffect, useMemo, useState } from 'react';
+import {
+	Fragment,
+	type MouseEvent,
+	memo,
+	type Ref,
+	useEffect,
+	useMemo,
+	useState,
+} from 'react';
 import { saveDownload } from '../../host/nativeActions';
 import { BotAvatar } from './BotAvatar';
 import { attachmentView, formatFileSize } from './botsModel';
@@ -90,6 +98,71 @@ import {
 } from './botMarkdown';
 import type { PlanStep, TranscriptItem } from './transcriptModel';
 
+/** A request to open a chat message's menu. */
+export type MessageMenuRequest = Readonly<{
+	key: string;
+	x: number;
+	y: number;
+	/** Opened with the context-menu key or Shift+F10, not the pointer. */
+	keyboard: boolean;
+	/** The user's selection, when it lies wholly inside this message's body. */
+	selection?: string;
+}>;
+
+/** The selection's text when it is non-empty and wholly inside `body`. */
+function selectionWithin(body: Element | null): string | undefined {
+	const selection = body?.ownerDocument.getSelection();
+	if (!body || !selection || selection.isCollapsed) return undefined;
+	const { anchorNode, focusNode } = selection;
+	if (!anchorNode || !focusNode) return undefined;
+	if (!body.contains(anchorNode) || !body.contains(focusNode)) return undefined;
+	const text = selection.toString();
+	return text.trim() ? text : undefined;
+}
+
+/* macOS selects the word under a right-click before `contextmenu` fires, so a
+ * pointer-opened menu uses the selection read when the right button went down. */
+let rightDownSelection: { key: string; text: string | undefined } | undefined;
+
+function messageMenuHandlers(
+	key: string,
+	bodyOf: (element: HTMLElement) => Element | null,
+	onMessageMenu: ((request: MessageMenuRequest) => void) | undefined,
+): {
+	onMouseDown?: (event: MouseEvent<HTMLElement>) => void;
+	onContextMenu?: (event: MouseEvent<HTMLElement>) => void;
+} {
+	if (!onMessageMenu) return {};
+	return {
+		onMouseDown: (event: MouseEvent<HTMLElement>) => {
+			if (event.button === 2)
+				rightDownSelection = {
+					key,
+					text: selectionWithin(bodyOf(event.currentTarget)),
+				};
+		},
+		onContextMenu: (event: MouseEvent<HTMLElement>) => {
+			event.preventDefault();
+			const element = event.currentTarget;
+			const keyboard =
+				event.button !== 2 || (event.clientX === 0 && event.clientY === 0);
+			const early =
+				!keyboard && rightDownSelection?.key === key
+					? rightDownSelection
+					: undefined;
+			rightDownSelection = undefined;
+			const rect = element.getBoundingClientRect();
+			onMessageMenu({
+				key,
+				x: keyboard ? rect.left : event.clientX,
+				y: keyboard ? rect.bottom : event.clientY,
+				keyboard,
+				selection: early ? early.text : selectionWithin(bodyOf(element)),
+			});
+		},
+	};
+}
+
 export const BotTranscript = memo(function BotTranscript({
 	items,
 	bot,
@@ -114,7 +187,7 @@ export const BotTranscript = memo(function BotTranscript({
 	transport?: BotIoTransport;
 	items: readonly TranscriptItem[];
 	bot: Pick<BotProfile, 'id' | 'name' | 'colour' | 'avatar'>;
-	onMessageMenu?: (key: string, text: string, x: number, y: number) => void;
+	onMessageMenu?: (request: MessageMenuRequest) => void;
 }>) {
 	const imageLoader = useMemo(() => {
 		if (!transport) return undefined;
@@ -166,24 +239,20 @@ export const BotTranscript = memo(function BotTranscript({
 		const at = messageTimes?.get(
 			block.kind === 'agent' ? block.key : block.item.key,
 		);
-		if (block.kind === 'user')
+		if (block.kind === 'user') {
+			const menuHandlers = messageMenuHandlers(
+				block.item.key,
+				(element) => element.querySelector('.bots-msg__body--plain'),
+				onMessageMenu,
+			);
 			return (
 				<div
 					className="bots-msg bots-msg--user"
 					key={block.item.key}
 					data-terminay-message-key={block.item.key}
 					tabIndex={onMessageMenu ? 0 : undefined}
-					onContextMenu={(event) => {
-						if (onMessageMenu) {
-							event.preventDefault();
-							onMessageMenu(
-								block.item.key,
-								block.item.text,
-								event.clientX,
-								event.clientY,
-							);
-						}
-					}}
+					onMouseDown={menuHandlers.onMouseDown}
+					onContextMenu={menuHandlers.onContextMenu}
 				>
 					<span className="bots-msg__you" aria-hidden="true">
 						You
@@ -235,6 +304,7 @@ export const BotTranscript = memo(function BotTranscript({
 					</div>
 				</div>
 			);
+		}
 		if (block.kind === 'other') {
 			const item = block.item;
 			if (item.kind === 'plan')
@@ -389,7 +459,7 @@ function AgentText({
 		path: string,
 		signal: AbortSignal,
 	) => Promise<{ mime: string; bytes: Uint8Array }>;
-	onMessageMenu?: (key: string, text: string, x: number, y: number) => void;
+	onMessageMenu?: (request: MessageMenuRequest) => void;
 }>) {
 	const pathKey = JSON.stringify(botMarkdownImagePaths(text));
 	const [images, setImages] = useState<ReadonlyMap<string, string | null>>(
@@ -433,6 +503,9 @@ function AgentText({
 		};
 	}, [pathKey, imageLoader]);
 	const html = useMemo(() => renderBotMarkdown(text, images), [text, images]);
+	const menuHandlers = messageKey
+		? messageMenuHandlers(messageKey, (element) => element, onMessageMenu)
+		: {};
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: delegated link clicks; links stay keyboard-focusable
 		<div
@@ -449,13 +522,9 @@ function AgentText({
 				});
 			}}
 			data-terminay-message-key={messageKey}
-			tabIndex={onMessageMenu ? 0 : undefined}
-			onContextMenu={(event) => {
-				if (onMessageMenu && messageKey) {
-					event.preventDefault();
-					onMessageMenu(messageKey, text, event.clientX, event.clientY);
-				}
-			}}
+			tabIndex={onMessageMenu && messageKey ? 0 : undefined}
+			onMouseDown={menuHandlers.onMouseDown}
+			onContextMenu={menuHandlers.onContextMenu}
 			onClick={handleBotMarkdownClick}
 			// biome-ignore lint/security/noDangerouslySetInnerHtml: markdown-it with html disabled escapes raw HTML
 			dangerouslySetInnerHTML={{ __html: html }}
