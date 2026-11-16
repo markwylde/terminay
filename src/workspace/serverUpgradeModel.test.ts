@@ -1604,3 +1604,77 @@ test('an attempt server that does not come back fails the restart once', async (
 	assert.equal(view?.steps[2]?.state, 'failed');
 	assert.equal(board.snapshot.notices.length, 1);
 });
+
+test('an upgrade begun on a server without attempts ends when it comes back publishing them', async () => {
+	// Pop: the release that ran the upgrade predated attempts, the one it
+	// installed publishes them, and it has no attempt to publish.
+	const board = new ServerUpgradeBoard({
+		...fakeTimers(),
+		randomId: () => 'req-1',
+	});
+	const before = fakeClient(status(AVAILABLE));
+	const sent: unknown[] = [];
+	const old = {
+		...before,
+		startServerUpgrade: async (_mode: string, options?: unknown) => {
+			sent.push(options);
+			return before.store.status;
+		},
+	};
+	board.sync([source('pop', old, { serverId: 'pop', label: 'Pop' })]);
+	await board.startUpgrade('pop', old, 'in-place', { to: '5.2.0' });
+	assert.deepEqual(sent, [undefined]);
+	before.publish(RUNNING);
+	board.sync([
+		source('pop', undefined, {
+			serverId: 'pop',
+			label: 'Pop',
+			phase: 'reconnecting',
+		}),
+	]);
+	const after = attemptClient(
+		status({
+			version: '5.2.0',
+			upgrade: { state: 'succeeded', from: '5.1.1', to: '5.2.0', at: 2_000 },
+		}),
+	);
+	after.attempts.attempt = null;
+	board.sync([source('pop', after, { serverId: 'pop', label: 'Pop' })]);
+	assert.equal(board.snapshot.progress[0]?.outcome, 'success');
+	assert.deepEqual(
+		board.snapshot.notices.map((notice) => notice.text),
+		['Pop is now on 5.2.0.'],
+	);
+	// The next upgrade of that server is followed by its attempts.
+	board.closeProgress('pop');
+	await board.startUpgrade('pop', after, 'in-place', { to: '5.3.0' });
+	assert.deepEqual(after.sent.at(-1), {
+		mode: 'in-place',
+		options: { requestId: 'req-1' },
+	});
+	after.publishAttempt(pendingAttempt({ stage: 'installing' }));
+	assert.equal(board.snapshot.progress[0]?.steps[1]?.state, 'running');
+});
+
+test('an upgrade followed from an old server still ends when it returns publishing attempts but no outcome', async () => {
+	// A server that comes back on a new build, publishing attempts, but
+	// whose status names no outcome: the old rules still end it.
+	const timers = fakeTimers();
+	const board = new ServerUpgradeBoard({ ...timers, randomId: () => 'req-1' });
+	const before = fakeClient(status(AVAILABLE));
+	board.sync([source('pop', before, { serverId: 'pop', label: 'Pop' })]);
+	board.markStarted('pop', { mode: 'in-place', to: '5.2.0' });
+	before.publish(RUNNING);
+	board.sync([
+		source('pop', undefined, {
+			serverId: 'pop',
+			label: 'Pop',
+			phase: 'reconnecting',
+		}),
+	]);
+	const after = attemptClient(status({ version: '5.2.0' }));
+	after.attempts.attempt = null;
+	board.sync([source('pop', after, { serverId: 'pop', label: 'Pop' })]);
+	timers.fire();
+	assert.notEqual(board.snapshot.progress[0]?.outcome, undefined);
+});

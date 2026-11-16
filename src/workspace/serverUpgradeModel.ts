@@ -820,13 +820,14 @@ export class ServerUpgradeBoard {
 		if (record.client?.attempts === undefined) return;
 		this.noteReturn(record);
 		if (attempt === undefined || attempt === null) return;
+		// An upgrade followed from a server without attempts is not one of
+		// them, even once the server it restarted into publishes attempts.
+		if (!followsByAttempt(record)) return;
 		if (record.following) {
 			const ours =
 				attempt.id === record.attemptId ||
 				(record.attemptId === undefined &&
-					(record.requestId === undefined
-						? attempt.ending === undefined
-						: attempt.requestId === record.requestId));
+					attempt.requestId === record.requestId);
 			if (!ours) return;
 			if (record.attemptId === undefined) {
 				record.attemptId = attempt.id;
@@ -896,8 +897,9 @@ export class ServerUpgradeBoard {
 			return;
 		}
 		record.status = status;
-		// A server that publishes attempts is followed by them alone.
-		if (record.client?.attempts !== undefined) {
+		// A server that publishes attempts is followed by them alone, unless
+		// what is followed began on a server that did not.
+		if (followsByAttempt(record)) {
 			this.noteReturn(record);
 			return;
 		}
@@ -1132,7 +1134,7 @@ export class ServerUpgradeBoard {
 				record.source.phase === 'ready' && record.client !== undefined;
 			// A server that publishes attempts ends each one by its own
 			// deadlines; while it is connected there is nothing to hold it to.
-			if (connected && record.client?.attempts !== undefined) return;
+			if (connected && followsByAttempt(record)) return;
 			if (connected || !record.expectsRestart) {
 				this.unfollow(record, {
 					failed: 'running',
@@ -1235,6 +1237,22 @@ export class ServerUpgradeBoard {
 		});
 		for (const listener of [...this.listeners]) listener();
 	}
+}
+
+/**
+ * Whether this record is followed by the attempts its server publishes. An
+ * upgrade this device began following on a server without attempts carries
+ * neither a request id nor an attempt id, and is followed by the rules for
+ * such a server to its end, even when the release it installs publishes
+ * attempts (ADR-0125).
+ */
+function followsByAttempt(record: Tracked): boolean {
+	return (
+		record.client?.attempts !== undefined &&
+		(!record.following ||
+			record.requestId !== undefined ||
+			record.attemptId !== undefined)
+	);
 }
 
 function progressView(
