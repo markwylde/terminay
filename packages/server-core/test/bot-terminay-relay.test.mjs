@@ -32,7 +32,6 @@ function harness(t, options = {}) {
 			return () => secrets.delete(key);
 		},
 		assert: () => {},
-		assertWork: () => {},
 		call: async () => ({}),
 		sanitizeSecrets: (_bot, value) => value,
 	};
@@ -304,7 +303,7 @@ for (const driver of ['codex-cli', 'claude-code-cli']) {
 			const servers = codexServers(args, agentEnvironment);
 			assert.deepEqual(Object.keys(servers.terminay.environment).sort(), ['BASH_ENV', 'TERMINAY_MCP_SOCKET', 'TERMINAY_MCP_TOKEN']);
 			assert.deepEqual(Object.keys(servers.terminay_bot.environment).sort(), ['BASH_ENV', 'TERMINAY_RUNTIME_SOCKET', 'TERMINAY_RUNTIME_TOKEN']);
-			assert.deepEqual(Object.keys(servers.terminay_desktop.environment), []);
+			assert.deepEqual(Object.keys(servers.terminay_desktop.environment).sort(), ['BASH_ENV', 'TERMINAY_RUNTIME_SOCKET', 'TERMINAY_RUNTIME_TOKEN']);
 			launches = Object.fromEntries(
 				['terminay', 'terminay_bot'].map((name) => [
 					name,
@@ -336,8 +335,9 @@ for (const driver of ['codex-cli', 'claude-code-cli']) {
 		const workspace = await listTools(t, launches.terminay.environment, launches.terminay.args, launches.terminay.command);
 		const own = await listTools(t, launches.terminay_bot.environment, launches.terminay_bot.args, launches.terminay_bot.command);
 		assert.ok(workspace.includes('list_projects') && workspace.includes('open_terminal'), `terminay lists ${workspace}`);
-		assert.equal(workspace.includes('work_acquire'), false);
-		assert.ok(own.includes('work_acquire'), `terminay_bot lists ${own}`);
+		assert.equal(workspace.includes('sessions_list'), false);
+		assert.ok(own.includes('sessions_list'), `terminay_bot lists ${own}`);
+		assert.equal(own.includes('work_acquire'), false);
 		assert.equal(own.includes('list_projects'), false);
 	});
 }

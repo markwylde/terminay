@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +24,6 @@ test('private MCP relay serves only scoped tools, preserves framing, redacts tok
 	t.after(() => rmSync(socket, { force: true }));
 	let child,
 		active = true,
-		ownsWork = false,
 		unbound = false,
 		calls = 0;
 	const killed = [];
@@ -35,10 +36,6 @@ test('private MCP relay serves only scoped tools, preserves framing, redacts tok
 		assert: (id) => {
 			assert.equal(id, sid);
 			if (!active) throw Error('revoked');
-		},
-		assertWork: (id) => {
-			assert.equal(id, sid);
-			if (!ownsWork) throw Error('work unavailable');
 		},
 		call: async (id, name, args) => {
 			assert.equal(id, sid);
@@ -165,10 +162,9 @@ test('private MCP relay serves only scoped tools, preserves framing, redacts tok
 		const [code] = await once(child, 'close');
 		return { code, output };
 	};
-	assert.notEqual((await shell()).code, 0);
-	ownsWork = true;
+	// A live execution passes the gate without acquiring anything.
 	assert.deepEqual(await shell(), { code: 0, output: 'guarded-ok' });
-	// Both native tool paths must check the capability/work lease before dispatching an app request.
+	// Both native tool paths must check that the capability is live before dispatching an app request.
 	const launcher = fileURLToPath(
 		new URL('../../../docker/terminay-bot/bin/terminay-app', import.meta.url),
 	);
@@ -237,16 +233,49 @@ test('private MCP relay serves only scoped tools, preserves framing, redacts tok
 			(await launch(kind, { TERMINAY_RUNTIME_TOKEN: '' })).code,
 			0,
 		);
-		ownsWork = false;
-		assert.notEqual((await launch(kind)).code, 0);
-		ownsWork = true;
 		const launched = await launch(kind);
 		assert.equal(launched.code, 0, kind + launched.stderr);
 		assert.match(launched.output, /Launch requested/);
 	}
+	// Claude runs each command as `bash -c -l "<prefix> '<command>'"`, so the
+	// outer bash sources BASH_ENV before the prefix gates the same command.
+	// The first gate must not leave the second a socket without its token.
+	const gateDir = mkdtempSync(join(tmpdir(), 'bot-gate-'));
+	t.after(() => rmSync(gateDir, { recursive: true, force: true }));
+	const envFile = join(gateDir, 'terminay-shell-env'),
+		prefixFile = join(gateDir, 'terminay-tool-shell');
+	writeFileSync(envFile, guard);
+	writeFileSync(prefixFile, claudeGuard, { mode: 0o755 });
+	const claudeShell = async (command) => {
+		const child = spawn('/bin/bash', ['-c', '-l', `${prefixFile} '${command}'`], {
+			env: { ...process.env, ...environment, BASH_ENV: envFile },
+			stdio: ['ignore', 'pipe', 'pipe'],
+		});
+		let output = '',
+			stderr = '';
+		child.stdout.on('data', (b) => (output += b));
+		child.stderr.on('data', (b) => (stderr += b));
+		const [code] = await once(child, 'close');
+		return { code, output, stderr };
+	};
+	for (const command of [
+		'printf wrapped-ok',
+		'bash -c "printf nested-ok"',
+		'env | grep -c ^TERMINAY_RUNTIME_ || true',
+	]) {
+		const result = await claudeShell(command);
+		assert.equal(result.code, 0, command + result.stderr);
+		assert.doesNotMatch(result.stderr, /terminay-bot-mcp/);
+	}
+	assert.equal((await claudeShell('printf nested-ok')).output, 'nested-ok');
+	assert.equal(
+		(await claudeShell('env | grep -c ^TERMINAY_RUNTIME_ || true')).output.trim(),
+		'0',
+	);
 	active = false;
 	for (const kind of ['codex', 'claude'])
 		assert.notEqual((await launch(kind)).code, 0);
+	assert.notEqual((await claudeShell('printf revoked')).code, 0);
 	const revoked = await request(4, 'tools/list');
 	assert.ok(revoked.error);
 	await bridge.close();
@@ -302,4 +331,35 @@ test('relay startup stderr is bounded, redacted and survives cleanup failure', a
 	assert.equal(killed, true);
 	assert.equal(diagnostics.length, 1);
 	assert.ok(!diagnostics[0].includes('secret-value'));
+});
+
+test('the desktop MCP keeps the runtime pair out of everything it starts', async () => {
+	const desktop = fileURLToPath(
+		new URL(
+			'../../../docker/terminay-bot/bin/terminay-desktop-mcp.mjs',
+			import.meta.url,
+		),
+	);
+	const child = spawn(
+		process.execPath,
+		[
+			'--input-type=module',
+			'-e',
+			`await import(${JSON.stringify(desktop)}); const { execFileSync } = await import('node:child_process'); process.stdout.write(execFileSync('env', { encoding: 'utf8' }));`,
+		],
+		{
+			env: {
+				PATH: process.env.PATH,
+				TERMINAY_RUNTIME_SOCKET: '/tmp/terminay-mcp-test.sock',
+				TERMINAY_RUNTIME_TOKEN: 'a'.repeat(64),
+			},
+			stdio: ['ignore', 'pipe', 'inherit'],
+		},
+	);
+	let output = '';
+	child.stdout.on('data', (b) => (output += b));
+	const [code] = await once(child, 'close');
+	assert.equal(code, 0);
+	assert.match(output, /^PATH=/m);
+	assert.doesNotMatch(output, /TERMINAY_RUNTIME_/);
 });

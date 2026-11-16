@@ -13,11 +13,11 @@ class Model(BaseHTTPRequestHandler):
   names=list(tools)
   results=[c for m in body.get('messages',[]) if isinstance(m.get('content'),list) for c in m['content'] if c.get('type')=='tool_result']
   print(json.dumps({'tools':names,'results':results}),flush=True)
-  sequence=[('chat_list',{}),('work_acquire',{}),('Bash',{'command':"test -z \"$TERMINAY_RUNTIME_TOKEN\" && test -z \"$ANTHROPIC_API_KEY\" && printf 'shell-token=unset provider-key=unset'",'description':'Verify shell credentials are stripped'}),('chat_post',{'text':'Hello from the real Claude MCP path','key':'real-claude-hi'})]
+  sequence=[('chat_list',{}),('Bash',{'command':"test -z \"$TERMINAY_RUNTIME_TOKEN\" && test -z \"$ANTHROPIC_API_KEY\" && printf 'shell-token=unset provider-key=unset'",'description':'Verify shell credentials are stripped'}),('Bash',{'command':"printf 'second-shell=ok ' && bash -c \"printf nested=ok\"",'description':'Run a later and a nested shell'}),('chat_post',{'text':'Hello from the real Claude MCP path','key':'real-claude-hi'})]
   available=any(n.endswith('__chat_post') for n in names) or '__chat_post' in json.dumps(results)
   step=len([r for r in results if r.get('tool_use_id')!='tool_fixture_search'])
   if not available and 'ToolSearch' in names and not results:
-   block={'type':'tool_use','id':'tool_fixture_search','name':'ToolSearch','input':{'query':'select:mcp__terminay_bot__chat_list,mcp__terminay_bot__work_acquire,mcp__terminay_bot__chat_post','max_results':3}};stop='tool_use'
+   block={'type':'tool_use','id':'tool_fixture_search','name':'ToolSearch','input':{'query':'select:mcp__terminay_bot__chat_list,mcp__terminay_bot__sessions_list,mcp__terminay_bot__chat_post','max_results':3}};stop='tool_use'
   elif available and step<len(sequence):
    suffix,args=sequence[step]
    name=next((n for n in names if n==suffix or n.endswith('__'+suffix)),None)
@@ -45,7 +45,7 @@ server.serve_forever()
 `;
 
 // Preserve the actual pre-fix gate as the negative control: direct preflight
-// succeeds, but Claude cannot bootstrap its own work_acquire server through it.
+// succeeds, but Claude cannot bootstrap its own runtime MCP server through it.
 export const preFixToolShell = `#!/bin/sh
 if [ -n "$TERMINAY_RUNTIME_SOCKET" ]; then
     /usr/local/bin/terminay-bot-mcp --check-work || exit 1

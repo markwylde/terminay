@@ -6,10 +6,11 @@ for name in $TERMINAY_CREDENTIAL_VARIABLES; do
 done
 unset TERMINAY_CREDENTIAL_VARIABLES
 # Claude also prefixes MCP stdio launches. Bootstrap only our fixed adapter
-# commands: the runtime adapter must supply work_acquire before ordinary
-# commands can pass the gate, and the Terminay MCP adapter reaches only its own
-# relay. Each keeps only its own pair. Never evaluate this command string or
-# allow other arguments/metacharacters.
+# commands: the runtime adapter is the execution's own runtime connection, the
+# Terminay MCP adapter reaches only its own relay, and the desktop MCP keeps the
+# runtime pair only to check, per tool call, that the execution is still live.
+# Each keeps only its own pair. Never evaluate this command string or allow
+# other arguments/metacharacters.
 if [ "$#" -eq 1 ]; then
     case "$1" in
         /usr/local/bin/terminay-bot-mcp|\"/usr/local/bin/terminay-bot-mcp\"|\'/usr/local/bin/terminay-bot-mcp\')
@@ -20,10 +21,21 @@ if [ "$#" -eq 1 ]; then
             unset BASH_ENV TERMINAY_RUNTIME_SOCKET TERMINAY_RUNTIME_TOKEN
             exec /usr/local/bin/terminay-bot-mcp --terminay-mcp
             ;;
+        "/usr/local/bin/terminay-desktop-mcp.mjs --endpoint=http://127.0.0.1:9223")
+            unset BASH_ENV TERMINAY_MCP_SOCKET TERMINAY_MCP_TOKEN
+            exec /usr/local/bin/terminay-desktop-mcp.mjs --endpoint=http://127.0.0.1:9223
+            ;;
+        "/usr/local/bin/terminay-desktop-mcp.mjs --cap-output -- chrome-devtools-mcp --browser-url=http://127.0.0.1:9223")
+            unset BASH_ENV TERMINAY_MCP_SOCKET TERMINAY_MCP_TOKEN
+            exec /usr/local/bin/terminay-desktop-mcp.mjs --cap-output -- chrome-devtools-mcp --browser-url=http://127.0.0.1:9223
+            ;;
     esac
 fi
+# Ordinary commands run only while the execution's capability is live.
 if [ -n "$TERMINAY_RUNTIME_SOCKET" ]; then
     /usr/local/bin/terminay-bot-mcp --check-work || exit 1
 fi
-unset TERMINAY_RUNTIME_TOKEN TERMINAY_MCP_TOKEN BASH_ENV
+# Drop each socket with its token, so nothing this command starts is gated
+# again with a socket but no token.
+unset TERMINAY_RUNTIME_SOCKET TERMINAY_RUNTIME_TOKEN TERMINAY_MCP_SOCKET TERMINAY_MCP_TOKEN BASH_ENV
 exec /bin/bash -c "$1"

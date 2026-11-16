@@ -286,13 +286,13 @@ async function finish(r, id) {
 	await flush();
 }
 
-test('runtime trigger CRUD shares UI persistence, validation and events without a work lease', async (t) => {
+test('runtime trigger CRUD shares UI persistence, validation and events', async (t) => {
 	const r = await setup(t);
 	const { sessionId } = await r.service.send(r.bot.id, 'Manage my triggers');
 	const call = (name, args = {}) =>
 		r.service.runtime.call(sessionId, name, args);
 	const initial = await call('triggers_list');
-	assert.equal((await call('sessions_get', { sessionId })).ownsWork, false);
+	assert.equal('ownsWork' in (await call('sessions_get', { sessionId })), false);
 	const created = await call('triggers_create', {
 		revision: initial.revision,
 		draft: draft(),
@@ -1609,26 +1609,21 @@ test('an engine error while ending a completed trigger turn does not block later
 	assert.equal(r.turns.length, 2, 'the next firing reached the agent');
 });
 
-test('a turn that fails cleanup releases its shared work ownership', async (t) => {
+test('a turn that fails cleanup is revoked and the next turn can use the shell', async (t) => {
 	captureErrors(t);
 	const r = await setup(t);
 	r.triggers.create(r.bot.id, draft());
 	r.failures.kill = 1;
 	await r.time.advance(start + 5 * MINUTE, r.engine);
 	const [first] = triggerRuns(r);
-	assert.equal(
-		(await r.service.runtime.call(first.id, 'work_acquire', {})).acquired,
-		true,
-	);
+	r.service.runtime.assert(first.id);
 	await finish(r, first.id);
 	await flush();
+	assert.throws(() => r.service.runtime.assert(first.id), /no longer active/);
 	await r.time.advance(start + 10 * MINUTE, r.engine);
 	await flush();
 	const second = triggerRuns(r)[1];
-	assert.equal(
-		(await r.service.runtime.call(second.id, 'work_acquire', {})).acquired,
-		true,
-	);
+	r.service.runtime.assert(second.id);
 });
 
 test('a stopped or timed-out turn keeps its outcome when cleanup fails', async (t) => {

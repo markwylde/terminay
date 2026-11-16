@@ -129,7 +129,7 @@ async function container(work) {
 }
 function runtime(sessionId) {
 	const calls = [],
-		state = { requests: 0, unbound: false, ownsWork: false };
+		state = { requests: 0, unbound: false, revoked: false };
 	return {
 		calls,
 		state,
@@ -143,17 +143,11 @@ function runtime(sessionId) {
 		assert: (id) => {
 			assert.equal(id, sessionId);
 			state.requests++;
-		},
-		assertWork: () => {
-			if (!state.ownsWork)
-				throw Error(
-					'Acquire shared work with work_acquire before shell/desktop actions',
-				);
+			if (state.revoked) throw Error('Execution capability is no longer active');
 		},
 		call: async (id, tool, args) => {
 			assert.equal(id, sessionId);
 			calls.push({ tool, args });
-			if (tool === 'work_acquire') state.ownsWork = true;
 			return tool === 'chat_post' ? { posted: true } : { items: [] };
 		},
 	};
@@ -353,6 +347,9 @@ test(
 					/did not connect/,
 					'a direct preflight is not provider startup',
 				);
+				// Only the exact adapter commands skip the gate: every variant is
+				// refused once the capability is revoked.
+				rpc.state.revoked = true;
 				for (const command of [
 					'printf should-not-run',
 					'/usr/local/bin/terminay-bot-mcp --help',
@@ -371,13 +368,21 @@ test(
 						'extra-argument',
 					]),
 				);
+				rpc.state.revoked = false;
+				// A variant that runs while live never sees the runtime token.
+				await assert.rejects(
+					exec([
+						'/usr/local/bin/terminay-tool-shell',
+						'/usr/local/bin/terminay-bot-mcp --check-work',
+					]),
+				);
 				const probe = `import subprocess,json,os,sys
 p=subprocess.Popen(['/usr/local/bin/terminay-tool-shell',sys.argv[1]],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
 for ident,method,params in [(1,'initialize',{'protocolVersion':'2025-03-26','clientInfo':{'name':'prefix-test','version':'1'},'capabilities':{}}),(2,'tools/list',{}),(3,'tools/call',{'name':'chat_list','arguments':{}}),(4,'tools/call',{'name':'chat_post','arguments':{'text':'prefixed reply','key':'prefix'}})]:
  p.stdin.write(json.dumps({'jsonrpc':'2.0','id':ident,'method':method,'params':params})+'\\n');p.stdin.flush()
  line=p.stdout.readline();assert line,'adapter closed before response'
  response=json.loads(line);assert 'result' in response,response
- if method=='tools/list':assert any(t['name']=='work_acquire' for t in response['result']['tools'])
+ if method=='tools/list':assert any(t['name']=='sessions_list' for t in response['result']['tools']) and not any(t['name'].startswith('work_') for t in response['result']['tools'])
  if ident==1:
   environment=open('/proc/'+str(p.pid)+'/environ','rb').read().split(b'\\0')
   assert not any(e.startswith(b'ANTHROPIC_API_KEY=') or e.startswith(b'BASH_ENV=') for e in environment),environment
@@ -392,15 +397,7 @@ p.stdin.close();assert p.wait(timeout=10)==0
 					await exec(['python3', '-c', probe, command]);
 				}
 				bridge.assertConnected();
-				assert.equal(
-					rpc.state.ownsWork,
-					false,
-					'MCP bootstrap must not acquire work implicitly',
-				);
-				await assert.rejects(
-					exec(['/usr/local/bin/terminay-tool-shell', 'printf still-refused']),
-				);
-				await rpc.call(sessionId, 'work_acquire', {});
+				// A live execution runs shell commands without acquiring anything.
 				assert.equal(
 					await exec([
 						'/usr/local/bin/terminay-tool-shell',
@@ -408,6 +405,24 @@ p.stdin.close();assert p.wait(timeout=10)==0
 					]),
 					'unset|unset|unset',
 				);
+				// Launched as Claude launches it, through the shell prefix, the desktop
+				// MCP gates each tool call on the same liveness check.
+				const desktopCall = `import subprocess,json,sys
+p=subprocess.Popen(['/usr/local/bin/terminay-tool-shell','/usr/local/bin/terminay-desktop-mcp.mjs --endpoint=http://127.0.0.1:9223'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+p.stdin.write(json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'screenshot','arguments':{}}})+'\\n');p.stdin.flush()
+print(p.stdout.readline());p.stdin.close();p.wait(timeout=20)
+`;
+				const live = await exec(['python3', '-c', desktopCall]);
+				assert.doesNotMatch(live, /no longer active/, live);
+				rpc.state.revoked = true;
+				await assert.rejects(
+					exec(['/usr/local/bin/terminay-tool-shell', 'printf revoked']),
+				);
+				assert.match(
+					await exec(['python3', '-c', desktopCall]),
+					/This execution is no longer active/,
+				);
+				rpc.state.revoked = false;
 				assert.match(
 					diagnostics.join('\n'),
 					/connected to terminay_bot and loaded its tools/,
@@ -507,10 +522,10 @@ for (const brokenPrefix of [false, true]) {
 						activity() {},
 					});
 					let workChecks = 0;
-					const assertWork = service.runtime.assertWork.bind(service.runtime);
-					service.runtime.assertWork = (id) => {
+					const assertLive = service.runtime.assert.bind(service.runtime);
+					service.runtime.assert = (id) => {
 						workChecks++;
-						return assertWork(id);
+						return assertLive(id);
 					};
 					await service.reconcile();
 					const bot = await service.save({
@@ -584,6 +599,9 @@ for (const brokenPrefix of [false, true]) {
 							),
 						);
 						assert.match(calls, /shell-token=unset provider-key=unset/);
+						// Claude's later commands, including a nested shell, keep working.
+						assert.match(calls, /second-shell=ok nested=ok/);
+						assert.doesNotMatch(calls, /terminay-bot-mcp:/);
 						assert.doesNotMatch(
 							JSON.stringify(session.updates),
 							/MCP server.*failed to start|CONNECTION_CLOSED/,
