@@ -35,6 +35,10 @@ A staged upload SHALL NOT be pruned while its token is valid. Tokens SHALL expir
 - **THEN** the user message records the attachment with its name, type and size
 - **AND** the image is readable through the attachment operation after the bot's container is replaced
 
+#### Scenario: File survives recreation
+- **WHEN** a user-posted zip has been delivered to an execution and the bot's container is then replaced
+- **THEN** the attachment operation still returns the zip's exact bytes
+
 #### Scenario: User posts a zip
 - **WHEN** an authorized client uploads a 3 MiB zip archive named `logs.zip` with a claimed type of `image/png` and posts a message referencing it
 - **THEN** the user message records the attachment named `logs.zip` with type `application/octet-stream` and its size
@@ -69,7 +73,7 @@ Chat SHALL show the bot's shared message log with paginated history, explicit pe
 
 Each device SHALL remember, per bot, the last message it has read. When Chat opens with bot messages posted after that point, a labelled divider SHALL mark where they begin, and SHALL stay in place for the rest of that visit. Leaving Chat, closing or leaving the bot tab, hiding the window, or sending a message SHALL mark every loaded message read. A bot this device has never shown SHALL start with every message read.
 
-The composer SHALL offer an attach button that opens a picker for files of any type. Files dropped onto the composer, and files pasted into it, SHALL be added the same way. Each pending file SHALL show before sending with a remove control: a PNG, JPEG, GIF or WebP image as a thumbnail, and any other file as a chip with a file icon, its name and its size. Send SHALL be enabled when the draft has text or at least one pending file. The composer SHALL refuse a fifth file, an image over 2 MiB or any other file over 5 MiB with an inline message, and leave the other pending files unchanged. Pending files SHALL be cleared once the message is posted and kept if posting fails. When the outcome of a send is unknown, a retry SHALL reuse the same idempotency key and any tokens already obtained, so the message is not duplicated. User messages SHALL show their image attachments inline, the same way bot posts do, and every other attachment as a file chip with its name and size. Activating a file chip SHALL save the attachment's bytes through the host's save flow; a non-image attachment SHALL never be rendered or opened in the workspace.
+The composer SHALL offer an attach button that opens a picker for files of any type. Files dropped onto the composer, and files pasted into it, SHALL be added the same way. The composer SHALL classify each file by its content, never by its claimed type or name. Each pending file SHALL show before sending with a remove control: PNG, JPEG, GIF or WebP content as a thumbnail, and any other file as a chip with a file icon, its name and its size. Send SHALL be enabled when the draft has text or at least one pending file. The composer SHALL refuse a fifth file, an image over 2 MiB or any other file over 5 MiB with an inline message, and leave the other pending files unchanged. Pending files SHALL be cleared once the message is posted and kept if posting fails. When the outcome of a send is unknown, a retry SHALL reuse the same idempotency key and any tokens already obtained, so the message is not duplicated. User messages SHALL show their image attachments inline, the same way bot posts do, and every other attachment as a file chip with its name and size. Activating a file chip SHALL save the attachment's bytes through the host's save flow; a non-image attachment SHALL never be rendered or opened in the workspace.
 
 #### Scenario: Read execution details
 - **WHEN** a user selects a recent execution
@@ -106,6 +110,10 @@ The composer SHALL offer an attach button that opens a picker for files of any t
 - **WHEN** the user clicks the attach button and chooses `logs.zip`
 - **THEN** a chip with a file icon, `logs.zip` and its size appears in the composer with a remove control
 
+#### Scenario: Misleading type
+- **WHEN** the user attaches a 3 MiB zip named `x.png` whose claimed type is `image/png`, and a PNG whose claimed type is empty
+- **THEN** the zip is accepted and shown as a file chip, and the PNG is shown as a thumbnail under the 2 MiB image limit
+
 #### Scenario: Drop and paste
 - **WHEN** the user drops a file onto the composer or pastes a file from the clipboard
 - **THEN** the file is added to the pending files, an image as a thumbnail and any other file as a chip
@@ -123,7 +131,15 @@ The composer SHALL offer an attach button that opens a picker for files of any t
 #### Scenario: Send a file
 - **WHEN** the user sends a message with `logs.zip` pending
 - **THEN** the user message shows a chip with `logs.zip` and its size
-- **AND** activating the chip saves the archive through the host's save flow
+- **AND** activating the chip saves the archive's exact bytes through the host's save flow
+
+#### Scenario: Active content is only downloaded
+- **WHEN** a user message carries an HTML or SVG file
+- **THEN** it shows as a file chip, and activating the chip saves it without rendering or opening it in the workspace
+
+#### Scenario: Download fails
+- **WHEN** reading a file attachment fails while the user activates its chip
+- **THEN** the chip shows the error and the chat stays usable
 
 #### Scenario: Too many or invalid files
 - **WHEN** four files are pending and the user adds another, or adds an image over 2 MiB or another file over 5 MiB
@@ -160,6 +176,14 @@ Attachments SHALL be delivered only to the execution triggered by that message. 
 #### Scenario: Unsafe extension
 - **WHEN** the user sends a file named `notes.../../x y`
 - **THEN** its container file name uses the `bin` extension and lies directly in the execution's attachment directory
+
+#### Scenario: Copy fails part-way
+- **WHEN** a message carries an image and a zip, the image copies into the container and the zip copy fails
+- **THEN** the execution fails with the copy error as its reason, does not start the agent, and the execution's attachment directory is removed
+
+#### Scenario: File deleted before start
+- **WHEN** a queued message carrying a zip has its attachment removed by clearing the chat before its execution starts
+- **THEN** the execution does not run without the file and reports why
 
 #### Scenario: Image deleted before start
 - **WHEN** a queued image message's attachment is removed by clearing the chat before its execution starts
