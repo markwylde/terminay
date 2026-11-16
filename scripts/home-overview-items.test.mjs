@@ -89,7 +89,11 @@ function workflow(sessionId, steps, overrides = {}) {
 			openingPrompt: '',
 			templateId: null,
 			createdAt: 0,
-			steps,
+			// Each step waits on the one before, as a normalised flat workflow does.
+			steps: steps.map((step, index) => ({
+				after: index === 0 ? [] : [steps[index - 1].id],
+				...step,
+			})),
 		},
 		...overrides,
 	};
