@@ -1194,3 +1194,129 @@ A saved server's detail SHALL show a **Connection** block with its status and no
 
 - **WHEN** the user chooses Forget on a saved server's detail
 - **THEN** a confirmation naming the server appears inside the Danger zone, below and clear of the Connection block, with Cancel focused
+
+### Requirement: Host-mediated file saves
+
+Desktop SHALL let a server-bundled renderer save bytes to the local filesystem only through a host save under the `osIntegration` capability, never through a browser-initiated download. The renderer SHALL supply a suggested file name, never a path; the user SHALL choose the destination in a native save dialog that confirms replacing an existing file; and the renderer SHALL receive an opaque token or a cancellation, never the destination. Bytes SHALL arrive in chunks of at most 1 MiB, one write at a time per save, into a temporary file beside the destination that is moved into place only when the renderer finishes the save. Every host save error returned to the renderer SHALL be generic and SHALL contain no path.
+
+#### Scenario: Saved whole
+
+- **WHEN** a renderer opens a host save, the user picks a destination, and the renderer writes its chunks and finishes
+- **THEN** the destination holds exactly those bytes, and the renderer is told only that the save completed
+
+#### Scenario: Cancelled dialog
+
+- **WHEN** the user cancels the save dialog
+- **THEN** the renderer is told the save was cancelled and nothing is written
+
+#### Scenario: Replacing a file
+
+- **WHEN** the user confirms replacing an existing file and the save completes
+- **THEN** the file holds the new bytes
+
+#### Scenario: Oversized chunk
+
+- **WHEN** a renderer sends a chunk whose decoded size is larger than 1 MiB
+- **THEN** the host refuses the action before writing anything
+
+#### Scenario: Write fails
+
+- **WHEN** a write or the final move fails
+- **THEN** the renderer receives an error that names no path, the save ends, no temporary file is left, and an existing destination keeps its original contents
+
+### Requirement: Host save lifetime and limits
+
+A host save SHALL belong to the document that opened it. A token from another window or an earlier document SHALL be refused. Every open save, and any save whose dialog is still showing, SHALL end without writing when its document reloads, switches server, or closes, when its window closes, when the renderer abandons it, or after 5 minutes without a write. An ended save SHALL leave no temporary file and SHALL refuse every later action. A document SHALL have at most 4 open saves.
+
+#### Scenario: Abandoned save
+
+- **WHEN** a renderer abandons a host save, or its document reloads, before finishing
+- **THEN** no file is left at the destination or beside it, and the token is refused afterwards
+
+#### Scenario: Window closes during the dialog
+
+- **WHEN** the window closes while the save dialog is still showing and the user then picks a destination
+- **THEN** nothing is written
+
+#### Scenario: Token from another window
+
+- **WHEN** a renderer writes to or finishes a save token that another window opened
+- **THEN** the host refuses the action and the other window's save is unaffected
+
+#### Scenario: Too many saves
+
+- **WHEN** a document already has 4 open saves and opens another
+- **THEN** the host refuses it without showing a dialog
+
+### Requirement: Server upgrade card header
+
+The server upgrade card SHALL show its title on a single line, cut with an
+ellipsis when too wide, offering its full text as a tooltip and keeping it as the
+card's accessible name. Known versions (`<from> → <to>`) SHALL sit on their own
+line beneath the title as secondary text, never cut: a long version SHALL wrap
+within the card.
+
+#### Scenario: Short server name
+
+- **WHEN** the card follows an upgrade of a server with a short name from `5.1.1` to `5.2.0`
+- **THEN** the title "Upgrading <name>" is shown in full on one line and `5.1.1 → 5.2.0` is shown on the line beneath it
+
+#### Scenario: Long server name
+
+- **WHEN** the card follows an upgrade of a server whose name is wider than the card
+- **THEN** the title stays on one line ending in an ellipsis, its tooltip and the card's accessible name give the full title, and the versions are shown in full on the line beneath it
+
+#### Scenario: Long server name after the outcome
+
+- **WHEN** the upgrade of a server whose name is wider than the card ends in success or failure
+- **THEN** "<name> is upgraded" or "<name> was not upgraded" stays on one line ending in an ellipsis, with the full title as its tooltip and accessible name
+
+#### Scenario: Renamed connection
+
+- **WHEN** the person renames an attached connection and then upgrades its server
+- **THEN** the confirmation, the card and the outcome name the server by its new name, as the connection menu does
+
+#### Scenario: Long version strings
+
+- **WHEN** the card follows an upgrade whose versions are longer than the card is wide, such as an unbroken build identifier, on a phone-width window
+- **THEN** both versions are shown in full beneath the title, wrapping onto further lines, and no text extends past the card's edge
+
+#### Scenario: Versions unknown
+
+- **WHEN** the card follows an upgrade whose source or target version is not known
+- **THEN** the title is shown and no version line is drawn beneath it
+
+### Requirement: Server upgrade card follows the appearance
+
+The server upgrade card and its backdrop SHALL follow the light or dark
+appearance in force. In both, the card's title, secondary text, every step
+state (waiting, running, done, failed), a failure's detail and the Close
+button SHALL be legible against the card's surface, and the Close button SHALL
+show a visible focus indicator when focused from the keyboard.
+
+#### Scenario: Light and dark appearance
+
+- **WHEN** the card is shown with a light appearance and again with a dark appearance
+- **THEN** the card's surface differs between the two, and in each the title, secondary text and the icon and text of each step state contrast with the surface
+
+#### Scenario: Ended card in either appearance
+
+- **WHEN** a failed upgrade's card is shown in either appearance and its Close button is focused from the keyboard
+- **THEN** the failed step and its detail are legible against the surface and the button shows a focus indicator
+
+### Requirement: Server upgrade confirmation title
+
+The server-upgrade confirmation's window title — "Upgrade <name>" or, for
+Install latest, "Install latest on <name>" — SHALL stay on one line and, when cut
+with an ellipsis, offer its full text as a tooltip. Its body SHALL wrap a long
+name or version inside the window.
+
+#### Scenario: Long name in the confirmation
+
+- **WHEN** the person asks to upgrade a server whose name is wider than the confirmation's title bar
+- **THEN** the title "Upgrade <name>" stays on one line ending in an ellipsis, its tooltip gives the full title, and the name and versions in its body wrap inside the window
+
+#### Scenario: Long name in the Install latest confirmation
+
+- **WHEN** the person asks to install the latest build on a server whose name is wider than the confirmation's title bar
+- **THEN** the title "Install latest on <name>" stays on one line ending in an ellipsis, and its tooltip gives the full title

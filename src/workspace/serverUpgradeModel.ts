@@ -114,6 +114,7 @@ export function serverUpgradeSources(
 	connections: readonly (LocalCandidate &
 		Readonly<{
 			label: string;
+			role?: string;
 			phase: ConnectionPhase;
 			error?: string;
 			compatibility?: Readonly<{ state: string; message?: string }>;
@@ -121,11 +122,24 @@ export function serverUpgradeSources(
 				serverUpgradeClient?: UpgradeClient;
 			}>;
 		}>)[],
-	profiles: Parameters<typeof isLocalConnection>[1],
+	profiles: readonly (Parameters<typeof isLocalConnection>[1][number] &
+		Readonly<{ label?: string }>)[],
+	/** The profile the host says this window shows: its primary connection's. */
+	currentProfileId?: string,
 ): readonly ServerUpgradeSource[] {
 	return connections
 		.filter((connection) => !isLocalConnection(connection, profiles))
 		.map((connection) => {
+			// The remembered profile carries the name the person last gave it;
+			// the open connection keeps the one it was opened under.
+			const named = profiles.find(
+				(profile) =>
+					profile.id === connection.profileId ||
+					(connection.role === 'primary' &&
+						profile.id === currentProfileId) ||
+					(profile.serverId !== undefined &&
+						profile.serverId === connection.serverId),
+			)?.label;
 			const error =
 				connection.compatibility?.state === 'incompatible' &&
 				connection.compatibility.message !== undefined
@@ -133,7 +147,7 @@ export function serverUpgradeSources(
 					: connection.error;
 			return {
 				profileId: connection.profileId,
-				label: connection.label,
+				label: named ?? connection.label,
 				phase: connection.phase,
 				...(error === undefined ? {} : { error }),
 				...(connection.serverId === undefined

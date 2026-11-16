@@ -34,6 +34,7 @@ import {
 	ContextMenu,
 	type ContextMenuItem,
 } from '../../components/ContextMenu';
+import { saveDownload } from '../../host/nativeActions';
 import { formatBytes } from './BotEnvironmentPanel';
 import { shortAge } from './botsModel';
 import { useNow } from './useNow';
@@ -87,15 +88,6 @@ async function collect(
 async function* fileChunks(file: Blob): AsyncIterable<Uint8Array> {
 	for (let at = 0; at < file.size; at += CHUNK)
 		yield new Uint8Array(await file.slice(at, at + CHUNK).arrayBuffer());
-}
-
-function save(name: string, bytes: Uint8Array) {
-	const url = URL.createObjectURL(new Blob([bytes as BlobPart]));
-	const a = document.createElement('a');
-	a.href = url;
-	a.download = name;
-	a.click();
-	setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 type Preview =
@@ -364,11 +356,14 @@ export function BotFilesView({
 	const download = (entry: BotFileEntry, from = dir) => {
 		if (files === undefined) return;
 		const path = joinPath(from, entry.name);
+		// Desktop denies browser downloads, so the host saves the stream to a
+		// destination the user picks first (ADR-0130).
 		run(`Downloading ${entry.name}…`, async () => {
-			const { bytes } = await collect(
-				entry.kind === 'dir' ? files.downloadFolder(path) : files.read(path),
-			);
-			save(entry.kind === 'dir' ? `${entry.name}.tar` : entry.name, bytes);
+			await saveDownload({
+				filename: entry.kind === 'dir' ? `${entry.name}.tar` : entry.name,
+				chunks: () =>
+					entry.kind === 'dir' ? files.downloadFolder(path) : files.read(path),
+			});
 		});
 	};
 

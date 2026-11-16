@@ -362,6 +362,14 @@ export type TerminayHostAction =
 			filename: string;
 			bytesBase64: string;
 	  }>
+	/**
+	 * A streamed save (ADR-0130). `open` asks the user for a destination for a
+	 * suggested name and returns an opaque token or a cancellation; `write`
+	 * appends at most 1 MiB; `close` commits or abandons. No path ever crosses.
+	 */
+	| Readonly<{ type: 'file.save.open'; filename: string }>
+	| Readonly<{ type: 'file.save.write'; token: string; bytesBase64: string }>
+	| Readonly<{ type: 'file.save.close'; token: string; commit: boolean }>
 	| Readonly<{ type: 'os.open-external'; url: string }>
 	| Readonly<{ type: 'os.reveal'; token: string }>
 	| Readonly<{
@@ -1339,6 +1347,28 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				bytesBase64: action.bytesBase64,
 			});
 		}
+		case 'file.save.open':
+			exactKeys(action, ['type', 'filename'], 'file save open action');
+			return Object.freeze({
+				type: 'file.save.open',
+				filename: fileSaveName(action.filename),
+			});
+		case 'file.save.write':
+			exactKeys(action, ['type', 'token', 'bytesBase64'], 'file save write action');
+			return Object.freeze({
+				type: 'file.save.write',
+				token: fileSaveToken(action.token),
+				bytesBase64: fileSaveChunk(action.bytesBase64),
+			});
+		case 'file.save.close':
+			exactKeys(action, ['type', 'token', 'commit'], 'file save close action');
+			if (typeof action.commit !== 'boolean')
+				throw new TypeError('file save commit flag is invalid');
+			return Object.freeze({
+				type: 'file.save.close',
+				token: fileSaveToken(action.token),
+				commit: action.commit,
+			});
 		case 'os.open-external':
 			exactKeys(action, ['type', 'url'], 'external URL action');
 			return Object.freeze({
@@ -1548,6 +1578,9 @@ export function requiredTerminayHostCapability(
 			return 'updater';
 		case 'preview.download':
 		case 'import-export.bundle.save':
+		case 'file.save.open':
+		case 'file.save.write':
+		case 'file.save.close':
 			return 'osIntegration';
 		case 'os.open-external':
 		case 'os.reveal':
@@ -1732,6 +1765,47 @@ function record(value: unknown, name: string): Record<string, unknown> {
 	if (typeof value !== 'object' || value === null || Array.isArray(value))
 		throw new TypeError(`${name} must be an object`);
 	return value as Record<string, unknown>;
+}
+
+/** Largest decoded chunk one `file.save.write` may carry. */
+export const TERMINAY_FILE_SAVE_CHUNK_MAX_BYTES = 1024 * 1024;
+
+function fileSaveName(value: unknown): string {
+	if (
+		typeof value !== 'string' ||
+		value.length === 0 ||
+		value.length > 255 ||
+		value === '.' ||
+		value === '..' ||
+		/[/\\]/u.test(value) ||
+		[...value].some((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code < 0x20 || code === 0x7f;
+		})
+	)
+		throw new TypeError('file save name is invalid');
+	return value;
+}
+
+function fileSaveToken(value: unknown): string {
+	if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{32}$/u.test(value))
+		throw new TypeError('file save token is invalid');
+	return value;
+}
+
+function fileSaveChunk(value: unknown): string {
+	if (
+		typeof value !== 'string' ||
+		value.length === 0 ||
+		value.length % 4 !== 0 ||
+		!/^[A-Za-z0-9+/]*={0,2}$/u.test(value)
+	)
+		throw new TypeError('file save chunk is invalid');
+	const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+	const decoded = (value.length / 4) * 3 - padding;
+	if (decoded < 1 || decoded > TERMINAY_FILE_SAVE_CHUNK_MAX_BYTES)
+		throw new TypeError('file save chunk is invalid');
+	return value;
 }
 
 function exactKeys(
