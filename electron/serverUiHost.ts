@@ -238,6 +238,16 @@ function denyDownloadForWindow(
 	item.cancel();
 }
 
+function createFileSaves(window: BrowserWindow): HostFileSaves {
+	return new HostFileSaves({
+		showSaveDialog: (suggestedName) =>
+			dialog.showSaveDialog(window, {
+				defaultPath: path.join(app.getPath('downloads'), suggestedName),
+				properties: ['showOverwriteConfirmation', 'createDirectory'],
+			}),
+	});
+}
+
 export function createServerUiPartitionKey(): string {
 	return randomBytes(24).toString('base64url');
 }
@@ -327,19 +337,33 @@ export function bindServerUiWindow(
 		readTerminalClipboardFilePart: options.readTerminalClipboardFilePart,
 		window,
 		lifecycle,
-		// Saves belong to this document (ADR-0130): the lifecycle ends them on
-		// reload, server switch, failed launch, window close and quit.
-		fileSaves: new HostFileSaves({
-			showSaveDialog: (suggestedName) =>
-				dialog.showSaveDialog(window, {
-					defaultPath: path.join(app.getPath('downloads'), suggestedName),
-					properties: ['showOverwriteConfirmation', 'createDirectory'],
-				}),
-		}),
+		fileSaves: createFileSaves(window),
 	};
 	bindings.set(webContentsId, binding);
+	// Saves belong to one document (ADR-0130). The lifecycle ends them on server
+	// switch, failed launch, window close and quit; a reload or a lost renderer
+	// keeps this binding, so a replaced document gets a fresh registry and the
+	// old one's tokens and pending dialogs end with it.
+	const replaceFileSaves = () => {
+		const ended = binding.fileSaves;
+		binding.fileSaves = createFileSaves(window);
+		void ended.dispose();
+	};
+	const onDocumentNavigation = (
+		_event: unknown,
+		_url: string,
+		isInPlace: boolean,
+		isMainFrame: boolean,
+	) => {
+		if (isMainFrame && !isInPlace) replaceFileSaves();
+	};
+	targetWebContents.on('did-start-navigation', onDocumentNavigation);
+	targetWebContents.on('render-process-gone', replaceFileSaves);
 	lifecycle.add('file-saves', () => {
 		void binding.fileSaves.dispose();
+		if (targetWebContentsDestroyed) return;
+		targetWebContents.off('did-start-navigation', onDocumentNavigation);
+		targetWebContents.off('render-process-gone', replaceFileSaves);
 	});
 	lifecycle.add('host-binding', () => {
 		if (bindings.get(webContentsId) === binding) bindings.delete(webContentsId);

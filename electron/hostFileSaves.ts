@@ -93,38 +93,47 @@ export class HostFileSaves {
 	): Promise<{ canceled: true } | { canceled: false; token: string }> {
 		if (this.#disposed) throw new Error(HOST_FILE_SAVE_ENDED);
 		if (this.openCount >= this.#maxOpen) throw new Error(HOST_FILE_SAVE_BUSY);
+		// The reservation holds until the save is registered or has failed, so
+		// concurrent opens can never exceed the limit.
 		this.#choosing += 1;
-		let destination: string | undefined;
 		try {
-			const result = await this.#dialog(suggestedName);
-			if (!result.canceled && result.filePath) destination = result.filePath;
-		} catch {
-			throw new Error(HOST_FILE_SAVE_FAILED);
+			let destination: string | undefined;
+			try {
+				const result = await this.#dialog(suggestedName);
+				if (!result.canceled && result.filePath) destination = result.filePath;
+			} catch {
+				throw new Error(HOST_FILE_SAVE_FAILED);
+			}
+			if (this.#disposed) throw new Error(HOST_FILE_SAVE_ENDED);
+			if (destination === undefined) return { canceled: true };
+			// A short name of its own, so a long destination name still fits.
+			const temporary = path.join(
+				path.dirname(destination),
+				`.terminay-${randomUUID()}.download`,
+			);
+			let handle: Save['handle'];
+			try {
+				handle = await this.#fs.open(temporary);
+			} catch {
+				throw new Error(HOST_FILE_SAVE_FAILED);
+			}
+			if (this.#disposed) {
+				await handle.close().catch(() => undefined);
+				await this.#fs.remove(temporary).catch(() => undefined);
+				throw new Error(HOST_FILE_SAVE_ENDED);
+			}
+			return { canceled: false, token: this.#register(destination, temporary, handle) };
 		} finally {
 			this.#choosing -= 1;
 		}
-		if (this.#disposed) throw new Error(HOST_FILE_SAVE_ENDED);
-		if (destination === undefined) return { canceled: true };
-		const temporary = path.join(
-			path.dirname(destination),
-			`.${path.basename(destination)}.${randomUUID()}.download`,
-		);
-		let handle: Save['handle'];
-		try {
-			handle = await this.#fs.open(temporary);
-		} catch {
-			throw new Error(HOST_FILE_SAVE_FAILED);
-		}
-		if (this.#disposed) {
-			await handle.close().catch(() => undefined);
-			await this.#fs.remove(temporary).catch(() => undefined);
-			throw new Error(HOST_FILE_SAVE_ENDED);
-		}
+	}
+
+	#register(destination: string, temporary: string, handle: Save['handle']): string {
 		const token = randomBytes(24).toString('base64url');
 		const save: Save = { state: 'open', destination, temporary, handle, timer: undefined };
 		this.#saves.set(token, save);
 		this.#arm(token, save);
-		return { canceled: false, token };
+		return token;
 	}
 
 	async write(token: string, bytes: Uint8Array): Promise<void> {

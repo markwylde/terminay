@@ -308,7 +308,7 @@ function withoutIpcPrefix(error: unknown): unknown {
 }
 
 function safeSaveFilename(value: string): string {
-	const name = safeDownloadFilename(value);
+	const name = safeDownloadFilename(value.replace(/\u007f/gu, '_'));
 	return name === '.' || name === '..' ? 'download' : name;
 }
 

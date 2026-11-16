@@ -255,3 +255,35 @@ test('disposing ends open saves and discards a dialog that resolves later', asyn
 	await assert.rejects(saves.close(opened.token, true), { message: HOST_FILE_SAVE_ENDED });
 	assert.deepEqual(await readdir(dir), []);
 });
+
+test('concurrent opens with slow file creation never exceed four saves', async (t) => {
+	const dir = await tempDir(t);
+	let n = 0;
+	const { open: openNode } = await import('node:fs/promises');
+	const saves = new HostFileSaves({
+		showSaveDialog: async () => ({ canceled: false, filePath: path.join(dir, `f${++n}`) }),
+		fs: {
+			open: async (target) => {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				return openNode(target, 'wx');
+			},
+			rename: async () => undefined,
+			remove: (target) => rm(target, { force: true }),
+		},
+	});
+	const results = await Promise.allSettled(Array.from({ length: 8 }, () => saves.open('f')));
+	assert.equal(results.filter((result) => result.status === 'fulfilled').length, 4);
+	assert.equal(saves.openCount, 4);
+	await saves.dispose();
+});
+
+test('a long multibyte destination name still saves', async (t) => {
+	const dir = await tempDir(t);
+	const name = `${'界'.repeat(80)}.txt`;
+	const saves = new HostFileSaves({ showSaveDialog: pick(path.join(dir, name)) });
+	const opened = await saves.open(name);
+	assert.ok(!opened.canceled);
+	await saves.write(opened.token, bytes('x'));
+	await saves.close(opened.token, true);
+	assert.deepEqual(await readdir(dir), [name]);
+});

@@ -146,3 +146,19 @@ test('a browser host uses its own download flow', async () => {
 		delete (globalThis as Record<string, unknown>).document;
 	}
 });
+
+test('a name the host would refuse is suggested in a form it accepts', async () => {
+	// The host's parser refuses separators, control characters, DEL, `.` and `..`.
+	for (const name of ['a\u007fb.txt', '..', 'x\u0001y', 'a/b\\c']) {
+		const actions = installHost(() => ({ canceled: true }));
+		await saveDownload({ filename: name, chunks: source([]).factory });
+		const suggested = actions[0].filename as string;
+		assert.ok(
+			[...suggested].every((character) => {
+				const code = character.codePointAt(0) ?? 0;
+				return code >= 0x20 && code !== 0x7f && character !== '/' && character !== '\\';
+			}),
+		);
+		assert.ok(suggested !== '.' && suggested !== '..' && suggested.length > 0);
+	}
+});

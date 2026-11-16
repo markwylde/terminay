@@ -130,3 +130,42 @@ test('an abandoned host save leaves nothing beside the destination', async ({
 	).toEqual({ ok: true, value: { saved: false } });
 	expect(await readdir(tempDir)).toEqual([]);
 });
+
+test('a reload ends the earlier document’s saves', async ({
+	electronApp,
+	mainWindow,
+	tempDir: root,
+}) => {
+	const tempDir = path.join(root, 'saves');
+	await mkdir(tempDir);
+	await electronApp.evaluate(({ dialog }, filePath) => {
+		dialog.showSaveDialog = (async () => ({
+			canceled: false,
+			filePath,
+		})) as typeof dialog.showSaveDialog;
+	}, path.join(tempDir, 'before-reload.txt'));
+	const opened = (await hostAction(mainWindow, {
+		type: 'file.save.open',
+		filename: 'before-reload.txt',
+	})) as { value: { token: string } };
+	const { token } = opened.value;
+	await hostAction(mainWindow, {
+		type: 'file.save.write',
+		token,
+		bytesBase64: Buffer.from('partial').toString('base64'),
+	});
+
+	await mainWindow.reload();
+	await expect
+		.poll(() => mainWindow.evaluate(() => typeof window.terminayHost?.requestAction))
+		.toBe('function');
+
+	const refused = (await hostAction(mainWindow, {
+		type: 'file.save.close',
+		token,
+		commit: true,
+	})) as { ok: boolean; error: string };
+	expect(refused.ok).toBe(false);
+	expect(refused.error).toContain('This save has ended.');
+	await expect.poll(() => readdir(tempDir)).toEqual([]);
+});
