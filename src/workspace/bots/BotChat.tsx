@@ -31,6 +31,7 @@ import {
 	chatSendAttempt,
 	formatFileSize,
 } from './botsModel';
+import { useFitTextarea } from './useFitTextarea';
 import { refusalText, type ServerBots } from './useServerBots';
 
 interface PendingFile {
@@ -192,6 +193,7 @@ export function BotChat({
 	const generation = useRef(0),
 		draftRef = useRef(draft);
 	draftRef.current = draft;
+	const composer = useFitTextarea(draft);
 	const olderRef = useRef(older);
 	olderRef.current = older;
 	const full = async (id: string): Promise<BotMessage> => {
@@ -951,8 +953,9 @@ export function BotChat({
 							</p>
 						) : null}
 						<textarea
+							ref={composer}
 							value={draft}
-							rows={2}
+							rows={1}
 							aria-label={`Message ${bot.name}`}
 							placeholder={`Message ${bot.name} · Enter to send`}
 							onChange={(event) => onDraftChange(event.target.value)}

@@ -2342,10 +2342,20 @@
 	max-width: none;
 	padding: 12px 14px;
 }
+/* Three lines empty; grows with its text (BotChat writes the content height)
+ * to twelve lines or 40vh, whichever is smaller, never under three; then
+ * scrolls. */
 .bots-composer textarea,
 .bots-composer textarea:focus,
 .bots-composer textarea:focus-visible {
-	min-height: 40px;
+	box-sizing: border-box;
+	line-height: 1.5;
+	min-height: calc(3 * 1.5em);
+	max-height: max(calc(3 * 1.5em), min(calc(12 * 1.5em), 40vh));
+	overflow-y: auto;
+}
+.bots-composer textarea:placeholder-shown {
+	overflow-y: hidden;
 }
 .bots-composer__row {
 	margin-top: 8px;
