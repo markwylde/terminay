@@ -103,6 +103,7 @@ with tempfile.TemporaryDirectory() as d:
     m.start_desktop(passwd, os.getuid(), os.getgid(), 'abc123def456')
     assert calls[0][calls[0].index('-localhost')+1]=='yes'
     assert calls[0][calls[0].index('-SecurityTypes')+1]=='VncAuth'
+    assert '-SendPrimary=0' in calls[0] and '-MaxCutText=1048576' in calls[0]
 `);
 });
 
