@@ -202,8 +202,25 @@ function setup(
 	const rfb = new FakeRfb();
 	const written: string[] = [];
 	let tooLarge = 0;
-	const state = { focusedInside: true, documentFocused: true, visible: true };
+	const state = {
+		focusedInside: true,
+		documentFocused: true,
+		visible: true,
+		catcher: [] as string[],
+		timer: undefined as (() => void) | undefined,
+	};
 	const detach = attachDesktopClipboard(layer, rfb, {
+		pasteRoot: layer,
+		catcher: {
+			focus: () => state.catcher.push('focus'),
+			restore: () => state.catcher.push('restore'),
+		},
+		setTimer: (callback) => {
+			state.timer = callback;
+			return () => {
+				state.timer = undefined;
+			};
+		},
 		isMac: false,
 		focusedInside: () => state.focusedInside,
 		documentFocused: () => state.documentFocused,
@@ -313,4 +330,66 @@ test('a refused host write is ignored', async () => {
 	});
 	rfb.dispatchEvent(new CustomEvent('clipboard', { detail: { text: 'x' } }));
 	await new Promise((resolve) => setImmediate(resolve));
+});
+
+test('a paste Chromium raises at a stale page selection still reaches the bot', () => {
+	// The document; the paste lands on the old selection, outside the layer.
+	const root = new EventTarget();
+	const { layer, rfb, state } = setup({ pasteRoot: root });
+	state.focusedInside = true;
+	layer.dispatchEvent(keyEvent('keydown', { code: 'KeyV', ctrlKey: true }));
+	const paste = pasteEvent('from host');
+	root.dispatchEvent(paste);
+	assert.equal(paste.defaultPrevented, true);
+	assert.deepEqual(rfb.pasted, ['from host']);
+	assert.deepEqual(state.catcher, ['focus', 'restore']);
+	// Edit › Paste from the menu, no shortcut seen: focus decides.
+	root.dispatchEvent(pasteEvent('menu'));
+	assert.deepEqual(rfb.pasted, ['from host', 'menu']);
+});
+
+test('a paste elsewhere in Terminay is left alone', () => {
+	const root = new EventTarget();
+	const { rfb, state } = setup({ pasteRoot: root });
+	state.focusedInside = false;
+	const paste = pasteEvent('into a text field');
+	root.dispatchEvent(paste);
+	assert.equal(paste.defaultPrevented, false);
+	assert.deepEqual(rfb.pasted, []);
+	assert.deepEqual(rfb.keys, []);
+});
+
+test('the paste shortcut moves focus to the editable catcher until its paste arrives', () => {
+	const { layer, rfb, state } = setup({ isMac: true });
+	layer.dispatchEvent(keyEvent('keydown', { code: 'MetaLeft', metaKey: true }));
+	layer.dispatchEvent(keyEvent('keydown', { code: 'KeyV', metaKey: true }));
+	assert.deepEqual(state.catcher, ['focus']);
+	// The move to the catcher is not leaving the desktop: Cmd stays tracked.
+	layer.dispatchEvent(new Event('focusout'));
+	layer.dispatchEvent(pasteEvent('from mac'));
+	assert.deepEqual(state.catcher, ['focus', 'restore']);
+	assert.equal(state.timer, undefined);
+	assert.deepEqual(rfb.keys[0], [Alt_L, 'MetaLeft', false]);
+	assert.deepEqual(rfb.pasted, ['from mac']);
+});
+
+test('focus returns to the desktop when no paste comes', () => {
+	const { layer, rfb, state } = setup();
+	layer.dispatchEvent(keyEvent('keydown', { code: 'KeyV', ctrlKey: true }));
+	state.timer?.();
+	assert.deepEqual(state.catcher, ['focus', 'restore']);
+	// The shortcut is spent: a later paste elsewhere is not ours.
+	state.focusedInside = false;
+	layer.dispatchEvent(pasteEvent('late'));
+	assert.deepEqual(rfb.pasted, []);
+});
+
+test('a modifier released while focus is on the catcher is released in the bot', () => {
+	const { layer, rfb } = setup({ isMac: true });
+	layer.dispatchEvent(
+		keyEvent('keydown', { code: 'MetaRight', metaKey: true }),
+	);
+	layer.dispatchEvent(keyEvent('keydown', { code: 'KeyV', metaKey: true }));
+	layer.dispatchEvent(keyEvent('keyup', { code: 'MetaRight' }));
+	assert.deepEqual(rfb.keys, [[Super_L, 'MetaRight', false]]);
 });

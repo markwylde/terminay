@@ -90,7 +90,16 @@ export function BotDesktopCanvas({
 				rfb.background = '#0d0f12';
 				// Clipboard sharing is control mode only (ADR-0129). View-only
 				// streams never read or write either clipboard.
-				if (streamMode === 'control' && !thumbnail)
+				if (streamMode === 'control' && !thumbnail) {
+					// The paste shortcut lands here: an editable target is what
+					// makes Chromium (and macOS Edit › Paste) raise a native paste.
+					const catcher = document.createElement('textarea');
+					catcher.className = 'bots-vnc__paste-catcher';
+					catcher.tabIndex = -1;
+					catcher.setAttribute('aria-hidden', 'true');
+					catcher.autocomplete = 'off';
+					catcher.spellcheck = false;
+					el.appendChild(catcher);
 					layer.detachClipboard = attachDesktopClipboard(el, rfb, {
 						isMac: /mac|iphone|ipad|ipod/i.test(navigator.platform),
 						focusedInside: () => el.contains(document.activeElement),
@@ -98,7 +107,16 @@ export function BotDesktopCanvas({
 						visible: () => document.visibilityState === 'visible',
 						writeHostClipboard: writeClipboardText,
 						onPasteTooLarge: () => tooLarge.current?.(),
+						pasteRoot: document,
+						catcher: {
+							focus: () => catcher.focus({ preventScroll: true }),
+							restore: () => {
+								catcher.value = '';
+								if (document.activeElement === catcher) rfb.focus();
+							},
+						},
 					});
+				}
 				// Give noVNC a moment to paint its first frame before swapping.
 				rfb.addEventListener('connect', () => setTimeout(show, 150));
 				rfb.addEventListener('disconnect', () => {

@@ -389,7 +389,7 @@ Environment › Desktop SHALL show the bot's desktop live, in either view-only o
 - **View-only enforcement.** In view-only mode, the server SHALL discard every keyboard, pointer, and clipboard message.
 - **Clipboard.** In control mode, the desktop SHALL share clipboard text with the device showing it, in both directions:
   - **Bot to device.** When the bot's clipboard changes, the client SHALL write its text to the device's clipboard through the host's clipboard-write route. It SHALL do so only while the desktop holds keyboard focus and its window is focused and visible. The client SHALL drop the change otherwise, and SHALL NOT write it later. The client SHALL NOT write text that is empty, longer than 1 MiB of UTF-8, or that contains a control character other than tab, line feed, or carriage return.
-  - **Device to bot.** When the user presses the device's paste shortcut on the focused desktop, the client SHALL send the text of that native paste to the bot's clipboard. It SHALL then press the matching Linux paste chord in the bot, regardless of which host modifiers noVNC is holding there. The shortcuts are Ctrl+V, Ctrl+Shift+V and Shift+Insert, or Cmd+V and Cmd+Shift+V on macOS. The chords are Ctrl+V, Ctrl+Shift+V and Shift+Insert. A paste with no text SHALL send nothing. The client SHALL NOT read the device's clipboard any other way.
+  - **Device to bot.** When the user presses the device's paste shortcut on the focused desktop, the client SHALL send the text of that native paste to the bot's clipboard. It SHALL then press the matching Linux paste chord in the bot, regardless of which host modifiers noVNC is holding there. The shortcuts are Ctrl+V, Ctrl+Shift+V and Shift+Insert, or Cmd+V and Cmd+Shift+V on macOS. The chords are Ctrl+V, Ctrl+Shift+V and Shift+Insert. The paste SHALL reach the bot even when text elsewhere in Terminay is still selected, and keyboard focus SHALL be back on the desktop once it is sent. A paste with no text SHALL send nothing. The client SHALL NOT read the device's clipboard any other way.
   - **Limits.** Text whose UTF-8 encoding is longer than 1 MiB, with line endings counted as CRLF, SHALL NOT be sent to the bot. The desktop bar SHALL say that the paste was too large. The bot's desktop SHALL accept clipboard text up to that size.
   - **Selections.** Selecting text in the bot without copying it SHALL NOT change the device's clipboard. The server SHALL ensure this on the bot's running desktop before it relays a control-mode stream.
   - **Unicode.** Text SHALL keep characters outside Latin-1 when the client and the server both support the extended form.
@@ -431,6 +431,11 @@ Environment › Desktop SHALL show the bot's desktop live, in either view-only o
 
 - **WHEN** a user copies text on their device, then focuses the bot's desktop in control mode and presses the device's paste shortcut in a bot text field
 - **THEN** that text is pasted into the bot's text field exactly once
+
+#### Scenario: Paste with text selected elsewhere
+
+- **WHEN** a user selects text elsewhere in Terminay, clicks into the bot's desktop in control mode, and presses the device's paste shortcut in a bot text field
+- **THEN** the device's clipboard text is pasted into the bot's text field exactly once, the selected text elsewhere is unchanged, and the desktop keeps keyboard focus
 
 #### Scenario: Paste on macOS
 
