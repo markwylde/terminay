@@ -27,18 +27,31 @@ test('a native window keeps one window id for its life, and no two windows share
 test('connections to one server open one at a time, and a failure does not hold up the next', async () => {
 	const queue = createProfileConnectQueue();
 	const events = [];
-	const attempt = (name, { fail = false, ms = 20 } = {}) =>
+	// The other server's attempt ends while the first is still open, by
+	// construction rather than by timer order, which a loaded runner can swap.
+	let otherEnded;
+	const otherEnd = new Promise((resolve) => {
+		otherEnded = resolve;
+	});
+	const attempt = (name, { fail = false, until } = {}) =>
 		async () => {
 			events.push(`start:${name}`);
-			await new Promise((resolve) => setTimeout(resolve, ms));
+			await (until ?? new Promise((resolve) => setTimeout(resolve, 20)));
 			events.push(`end:${name}`);
+			if (name === 'other') otherEnded();
 			if (fail) throw new Error(`${name} failed`);
 			return name;
 		};
-	const first = queue.run('remote:a', attempt('main', { fail: true }));
+	const first = queue.run(
+		'remote:a',
+		attempt('main', { fail: true, until: otherEnd }),
+	);
 	const second = queue.run('remote:a', attempt('settings'));
-	// Another server does not wait behind them.
-	const other = queue.run('remote:b', attempt('other', { ms: 1 }));
+	// Another server does not wait behind them: if it did, main would never end.
+	const other = queue.run(
+		'remote:b',
+		attempt('other', { until: Promise.resolve() }),
+	);
 
 	await assert.rejects(first, /main failed/u);
 	assert.equal(await second, 'settings');
