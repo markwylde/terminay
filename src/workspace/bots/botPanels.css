@@ -2574,6 +2574,20 @@
 	position: absolute;
 	inset: 0;
 }
+/* Invisible editable target for the paste shortcut; see desktopClipboard.ts. */
+.bots-vnc__paste-catcher {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	opacity: 0;
+	resize: none;
+	pointer-events: none;
+	caret-color: transparent;
+}
 
 .bots-recovery {
 	flex: 0 0 auto;

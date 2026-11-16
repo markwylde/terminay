@@ -168,6 +168,18 @@ export type DesktopClipboardEnvironment = Readonly<{
 	visible: () => boolean;
 	writeHostClipboard: (text: string) => Promise<void>;
 	onPasteTooLarge: () => void;
+	/** Where `paste` is heard: the document. Chromium raises it at the page's
+	 * selection, which need not be inside the layer. */
+	pasteRoot: EventTarget;
+	/**
+	 * An invisible textarea inside the layer. The paste shortcut moves focus
+	 * there so the native paste has an editable target: on macOS Edit › Paste
+	 * (Cmd+V) needs editable focus, and a stale selection elsewhere on the page
+	 * would otherwise take the event. `restore` returns focus to the desktop.
+	 */
+	catcher: Readonly<{ focus: () => void; restore: () => void }>;
+	/** Bounds how long focus waits on the catcher for a paste that never comes. */
+	setTimer?: (callback: () => void, ms: number) => () => void;
 }>;
 
 type KeyLike = Event & ShortcutEvent;
@@ -177,8 +189,8 @@ type PasteLike = Event & {
 
 /**
  * Wire clipboard sharing onto a control-mode layer. `layer` must be an
- * ancestor of noVNC's canvas so its capture listeners run first. Returns the
- * detach function.
+ * ancestor of noVNC's canvas and of the catcher, so its capture listeners run
+ * first. Returns the detach function.
  */
 export function attachDesktopClipboard(
 	layer: EventTarget,
@@ -188,34 +200,69 @@ export function attachDesktopClipboard(
 	const held = new Set<string>();
 	const diverted = new Set<string>();
 	let pending: LinuxPasteChord | null = null;
+	let catching = false;
+	let cancelTimer: (() => void) | undefined;
+	const setTimer =
+		env.setTimer ??
+		((callback: () => void, ms: number) => {
+			const id = setTimeout(callback, ms);
+			return () => clearTimeout(id);
+		});
 
+	const stopCatching = () => {
+		cancelTimer?.();
+		cancelTimer = undefined;
+		if (!catching) return;
+		catching = false;
+		env.catcher.restore();
+	};
 	const keydown = (event: Event) => {
 		const e = event as KeyLike;
 		if (heldModifierKeysym(e.code, env.isMac) !== undefined) held.add(e.code);
 		const chord = pasteShortcut(e, env.isMac);
 		if (chord === null) return;
 		// Keep the key from noVNC without cancelling it, so the browser or the
-		// Edit › Paste menu raises a native paste on the focused canvas.
+		// Edit › Paste menu raises a native paste, aimed at the catcher.
 		e.stopPropagation();
 		diverted.add(e.code);
 		pending = chord;
+		catching = true;
+		env.catcher.focus();
+		cancelTimer?.();
+		cancelTimer = setTimer(() => {
+			pending = null;
+			stopCatching();
+		}, 1000);
 	};
 	const keyup = (event: Event) => {
 		const e = event as KeyLike;
 		held.delete(e.code);
-		if (diverted.delete(e.code)) e.stopPropagation();
+		if (diverted.delete(e.code)) {
+			e.stopPropagation();
+			return;
+		}
+		// A modifier released while focus sits on the catcher never reaches
+		// noVNC's canvas listener, so release it in the bot here.
+		const keysym = heldModifierKeysym(e.code, env.isMac);
+		if (catching && keysym !== undefined) rfb.sendKey(keysym, e.code, false);
 	};
 	const blur = () => {
+		// Moving focus to the catcher, or back, is not leaving the desktop.
+		if (catching) return;
 		held.clear();
 		diverted.clear();
 		pending = null;
 	};
 	const paste = (event: Event) => {
+		// Ours only when the shortcut was just pressed on the desktop, or the
+		// desktop holds focus (Edit › Paste chosen from the menu).
+		if (pending === null && !env.focusedInside()) return;
 		const e = event as PasteLike;
 		e.preventDefault();
 		e.stopPropagation();
 		const chord = pending ?? 'ctrl+v';
 		pending = null;
+		stopCatching();
 		const text = e.clipboardData?.getData('text/plain') ?? '';
 		if (text.length === 0) return;
 		if (!pasteTextFits(text)) {
@@ -245,13 +292,14 @@ export function attachDesktopClipboard(
 	layer.addEventListener('keydown', keydown, { capture: true });
 	layer.addEventListener('keyup', keyup, { capture: true });
 	layer.addEventListener('focusout', blur, { capture: true });
-	layer.addEventListener('paste', paste, { capture: true });
+	env.pasteRoot.addEventListener('paste', paste, { capture: true });
 	rfb.addEventListener('clipboard', clipboard);
 	return () => {
+		cancelTimer?.();
 		layer.removeEventListener('keydown', keydown, { capture: true });
 		layer.removeEventListener('keyup', keyup, { capture: true });
 		layer.removeEventListener('focusout', blur, { capture: true });
-		layer.removeEventListener('paste', paste, { capture: true });
+		env.pasteRoot.removeEventListener('paste', paste, { capture: true });
 		rfb.removeEventListener('clipboard', clipboard);
 	};
 }
