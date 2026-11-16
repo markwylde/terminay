@@ -9,7 +9,12 @@ import {
 } from '../durableFile.js';
 import { WorkflowServiceError } from './errors.js';
 import { validateSessionRecord } from './normalize.js';
-import { applyStepUpdate, isUnfinished, resumeStepId } from './steps.js';
+import {
+	applyStepUpdate,
+	isUnfinished,
+	readyStepIds,
+	resumeStepId,
+} from './steps.js';
 import {
 	type SessionWorkflowRecord,
 	type SessionWorkflowView,
@@ -294,6 +299,7 @@ function viewOf(sessionId: string, entry: Entry): SessionWorkflowView {
 		state: 'attached',
 		workflow: structuredClone(entry.workflow),
 		resumeStepId: resumeStepId(entry.workflow),
+		readyStepIds: readyStepIds(entry.workflow),
 		unfinished: isUnfinished(entry.workflow),
 	};
 }

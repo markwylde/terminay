@@ -338,8 +338,10 @@ test('Home shows every workflow as columns, filters, groups and remembers its vi
 	await expect(panelOfB).toBeVisible({ timeout: READY_TIMEOUT_MS });
 	const expand = panelOfB.getByRole('button', { name: 'Expand workflow' });
 	if (await expand.isVisible()) await expand.click();
-	await mainWindow.getByRole('button', { name: 'Remove…' }).click();
-	await mainWindow.getByRole('button', { name: 'Remove workflow' }).click();
+	// Removal is in the workflow options menu, behind a confirmation.
+	await panelOfB.getByRole('button', { name: 'Workflow options' }).click();
+	await panelOfB.getByRole('menuitem', { name: 'Remove workflow…' }).click();
+	await panelOfB.getByRole('menuitem', { name: 'Remove', exact: true }).click();
 	await homeControl(mainWindow).click();
 	await workflowsItem(mainWindow).click();
 	await expect(column(mainWindow, 'release')).toHaveCount(0, { timeout: READY_TIMEOUT_MS });

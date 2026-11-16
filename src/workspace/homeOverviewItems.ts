@@ -28,7 +28,8 @@ import type { DashboardServerSource } from './crossServerRows.ts';
 import type { DashboardAgent, DashboardStatusCounts } from './dashboardRows.ts';
 import { buildDashboardGroups } from './dashboardRows.ts';
 import {
-	isSettledStatus,
+	currentSteps,
+	currentStepTitle,
 	tabSummary,
 	type WorkflowTabSummary,
 } from './workflows/workflowPanelModel.ts';
@@ -255,15 +256,9 @@ function latestEnd(steps: readonly WorkflowStep[]): number | undefined {
 	return latest;
 }
 
-/** The step a row names: active, else the first failed, else the first not settled. */
+/** The step a row names: the first of the workflow's current steps (ADR-0128). */
 function currentStep(steps: readonly WorkflowStep[]): WorkflowStep | undefined {
-	return (
-		steps.find(
-			(step) => step.status === 'running' || step.status === 'needs_input',
-		) ??
-		steps.find((step) => step.status === 'failed') ??
-		steps.find((step) => !isSettledStatus(step.status))
-	);
+	return currentSteps(steps)[0];
 }
 
 const RANK_ORDER: Readonly<Record<HomeWorkflowRank, number>> = {
@@ -340,7 +335,12 @@ export function buildWorkflowItems(
 				rank,
 				...(current === undefined
 					? {}
-					: { current: { title: current.title, status: current.status } }),
+					: {
+							current: {
+								title: currentStepTitle(steps) ?? current.title,
+								status: current.status,
+							},
+						}),
 				...(active ? { currentStartedAt: current.startedAt as number } : {}),
 				...(finishedAt === undefined ? {} : { finishedAt }),
 				...(firstFailed === undefined

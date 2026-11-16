@@ -1,0 +1,379 @@
+<title>Workflow Run Layouts</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: one mock terminal pane whose workflow view switches between a vertical side panel and a horizontal bottom drawer from its ⋯ menu. Single dark theme on purpose: it mocks the dark app. */
+:root{
+  color-scheme:dark;
+  --page:#0c120b; --term:#14250f; --panel:#0f1c0b; --card:#121a10; --line:rgb(255 255 255 / .09); --line2:rgb(255 255 255 / .16);
+  --fg:#e6ebe4; --muted:#93a38f; --faint:#5d6c5a;
+  --ok:#5bb85b; --ok-ink:#0b1809; --run:#e6ad2a; --bad:#e5534b; --idle:#6f7f6c;
+  --accent:#8fd18a; --tab:#1b2c17; --hi:rgb(230 173 42 / .12); --sel:#7fb8ff;
+  --f-ui:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --f-head:"Space Grotesk","Inter",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--fg);font-family:var(--f-ui);font-size:14px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 56px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:44px}
+section{display:flex;flex-direction:column;gap:14px;min-width:0}
+h1{font-family:var(--f-head);font-weight:600;font-size:30px;margin:0;text-wrap:balance}
+h2{font-family:var(--f-head);font-weight:600;font-size:20px;margin:0;display:flex;gap:10px;align-items:baseline}
+h2 small{font:600 11px var(--f-mono);color:var(--accent);letter-spacing:.06em}
+.lede{color:var(--muted);max-width:74ch;margin:0}
+.lede b{color:var(--fg);font-weight:600}
+.btn,.seg button{appearance:none;border:1px solid var(--line);background:transparent;color:var(--fg);font:500 12.5px var(--f-ui);padding:6px 11px;border-radius:8px;cursor:pointer}
+.btn:hover{border-color:var(--line2)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.primary{background:#2f6fd0;border-color:#2f6fd0;color:#fff}
+.btn.sm{padding:3px 8px;font-size:12px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--tab);color:var(--fg)}
+:is(.btn,.seg button,.chev,.dep,.preset):focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.clock{font:12px var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* Terminal pane */
+.pane{display:flex;height:620px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--term)}
+.term{flex:1;min-width:0;padding:14px 16px;font:12.5px/1.6 var(--f-mono);color:#cfd8cb;overflow:hidden}
+.term p{margin:0 0 10px}.term .dim{color:#7f907a}.term .amb{color:var(--run)}
+
+/* Workflow panel */
+.wp{flex:none;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);font-size:12px;min-height:0}
+.wp-scroll{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0}
+.wp-e header{padding:14px 14px 10px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:flex-start}
+.wp-e header .hd{flex:1;min-width:0}
+.eyebrow{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.wname{font:600 13px var(--f-mono);margin-top:3px}
+.meta{color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+.brief{margin:8px 0 0;color:var(--muted)}
+.brief summary{cursor:pointer}
+.brief p{margin:6px 0 0;color:var(--fg)}
+.chev{appearance:none;border:1px solid var(--line);background:transparent;color:var(--muted);width:24px;height:24px;border-radius:6px;cursor:pointer;flex:none;display:grid;place-items:center;font-size:14px}
+.wp-c .chev{margin:8px auto 4px}
+.vname{padding:8px 0 12px;display:flex;justify-content:center;max-height:45%;overflow:hidden}
+.vname span{writing-mode:vertical-rl;transform:rotate(180deg);font:600 11px var(--f-mono);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Markers */
+.mk{overflow:visible;flex:none;display:block}
+.mk circle{stroke-width:1.6}
+.mk .ic{fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-width:2.4}
+.st-done circle{fill:var(--ok);stroke:var(--ok)} .st-done .ic{stroke:var(--ok-ink)}
+.st-running circle{fill:var(--panel);stroke:var(--run);stroke-width:2} .st-running .ic{stroke:var(--run)}
+.st-needs_input circle{fill:var(--bad);stroke:var(--bad)} .st-needs_input .ic{stroke:#fff}
+.st-not_started circle{fill:var(--panel);stroke:var(--idle)} .st-not_started .ic{stroke:var(--idle)}
+.mk .halo{fill:none;stroke:var(--run);stroke-width:2;opacity:0;animation:halo 1.8s ease-out infinite;transform-origin:12px 12px}
+.st-needs_input .halo{stroke:var(--bad)}
+@keyframes halo{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.7)}}
+@media (prefers-reduced-motion:reduce){.mk .halo{animation:none}}
+
+/* F rows */
+.qs{padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.srow{display:flex;gap:9px;align-items:flex-start;padding:7px 6px;border-radius:7px;font-size:12.5px}
+.srow .mk{margin-top:-1px}
+.sbody{flex:1;min-width:0}
+.sline{display:flex;gap:8px}
+.tt{flex:1;min-width:0}
+.du{color:var(--muted);font:11px var(--f-mono);font-variant-numeric:tabular-nums;flex:none}
+.r-running .tt,.r-needs_input .tt{font-weight:600}
+.r-running .du{color:var(--run)} .r-needs_input .du{color:var(--bad)}
+.r-not_started .tt{color:var(--muted)}
+.active-row{background:var(--hi)}
+.needs{font-size:10px;font-weight:600;color:#fff;background:var(--bad);border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:1px}
+.after{font-size:11px;color:var(--muted);margin-top:2px}
+.after i{font-style:normal;color:var(--fg)}
+.qgrp{position:relative;padding-left:12px;margin:3px 0}
+.qgrp::before{content:"";position:absolute;left:3px;top:6px;bottom:6px;width:6px;border:2px solid var(--idle);border-right:0;border-radius:6px 0 0 6px}
+.qgrp.g-done::before{border-color:var(--ok)} .qgrp.g-running::before{border-color:var(--run)} .qgrp.g-needs_input::before{border-color:var(--bad)}
+.qgrp .srow{padding-left:4px}
+.qtracks.div > .qtrack + .qtrack{border-top:1px dashed var(--line);margin-top:3px;padding-top:3px}
+.qtrack.chain > .srow{position:relative}
+.qtrack.chain > .srow:not(:last-child)::after{content:"";position:absolute;left:13px;top:27px;bottom:-1px;width:2px;background:var(--idle);opacity:.7}
+.qtrack.chain > .srow + .srow::before{content:"";position:absolute;left:13px;top:0;height:7px;width:2px;background:var(--idle);opacity:.7}
+.qtrack.chain > .srow.r-done:not(:last-child)::after,.qtrack.chain > .srow.r-done + .srow::before{background:var(--ok)}
+.capcol{display:flex;flex-direction:column;align-items:center;gap:6px;padding:6px 0}
+.cap{display:flex;flex-direction:column;align-items:center;gap:4px;border:1.5px solid var(--idle);border-radius:13px;padding:4px 3px}
+.cap.g-done{border-color:var(--ok)} .cap.g-running{border-color:var(--run)} .cap.g-needs_input{border-color:var(--bad)}
+.ctrack{display:flex;flex-direction:column;align-items:center;gap:4px}
+.ctrack.chain{gap:0}
+.clink{width:2px;height:5px;background:var(--idle);flex:none}
+.clink.ok{background:var(--ok)}
+.cdiv{width:10px;height:0;border-top:1.5px dashed var(--idle);flex:none;margin:1px 0}
+
+/* Tracing */
+.tracing [data-id]:not(.hl){opacity:.3}
+.tracing [data-id] [data-id]{opacity:1}
+.tracing .edge:not(.hl){opacity:.1}
+.tracing .edge.hl{stroke-dasharray:none}
+
+/* Switchable run view: the pane flips between a side rail (vertical) and a bottom drawer (horizontal). */
+.wrap{max-width:1180px;gap:20px}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center}
+.toolbar .grp{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.toolbar .lbl{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:600;margin-right:2px}
+.chipbtn{appearance:none;border:1px solid var(--line);background:transparent;color:var(--muted);font:500 12px var(--f-ui);padding:4px 10px;border-radius:999px;cursor:pointer}
+.chipbtn[aria-pressed="true"]{color:var(--fg);border-color:rgb(143 209 138 / .4);background:var(--tab)}
+.chipbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.stagebox{display:flex;justify-content:center;min-width:0}
+.pane{position:relative;width:100%;transition:width .2s ease}
+.pane.v{flex-direction:row}
+.pane.h{flex-direction:column}
+.pane.phone{width:390px;max-width:100%;height:700px}
+.pane.phone .term{font-size:11px;padding:10px}
+.wp{position:relative}
+.wp-c .dots{margin:0 auto 4px}
+.hbtns{display:flex;gap:6px;flex:none}
+.drawer{flex:none;border-top:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-width:0;position:relative}
+.dh{display:flex;align-items:center;gap:10px;padding:8px 12px;min-width:0}
+.dh .nm{font:600 12px var(--f-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dh .meta{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dh .sp{flex:1}
+.dbody{overflow-x:auto;overflow-y:hidden;padding:4px 14px 12px;scrollbar-width:thin}
+.dbody svg{display:block;overflow:visible}
+.mlab{font:500 10.5px var(--f-ui);fill:var(--fg)}
+.mlab.dim{fill:var(--muted)}
+.mdur{font:10px var(--f-mono);fill:var(--muted)}
+.mdur.run{fill:var(--run)} .mdur.bad{fill:var(--bad)}
+.edge{fill:none}
+.e-done{stroke:rgb(91 184 91 / .75)} .e-wait{stroke:var(--idle);stroke-dasharray:2 5;stroke-linecap:round}
+.strip{display:flex;align-items:center;gap:12px;padding:6px 10px 6px 12px;height:46px;min-width:0}
+.strip .cnt{font:600 11.5px var(--f-mono);color:var(--muted);flex:none}
+.strip .sx{flex:none;overflow:hidden;max-width:45%}
+.strip .now{flex:1;min-width:0;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip .now b{font-weight:600;color:var(--run)}
+.strip .now b.bad{color:var(--bad)}
+.menu{position:absolute;z-index:20;background:#191c18;border:1px solid var(--line2);border-radius:10px;padding:5px;width:236px;box-shadow:0 10px 34px rgb(0 0 0 / .55);display:flex;flex-direction:column}
+.menu .ml{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:600;padding:6px 9px 3px}
+.mi{appearance:none;border:0;background:transparent;color:var(--fg);font:13px var(--f-ui);text-align:left;padding:7px 9px;border-radius:7px;cursor:pointer;display:grid;grid-template-columns:16px 22px 1fr;gap:6px;align-items:center}
+.mi:hover,.mi:focus-visible{background:rgb(255 255 255 / .07);outline:none}
+.mi .ck{color:var(--accent)}
+.mi small{display:block;color:var(--muted);font-size:11.5px}
+.mi svg{stroke:var(--muted);fill:none;stroke-width:1.6}
+.mi.danger{color:var(--bad);grid-template-columns:16px 1fr}
+.menu hr{border:0;border-top:1px solid var(--line);margin:4px 3px}
+.confirm{padding:8px 9px;display:flex;flex-direction:column;gap:8px;font-size:12.5px}
+.confirm p{margin:0;color:var(--muted)}
+.confirm p b{color:var(--fg)}
+.confirm .row{display:flex;gap:6px;justify-content:flex-end}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.toast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:#1d211c;border:1px solid var(--line2);border-radius:9px;padding:8px 10px 8px 14px;display:flex;gap:12px;align-items:center;font-size:13px;white-space:nowrap;box-shadow:0 10px 30px rgb(0 0 0 / .5)}
+.spec{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.spec div{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.spec h3{margin:0 0 4px;font-size:13px}
+.spec p{margin:0;color:var(--muted);font-size:13px}
+@media (max-width:560px){.pane{height:600px}}
+</style>
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:8px">
+    <h1>Vertical or horizontal</h1>
+    <p class="lede">One workflow, two ways to watch it. Open the <b>⋯</b> menu at the top right of the panel to switch between a <b>vertical</b> side panel and a <b>horizontal</b> bottom drawer, or to <b>remove</b> the workflow. Each layout collapses on its own. Hover or tap a step to trace what it waits on and what it unblocks.</p>
+  </header>
+  <div class="toolbar">
+    <div class="grp"><span class="lbl">Workflow</span><span id="presets" class="grp"></span></div>
+    <div class="grp"><span class="lbl">Pane</span><button type="button" class="chipbtn" data-size="wide">Desktop</button><button type="button" class="chipbtn" data-size="phone">Phone</button></div>
+    <div class="grp"><button type="button" class="btn" id="adv">Advance to next event</button><button type="button" class="btn" id="rst">Restart run</button><span class="clock" id="clock"></span></div>
+  </div>
+  <div class="stagebox"><div class="pane" id="pane"></div></div>
+  <div class="spec">
+    <div><h3>⋯ menu, top right</h3><p>Show as Vertical or Horizontal, then Remove workflow. It's on the expanded header and on both collapsed forms, so you never have to expand to switch.</p></div>
+    <div><h3>Vertical · side panel</h3><p>Quiet stages. Collapsed it's a 36px rail, 8px wider for each bracket nested inside another. Expanded it uses the panel's chosen width.</p></div>
+    <div><h3>Horizontal · bottom drawer</h3><p>Metro map. Collapsed it's a 46px strip: the shape in dots, plus what's running now. Expanded it scrolls sideways inside the drawer only when the plan is wider than the pane.</p></div>
+    <div><h3>One choice for every terminal</h3><p>The layout is a single preference, so every workflow looks the same everywhere. Collapsed or expanded is remembered for each layout separately.</p></div>
+  </div>
+</div>
+<script>
+const ICON={
+  bulb:"M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z",
+  eye:"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 1 0 0-6z",
+  list:"M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
+  wrench:"M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
+  server:"M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01",
+  code:"M16 18l6-6-6-6M8 6l-6 6 6 6",
+  book:"M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5",
+  verify:"M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+  camera:"M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2zM12 10a3 3 0 1 0 0 6 3 3 0 1 0 0-6z",
+  pr:"M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9",
+  flag:"M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1zM4 22v-7",
+  bug:"M9 7V6a3 3 0 0 1 6 0v1M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9M6 13H2M22 13h-4M6 9L3 7M18 9l3-2M6 17l-3 2M18 17l3 2",
+  box:"M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7zM3.3 7L12 12l8.7-5M12 22V12",
+  db:"M12 8c4.4 0 8-1.3 8-3s-3.6-3-8-3-8 1.3-8 3 3.6 3 8 3zM4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"
+};
+const ICON_NAMES={bulb:"Idea",eye:"Review",list:"Checklist",wrench:"Fix",server:"Server",code:"Code",book:"Docs",verify:"Verify",camera:"Screenshot",pr:"Pull request",flag:"Finish",bug:"Bug",box:"Package",db:"Database"};
+const P=(id,t,sh,i,deps,dur,p)=>({id,t,sh,i,deps,dur,p:p||""});
+const PRESETS=[
+  {id:"openspec",label:"OpenSpec: Propose → Ship",name:"OpenSpec: Propose → Ship",brief:"Fix PWA infinite loading after a server upgrade. Keep planning, code and specs in one worktree and pull request.",now:32,
+    steps:[P("propose","Propose the change","Propose","bulb",[],3,"Write proposal.md, design.md and tasks.md for the change."),P("codex","Codex reviews the proposal","Codex review","eye",["propose"],4),P("specs","Check against the specs","Spec check","list",["propose"],2),
+      P("amend","Amend the proposal","Amend","wrench",["codex","specs"],3),P("server","Implement the server","Server","server",["amend"],18),P("ui","Implement the panel UI","Panel UI","code",["amend"],26),
+      P("docs","Update the operator docs","Docs","book",["amend"],9),P("verify","Verify the implementation","Verify","verify",["server","ui"],5),P("e2e","E2E test and screenshots","E2E","camera",["ui"],8),
+      P("pr","Open the pull request","PR","pr",["verify","e2e","docs"],1),P("ci","Get CI green","CI","flag",["pr"],9)],
+    init:{propose:["done",0,3],codex:["done",3,7],specs:["done",3,5],amend:["done",7,10],server:["done",10,28],ui:["running",10],docs:["needs_input",10]}},
+  {id:"bugfix",label:"Bugfix",name:"Bugfix: Reproduce → Fix",brief:"Fix the reported crash when a pane closes mid-scroll.",now:9,
+    steps:[P("repro","Reproduce the bug","Reproduce","bug",[],4),P("test","Write a failing test","Failing test","verify",["repro"],8),P("spec","Read the spec and history","Read spec","book",[],6),
+      P("fix","Fix the bug","Fix","wrench",["test","spec"],10),P("check","Verify the fix","Verify","list",["fix"],3),P("pr","Open the pull request","PR","pr",["check"],1)],
+    init:{repro:["done",0,4],test:["running",4],spec:["done",0,6]}},
+  {id:"chains",label:"Server + UI",name:"Feature: Server + UI",brief:"Add upgrade outcomes to the server card.",now:17,
+    steps:[P("plan","Plan the change","Plan","bulb",[],3),P("server","Implement the server","Server","server",["plan"],12),P("migrate","Write the DB migration","Migration","db",["server"],6),
+      P("stest","Run the server tests","Server tests","verify",["migrate"],5),P("ui","Implement the UI","UI","code",["plan"],9),P("shots","Take screenshots","Screenshots","camera",["ui"],6),
+      P("pr","Open the pull request","PR","pr",["stest","shots"],1),P("ci","Get CI green","CI","flag",["pr"],8)],
+    init:{plan:["done",0,3],server:["done",3,15],migrate:["running",15],ui:["done",3,12],shots:["running",12]}},
+  {id:"nested",label:"API + docs",name:"API + docs",brief:"Add the workflow status API and document it.",now:16,
+    steps:[P("plan","Plan the change","Plan","bulb",[],2),P("api","Implement the API","API","code",["plan"],12),P("unit","Run unit tests","Unit tests","verify",["api"],5),
+      P("lint","Lint","Lint","list",["api"],1),P("types","Typecheck","Typecheck","eye",["api"],3),P("docs","Write the docs","Docs","book",["plan"],8),P("pr","Open the pull request","PR","pr",["unit","lint","types","docs"],1)],
+    init:{plan:["done",0,2],api:["done",2,14],unit:["running",14],lint:["done",14,15],types:["running",14],docs:["needs_input",2]}},
+  {id:"upgrade",label:"Upgrade dependencies",name:"Upgrade dependencies",brief:"Bring every workspace package up to date.",now:9,
+    steps:[P("plan","List outdated packages","Plan","list",[],2),...[["react","React",5],["electron","Electron",9],["vite","Vite",4],["pty","node-pty",6],["pw","Playwright",5],["ts","TypeScript",8]].map(([id,n,d])=>P(id,"Upgrade "+n,n,"box",["plan"],d)),
+      P("build","Build every package","Build","code",["react","electron","vite","pty","pw","ts"],4),P("test","Run the full test suite","Tests","verify",["build"],10),P("pr","Open the pull request","PR","pr",["test"],1)],
+    init:{plan:["done",0,2],react:["done",2,7],electron:["running",2],vite:["done",2,6],pty:["needs_input",2],pw:["done",2,7],ts:["running",2]}}
+];
+
+/* ---------- shared helpers ---------- */
+const isActive=x=>x.s==="running"||x.s==="needs_input";
+const LABEL={done:"done",running:"running",needs_input:"needs input",not_started:"not started"};
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+function dur(c,x){if(x.s==="done")return (x.end-x.start)+"m";if(isActive(x))return (c.now-x.start)+"m";return "";}
+function gst(c,ids){const s=ids.map(id=>c.by[id].s);if(s.includes("needs_input"))return "needs_input";if(s.includes("running"))return "running";if(s.every(v=>v==="done"))return "done";return "not_started";}
+function mkInner(x){return `<title>${esc(x.t)} — ${LABEL[x.s]}</title>${isActive(x)?'<circle class="halo" cx="12" cy="12" r="10.5"/>':''}<circle cx="12" cy="12" r="10.5"/><path class="ic" transform="translate(6.4 6.4) scale(.47)" d="${ICON[x.i]}"/>`;}
+function mkH(x,s,noid){return `<svg class="mk st-${x.s}" ${noid?"":`data-id="${x.id}"`} width="${s}" height="${s}" viewBox="0 0 24 24" role="img" aria-label="${esc(x.t)}, ${LABEL[x.s]}">${mkInner(x)}</svg>`;}
+function mkS(x,X,Y,s){return `<svg class="mk node st-${x.s}" data-id="${x.id}" x="${X}" y="${Y}" width="${s}" height="${s}" viewBox="0 0 24 24" role="img" aria-label="${esc(x.t)}">${mkInner(x)}</svg>`;}
+const sameSet=(a,b)=>a.length===b.length&&a.every(v=>b.includes(v));
+
+/* ---------- structure: brackets worked out from dependencies ---------- */
+function analyze(steps){
+  const ids=steps.map(s=>s.id),by=Object.fromEntries(steps.map(s=>[s.id,s])),anc={};
+  steps.forEach(s=>{const a=new Set();s.deps.forEach(d=>{a.add(d);anc[d].forEach(x=>a.add(x));});anc[s.id]=a;});
+  const red={};steps.forEach(s=>red[s.id]=s.deps.filter(d=>!s.deps.some(o=>o!==d&&anc[o].has(d))));
+  const rel=(a,b)=>anc[a].has(b)||anc[b].has(a),ord=v=>ids.indexOf(v);
+  function dec(set){
+    if(!set.length)return [];
+    if(set.length===1)return [set[0]];
+    const cuts=set.filter(v=>set.every(o=>o===v||rel(o,v)));
+    if(cuts.length){const out=[];let seg=[];set.forEach(v=>{if(cuts.includes(v)){out.push(...dec(seg),v);seg=[];}else seg.push(v);});out.push(...dec(seg));return out;}
+    const seen=new Set(),comps=[];
+    set.forEach(v=>{if(seen.has(v))return;const c=[],q=[v];seen.add(v);while(q.length){const x=q.pop();c.push(x);set.forEach(y=>{if(!seen.has(y)&&rel(x,y)){seen.add(y);q.push(y);}});}comps.push(c.sort((a,b)=>ord(a)-ord(b)));});
+    if(comps.length>1)return [{par:comps.map(dec)}];
+    const rk={};set.forEach(v=>{rk[v]=Math.max(-1,...by[v].deps.filter(d=>set.includes(d)).map(d=>rk[d]))+1;});
+    const layers=[];set.forEach(v=>(layers[rk[v]]=layers[rk[v]]||[]).push(v));
+    return layers.map(l=>l.length>1?{par:l.map(v=>dec([v]))}:l[0]);
+  }
+  const tree=dec(ids),imp={};
+  (function seq(items,entry){items.forEach(it=>{if(typeof it==="string"){imp[it]=entry;entry=[it];}else entry=it.par.flatMap(t=>seq(t,entry));});return entry;})(tree,[]);
+  return {tree,red,imp};
+}
+const idsOf=it=>typeof it==="string"?[it]:it.par.flatMap(t=>t.flatMap(idsOf));
+const depthOf=items=>Math.max(0,...items.map(it=>typeof it==="string"?0:1+Math.max(...it.par.map(depthOf))));
+
+/* ---------- F panel ---------- */
+function fRow(c,A,x){const want=A.imp[x.id]||[],real=A.red[x.id];
+  const after=sameSet(real,want)?"":`<div class="after">after ${real.map(d=>`<i>${esc(c.by[d].sh)}</i>`).join(", ")}</div>`;
+  return `<div class="srow r-${x.s}${isActive(x)?" active-row":""}" data-id="${x.id}">${mkH(x,20)}<div class="sbody"><div class="sline"><span class="tt">${esc(x.t)}${x.s==="needs_input"?'<span class="needs">Needs you</span>':""}</span><span class="du">${dur(c,x)}</span></div>${after}</div></div>`;}
+function fSeqE(c,A,items){return items.map(it=>{if(typeof it==="string")return fRow(c,A,c.by[it]);
+  const chain=it.par.some(t=>t.length>1);
+  return `<div class="qgrp g-${gst(c,idsOf(it))}"><div class="qtracks ${chain?"div":""}">${it.par.map(t=>`<div class="qtrack ${t.length>1?"chain":""}">${fSeqE(c,A,t)}</div>`).join("")}</div></div>`;}).join("");}
+function fSeqC(c,items,inTrack){return items.map((it,k)=>{let link="";
+  if(inTrack&&k){const ok=idsOf(items[k-1]).every(id=>c.by[id].s==="done");link=`<span class="clink ${ok?"ok":""}"></span>`;}
+  if(typeof it==="string")return link+mkH(c.by[it],18);
+  const chain=it.par.some(t=>t.length>1);
+  return link+`<div class="cap g-${gst(c,idsOf(it))}">${it.par.map(t=>`<div class="ctrack ${t.length>1?"chain":""}">${fSeqC(c,t,true)}</div>`).join(chain?'<span class="cdiv"></span>':"")}</div>`;}).join("");}
+
+/* ---------- run state ---------- */
+const ctxOf=(steps,now)=>({steps,now,by:Object.fromEntries(steps.map(s=>[s.id,s]))});
+let presetId="openspec",run,orient="vertical",collapsed={vertical:false,horizontal:false},menu=false,confirmRm=false,removed=false,size="wide";
+function startRun(){const p=PRESETS.find(x=>x.id===presetId);
+  const steps=p.steps.map(s=>{const v=p.init[s.id]||["not_started"];return {...s,deps:[...s.deps],s:v[0],start:v[1],end:v[2],pe:v[0]==="running"?v[1]+s.dur:undefined};});
+  run={name:p.name,brief:p.brief,...ctxOf(steps,p.now)};}
+function advance(){const S=run.steps;if(S.every(x=>x.s==="done"))return;
+  S.forEach(x=>{if(x.s==="needs_input"){x.s="running";x.pe=run.now+3;}});
+  const r=S.filter(x=>x.s==="running");if(!r.length)return;
+  const next=Math.min(...r.map(x=>x.pe));run.now=next;
+  r.forEach(x=>{if(x.pe<=next){x.s="done";x.end=x.pe;}});
+  S.forEach(x=>{if(x.s==="not_started"&&x.deps.every(d=>run.by[d].s==="done")){x.s="running";x.start=run.now;x.pe=run.now+x.dur;}});
+  render();}
+
+/* ---------- metro (horizontal) ---------- */
+function metro(c,small){
+  const S=c.steps,rank={},lane={},occ=[];
+  S.forEach(x=>{rank[x.id]=x.deps.length?Math.max(...x.deps.map(d=>rank[d]))+1:0;});
+  S.forEach(x=>{const col=rank[x.id];occ[col]=occ[col]||new Set();const pref=x.deps.map(d=>lane[d]).sort((a,b)=>a-b);let l=pref.find(p=>!occ[col].has(p));if(l===undefined){l=0;while(occ[col].has(l))l++;}occ[col].add(l);lane[x.id]=l;});
+  const cw=small?24:120,lh=small?12:56,ms=small?11:22,top=small?2:12,left=small?6:50;
+  const cols=Math.max(...Object.values(rank))+1,lanes=Math.max(...Object.values(lane))+1;
+  const pos=id=>[left+rank[id]*cw,top+lane[id]*lh+ms/2];
+  const W=left*2+(cols-1)*cw,H=top+(lanes-1)*lh+ms+(small?2:30);
+  let e="";S.forEach(ch=>ch.deps.forEach(p=>{const [x1,y1]=pos(p),[x2,y2]=pos(ch.id);let d;
+    if(y1===y2)d=`M${x1} ${y1}H${x2}`;else if(y2>y1)d=`M${x1} ${y1}C${x1+cw*.5} ${y1} ${x1+cw*.5} ${y2} ${x1+cw} ${y2}H${x2}`;else d=`M${x1} ${y1}H${x2-cw}C${x2-cw*.5} ${y1} ${x2-cw*.5} ${y2} ${x2} ${y2}`;
+    e+=`<path class="edge ${c.by[p].s==="done"?"e-done":"e-wait"}" data-e="${p}>${ch.id}" d="${d}" stroke-width="${small?2:3.5}"/>`;}));
+  const n=S.map(x=>{const [cx,cy]=pos(x.id),lab=x.sh.length>15?x.sh.slice(0,14)+"…":x.sh,du=dur(c,x);
+    return `<svg class="mk st-${x.s}" data-id="${x.id}" x="${cx-ms/2}" y="${cy-ms/2}" width="${ms}" height="${ms}" viewBox="0 0 24 24" role="img" aria-label="${esc(x.t)}, ${LABEL[x.s]}">${mkInner(x)}</svg>`+
+      (small?"":`<text class="mlab ${x.s==="not_started"?"dim":""}" x="${cx}" y="${cy+ms/2+14}" text-anchor="middle">${esc(lab)}</text>${du?`<text class="mdur ${x.s==="running"?"run":x.s==="needs_input"?"bad":""}" x="${cx}" y="${cy+ms/2+26}" text-anchor="middle">${x.s==="needs_input"?"needs you · ":""}${du}</text>`:""}`);}).join("");
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${e}${n}</svg>`;
+}
+
+/* ---------- menu ---------- */
+const ICO_V=`<svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="2.5" width="15" height="13" rx="2"/><path d="M11.5 2.5v13"/></svg>`;
+const ICO_H=`<svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="2.5" width="15" height="13" rx="2"/><path d="M1.5 11h15"/></svg>`;
+function menuHTML(pos){if(!menu)return "";
+  const body=confirmRm?`<div class="confirm"><p>Remove <b>${esc(run.name)}</b> from this terminal? The agent keeps working; Terminay stops tracking its steps.</p><div class="row"><button type="button" class="btn sm" data-m="cancel">Cancel</button><button type="button" class="btn sm danger" data-m="remove">Remove</button></div></div>`
+    :`<span class="ml">Show as</span>
+      <button type="button" class="mi" role="menuitemradio" aria-checked="${orient==="vertical"}" data-orient="vertical"><span class="ck">${orient==="vertical"?"✓":""}</span>${ICO_V}<span>Vertical<small>Side panel</small></span></button>
+      <button type="button" class="mi" role="menuitemradio" aria-checked="${orient==="horizontal"}" data-orient="horizontal"><span class="ck">${orient==="horizontal"?"✓":""}</span>${ICO_H}<span>Horizontal<small>Bottom drawer</small></span></button>
+      <hr><button type="button" class="mi danger" role="menuitem" data-m="ask"><span></span>Remove workflow…</button>`;
+  return `<div class="menu" role="menu" style="${pos}">${body}</div>`;}
+const dots=`<button class="chev dots" type="button" data-act="menu" aria-haspopup="menu" aria-expanded="${"__M__"}" aria-label="Workflow options">⋯</button>`;
+const dotsBtn=()=>dots.replace("__M__",menu);
+
+/* ---------- views ---------- */
+function meta(c){const S=c.steps,dn=S.filter(x=>x.s==="done").length,ru=S.filter(x=>x.s==="running").length,nd=S.filter(x=>x.s==="needs_input").length;
+  return dn===S.length?`Finished · ${c.now}m`:`${dn} of ${S.length} done · ${ru} running${nd?` · ${nd} needs you`:""} · ${c.now}m`;}
+function vertical(c){const A=analyze(c.steps);
+  if(collapsed.vertical){const w=36+8*Math.max(0,depthOf(A.tree)-1);
+    return `<aside class="wp wp-c" data-ctx style="width:${w}px" aria-label="Workflow ${esc(c.name)}"><button class="chev" type="button" data-act="toggle" aria-label="Expand workflow panel">‹</button>${dotsBtn()}<div class="wp-scroll"><div class="capcol">${fSeqC(c,A.tree,false)}</div></div><div class="vname"><span>${esc(c.name)}</span></div>${menuHTML(`right:${w+6}px;top:36px`)}</aside>`;}
+  const w=size==="phone"?250:288;
+  return `<aside class="wp wp-e" data-ctx style="width:${w}px" aria-label="Workflow ${esc(c.name)}"><header><div class="hd"><div class="eyebrow">Workflow</div><div class="wname">${esc(c.name)}</div><div class="meta">${meta(c)}</div><details class="brief"><summary>Brief</summary><p>${esc(c.brief)}</p></details></div><div class="hbtns">${dotsBtn()}<button class="chev" type="button" data-act="toggle" aria-label="Collapse workflow panel">›</button></div></header><div class="wp-scroll"><div class="qs">${fSeqE(c,A,A.tree)}</div></div>${menuHTML("right:10px;top:44px")}</aside>`;}
+function horizontal(c){const S=c.steps,dn=S.filter(x=>x.s==="done").length,act=S.filter(isActive);
+  if(collapsed.horizontal){const now=act.length?act.map(x=>`<b class="${x.s==="needs_input"?"bad":""}">${esc(x.sh)}</b>${x.s==="needs_input"?" needs you":""}`).join(" · "):(dn===S.length?"Finished":"Waiting");
+    return `<div class="drawer" data-ctx aria-label="Workflow ${esc(c.name)}"><div class="strip"><span class="cnt">${dn}/${S.length}</span><div class="sx">${metro(c,true)}</div><span class="now">${now}</span><div class="hbtns">${dotsBtn()}<button class="chev" type="button" data-act="toggle" aria-label="Expand workflow drawer">⌃</button></div></div>${menuHTML("right:10px;bottom:48px")}</div>`;}
+  return `<div class="drawer" data-ctx aria-label="Workflow ${esc(c.name)}"><div class="dh"><span class="nm">${esc(c.name)}</span><span class="meta">${meta(c)}</span><span class="sp"></span><div class="hbtns">${dotsBtn()}<button class="chev" type="button" data-act="toggle" aria-label="Collapse workflow drawer">⌄</button></div></div><div class="dbody">${metro(c,false)}</div>${menuHTML("right:10px;bottom:calc(100% - 40px)")}</div>`;}
+
+const TERM=`<div class="term" aria-hidden="true"><p>● Server side is done. The upgrade now writes a terminal state for every run, so a card can't sit on <span class="amb">Installing</span> forever.</p><p class="dim">Ran 4 shell commands · Made 3 edits +142 −38</p><p>● Panel UI is in progress in a subagent.</p><p>● The docs track needs a decision: should the runbook tell operators to clear the PWA cache, or will the service worker handle it?</p><p class="dim">✻ Working · 2 subagents running</p></div>`;
+function render(){
+  document.getElementById("presets").innerHTML=PRESETS.map(p=>`<button type="button" class="chipbtn" data-preset="${p.id}" aria-pressed="${p.id===presetId}">${esc(p.label)}</button>`).join("");
+  document.querySelectorAll("[data-size]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.size===size));
+  const pane=document.getElementById("pane");
+  pane.className=`pane ${orient==="vertical"?"v":"h"} ${size==="phone"?"phone":""}`;
+  pane.innerHTML=TERM+(removed?`<div class="toast" role="status">Workflow removed from this terminal<button type="button" class="btn sm" data-m="undo">Undo</button></div>`:(orient==="vertical"?vertical(run):horizontal(run)));
+  const fin=run.steps.every(x=>x.s==="done");
+  document.getElementById("adv").disabled=fin||removed;
+  document.getElementById("clock").textContent=fin?`Finished at ${run.now}m`:`Run clock: ${run.now}m`;
+  if(menu){const f=pane.querySelector(".menu .mi[aria-checked='true'],.menu button");if(f)f.focus();}
+}
+
+/* ---------- tracing ---------- */
+function trace(host,id){const c=run;if(!c.by[id])return;const up=new Set(),down=new Set();
+  (function u(i){c.by[i].deps.forEach(d=>{if(!up.has(d)){up.add(d);u(d);}});})(id);
+  (function w(i){c.steps.filter(q=>q.deps.includes(i)).forEach(q=>{if(!down.has(q.id)){down.add(q.id);w(q.id);}});})(id);
+  const all=new Set([id,...up,...down]);host.classList.add("tracing");
+  host.querySelectorAll("[data-id]").forEach(n=>n.classList.toggle("hl",all.has(n.dataset.id)));
+  host.querySelectorAll("[data-e]").forEach(p=>{const [a,b]=p.dataset.e.split(">");p.classList.toggle("hl",(up.has(a)&&(b===id||up.has(b)))||((a===id||down.has(a))&&down.has(b)));});}
+function clear(h){h.classList.remove("tracing");h.querySelectorAll(".hl").forEach(n=>n.classList.remove("hl"));}
+document.addEventListener("mouseover",e=>{const host=e.target.closest("[data-ctx]");document.querySelectorAll("[data-ctx].tracing").forEach(h=>{if(h!==host)clear(h);});
+  if(!host||e.target.closest(".menu"))return;const el=e.target.closest("[data-id]");if(el)trace(host,el.dataset.id);else clear(host);});
+
+/* ---------- events ---------- */
+document.addEventListener("click",e=>{const t=e.target;let el;
+  if(menu&&!t.closest(".menu")&&!t.closest('[data-act="menu"]')){menu=false;confirmRm=false;render();if(!t.closest("button"))return;}
+  if(el=t.closest('[data-act="menu"]')){menu=!menu;confirmRm=false;render();return;}
+  if(el=t.closest("[data-orient]")){orient=el.dataset.orient;menu=false;render();return;}
+  if(el=t.closest("[data-m]")){const m=el.dataset.m;
+    if(m==="ask")confirmRm=true;else if(m==="cancel"){confirmRm=false;}else if(m==="remove"){removed=true;menu=false;confirmRm=false;}else if(m==="undo")removed=false;
+    render();return;}
+  if(el=t.closest('[data-act="toggle"]')){collapsed[orient]=!collapsed[orient];render();return;}
+  if(el=t.closest("[data-preset]")){presetId=el.dataset.preset;removed=false;startRun();render();return;}
+  if(el=t.closest("[data-size]")){size=el.dataset.size;render();return;}
+  const host=t.closest("[data-ctx]"),node=t.closest("[data-id]");if(host&&node)trace(host,node.dataset.id);
+});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&menu){menu=false;confirmRm=false;render();const b=document.querySelector('[data-act="menu"]');if(b)b.focus();}});
+document.getElementById("adv").onclick=advance;
+document.getElementById("rst").onclick=()=>{startRun();render();};
+startRun();render();
+</script>

@@ -27,6 +27,8 @@ export const WORKFLOW_TOOL_LIMITS = Object.freeze({
 	maxNoteChars: 200,
 	maxDescriptionChars: 1024,
 	maxCategoryChars: 64,
+	maxRequestIdChars: 64,
+	maxDependencies: 200,
 });
 
 export interface GetWorkflowParams {
@@ -49,14 +51,18 @@ export type CreateWorkflowParams =
 			readonly replaceWorkflowId?: string;
 	  };
 export interface WorkflowStepContent {
+	/**
+	 * The name later steps' `after` use for this step; for a template update,
+	 * a step id of that template keeps it (ADR-0128).
+	 */
+	readonly id?: string;
 	readonly title: string;
 	readonly prompt: string;
 	readonly icon: string;
+	/** Ids given to earlier steps of the same call; absent means the step above. */
+	readonly after?: readonly string[];
 }
-export interface TemplateStepContent extends WorkflowStepContent {
-	/** A step id of the template being updated, to keep it. */
-	readonly id?: string;
-}
+export type TemplateStepContent = WorkflowStepContent;
 export interface TemplateIdParams {
 	readonly templateId: string;
 }
@@ -170,7 +176,7 @@ export function parseCreateWorkflow(
 	if (isWorkflowParamFailure(name)) return name;
 	const openingPrompt = promptOf(params.opening_prompt, 'opening_prompt');
 	if (isWorkflowParamFailure(openingPrompt)) return openingPrompt;
-	const steps = stepsOf(params.steps, false);
+	const steps = stepsOf(params.steps);
 	if (isWorkflowParamFailure(steps)) return steps;
 	const size = serializedSize({ name, openingPrompt, steps });
 	if (size > WORKFLOW_TOOL_LIMITS.maxSerializedBytes)
@@ -203,7 +209,7 @@ export function parseCreateWorkflowTemplate(
 	if (isWorkflowParamFailure(category)) return category;
 	const openingPrompt = promptOf(params.opening_prompt, 'opening_prompt');
 	if (isWorkflowParamFailure(openingPrompt)) return openingPrompt;
-	const steps = stepsOf(params.steps, false);
+	const steps = stepsOf(params.steps);
 	if (isWorkflowParamFailure(steps)) return steps;
 	const size = serializedSize({ name, openingPrompt, steps });
 	if (size > WORKFLOW_TOOL_LIMITS.maxSerializedBytes)
@@ -247,7 +253,7 @@ export function parseUpdateWorkflowTemplate(
 		out.openingPrompt = openingPrompt;
 	}
 	if (params.steps !== undefined) {
-		const steps = stepsOf(params.steps, true);
+		const steps = stepsOf(params.steps);
 		if (isWorkflowParamFailure(steps)) return steps;
 		out.steps = steps;
 	}
@@ -313,10 +319,12 @@ function promptOf(value: unknown, field: string): string | Failure {
 	return text;
 }
 
-function stepsOf(
-	value: unknown,
-	keepIds: boolean,
-): TemplateStepContent[] | Failure {
+/**
+ * Steps as a call gives them. An `id` names a step for later steps' `after`
+ * (and, in a template update, keeps a stored step's id); `after` may name only
+ * ids given to earlier steps, never one twice (ADR-0128).
+ */
+function stepsOf(value: unknown): TemplateStepContent[] | Failure {
 	const limits = WORKFLOW_TOOL_LIMITS;
 	if (
 		!Array.isArray(value) ||
@@ -325,10 +333,12 @@ function stepsOf(
 	)
 		return badRequest(`steps must list 1 to ${limits.maxSteps} steps`);
 	const steps: TemplateStepContent[] = [];
+	const named = new Set<string>();
+	let dependencies = 0;
 	for (const [index, candidate] of value.entries()) {
 		if (typeof candidate !== 'object' || candidate === null)
 			return badRequest(`steps[${index}] must be an object`);
-		const { id, title, prompt = '', icon = '' } = candidate as Record<
+		const { id, title, prompt = '', icon = '', after } = candidate as Record<
 			string,
 			unknown
 		>;
@@ -349,14 +359,52 @@ function stepsOf(
 			);
 		if (typeof icon !== 'string' || icon.length > MAX_ICON_CHARS)
 			return badRequest(`steps[${index}].icon must be an icon name`);
-		if (keepIds && id !== undefined) {
-			if (typeof id !== 'string' || !ID_PATTERN.test(id))
+		if (id !== undefined) {
+			if (
+				typeof id !== 'string' ||
+				!ID_PATTERN.test(id) ||
+				[...id].length > limits.maxRequestIdChars
+			)
 				return badRequest(
-					`steps[${index}].id must be a step id from get_workflow_template`,
+					`steps[${index}].id must be an id of at most ${limits.maxRequestIdChars} letters, digits, and . _ : -`,
 				);
-			steps.push({ id, title, prompt, icon });
-		} else steps.push({ title, prompt, icon });
+			if (named.has(id))
+				return badRequest(
+					`steps[${index}].id repeats the id of an earlier step`,
+				);
+		}
+		let waits: string[] | undefined;
+		if (after !== undefined) {
+			if (!Array.isArray(after))
+				return badRequest(`steps[${index}].after must be a list of step ids`);
+			const seen = new Set<string>();
+			for (const name of after) {
+				if (typeof name !== 'string' || !named.has(name))
+					return badRequest(
+						`steps[${index}].after may name only the ids given to earlier steps`,
+					);
+				if (seen.has(name))
+					return badRequest(
+						`steps[${index}].after names the same step twice`,
+					);
+				seen.add(name);
+			}
+			waits = [...seen];
+			dependencies += waits.length;
+		} else if (index > 0) dependencies += 1;
+		if (typeof id === 'string') named.add(id);
+		steps.push({
+			...(typeof id === 'string' ? { id } : {}),
+			title,
+			prompt,
+			icon,
+			...(waits === undefined ? {} : { after: waits }),
+		});
 	}
+	if (dependencies > limits.maxDependencies)
+		return badRequest(
+			`a workflow has at most ${limits.maxDependencies} dependencies; this one has ${dependencies}`,
+		);
 	return steps;
 }
 
@@ -393,26 +441,26 @@ export function parseUpdateWorkflowStep(
 }
 
 /**
- * The serialized size the workflow service bounds: the JSON encoding of the
- * name, opening prompt and steps, escaping included.
+ * The serialized size the workflow service bounds, as this call carries it:
+ * the JSON encoding of the name, opening prompt and steps with their given
+ * ids and `after`, escaping included. The service also bounds the same
+ * content with its own ids (ADR-0128).
  */
 export function serializedSize(content: {
 	readonly name: string;
 	readonly openingPrompt: string;
-	readonly steps: readonly {
-		readonly title: string;
-		readonly prompt: string;
-		readonly icon: string;
-	}[];
+	readonly steps: readonly WorkflowStepContent[];
 }): number {
 	return Buffer.byteLength(
 		JSON.stringify({
 			name: content.name,
 			openingPrompt: content.openingPrompt,
-			steps: content.steps.map(({ title, prompt, icon }) => ({
+			steps: content.steps.map(({ id, title, prompt, icon, after }) => ({
+				...(id === undefined ? {} : { id }),
 				title,
 				prompt,
 				icon,
+				...(after === undefined ? {} : { after }),
 			})),
 		}),
 		'utf8',

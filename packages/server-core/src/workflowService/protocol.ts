@@ -427,7 +427,7 @@ export function toProtocolError(error: unknown): unknown {
 					error.code === 'unauthorized_target'
 				? 'not_found'
 				: error.code === 'workflow_exists' ||
-						error.code === 'step_active' ||
+						error.code === 'step_blocked' ||
 						error.code === 'step_changed'
 					? 'conflict'
 					: 'internal';

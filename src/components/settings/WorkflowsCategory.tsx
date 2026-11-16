@@ -1,11 +1,13 @@
 import { WORKFLOW_CLIENT_LIMITS, WORKFLOW_ICON_NAMES, type WorkflowIconName } from '@terminay/client-core'
-import { GripVertical, X } from 'lucide-react'
+import { FileText, GripVertical, X } from 'lucide-react'
 import { type DragEvent, type ReactNode, useLayoutEffect, useRef, useState } from 'react'
 import { SharedMacroLibraryPane } from '../../shared/SharedMacroLibraryPane'
 import { type SettingsCategoryParts, SettingsListColumn, useSettingsShellNavigation } from '../../shared/SharedSettingsRouteBody'
+import { analyzeStages, unimpliedDependencies } from '../../workspace/workflows/workflowGraph'
 import { WorkflowIcon } from '../../workspace/workflows/workflowIcons'
 import type { WorkflowEditor } from '../workflows/useWorkflowEditor'
-import { type DraftTemplate, formatKiB, launchPreview, moveBefore, serializedSize, templateSearchText } from '../workflows/workflowLibraryModel'
+import { type DraftTemplate, formatKiB, launchPreview, serializedSize, templateSearchText } from '../workflows/workflowLibraryModel'
+import { groupKey, type Outline, outlineKeys, trackOf } from '../workflows/workflowOutlineModel'
 import '../workflows/WorkflowsCategory.css'
 
 const NEW_CATEGORY = '\u0000new'
@@ -306,9 +308,9 @@ function TemplateDetail({
       <section className="settings-section">
         <div className="settings-section-title-row">
           <h3 className="settings-section-title">Steps</h3>
-          <span className="settings-status">The agent works through these in order</span>
+          <span className="settings-status">In order, except steps placed alongside each other, which run at the same time</span>
         </div>
-        <StepList editor={editor} template={template} />
+        <StepOutline editor={editor} template={template} />
       </section>
 
       <section className="settings-section" aria-label="Launch text">
@@ -346,52 +348,135 @@ function TemplateDetail({
   )
 }
 
-/** A template's steps: drag or Alt+Arrow on a handle to reorder; the moved handle keeps focus. */
-export function StepList({ editor, template }: Readonly<{ editor: Pick<WorkflowEditor, 'addStep' | 'removeStep' | 'updateStep' | 'moveStep' | 'reorderSteps'>; template: DraftTemplate }>) {
-  const handles = useRef(new Map<string, HTMLButtonElement>())
-  const refocus = useRef<string | null>(null)
-  const [dragging, setDragging] = useState<string | null>(null)
-  const [dropBefore, setDropBefore] = useState<number | null>(null)
+type OutlineEditorActions = Pick<
+  WorkflowEditor,
+  'addStep' | 'addStepThen' | 'addStepAlongside' | 'addStepTrack' | 'removeStep' | 'updateStep' | 'moveStep' | 'moveStepBefore'
+>
 
-  // Reordering moves the row's element, which can drop the focus; give it back.
+/** Rows the prompt editor grows between as its text does. */
+const PROMPT_MIN_ROWS = 3
+const PROMPT_MAX_ROWS = 18
+
+/**
+ * A template's steps as an outline (ADR-0128), drawn as the vertical panel
+ * draws a workflow: one row per step, and a bracket of tracks for steps that
+ * run alongside each other. Each row shows the step's icon and title, with
+ * "+ then", "+ alongside", its prompt and its removal at its end; opening a
+ * step's prompt edits it over as many lines as it needs. Each bracket offers
+ * "+ another track alongside", and the outline ends with "+ Add step at the
+ * end". A step moves within its track by drag or Alt+Arrow on its handle; the
+ * moved handle keeps focus.
+ */
+export function StepOutline({ editor, template }: Readonly<{ editor: OutlineEditorActions; template: DraftTemplate }>) {
+  const handles = useRef(new Map<string, HTMLButtonElement>())
+  const titles = useRef(new Map<string, HTMLInputElement>())
+  const refocus = useRef<{ key: string; on: 'handle' | 'title' } | null>(null)
+  const known = useRef(new Set(template.steps.map((step) => step.key)))
+  const [open, setOpen] = useState<string | null>(null)
+  const [dragging, setDragging] = useState<string | null>(null)
+  const [drop, setDrop] = useState<{ key: string; before: string | null } | null>(null)
+
+  // A step just added opens, with its title focused, ready to be named.
   useLayoutEffect(() => {
-    const key = refocus.current
-    if (key === null) return
+    const fresh = template.steps.filter((step) => !known.current.has(step.key))
+    known.current = new Set(template.steps.map((step) => step.key))
+    if (fresh.length === 1 && fresh[0] !== undefined) {
+      setOpen(fresh[0].key)
+      refocus.current = { key: fresh[0].key, on: 'title' }
+    }
+  }, [template.steps])
+
+  // Moving a step moves its row's element, which can drop the focus; give it back.
+  useLayoutEffect(() => {
+    const target = refocus.current
+    if (target === null) return
     refocus.current = null
-    const handle = handles.current.get(key)
-    if (handle !== undefined && handle !== document.activeElement) handle.focus()
+    const element = (target.on === 'handle' ? handles : titles).current.get(target.key)
+    if (element !== undefined && element !== document.activeElement) element.focus()
   })
 
-  const keys = template.steps.map((step) => step.key)
-  const onDrop = (event: DragEvent<HTMLElement>, before: number) => {
-    const key = event.dataTransfer.getData(STEP_DRAG_TYPE) || dragging
+  const byKey = new Map(template.steps.map((step) => [step.key, step]))
+  const numberOf = (key: string) => template.steps.findIndex((step) => step.key === key) + 1
+  const full = template.steps.length >= WORKFLOW_CLIENT_LIMITS.maxSteps
+  // Dependencies the outline cannot show, while they are still the stored ones.
+  const analysis = template.shapeChanged
+    ? undefined
+    : analyzeStages(template.steps.map((step) => ({ id: step.key, after: step.after })))
+  const unshown = (key: string) =>
+    analysis === undefined
+      ? []
+      : unimpliedDependencies(analysis, key).flatMap((id) => {
+          const title = byKey.get(id)?.title
+          return title === undefined ? [] : [title]
+        })
+  const anyUnshown = template.steps.some((step) => unshown(step.key).length > 0)
+
+  const finishDrag = () => {
     setDragging(null)
-    setDropBefore(null)
-    if (!key) return
+    setDrop(null)
+  }
+  const onDrop = (event: DragEvent<HTMLElement>) => {
+    const key = event.dataTransfer.getData(STEP_DRAG_TYPE) || dragging
+    const target = drop
+    finishDrag()
+    if (!key || target === null) return
     event.preventDefault()
-    const next = moveBefore(keys, keys.indexOf(key), before)
-    if (next !== keys) editor.reorderSteps(template.id, next)
+    editor.moveStepBefore(template.id, key, target.before)
   }
 
-  return (
-    <div className="workflow-steps-editor">
-      <p id="workflow-step-reorder-help" className="sr-only">
-        Press Alt and the up or down arrow to move this step.
-      </p>
-      <ol className="workflow-step-rows">
-        {template.steps.map((step, index) => (
-          <li
-            key={step.key}
-            className={`workflow-step-row${dropBefore === index ? ' workflow-step-row--drop' : ''}`}
-            data-step-key={step.key}
-            onDragOver={(event) => {
-              if (dragging === null) return
-              event.preventDefault()
-              const box = event.currentTarget.getBoundingClientRect()
-              setDropBefore(event.clientY > box.top + box.height / 2 ? index + 1 : index)
-            }}
-            onDrop={(event) => onDrop(event, dropBefore ?? index)}
-          >
+  const renderItems = (items: Outline): ReactNode[] =>
+    items.map((item, position) => {
+      if (typeof item !== 'string') {
+        const first = groupKey(item)
+        return (
+          <li key={`group:${first}`} className="workflow-outline-group" data-outline-group={first}>
+            <div className="workflow-outline-bracket">
+              {item.tracks.map((track, index) => (
+                <ol key={outlineKeys(track)[0] ?? index} className="workflow-outline-track">
+                  {renderItems(track)}
+                </ol>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="workflow-outline-link"
+              disabled={full}
+              onClick={() => editor.addStepTrack(template.id, first)}
+            >
+              + another track alongside
+            </button>
+          </li>
+        )
+      }
+      const step = byKey.get(item)
+      if (step === undefined) return null
+      const number = numberOf(item)
+      const after = unshown(item)
+      const next = items[position + 1]
+      const isOpen = open === step.key
+      const isDropTarget = drop !== null && drop.before === item
+      const sameTrack = (key: string | null) => key !== null && trackOf(template.outline, key).includes(item)
+      const promptId = `workflow-step-prompt-${template.id}-${step.key}`
+      const promptRows = Math.min(PROMPT_MAX_ROWS, Math.max(PROMPT_MIN_ROWS, step.prompt.split('\n').length + 1))
+      const firstLine = step.prompt.trim().split('\n')[0] ?? ''
+      return (
+        <li
+          key={step.key}
+          className={`workflow-step-row${isOpen ? ' workflow-step-row--open' : ''}${isDropTarget ? ' workflow-step-row--drop' : ''}`}
+          data-step-key={step.key}
+          onDragOver={(event) => {
+            if (!sameTrack(dragging)) return
+            event.preventDefault()
+            const box = event.currentTarget.getBoundingClientRect()
+            const below = event.clientY > box.top + box.height / 2
+            setDrop({
+              key: item,
+              before: below ? (typeof next === 'string' ? next : next === undefined ? null : groupKey(next)) : item,
+            })
+          }}
+          onDrop={onDrop}
+        >
+          <div className="workflow-outline-row">
             <button
               type="button"
               className="workflow-step-handle"
@@ -400,7 +485,7 @@ export function StepList({ editor, template }: Readonly<{ editor: Pick<WorkflowE
                 else handles.current.set(step.key, element)
               }}
               draggable
-              aria-label={`Move step ${index + 1}`}
+              aria-label={`Move step ${number}`}
               aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
               aria-describedby="workflow-step-reorder-help"
               onDragStart={(event) => {
@@ -408,65 +493,131 @@ export function StepList({ editor, template }: Readonly<{ editor: Pick<WorkflowE
                 event.dataTransfer.effectAllowed = 'move'
                 setDragging(step.key)
               }}
-              onDragEnd={() => {
-                setDragging(null)
-                setDropBefore(null)
-              }}
+              onDragEnd={finishDrag}
               onKeyDown={(event) => {
                 if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
                 event.preventDefault()
-                refocus.current = step.key
+                refocus.current = { key: step.key, on: 'handle' }
                 editor.moveStep(template.id, step.key, event.key === 'ArrowUp' ? -1 : 1)
               }}
             >
               <GripVertical size={14} aria-hidden="true" />
             </button>
-            <span className="workflow-step-number" aria-hidden="true">{index + 1}</span>
-            <div className="workflow-step-fields">
-              <div className="workflow-step-title-row">
-                <IconPicker
-                  index={index}
-                  value={step.icon}
-                  onChange={(icon) => editor.updateStep(template.id, step.key, { icon })}
-                />
-                <input
-                  className="settings-input-text"
-                  type="text"
-                  aria-label={`Step ${index + 1} title`}
-                  value={step.title}
-                  maxLength={WORKFLOW_CLIENT_LIMITS.maxTitleChars}
-                  onChange={(event) => editor.updateStep(template.id, step.key, { title: event.target.value })}
-                  placeholder="Step title"
-                />
-              </div>
+            <IconPicker
+              index={number - 1}
+              value={step.icon}
+              onChange={(icon) => editor.updateStep(template.id, step.key, { icon })}
+            />
+            <div className="workflow-outline-text">
+              <input
+                ref={(element) => {
+                  if (element === null) titles.current.delete(step.key)
+                  else titles.current.set(step.key, element)
+                }}
+                className="workflow-outline-title"
+                type="text"
+                aria-label={`Step ${number} title`}
+                value={step.title}
+                maxLength={WORKFLOW_CLIENT_LIMITS.maxTitleChars}
+                onChange={(event) => editor.updateStep(template.id, step.key, { title: event.target.value })}
+                placeholder="Step title"
+              />
+              {after.length === 0 ? null : <span className="workflow-outline-after">after {after.join(', ')}</span>}
+              {isOpen || firstLine === '' ? null : (
+                <button
+                  type="button"
+                  className="workflow-outline-excerpt"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  onClick={() => setOpen(step.key)}
+                >
+                  {firstLine}
+                </button>
+              )}
+            </div>
+            <div className="workflow-outline-actions">
+              <button
+                type="button"
+                className="workflow-outline-action"
+                aria-label={`Add a step after step ${number}`}
+                disabled={full}
+                onClick={() => editor.addStepThen(template.id, step.key)}
+              >
+                + then
+              </button>
+              <button
+                type="button"
+                className="workflow-outline-action"
+                aria-label={`Add a step alongside step ${number}`}
+                disabled={full}
+                onClick={() => editor.addStepAlongside(template.id, step.key)}
+              >
+                + alongside
+              </button>
+              <button
+                type="button"
+                className={`workflow-outline-icon-button${step.prompt.trim() === '' ? '' : ' workflow-outline-icon-button--filled'}`}
+                aria-label={`Step ${number} prompt`}
+                aria-expanded={isOpen}
+                aria-controls={isOpen ? promptId : undefined}
+                title={isOpen ? 'Close prompt' : 'Edit prompt'}
+                onClick={() => setOpen(isOpen ? null : step.key)}
+              >
+                <FileText size={14} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="workflow-outline-icon-button workflow-step-remove"
+                aria-label={`Remove step ${number}`}
+                title="Remove step"
+                onClick={() => editor.removeStep(template.id, step.key)}
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+          {isOpen ? (
+            <div className="workflow-outline-detail">
               <textarea
-                className="settings-input-text workflow-editor-textarea"
-                aria-label={`Step ${index + 1} prompt`}
-                rows={2}
+                id={promptId}
+                className="settings-input-text workflow-editor-textarea workflow-outline-prompt"
+                aria-label={`Step ${number} prompt text`}
+                rows={promptRows}
                 value={step.prompt}
                 onChange={(event) => editor.updateStep(template.id, step.key, { prompt: event.target.value })}
-                placeholder="What the agent does in this step…"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return
+                  event.preventDefault()
+                  setOpen(null)
+                  titles.current.get(step.key)?.focus()
+                }}
+                placeholder="What the agent does in this step… (Markdown, any number of lines)"
               />
             </div>
-            <button
-              type="button"
-              className="workflow-step-remove"
-              aria-label={`Remove step ${index + 1}`}
-              title="Remove step"
-              onClick={() => editor.removeStep(template.id, step.key)}
-            >
-              <X size={14} aria-hidden="true" />
-            </button>
-          </li>
-        ))}
-      </ol>
+          ) : null}
+        </li>
+      )
+    })
+
+  return (
+    <div className="workflow-steps-editor">
+      <p id="workflow-step-reorder-help" className="sr-only">
+        Press Alt and the up or down arrow to move this step within its track.
+      </p>
+      {anyUnshown ? (
+        <p className="workflow-outline-notice" role="note">
+          Some steps wait on steps the outline cannot show, marked “after”. Adding, removing or moving a step, or placing one
+          alongside another, replaces them with what the outline shows.
+        </p>
+      ) : null}
+      <ol className="workflow-step-rows workflow-outline">{renderItems(template.outline)}</ol>
       <button
         type="button"
-        className="settings-secondary-button"
+        className="settings-secondary-button workflow-outline-add-end"
         onClick={() => editor.addStep(template.id)}
-        disabled={template.steps.length >= WORKFLOW_CLIENT_LIMITS.maxSteps}
+        disabled={full}
       >
-        Add step
+        + Add step at the end
       </button>
     </div>
   )

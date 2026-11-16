@@ -14,7 +14,9 @@ import { type ReactElement, type RefObject, useContext, useEffect, useMemo, useR
 import { TerminalTitleStoreContext } from '../../shared/useWorkspaceProjection';
 import { useCompactHome } from '../compact/CompactHomeContext';
 import { type WorkflowsCompactTab, WorkflowsCompactPage } from './WorkflowsCompactPage';
+import { analyzeStages, unimpliedDependencies } from './workflowGraph';
 import { WorkflowStepMarker } from './workflowIcons';
+import { renderStages } from './WorkflowPanel';
 import { WORKFLOW_DIAL_TICK_MS, WorkflowDial } from './WorkflowTabBadge';
 import { elapsed, statusLabel, stepTime, tabSummary } from './workflowPanelModel';
 import {
@@ -649,6 +651,17 @@ function WorkflowColumn(props: {
 	const showProject = view.group !== 'project';
 	const showName = view.group !== 'workflow';
 	const workflow = row.view.state === 'attached' ? row.view.workflow : undefined;
+	// The same arrangement as the panel: brackets from dependencies (ADR-0128).
+	const stages = useMemo(
+		() =>
+			workflow === undefined
+				? undefined
+				: {
+						analysis: analyzeStages(workflow.steps),
+						byId: new Map(workflow.steps.map((step) => [step.id, step])),
+					},
+		[workflow],
+	);
 	const since = workflow === undefined ? undefined : elapsed(workflow, now);
 	const progress =
 		workflow === undefined
@@ -693,7 +706,7 @@ function WorkflowColumn(props: {
 					<ChevronRight size={14} aria-hidden="true" />
 				</button>
 			</header>
-			{workflow === undefined ? (
+			{workflow === undefined || stages === undefined ? (
 				<p className="workflows-home__unrestorable" role="status">
 					This terminal’s workflow could not be restored.
 				</p>
@@ -706,8 +719,14 @@ function WorkflowColumn(props: {
 						</details>
 					)}
 					<ol className="workflow-steps workflows-home__steps">
-						{workflow.steps.map((step) => {
+						{renderStages(stages.analysis.tree, stages.byId, (step) => {
 							const highlighted = isHighlighted(step.status);
+							const after = unimpliedDependencies(stages.analysis, step.id).flatMap(
+								(id) => {
+									const title = stages.byId.get(id)?.title;
+									return title === undefined ? [] : [title];
+								},
+							);
 							const time = stepTime(step, now);
 							const showNote =
 								step.note !== '' && (view.notes !== 'current' || highlighted);
@@ -725,6 +744,11 @@ function WorkflowColumn(props: {
 												{`, ${statusLabel(step.status)}`}
 											</span>
 										</span>
+										{after.length === 0 ? null : (
+											<span className="workflow-step-after">
+												after {after.join(', ')}
+											</span>
+										)}
 										{showNote ? (
 											<span className="workflow-step-note workflow-text workflows-home__note">
 												{step.note}

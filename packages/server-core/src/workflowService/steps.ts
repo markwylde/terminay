@@ -23,19 +23,62 @@ export function isUnfinished(workflow: Workflow): boolean {
 	return workflow.steps.some((step) => !isSettled(step.status));
 }
 
+/** Ids of `step`'s dependencies that are not settled, in step order. */
+export function unsettledDependencies(
+	workflow: Workflow,
+	step: WorkflowStep,
+): readonly string[] {
+	if (step.after.length === 0) return [];
+	const waits = new Set(step.after);
+	return workflow.steps
+		.filter((other) => waits.has(other.id) && !isSettled(other.status))
+		.map((other) => other.id);
+}
+
 /**
- * The step to continue from: the active step if there is one, else the first
- * step that is not settled, else null.
+ * Ready steps (ADR-0128): not started or failed, with every dependency
+ * settled, in step order.
+ */
+export function readyStepIds(workflow: Workflow): readonly string[] {
+	return workflow.steps
+		.filter(
+			(step) =>
+				(step.status === 'not_started' || step.status === 'failed') &&
+				unsettledDependencies(workflow, step).length === 0,
+		)
+		.map((step) => step.id);
+}
+
+/**
+ * The step to continue from: the first active step, else the first ready
+ * step, else the first step that is not settled, else null.
  */
 export function resumeStepId(workflow: Workflow): string | null {
 	const active = workflow.steps.find((step) => isActiveStatus(step.status));
 	if (active !== undefined) return active.id;
+	const ready = readyStepIds(workflow)[0];
+	if (ready !== undefined) return ready;
 	return workflow.steps.find((step) => !isSettled(step.status))?.id ?? null;
 }
 
 /**
- * Apply one status report. Any status may move to any status; at most one
- * step is active; times follow design decision 4's table.
+ * Whether moving `from` to `to` starts the step: into an active status from
+ * one that is not, or straight to done from not started. Only starting is
+ * held to the step's dependencies, so a step already under way can always
+ * report and finish.
+ */
+export function startsStep(
+	from: WorkflowStepStatus,
+	to: WorkflowStepStatus,
+): boolean {
+	if (isActiveStatus(to)) return !isActiveStatus(from);
+	return to === 'done' && from === 'not_started';
+}
+
+/**
+ * Apply one status report. Any status may move to any status, except that a
+ * step may not start before its dependencies are settled (ADR-0128); any
+ * number of steps may be active. Times follow design decision 4's table.
  */
 export function applyStepUpdate(
 	workflow: Workflow,
@@ -59,16 +102,19 @@ export function applyStepUpdate(
 			`step "${current.title}" is now ${current.status}`,
 			{ stepId, status: current.status },
 		);
-	if (isActiveStatus(status)) {
-		const active = workflow.steps.find(
-			(step) => step.id !== stepId && isActiveStatus(step.status),
-		);
-		if (active !== undefined)
+	if (startsStep(current.status, status)) {
+		const waiting = unsettledDependencies(workflow, current);
+		if (waiting.length > 0) {
+			const titles = workflow.steps
+				.filter((step) => waiting.includes(step.id))
+				.map((step) => `"${step.title}"`)
+				.join(', ');
 			throw new WorkflowServiceError(
-				'step_active',
-				`step "${active.title}" is still ${active.status}; finish it before starting another`,
-				{ stepId: active.id },
+				'step_blocked',
+				`step "${current.title}" waits on ${titles}; finish or skip ${waiting.length === 1 ? 'it' : 'them'} first`,
+				{ stepIds: waiting },
 			);
+		}
 	}
 	const validatedNote = note === undefined ? undefined : validateNote(note);
 	const step = workflow.steps[index] as WorkflowStep;
