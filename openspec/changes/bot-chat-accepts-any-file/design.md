@@ -45,7 +45,7 @@ At start, the server copies every snapshotted attachment into `/tmp/terminay-att
 
 The extension is the only part of the offered name that can reach the container path, and it cannot contain a separator or dot. Claude Code receives image content blocks for images only. Codex receives `--image` for images only. The briefing's `triggerMessage.attachments` lists every attachment with name, type, size and path, so the bot finds files the same way it finds images.
 
-If any copy fails, the execution fails with the copy error as its reason (ADR-0109: the failure is reported as a fact) and the directory is removed, including files already copied. Same-bot executions share a container and UID (ADR-0127), so "only the triggering execution" means only its briefing and prompt name the files; a sibling could still find them in `/tmp` while they exist. That is accepted, as for images.
+If any copy fails, the execution fails with the reason "The attached files could not be copied into the bot container." (ADR-0109: the failure is reported as a fact) and the directory is removed, including files already copied. Same-bot executions share a container and UID (ADR-0127), so "only the triggering execution" means only its briefing and prompt name the files; a sibling could still find them in `/tmp` while they exist. That is accepted, as for images.
 
 *Alternative:* deliver non-images only as a path to the durable store. The store is on the server, not in the container, so the bot could not read it. Rejected.
 

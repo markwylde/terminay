@@ -179,7 +179,7 @@ Attachments SHALL be delivered only to the execution triggered by that message. 
 
 #### Scenario: Copy fails part-way
 - **WHEN** a message carries an image and a zip, the image copies into the container and the zip copy fails
-- **THEN** the execution fails with the copy error as its reason, does not start the agent, and the execution's attachment directory is removed
+- **THEN** the execution fails with a reason saying the attached files could not be copied, does not start the agent, and the execution's attachment directory is removed
 
 #### Scenario: File deleted before start
 - **WHEN** a queued message carrying a zip has its attachment removed by clearing the chat before its execution starts
