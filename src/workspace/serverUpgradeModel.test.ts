@@ -212,6 +212,38 @@ test('Local is never shown an upgrade, whatever its server reports', () => {
 	);
 });
 
+test('an upgrade names the server as its profile is named now', () => {
+	const remote = {
+		profileId: 'remote:vps',
+		label: '127.0.0.1:4000',
+		phase: 'ready' as const,
+	};
+	const renamed = serverUpgradeSources(
+		[remote],
+		[{ id: 'remote:vps', label: 'Pop Terminay', isLocal: false }],
+	);
+	assert.equal(renamed[0]?.label, 'Pop Terminay');
+	// A profile saved under another id is the same server by its id.
+	assert.equal(
+		serverUpgradeSources(
+			[{ ...remote, serverId: 'srv-1' }],
+			[{ id: 'saved:1', serverId: 'srv-1', label: 'Pop Terminay' }],
+		)[0]?.label,
+		'Pop Terminay',
+	);
+	// The window's primary connection is the profile the host says it shows.
+	assert.equal(
+		serverUpgradeSources(
+			[{ ...remote, role: 'primary' }],
+			[{ id: 'saved:2', label: 'Pop Terminay' }],
+			'saved:2',
+		)[0]?.label,
+		'Pop Terminay',
+	);
+	// Without a remembered profile, the name it was opened under stands.
+	assert.equal(serverUpgradeSources([remote], [])[0]?.label, '127.0.0.1:4000');
+});
+
 test('each status shape gives the menu row its own content', () => {
 	const row = (next: ServerUpgradeStatus, reachable = true) =>
 		serverUpgradeRow({
@@ -1408,14 +1440,17 @@ test('an upgrader that never starts fails the first step, with what to run', asy
 			from: '5.1.1',
 			to: '5.1.1',
 			reason:
-				'the upgrader did not start. Run `sudo terminay daemon upgrade --system` on the server\'s host to upgrade it.',
+				"the upgrader did not start. Run `sudo terminay daemon upgrade --system` on the server's host to upgrade it.",
 			at: 121_000,
 		}),
 	);
 	const view = board.snapshot.progress[0];
 	assert.equal(view?.outcome, 'failure');
 	assert.equal(view?.steps[0]?.state, 'failed');
-	assert.match(view?.steps[0]?.detail ?? '', /sudo terminay daemon upgrade --system/u);
+	assert.match(
+		view?.steps[0]?.detail ?? '',
+		/sudo terminay daemon upgrade --system/u,
+	);
 });
 
 test('a late reply for an attempt that has ended changes nothing', async () => {

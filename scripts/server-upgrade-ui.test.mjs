@@ -184,7 +184,10 @@ test('the ticklist is a status region that says each step and its state in words
 		}),
 	);
 	assert.match(markup, /role="status"[^>]*aria-label="Upgrading VPS"/);
-	assert.match(markup, /5\.1\.1 → 5\.2\.0/);
+	const versions = markup
+		.match(/class="server-upgrade-progress__versions">([\s\S]*?)<\/p>/)?.[1]
+		.replace(/<[^>]+>/g, '');
+	assert.equal(versions, '5.1.1 → 5.2.0');
 	assert.match(markup, /<ol/);
 	assert.match(markup, /data-step="install" data-step-state="done"/);
 	assert.match(markup, /Restarting the server<span[^>]*>, In progress</);
@@ -192,6 +195,63 @@ test('the ticklist is a status region that says each step and its state in words
 	assert.match(markup, /Disconnected while the server restarts/);
 	// Nothing to put away while it restarts.
 	assert.doesNotMatch(markup, /<button/);
+});
+
+test('the ticklist title is one heading with its full text as a tooltip, the versions beneath it', () => {
+	const label = 'Pop Terminay on the build cluster in the basement rack';
+	const markup = renderToStaticMarkup(
+		React.createElement(ServerUpgradeProgress, {
+			progress: progress({
+				label,
+				from: '6.10.0-main.3420.canary',
+				to: 'canary',
+			}),
+		}),
+	);
+	assert.match(markup, new RegExp(`aria-label="Upgrading ${label}"`));
+	assert.match(
+		markup,
+		new RegExp(
+			`<h2 class="server-upgrade-progress__title" title="Upgrading ${label}">Upgrading ${label}</h2>`,
+		),
+	);
+	// The versions follow the title, on their own line, in full.
+	assert.match(
+		markup,
+		/<\/h2><p class="server-upgrade-progress__versions"><span class="server-upgrade-progress__version">6\.10\.0-main\.3420\.canary<\/span><span class="server-upgrade-progress__arrow"> → <\/span><span class="server-upgrade-progress__version">canary<\/span><\/p>/,
+	);
+});
+
+test('an ended ticklist keeps its long title on one heading with the full tooltip', () => {
+	const label = 'Pop Terminay on the build cluster in the basement rack';
+	for (const [outcome, title] of [
+		['success', `${label} is upgraded`],
+		['failure', `${label} was not upgraded`],
+	]) {
+		const markup = renderToStaticMarkup(
+			React.createElement(ServerUpgradeProgress, {
+				progress: progress({ label, outcome }),
+				onClose: noop,
+			}),
+		);
+		assert.match(markup, new RegExp(`aria-label="${title}"`));
+		assert.match(
+			markup,
+			new RegExp(
+				`<h2 class="server-upgrade-progress__title" title="${title}">${title}</h2>`,
+			),
+		);
+	}
+});
+
+test('the ticklist draws no version line when a version is unknown', () => {
+	const markup = renderToStaticMarkup(
+		React.createElement(ServerUpgradeProgress, {
+			progress: progress({ from: undefined }),
+		}),
+	);
+	assert.match(markup, /server-upgrade-progress__title/);
+	assert.doesNotMatch(markup, /server-upgrade-progress__versions/);
 });
 
 test('the ticklist has no dismiss action while it runs and Close once it has ended', () => {
@@ -546,7 +606,10 @@ test('at phone width the title block carries the upgrade warning and names it', 
 	);
 	assert.match(warned, /data-compact-breadcrumb-alert="true"/);
 	const unreachable = compactRow({ isReachable: false });
-	assert.match(unreachable, /aria-label="Switch terminal — Paged — VPS unreachable"/);
+	assert.match(
+		unreachable,
+		/aria-label="Switch terminal — Paged — VPS unreachable"/,
+	);
 });
 
 test('at phone width the drawer Servers panel lists the same server updates', async () => {
@@ -582,7 +645,10 @@ test('a server with an upgrader offers a check even with nothing on offer', () =
 		row({ available: undefined, action: 'none', checkable: true }),
 	]);
 	assert.match(quiet, /Running 5\.1\.1/);
-	assert.match(quiet, /data-server-upgrade-check[^>]*>(<span>)?Check for updates/);
+	assert.match(
+		quiet,
+		/data-server-upgrade-check[^>]*>(<span>)?Check for updates/,
+	);
 	assert.match(quiet, /server-upgrade-row__icon--quiet/);
 	assert.doesNotMatch(quiet, /Upgrade server…/);
 	// Alongside an upgrade on offer too, but never while one runs.

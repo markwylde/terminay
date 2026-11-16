@@ -199,6 +199,8 @@ async function pairAndLand(
 	},
 	mainWindow: Page,
 	server: { pairingUrl: string },
+	/** A name to give the connection once it is paired. */
+	rename?: string,
 ) {
 	const serverHost = new URL(server.pairingUrl).host;
 	const manager = await appHarness.openChildWindow(async () => {
@@ -216,7 +218,14 @@ async function pairAndLand(
 		.click();
 	await expectShowing(mainWindow, serverHost);
 	await mainWindow.keyboard.press('Escape');
-	return serverHost;
+	if (rename === undefined) return serverHost;
+	await manager.getByRole('button', { name: 'Rename', exact: true }).click();
+	const form = manager.getByRole('form', { name: 'Rename connection' });
+	await form.getByLabel('Connection name').fill(rename);
+	await form.getByRole('button', { name: 'Save name' }).click();
+	await expectShowing(mainWindow, rename);
+	await mainWindow.keyboard.press('Escape');
+	return rename;
 }
 
 async function resize(
@@ -293,6 +302,149 @@ async function capture(window: Page, name: string) {
 	await window.screenshot({ path: test.info().outputPath(`${name}.png`) });
 }
 
+/**
+ * The card's header as drawn: the title on one line, cut or not, its tooltip
+ * the full title, the versions wholly beneath it in as many lines as they
+ * need, and nothing in the card drawn past its edge.
+ */
+async function expectCardHeader(
+	window: Page,
+	expected: Readonly<{ cut: boolean; versionLines: 'one' | 'several' }>,
+) {
+	const card = progressCard(window);
+	const title = card.locator('.server-upgrade-progress__title');
+	await expect(title).toHaveAttribute(
+		'title',
+		(await card.getAttribute('aria-label')) ?? '',
+	);
+	const drawn = await card.evaluate((element) => {
+		const titleElement = element.querySelector(
+			'.server-upgrade-progress__title',
+		) as HTMLElement;
+		const versions = element.querySelector(
+			'.server-upgrade-progress__versions',
+		) as HTMLElement;
+		const lines = (target: HTMLElement) =>
+			Math.round(
+				target.getBoundingClientRect().height /
+					Number.parseFloat(getComputedStyle(target).lineHeight),
+			);
+		const edge = element.getBoundingClientRect();
+		const outside = [
+			...element.querySelectorAll<HTMLElement>('h2, p, li, span, button'),
+		]
+			.filter((child) => {
+				const box = child.getBoundingClientRect();
+				return (
+					box.width > 1 &&
+					(box.left < edge.left - 0.5 || box.right > edge.right + 0.5)
+				);
+			})
+			.map((child) => child.className || child.tagName);
+		return {
+			titleLines: lines(titleElement),
+			titleCut: titleElement.scrollWidth > titleElement.clientWidth,
+			versionLines: lines(versions),
+			versionsBelow:
+				versions.getBoundingClientRect().top >=
+				titleElement.getBoundingClientRect().bottom - 0.5,
+			outside,
+		};
+	});
+	expect(drawn.titleLines, 'the title is one line').toBe(1);
+	expect(drawn.titleCut, 'the title is cut').toBe(expected.cut);
+	expect(drawn.versionsBelow, 'the versions are beneath the title').toBe(true);
+	if (expected.versionLines === 'one') expect(drawn.versionLines).toBe(1);
+	else expect(drawn.versionLines).toBeGreaterThan(1);
+	expect(drawn.outside, 'nothing is drawn past the card edge').toEqual([]);
+}
+
+/**
+ * Every text and icon of the card against its surface, as WCAG contrast
+ * ratios, in the given appearance: text needs 4.5:1, icons and the focus
+ * ring 3:1. Returns the surface colour so appearances can be compared.
+ */
+async function expectLegibleIn(window: Page, scheme: 'light' | 'dark') {
+	await window.emulateMedia({ colorScheme: scheme });
+	const { surface, ratios, focusStyle } = await progressCard(window).evaluate(
+		(element) => {
+			const channels = (value: string) =>
+				(value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+			const luminance = (value: string) => {
+				const [r = 0, g = 0, b = 0] = channels(value).map((channel) => {
+					const c = channel / 255;
+					return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+				});
+				return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+			};
+			const background = getComputedStyle(element).backgroundColor;
+			const ratio = (value: string) => {
+				const [light, dark] = [luminance(value), luminance(background)].sort(
+					(a, b) => b - a,
+				);
+				return ((light ?? 0) + 0.05) / ((dark ?? 0) + 0.05);
+			};
+			const found: Record<string, number> = {};
+			const add = (key: string, target: Element | null, property = 'color') => {
+				if (target !== null)
+					found[key] = ratio(
+						getComputedStyle(target).getPropertyValue(property),
+					);
+			};
+			add(
+				'text:title',
+				element.querySelector('.server-upgrade-progress__title'),
+			);
+			add(
+				'text:versions',
+				element.querySelector('.server-upgrade-progress__versions'),
+			);
+			for (const step of element.querySelectorAll('[data-step]')) {
+				const state = step.getAttribute('data-step-state');
+				add(
+					`text:${state} step`,
+					step.querySelector('.server-upgrade-progress__label'),
+				);
+				add(
+					`icon:${state} step`,
+					step.querySelector('.server-upgrade-progress__icon'),
+				);
+			}
+			add(
+				'text:detail',
+				element.querySelector('.server-upgrade-progress__detail'),
+			);
+			add('text:note', element.querySelector('.server-upgrade-progress__note'));
+			const close = element.querySelector(
+				'.server-upgrade-progress__actions button',
+			);
+			add('text:close', close);
+			let focusStyle: string | undefined;
+			if (close !== null && close === document.activeElement) {
+				add('icon:focus ring', close, 'outline-color');
+				focusStyle = getComputedStyle(close).outlineStyle;
+			}
+			return { surface: background, ratios: found, focusStyle };
+		},
+	);
+	for (const [key, value] of Object.entries(ratios))
+		expect(value, `${scheme}: ${key} contrast`).toBeGreaterThanOrEqual(
+			key.startsWith('icon:') ? 3 : 4.5,
+		);
+	return { surface, focusStyle };
+}
+
+/** The card checked and captured in both appearances; the surfaces differ. */
+async function captureBothAppearances(window: Page, name: string) {
+	const dark = await expectLegibleIn(window, 'dark');
+	await capture(window, `${name}-dark`);
+	const light = await expectLegibleIn(window, 'light');
+	await capture(window, `${name}-light`);
+	expect(light.surface).not.toBe(dark.surface);
+	await window.emulateMedia({ colorScheme: null });
+	return { dark, light };
+}
+
 /** Opens the header Notifications list at the upgrade's outcome. */
 async function openUpgradeNotice(window: Page, tone?: 'success' | 'failure') {
 	await notificationsBell(window).click();
@@ -314,7 +466,8 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 	// Local is updated with Terminay Desktop and never shows a server upgrade.
 	await expect(upgradeIndicator(mainWindow)).toHaveCount(0);
-	const upgrader = await fakeUpgrader(tempDir, { upgradeSeconds: 6 });
+	// Long enough to check and capture the card while it installs.
+	const upgrader = await fakeUpgrader(tempDir, { upgradeSeconds: 15 });
 	const server = await startStandaloneServer(tempDir, upgrader.path);
 	try {
 		const serverHost = await pairAndLand(appHarness, mainWindow, server);
@@ -383,7 +536,10 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 		// It is modal over the whole window, centred, with nothing to dismiss.
 		const installing = await modalCardCentre(mainWindow);
 		await expect(card.getByRole('button')).toHaveCount(0);
-		await capture(mainWindow, '01-upgrade-installing');
+		// A short name fits: the title in full on one line, the versions on
+		// the line beneath, legible in either appearance.
+		await expectCardHeader(mainWindow, { cut: false, versionLines: 'one' });
+		await captureBothAppearances(mainWindow, '01-upgrade-installing');
 		await expect
 			.poll(() => upgrader.upgrades(), { timeout: 15_000 })
 			.toEqual(['daemon upgrade --user']);
@@ -397,7 +553,8 @@ test('a server with an upgrade is marked, confirmed, followed, and told once', a
 		await expectTicks(mainWindow, ['done', 'done', 'done', 'done']);
 		await expect(card).toHaveAccessibleName(`${serverHost} is upgraded`);
 		expectSamePlace(await modalCardCentre(mainWindow), installing);
-		await capture(mainWindow, '03-upgrade-succeeded');
+		await expectCardHeader(mainWindow, { cut: false, versionLines: 'one' });
+		await captureBothAppearances(mainWindow, '03-upgrade-succeeded');
 		await card.getByRole('button', { name: 'Close' }).click();
 		await expect(card).toHaveCount(0);
 		await expect(mainWindow.locator('[data-server-upgrade-modal]')).toHaveCount(
@@ -542,7 +699,7 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 			0,
 		);
 		await expect(mainWindow.getByText('Connection lost')).toHaveCount(0);
-		await capture(mainWindow, '02-upgrade-restarting');
+		await captureBothAppearances(mainWindow, '02-upgrade-restarting');
 
 		// The previous release comes back.
 		await upgrader.answer(
@@ -579,8 +736,18 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 		);
 		await expect(card).toHaveAccessibleName(`${serverHost} was not upgraded`);
 		expectSamePlace(await modalCardCentre(mainWindow), installing);
-		await capture(mainWindow, '04-upgrade-rolled-back');
-		await card.getByRole('button', { name: 'Close' }).click();
+		// The failed step, its reason and Close are legible in either
+		// appearance, and Close shows where keyboard focus is.
+		const close = card.getByRole('button', { name: 'Close' });
+		await close.focus();
+		await mainWindow.keyboard.press('Shift');
+		const ended = await captureBothAppearances(
+			mainWindow,
+			'04-upgrade-rolled-back',
+		);
+		expect(ended.dark.focusStyle).toBe('solid');
+		expect(ended.light.focusStyle).toBe('solid');
+		await close.click();
 		await expect(card).toHaveCount(0);
 
 		await expect(notificationsBell(mainWindow)).toHaveAccessibleName(
@@ -603,6 +770,131 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 		await expect(
 			menu.getByRole('menuitem', { name: 'Upgrade server…' }),
 		).toBeVisible();
+	} finally {
+		await server.stop();
+	}
+});
+
+test('a long server name and long versions keep the card and the confirmation tidy', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const from = '6.10.0-main.3420.canary';
+	const to = '6.10.0-main.3421.canary.0f9c2d7e41b8a6c3d5e7f9a1b2c4d6e8f0a1b3c5';
+	const upgrader = await fakeUpgrader(tempDir, { upgradeSeconds: 15 });
+	await upgrader.answer(
+		checkAnswer({
+			installed: { channel: 'tag', version: from, revision: 'aaaa111' },
+			available: { version: to, revision: 'bbbb222' },
+		}),
+	);
+	const server = await startStandaloneServer(tempDir, upgrader.path);
+	try {
+		const name = await pairAndLand(
+			appHarness,
+			mainWindow,
+			server,
+			'Pop Terminay — the build cluster in the basement rack',
+		);
+		await expect(upgradeIndicator(mainWindow)).toHaveAttribute(
+			'data-server-upgrade-indicator',
+			to,
+			{ timeout: 30_000 },
+		);
+
+		// The confirmation's title is one line, cut, with the whole as a tooltip.
+		const menu = await openConnectionMenu(mainWindow);
+		await menu.getByRole('menuitem', { name: 'Upgrade server…' }).click();
+		const confirmation = confirmationOf(mainWindow);
+		await expect(confirmation).toBeVisible();
+		const heading = mainWindow
+			.locator('[data-in-page-window="server-upgrade"]')
+			.locator('.in-page-window__title');
+		await expect(heading).toHaveText(`Upgrade ${name}`);
+		await expect(heading).toHaveAttribute('title', `Upgrade ${name}`);
+		expect(
+			await heading.evaluate((element) => ({
+				oneLine:
+					element.getBoundingClientRect().height <=
+					Number.parseFloat(getComputedStyle(element).lineHeight) * 1.5,
+				cut: element.scrollWidth > element.clientWidth,
+			})),
+		).toEqual({ oneLine: true, cut: true });
+		// Its body wraps the long name and versions inside the window.
+		const summary = confirmation.locator('.server-upgrade-dialog__summary');
+		await expect(summary).toContainText(to);
+		expect(
+			await summary.evaluate((element) => {
+				const window = element.closest('.in-page-window');
+				const outer = (window ?? element).getBoundingClientRect();
+				const range = document.createRange();
+				range.selectNodeContents(element);
+				const text = range.getBoundingClientRect();
+				return (
+					element.scrollWidth <= element.clientWidth &&
+					text.right <= outer.right - 1
+				);
+			}),
+		).toBe(true);
+		await capture(mainWindow, '05-long-name-confirmation');
+
+		await upgrader.answerAfterUpgrade(
+			checkAnswer({
+				installed: { channel: 'tag', version: to, revision: 'bbbb222' },
+				available: null,
+				lastResult: {
+					from,
+					to,
+					outcome: 'succeeded',
+					at: new Date(Date.now() + 60_000).toISOString(),
+				},
+			}),
+		);
+		await confirmation
+			.getByRole('button', { name: 'Upgrade', exact: true })
+			.click();
+
+		// The card cuts the long title on one line and keeps the whole as its
+		// tooltip and name; the long versions wrap beneath it, in full.
+		const card = progressCard(mainWindow);
+		await expect(card).toHaveAccessibleName(`Upgrading ${name}`);
+		await expect(card.locator('.server-upgrade-progress__versions')).toHaveText(
+			`${from} → ${to}`,
+		);
+		await expect(stepState(mainWindow, 'install')).toHaveAttribute(
+			'data-step-state',
+			'running',
+		);
+		await expectCardHeader(mainWindow, { cut: true, versionLines: 'several' });
+		await captureBothAppearances(mainWindow, '06-long-name-installing');
+
+		// So does the outcome's title.
+		await expect(card).toHaveAttribute(
+			'data-server-upgrade-outcome',
+			'success',
+			{ timeout: 60_000 },
+		);
+		await expect(card).toHaveAccessibleName(`${name} is upgraded`);
+		await expectCardHeader(mainWindow, { cut: true, versionLines: 'several' });
+		await captureBothAppearances(mainWindow, '07-long-name-succeeded');
+
+		// At phone width the card fits the screen and still draws nothing past
+		// its edge.
+		await resize(mainWindow, electronApp, PHONE);
+		await expect(async () => {
+			const box = await card.boundingBox();
+			expect(box?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+				PHONE.width - 32,
+			);
+		}).toPass({ timeout: 10_000 });
+		await expectCardHeader(mainWindow, { cut: true, versionLines: 'several' });
+		await captureBothAppearances(mainWindow, '08-long-name-phone');
+		await card.getByRole('button', { name: 'Close' }).click();
+		await expect(card).toHaveCount(0);
 	} finally {
 		await server.stop();
 	}

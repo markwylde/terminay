@@ -1,8 +1,8 @@
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import {
 	type CSSProperties,
-	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
+	type PointerEvent as ReactPointerEvent,
 	useCallback,
 	useEffect,
 	useId,
@@ -279,7 +279,10 @@ export function InPageWindow({
 		edges: ResizeEdges | null,
 	) => {
 		if (event.button !== 0 || filled) return;
-		if (edges === null && (event.target as Element).closest('button') !== null) {
+		if (
+			edges === null &&
+			(event.target as Element).closest('button') !== null
+		) {
 			return;
 		}
 		const frame = frameRef.current;
@@ -427,7 +430,7 @@ export function InPageWindow({
 								{icon}
 							</span>
 						)}
-						<h2 className="in-page-window__title" id={titleId}>
+						<h2 className="in-page-window__title" id={titleId} title={title}>
 							{title}
 						</h2>
 						<div className="in-page-window__controls">
@@ -440,7 +443,11 @@ export function InPageWindow({
 									type="button"
 									onClick={toggleMaximized}
 								>
-									{maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+									{maximized ? (
+										<Minimize2 size={14} />
+									) : (
+										<Maximize2 size={14} />
+									)}
 								</button>
 							) : null}
 							<button
