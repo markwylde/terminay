@@ -1561,7 +1561,7 @@ test('right-click edits user messages, deletes assistant messages, and clear cha
 				Math.abs(menuBox.y - pointer.y) < 2,
 			'menu opens at the pointer even inside an offset transformed pane',
 		);
-		await page.getByRole('button', { name: 'Edit message' }).click();
+		await page.getByRole('menuitem', { name: 'Edit message' }).click();
 		const editor = page.getByRole('dialog', { name: 'Edit message' });
 		await editor
 			.getByRole('textbox', { name: 'Message text' })
@@ -1577,7 +1577,7 @@ test('right-click edits user messages, deletes assistant messages, and clear cha
 		await page
 			.locator('[data-terminay-message-key="agent:1"]')
 			.click({ button: 'right' });
-		await page.getByRole('button', { name: 'Delete message' }).click();
+		await page.getByRole('menuitem', { name: 'Delete message' }).click();
 		await page.waitForFunction(
 			() => !document.querySelector('[data-terminay-message-key="agent:1"]'),
 		);

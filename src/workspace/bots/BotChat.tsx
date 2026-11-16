@@ -11,6 +11,7 @@ import {
 	type ClipboardEvent,
 	type DragEvent,
 	type KeyboardEvent,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -31,6 +32,7 @@ import {
 	chatSendAttempt,
 	formatFileSize,
 } from './botsModel';
+import { appendQuote, quoteMessage } from './quoteMessage';
 import { useFitTextarea } from './useFitTextarea';
 import { refusalText, type ServerBots } from './useServerBots';
 
@@ -84,11 +86,18 @@ export function BotChat({
 		[recovering, setRecovering] = useState<string>();
 	const [menu, setMenu] = useState<{
 		id: string;
+		/** The full stored text, which Edit message edits. */
 		text: string;
+		/** The formatted quote (of the selection, or else of `text`); '' when there is nothing to quote. */
+		quote: string;
 		revision: number;
 		x: number;
 		y: number;
+		keyboard: boolean;
 	}>();
+	const composer = useRef<HTMLTextAreaElement>(null),
+		caretPending = useRef(false),
+		menuFor = useRef<string | undefined>(undefined);
 	const [editing, setEditing] = useState<{
 			id: string;
 			revision: number;
@@ -193,7 +202,15 @@ export function BotChat({
 	const generation = useRef(0),
 		draftRef = useRef(draft);
 	draftRef.current = draft;
-	const composer = useFitTextarea(draft);
+	// The composer grows with its draft; the element is also kept for quoting.
+	const fitComposer = useFitTextarea(draft),
+		composerRef = useCallback(
+			(element: HTMLTextAreaElement | null) => {
+				composer.current = element;
+				fitComposer(element);
+			},
+			[fitComposer],
+		);
 	const olderRef = useRef(older);
 	olderRef.current = older;
 	const full = async (id: string): Promise<BotMessage> => {
@@ -644,14 +661,55 @@ export function BotChat({
 		window.addEventListener('keydown', onEscape);
 		return () => window.removeEventListener('keydown', onEscape);
 	}, [mutating]);
+	// A quote leaves the composer focused with the caret after it.
+	useLayoutEffect(() => {
+		const input = composer.current;
+		if (!caretPending.current || !input) return;
+		caretPending.current = false;
+		input.focus();
+		input.setSelectionRange(input.value.length, input.value.length);
+		input.scrollTop = input.scrollHeight;
+	}, [draft]);
+	// A menu closed without moving focus elsewhere (Escape) hands it back to its message.
+	useEffect(() => {
+		if (menu) {
+			menuFor.current = menu.id;
+			return;
+		}
+		const key = menuFor.current;
+		menuFor.current = undefined;
+		const focused = document.activeElement;
+		if (!key || editing || clearing) return;
+		if (focused && focused !== document.body && focused.isConnected) return;
+		transcript.current
+			?.querySelector<HTMLElement>(
+				`[data-terminay-message-key="${CSS.escape(key)}"][tabindex]`,
+			)
+			?.focus();
+	}, [menu, editing, clearing]);
+	const quote = (text: string) => {
+		caretPending.current = true;
+		onDraftChange(appendQuote(draftRef.current, text));
+	};
 	return (
 		<div className="bots-chatwrap">
 			{menu ? (
 				<ContextMenu
+					key={`${menu.id}:${menu.x}:${menu.y}`}
 					x={menu.x}
 					y={menu.y}
+					keyboard={{ autoFocus: menu.keyboard }}
+					label="Message actions"
 					onClose={() => setMenu(undefined)}
 					items={[
+						...(menu.quote
+							? [
+									{
+										label: 'Quote',
+										onClick: () => quote(menu.quote),
+									},
+								]
+							: []),
 						{
 							label: 'Edit message',
 							disabled: mutating,
@@ -802,15 +860,17 @@ export function BotChat({
 						unread={unread ? { ...unread, ref: divider } : undefined}
 						bot={bot}
 						transport={server.transport}
-						onMessageMenu={(id, _text, x, y) => {
-							const message = messages.get(id);
+						onMessageMenu={({ key, x, y, keyboard, selection }) => {
+							const message = messages.get(key);
 							if (message)
 								setMenu({
-									id,
+									id: key,
 									text: message.text,
+									quote: quoteMessage(selection ?? message.text),
 									revision: message.revision,
 									x,
 									y,
+									keyboard,
 								});
 						}}
 					/>
@@ -953,7 +1013,7 @@ export function BotChat({
 							</p>
 						) : null}
 						<textarea
-							ref={composer}
+							ref={composerRef}
 							value={draft}
 							rows={1}
 							aria-label={`Message ${bot.name}`}
