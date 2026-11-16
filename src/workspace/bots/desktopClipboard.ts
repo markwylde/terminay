@@ -1,5 +1,5 @@
 /**
- * Clipboard sharing for a bot desktop in control mode (ADR-0128).
+ * Clipboard sharing for a bot desktop in control mode (ADR-0129).
  *
  * Device → bot: only the native paste of the user's paste shortcut. The
  * shortcut is kept from noVNC so the browser raises `paste`; its text goes to

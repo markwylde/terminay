@@ -18,6 +18,13 @@ import {
 	typedWorkflowGoal,
 	WORKFLOW_LAUNCH_INSTRUCTION,
 } from '@terminay/protocol';
+import {
+	dependenciesFromOutline,
+	impliedLinkCount,
+	type Outline,
+	outlineFromSteps,
+	outlineKeys,
+} from './workflowOutlineModel.ts';
 
 export interface DraftStep {
 	/** A key for the editor's own rows; never sent. */
@@ -27,6 +34,8 @@ export interface DraftStep {
 	readonly title: string;
 	readonly prompt: string;
 	readonly icon: WorkflowIconName | '';
+	/** The keys of the steps this step waits on, as stored (ADR-0128). */
+	readonly after: readonly string[];
 }
 
 export interface DraftTemplate {
@@ -35,7 +44,16 @@ export interface DraftTemplate {
 	readonly description: string;
 	readonly category: string;
 	readonly openingPrompt: string;
+	/** Every step, in outline order once the shape has changed. */
 	readonly steps: readonly DraftStep[];
+	/** The plan's shape as the editor draws it. */
+	readonly outline: Outline;
+	/**
+	 * Whether a step was added, removed, moved or placed alongside another.
+	 * Until then saving keeps each step's stored dependencies; after, it
+	 * derives every step's dependencies from the outline.
+	 */
+	readonly shapeChanged: boolean;
 }
 
 export interface WorkflowDraft {
@@ -59,37 +77,92 @@ export function draftFrom(
 }
 
 function draftTemplate(template: WorkflowTemplate): DraftTemplate {
+	// The server's id is the row's key, so a saved step keeps its row.
+	const steps = template.steps.map((step) => ({
+		key: step.id,
+		id: step.id,
+		title: step.title,
+		prompt: step.prompt,
+		icon: step.icon,
+		after: step.after,
+	}));
 	return {
 		id: template.id,
 		name: template.name,
 		description: template.description,
 		category: template.category,
 		openingPrompt: template.openingPrompt,
-		// The server's id is the row's key, so a saved step keeps its row.
-		steps: template.steps.map((step) => ({
-			key: step.id,
-			id: step.id,
-			title: step.title,
-			prompt: step.prompt,
-			icon: step.icon,
-		})),
+		steps,
+		outline: outlineFromSteps(steps.map((step) => ({ id: step.key, after: step.after }))),
+		shapeChanged: false,
 	};
 }
 
-/** What is sent: a step keeps its server id, a new one has none. */
+/** A template with steps given as a list, drawn as the panel would draw them. */
+export function withSteps(
+	template: Omit<DraftTemplate, 'steps' | 'outline' | 'shapeChanged'>,
+	steps: readonly DraftStep[],
+): DraftTemplate {
+	return {
+		...template,
+		steps,
+		outline: outlineFromSteps(steps.map((step) => ({ id: step.key, after: step.after }))),
+		shapeChanged: false,
+	};
+}
+
+/**
+ * The steps a save sends, in order, each with the keys it waits on: as stored
+ * until the shape changes, then as the outline implies.
+ */
+export function effectiveSteps(template: DraftTemplate): readonly DraftStep[] {
+	if (!template.shapeChanged) return template.steps;
+	const derived = dependenciesFromOutline(template.outline);
+	const byKey = new Map(template.steps.map((step) => [step.key, step]));
+	return outlineKeys(template.outline).flatMap((key) => {
+		const step = byKey.get(key);
+		return step === undefined ? [] : [{ ...step, after: derived.get(key) ?? [] }];
+	});
+}
+
+/**
+ * What is sent: a step keeps its server id; a new one is sent without one,
+ * or with its editor key when a later step waits on it, which names it for
+ * that request only. `after` is left out where it is the step above.
+ */
 export function templateInput(template: DraftTemplate): WorkflowTemplateInput {
+	const steps = effectiveSteps(template);
+	const named = new Set(steps.flatMap((step) => step.after));
+	const nameOf = (step: DraftStep) => step.id ?? step.key;
+	const byKey = new Map(steps.map((item) => [item.key, item]));
 	return {
 		id: template.id,
 		name: template.name,
 		description: template.description,
 		category: template.category,
 		openingPrompt: template.openingPrompt,
-		steps: template.steps.map((step) => ({
-			...(step.id === undefined ? {} : { id: step.id }),
-			title: step.title,
-			prompt: step.prompt,
-			icon: step.icon,
-		})),
+		steps: steps.map((step, index) => {
+			const after = step.after.map((key) => {
+				const target = byKey.get(key);
+				return target === undefined ? key : nameOf(target);
+			});
+			const previous = steps[index - 1];
+			const isDefault =
+				index === 0
+					? after.length === 0
+					: after.length === 1 && previous !== undefined && after[0] === nameOf(previous);
+			return {
+				...(step.id !== undefined
+					? { id: step.id }
+					: named.has(step.key)
+						? { id: step.key }
+						: {}),
+				title: step.title,
+				prompt: step.prompt,
+				icon: step.icon,
+				...(isDefault ? {} : { after }),
+			};
+		}),
 	};
 }
 
@@ -99,18 +172,20 @@ export function templateFingerprint(template: DraftTemplate): string {
 }
 
 export function emptyTemplate(index: number, category: string): DraftTemplate {
-	return {
-		id: `tpl-${Date.now().toString(36)}-${index}`,
-		name: `Workflow ${index}`,
-		description: '',
-		category,
-		openingPrompt: '',
-		steps: [emptyStep(1)],
-	};
+	return withSteps(
+		{
+			id: `tpl-${Date.now().toString(36)}-${index}`,
+			name: `Workflow ${index}`,
+			description: '',
+			category,
+			openingPrompt: '',
+		},
+		[emptyStep(1)],
+	);
 }
 
 export function emptyStep(index: number): DraftStep {
-	return { key: newKey('row'), title: `Step ${index}`, prompt: '', icon: '' };
+	return { key: newKey('row'), title: `Step ${index}`, prompt: '', icon: '', after: [] };
 }
 
 /** Everything a filter matches: name, description, category, brief, step titles and prompts. */
@@ -127,7 +202,13 @@ export function serializedSize(template: DraftTemplate): number {
 	return workflowSerializedSize({
 		name: template.name,
 		openingPrompt: template.openingPrompt,
-		steps: template.steps,
+		steps: effectiveSteps(template).map((step) => ({
+			id: step.key,
+			title: step.title,
+			prompt: step.prompt,
+			icon: step.icon,
+			after: step.after,
+		})),
 	});
 }
 
@@ -156,6 +237,13 @@ export function templateProblems(template: DraftTemplate): string[] {
 		if (bytes(step.prompt) > limits.maxPromptBytes)
 			problems.push(`“${name}”: step ${index + 1}’s prompt is larger than 8 KiB.`);
 	});
+	if (template.shapeChanged) {
+		const implied = impliedLinkCount(template.outline);
+		if (implied > limits.maxDependencies)
+			problems.push(
+				`“${name}”: the outline implies ${implied} dependencies; a workflow may have at most ${limits.maxDependencies}.`,
+			);
+	}
 	const size = serializedSize(template);
 	if (size > limits.maxSerializedBytes)
 		problems.push(`“${name}” is ${formatKiB(size)}; a workflow may be at most 56 KiB.`);
@@ -169,30 +257,6 @@ export function formatKiB(size: number): string {
 /** What launching this template types into the terminal. */
 export function launchPreview(openingPrompt: string): string {
 	return typedWorkflowGoal(openingPrompt, WORKFLOW_LAUNCH_INSTRUCTION);
-}
-
-/** Move one entry by one place; the same list when it cannot move. */
-export function moveBy<T>(list: readonly T[], index: number, direction: -1 | 1): readonly T[] {
-	const target = index + direction;
-	if (index < 0 || index >= list.length || target < 0 || target >= list.length) return list;
-	const next = [...list];
-	const [item] = next.splice(index, 1);
-	next.splice(target, 0, item as T);
-	return next;
-}
-
-/** Move an entry to stand before another, by drag. */
-export function moveBefore<T>(
-	list: readonly T[],
-	from: number,
-	before: number,
-): readonly T[] {
-	if (from < 0 || from >= list.length || before < 0 || before > list.length) return list;
-	if (before === from || before === from + 1) return list;
-	const next = [...list];
-	const [item] = next.splice(from, 1);
-	next.splice(before > from ? before - 1 : before, 0, item as T);
-	return next;
 }
 
 export function describeSaveError(error: unknown): string {

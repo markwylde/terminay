@@ -88,7 +88,7 @@ export function BotDesktopCanvas({
 				rfb.resizeSession = false;
 				rfb.focusOnClick = !thumbnail;
 				rfb.background = '#0d0f12';
-				// Clipboard sharing is control mode only (ADR-0128). View-only
+				// Clipboard sharing is control mode only (ADR-0129). View-only
 				// streams never read or write either clipboard.
 				if (streamMode === 'control' && !thumbnail)
 					layer.detachClipboard = attachDesktopClipboard(el, rfb, {

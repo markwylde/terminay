@@ -1,4 +1,4 @@
-# ADR-0128: A bot desktop shares the clipboard only while the user controls it
+# ADR-0129: A bot desktop shares the clipboard only while the user controls it
 
 Status: accepted
 Date: 2026-11-16

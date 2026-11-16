@@ -242,8 +242,13 @@ test('split panes share one chosen width, each drawing it narrower as its own sp
 	for (const terminal of [caller, other]) {
 		const separator = separatorOf(mainWindow, terminal);
 		await expect.poll(async () => Number(await separator.getAttribute('aria-valuemax'))).toBeLessThan(640);
-		const max = Number(await separator.getAttribute('aria-valuemax'));
-		await expect.poll(() => panelWidth(mainWindow, terminal)).toBe(max);
+		// The widest width follows the pane's measured columns, which settle after
+		// the panel takes its space; compare against the settled value.
+		await expect
+			.poll(async () => (await panelWidth(mainWindow, terminal)) - Number(await separator.getAttribute('aria-valuemax')), {
+				timeout: READY_TIMEOUT_MS,
+			})
+			.toBe(0);
 		await expectTerminalUncovered(mainWindow, terminal);
 	}
 	await mainWindow.screenshot({ path: testInfo.outputPath('workflow-panel-split.png') });

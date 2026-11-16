@@ -75,6 +75,74 @@ export function isSettledStatus(status: WorkflowStepStatus): boolean {
 	return status === 'done' || status === 'skipped';
 }
 
+/**
+ * Ready steps (ADR-0128): not started or failed, with every step they wait on
+ * settled, in step order.
+ */
+export function readySteps<T extends Pick<WorkflowStep, 'id' | 'status' | 'after'>>(
+	steps: readonly T[],
+): T[] {
+	const settled = new Set(
+		steps.filter((step) => isSettledStatus(step.status)).map((step) => step.id),
+	);
+	return steps.filter(
+		(step) =>
+			(step.status === 'not_started' || step.status === 'failed') &&
+			step.after.every((id) => settled.has(id)),
+	);
+}
+
+/**
+ * A workflow's current steps: those that need input, then those running,
+ * each in step order; when none is active, its first failed step; otherwise
+ * its first ready step (else its first step not settled).
+ */
+export function currentSteps<T extends Pick<WorkflowStep, 'id' | 'status' | 'after'>>(
+	steps: readonly T[],
+): T[] {
+	const active = [
+		...steps.filter((step) => step.status === 'needs_input'),
+		...steps.filter((step) => step.status === 'running'),
+	];
+	if (active.length > 0) return active;
+	const failed = steps.find((step) => step.status === 'failed');
+	if (failed !== undefined) return [failed];
+	const ready = readySteps(steps)[0];
+	if (ready !== undefined) return [ready];
+	const next = steps.find((step) => !isSettledStatus(step.status));
+	return next === undefined ? [] : [next];
+}
+
+/**
+ * The first current step's title, with how many other steps are active:
+ * "Server + 2 more". Undefined when nothing is current.
+ */
+export function currentStepTitle(
+	steps: readonly Pick<WorkflowStep, 'id' | 'title' | 'status' | 'after'>[],
+): string | undefined {
+	const current = currentSteps(steps);
+	const first = current[0];
+	if (first === undefined) return undefined;
+	const others = isActive(first.status) ? current.length - 1 : 0;
+	return others > 0 ? `${first.title} + ${others} more` : first.title;
+}
+
+/**
+ * The current step in words: as `currentStepTitle`, with "needs you" after a
+ * step that needs input: "Docs needs you + 2 more".
+ */
+export function currentStepLabel(
+	steps: readonly Pick<WorkflowStep, 'id' | 'title' | 'status' | 'after'>[],
+): string | undefined {
+	const current = currentSteps(steps);
+	const first = current[0];
+	if (first === undefined) return undefined;
+	const name =
+		first.status === 'needs_input' ? `${first.title} needs you` : first.title;
+	const others = isActive(first.status) ? current.length - 1 : 0;
+	return others > 0 ? `${name} + ${others} more` : name;
+}
+
 /** Every step is settled (and there is at least one). */
 export function isFinished(workflow: Pick<Workflow, 'steps'>): boolean {
 	return (
@@ -164,7 +232,7 @@ export function tabSummary(
 			ticking: false,
 			label: finishedLabel(steps),
 		};
-	const active = steps.find((step) => isActive(step.status));
+	const active = currentSteps(steps).find((step) => isActive(step.status));
 	const failed = steps.filter((step) => step.status === 'failed');
 	const tone: WorkflowDialTone =
 		failed.length > 0 || steps.some((step) => step.status === 'needs_input')
@@ -175,8 +243,7 @@ export function tabSummary(
 	const failures = failed.map((step) => `${step.title} failed`);
 	let parts: string[];
 	if (active !== undefined) {
-		const name =
-			active.status === 'needs_input' ? `${active.title} needs you` : active.title;
+		const name = currentStepLabel(steps) ?? active.title;
 		const time =
 			active.startedAt === null ? [] : [formatDuration(now - active.startedAt)];
 		parts = [name, count, ...time, ...failures];
@@ -184,7 +251,7 @@ export function tabSummary(
 		const [first, ...rest] = failures;
 		parts = [first as string, count, ...rest];
 	} else {
-		const next = steps.find((step) => !isSettledStatus(step.status));
+		const next = currentSteps(steps)[0];
 		parts = next === undefined ? [count] : [`Next: ${next.title}`, count];
 	}
 	return {
@@ -296,9 +363,12 @@ export function panelLayout(
 }
 
 /** Pixels the pane reserves at its right edge for the panel. */
-export function reservedWidth(layout: WorkflowPanelLayout | undefined): number {
+export function reservedWidth(
+	layout: WorkflowPanelLayout | undefined,
+	railWidth: number = WORKFLOW_RAIL_WIDTH,
+): number {
 	if (layout === undefined) return 0;
-	return layout.mode === 'expanded' ? layout.width : WORKFLOW_RAIL_WIDTH;
+	return layout.mode === 'expanded' ? layout.width : railWidth;
 }
 
 /** The narrow-pane overlay: the chosen width, or most of the pane. */
@@ -336,4 +406,104 @@ export function showsStepNote(
 ): boolean {
 	if (step.note === '') return false;
 	return notes !== 'current' || isCurrentStep(step.status);
+}
+
+/** The horizontal drawer's collapsed strip height. */
+export const WORKFLOW_STRIP_HEIGHT = 46;
+/** The expanded drawer's height cap. */
+export const WORKFLOW_DRAWER_MAX_HEIGHT = 240;
+/** The expanded drawer's header, above the map. */
+export const WORKFLOW_DRAWER_HEADER_HEIGHT = 36;
+/** One lane of the metro map, and the map's padding above and below. */
+export const WORKFLOW_DRAWER_LANE_HEIGHT = 56;
+export const WORKFLOW_DRAWER_MAP_PADDING = 8;
+/** A terminal shorter than this above the expanded drawer keeps the strip. */
+export const WORKFLOW_MIN_TERMINAL_ROWS = 10;
+
+/** How tall the expanded drawer is for a map of `lanes` lanes: header plus map, capped. */
+export function drawerHeight(lanes: number): number {
+	return Math.min(
+		WORKFLOW_DRAWER_MAX_HEIGHT,
+		WORKFLOW_DRAWER_HEADER_HEIGHT +
+			WORKFLOW_DRAWER_MAP_PADDING * 2 +
+			Math.max(1, lanes) * WORKFLOW_DRAWER_LANE_HEIGHT,
+	);
+}
+
+export interface WorkflowDrawerLayout {
+	readonly mode: WorkflowPanelMode;
+	/** The expanded drawer's height in this pane. */
+	readonly height: number;
+	/** The short-pane overlay's height: the drawer's, at most 85% of the pane. */
+	readonly overlayHeight: number;
+}
+
+/**
+ * How the horizontal drawer shows. It expands only when the terminal keeps at
+ * least ten rows above it; otherwise the pane keeps the strip, and expanding
+ * opens an overlay that does not resize the terminal.
+ */
+export function drawerLayout(
+	setting: 'collapsed' | 'expanded',
+	lanes: number,
+	paneHeight: number | undefined,
+	rowHeight: number | undefined,
+): WorkflowDrawerLayout {
+	const height = drawerHeight(lanes);
+	const overlayHeight =
+		paneHeight === undefined || !(paneHeight > 0)
+			? height
+			: Math.min(height, Math.floor(paneHeight * 0.85));
+	const fits =
+		paneHeight === undefined ||
+		rowHeight === undefined ||
+		!(rowHeight > 0) ||
+		paneHeight - height >= WORKFLOW_MIN_TERMINAL_ROWS * rowHeight;
+	return { mode: fits ? setting : 'forced-collapsed', height, overlayHeight };
+}
+
+/** Pixels the pane reserves at its bottom edge for the drawer. */
+export function reservedHeight(layout: WorkflowDrawerLayout | undefined): number {
+	if (layout === undefined) return 0;
+	return layout.mode === 'expanded' ? layout.height : WORKFLOW_STRIP_HEIGHT;
+}
+
+/**
+ * The expanded panel's and drawer's progress line: "5 of 11 done · 2 running ·
+ * 1 needs you · 12m elapsed", leaving out counts of nothing and the time
+ * before any step has started.
+ */
+export function progressLabel(workflow: Workflow, now: number): string {
+	return progressParts(workflow, now).join(' · ');
+}
+
+/** The progress line's parts, each drawn unbroken so the line wraps only between them. */
+export function progressParts(workflow: Workflow, now: number): readonly string[] {
+	const running = workflow.steps.filter((step) => step.status === 'running').length;
+	const needs = workflow.steps.filter((step) => step.status === 'needs_input').length;
+	const since = elapsed(workflow, now);
+	return [
+		`${doneCount(workflow)} of ${workflow.steps.length} done`,
+		...(running > 0 ? [`${running} running`] : []),
+		...(needs > 0 ? [`${needs} ${needs === 1 ? 'needs' : 'need'} you`] : []),
+		...(since === undefined ? [] : [`${since} elapsed`]),
+	];
+}
+
+/**
+ * What the collapsed strip says: every running or needs-input step in step
+ * order, "Finished" once every step is settled, and "Waiting" otherwise.
+ */
+export function stripWords(
+	steps: readonly Pick<WorkflowStep, 'title' | 'status'>[],
+): readonly { readonly title: string; readonly needsYou: boolean }[] | 'Finished' | 'Waiting' {
+	const active = steps.filter((step) => isActive(step.status));
+	if (active.length > 0)
+		return active.map((step) => ({
+			title: step.title,
+			needsYou: step.status === 'needs_input',
+		}));
+	return steps.length > 0 && steps.every((step) => isSettledStatus(step.status))
+		? 'Finished'
+		: 'Waiting';
 }

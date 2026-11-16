@@ -16,7 +16,7 @@
 }
 
 .workflow-panel--collapsed {
-  width: 36px;
+  width: var(--workflow-rail-width, 36px);
 }
 
 .workflow-panel--expanded {
@@ -109,7 +109,6 @@
   box-sizing: border-box;
   padding: 8px 0 12px;
   min-height: 0;
-  overflow: hidden;
 }
 
 /* The name runs up the foot of the rail, below the markers, and gives way
@@ -131,11 +130,14 @@
 
 .workflow-rail-steps {
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
   align-items: center;
   gap: 14px;
+  min-height: 0;
   margin: 0;
   padding: 0;
+  overflow: hidden;
   list-style: none;
 }
 
@@ -238,24 +240,35 @@
   font-size: 13px;
 }
 
+/* The eyebrow shares its row with the buttons; the name and progress take the
+   panel's whole width beneath, so neither is squeezed beside the buttons. */
 .workflow-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 14px 12px 14px 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 12px 12px 14px 16px;
   border-bottom: 1px solid rgb(255 255 255 / 0.08);
 }
 
 .workflow-summary {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  display: contents;
+}
+
+.workflow-header > .workflow-header-buttons {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.workflow-summary > .workflow-name,
+.workflow-summary > .workflow-progress {
+  grid-column: 1 / -1;
 }
 
 .workflow-eyebrow {
-  margin-bottom: 2px;
+  grid-row: 1;
+  grid-column: 1;
   color: var(--text-secondary, #9aa4af);
   font-size: 10px;
   line-height: 14px;
@@ -273,54 +286,14 @@
 }
 
 .workflow-progress {
-  margin-top: 2px;
   color: var(--text-secondary, #9aa4af);
   font-size: 12px;
   line-height: 16px;
 }
 
-/* The note density: its own line under the summary, so it never competes
-   with the collapse button for the header's width. */
-.workflow-notes-field {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  max-width: 100%;
-  margin-top: 6px;
-}
-
-.workflow-notes-label {
-  color: var(--text-secondary, #9aa4af);
-  font-size: 10px;
-  line-height: 14px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.workflow-notes-select {
-  min-width: 0;
-  max-width: 100%;
-  height: 22px;
-  padding: 0 4px;
-  border: 1px solid rgb(255 255 255 / 0.14);
-  border-radius: 6px;
-  color: var(--text-primary, #e6e6e6);
-  background: rgb(255 255 255 / 0.04);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.workflow-notes-select:hover,
-.workflow-notes-select:focus-visible {
-  background: rgb(255 255 255 / 0.08);
-}
-
-.workflow-notes-select option {
-  color: #e6e6e6;
-  background: #1e1e1e;
+/* "2s elapsed" never breaks from its number: the line wraps only between parts. */
+.workflow-progress-part {
+  white-space: nowrap;
 }
 
 /* 2 lines: the note is cut, never changed; its full text is its title. */
@@ -631,4 +604,540 @@
 .workflow-step-button:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+/* ---------- Steps that run alongside each other (ADR-0128) ---------- */
+
+/* A bracket's tone: red when a step needs input or failed, amber while one
+   runs, green once all are settled, grey otherwise. */
+.workflow-group,
+.workflow-capsule {
+  --workflow-group-tone: #6e7681;
+}
+
+.workflow-group--alert,
+.workflow-capsule--alert {
+  --workflow-group-tone: #f85149;
+}
+
+.workflow-group--running,
+.workflow-capsule--running {
+  --workflow-group-tone: #d29922;
+}
+
+.workflow-group--done,
+.workflow-capsule--done {
+  --workflow-group-tone: #3fb950;
+}
+
+/* The expanded panel: a bracket down the left of its tracks. */
+.workflow-group {
+  position: relative;
+  margin: 3px 0;
+  padding-left: 12px;
+}
+
+.workflow-group::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 3px;
+  width: 6px;
+  border: 2px solid var(--workflow-group-tone);
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.workflow-track {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A dashed rule between tracks, when any track holds a sequence. */
+.workflow-group--divided > .workflow-track + .workflow-track {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px dashed rgb(255 255 255 / 0.14);
+}
+
+.workflow-group .workflow-step {
+  padding-left: 5px;
+}
+
+.workflow-group .workflow-step:not(:last-child)::after {
+  left: 16px;
+}
+
+/* A step followed by a bracket, or the last step of a track, draws no line. */
+.workflow-step:has(+ .workflow-group)::after {
+  display: none;
+}
+
+.workflow-step-after {
+  margin-top: 2px;
+  color: var(--text-secondary, #9aa4af);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.workflow-step-needs {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #fff;
+  background: #f85149;
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+.workflow-step:focus-visible {
+  outline: 2px solid rgb(88 166 255 / 0.7);
+  outline-offset: -2px;
+}
+
+/* Tracing: what a step waits on and what waits on it stay; the rest dims. */
+.workflow-step--dimmed,
+.workflow-station--dimmed {
+  opacity: 0.3;
+}
+
+.workflow-edge--dimmed {
+  opacity: 0.1;
+}
+
+.workflow-edge--traced {
+  stroke-dasharray: none;
+}
+
+/* The collapsed rail: each bracket a capsule around its tracks. */
+.workflow-capsule {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 2px;
+  border: 1.5px solid var(--workflow-group-tone);
+  border-radius: 13px;
+  list-style: none;
+}
+
+.workflow-rail-track {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-rail-track .workflow-rail-step:not(:last-child)::after {
+  height: 6px;
+}
+
+.workflow-capsule-rule {
+  flex: none;
+  width: 10px;
+  margin: 1px 0;
+  border-top: 1.5px dashed rgb(255 255 255 / 0.2);
+}
+
+/* ---------- The ⋯ options menu ---------- */
+
+.workflow-header-buttons {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.workflow-options {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+/* Fixed, and placed inside the window by WorkflowOptionsMenu, so no pane or
+   panel edge clips it. */
+.workflow-menu {
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  width: 236px;
+  padding: 5px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 10px;
+  color: var(--text-primary, #e6e6e6);
+  background: #191c20;
+  box-shadow: 0 10px 34px rgb(0 0 0 / 0.55);
+  font-size: 13px;
+  text-align: left;
+}
+
+.workflow-menu-item.workflow-menu-item--plain {
+  grid-template-columns: 16px 1fr;
+}
+
+.workflow-menu-label {
+  padding: 6px 9px 3px;
+  color: var(--text-secondary, #9aa4af);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.workflow-menu-item {
+  display: grid;
+  grid-template-columns: 16px 22px 1fr;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-menu-item:hover,
+.workflow-menu-item:focus-visible {
+  outline: none;
+  background: rgb(255 255 255 / 0.07);
+}
+
+.workflow-menu-check {
+  display: inline-flex;
+  color: #3fb950;
+}
+
+.workflow-menu-glyph {
+  fill: none;
+  stroke: var(--text-secondary, #9aa4af);
+  stroke-width: 1.6;
+}
+
+.workflow-menu-text small {
+  display: block;
+  color: var(--text-secondary, #9aa4af);
+  font-size: 11.5px;
+}
+
+.workflow-menu-item--danger {
+  grid-template-columns: 1fr;
+  color: #f85149;
+}
+
+.workflow-menu-rule {
+  margin: 4px 3px;
+  border: 0;
+  border-top: 1px solid rgb(255 255 255 / 0.1);
+}
+
+.workflow-menu-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 9px;
+  font-size: 12.5px;
+}
+
+.workflow-menu-confirm p {
+  margin: 0;
+  color: var(--text-secondary, #9aa4af);
+  overflow-wrap: anywhere;
+}
+
+.workflow-menu-confirm b {
+  color: var(--text-primary, #e6e6e6);
+}
+
+.workflow-menu-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.workflow-menu-button {
+  padding: 4px 10px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workflow-menu-button:focus-visible {
+  outline: 2px solid rgb(88 166 255 / 0.7);
+  outline-offset: 1px;
+}
+
+.workflow-menu-button--danger {
+  border-color: #da3633;
+  color: #fff;
+  background: #da3633;
+}
+
+/* ---------- The horizontal drawer (ADR-0128) ---------- */
+
+.workflow-drawer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: var(--workflow-drawer-height, 46px);
+  color: var(--text-primary, #e6e6e6);
+  background: rgb(0 0 0 / 0.22);
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+  font-size: 12px;
+}
+
+.workflow-drawer-expanded {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.workflow-drawer-header {
+  box-sizing: border-box;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 2px 12px;
+  min-width: 0;
+}
+
+.workflow-drawer-summary {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.workflow-drawer-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--terminal-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workflow-drawer-summary .workflow-progress {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The map scrolls inside the drawer; the terminal keeps its size. */
+.workflow-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 14px 8px;
+  scrollbar-width: thin;
+}
+
+.workflow-metro {
+  position: relative;
+  flex: none;
+}
+
+.workflow-metro-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.workflow-edge {
+  fill: none;
+}
+
+.workflow-edge--done {
+  stroke: rgb(63 185 80 / 0.75);
+}
+
+.workflow-edge--waiting {
+  stroke: rgb(255 255 255 / 0.22);
+  stroke-dasharray: 2 5;
+  stroke-linecap: round;
+}
+
+.workflow-station {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 112px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+
+.workflow-station:focus-visible {
+  outline: 2px solid rgb(88 166 255 / 0.7);
+  outline-offset: 2px;
+}
+
+.workflow-station--selected .workflow-marker {
+  box-shadow: 0 0 0 3px rgb(88 166 255 / 0.45);
+}
+
+.workflow-station[data-status="running"] .workflow-marker,
+.workflow-station[data-status="needs_input"] .workflow-marker {
+  box-shadow: 0 0 0 3px rgb(210 153 34 / 0.25);
+}
+
+.workflow-station-label {
+  max-width: 100%;
+  margin-top: 3px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workflow-station[data-status="not_started"] .workflow-station-label,
+.workflow-station[data-status="skipped"] .workflow-station-label {
+  color: var(--text-secondary, #9aa4af);
+}
+
+.workflow-station[data-status="skipped"] .workflow-station-label {
+  text-decoration: line-through;
+}
+
+.workflow-station-time {
+  color: var(--text-secondary, #9aa4af);
+  font-family: var(--terminal-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  line-height: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-station[data-status="running"] .workflow-station-time {
+  color: #d29922;
+}
+
+.workflow-station[data-status="needs_input"] .workflow-station-time {
+  color: #f85149;
+}
+
+.workflow-station-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.04);
+  font-size: 12.5px;
+}
+
+.workflow-station-detail-status {
+  color: var(--text-secondary, #9aa4af);
+  font-size: 11.5px;
+}
+
+.workflow-station-detail .workflow-step-button {
+  opacity: 1;
+}
+
+/* The collapsed strip: count, the map drawn small, and the current steps. */
+.workflow-strip {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  padding: 6px 10px 6px 12px;
+  min-width: 0;
+}
+
+.workflow-strip-count {
+  flex: none;
+  color: var(--text-secondary, #9aa4af);
+  font-family: var(--terminal-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-strip-map {
+  flex: none;
+  max-width: 45%;
+  max-height: 32px;
+  overflow: visible;
+}
+
+.workflow-strip-dot {
+  fill: var(--terminal-panel-surface, #111316);
+  stroke: var(--workflow-tone);
+  stroke-width: 1.6;
+}
+
+.workflow-strip-dot--filled {
+  fill: var(--workflow-tone);
+}
+
+.workflow-strip-now {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary, #9aa4af);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workflow-strip-now b {
+  color: #d29922;
+  font-weight: 600;
+}
+
+.workflow-strip-now b.workflow-strip-word--alert {
+  color: #f85149;
+}
+
+/* In a short pane the expanded drawer opens over the bottom of the terminal. */
+.workflow-drawer-overlay {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  height: var(--workflow-drawer-overlay-height, 240px);
+  background: var(--terminal-panel-surface, #111316);
+  border-top: 1px solid rgb(255 255 255 / 0.16);
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 0.4);
+  outline: none;
 }

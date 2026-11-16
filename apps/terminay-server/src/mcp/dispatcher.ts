@@ -2127,7 +2127,7 @@ function publicControlError(error: unknown): ControlError {
 		workflow_exists: 'This terminal already has an unfinished workflow.',
 		no_workflow: 'This terminal has no workflow.',
 		step_not_found: "That step is not in this terminal's workflow.",
-		step_active: 'Another step is still running or waiting on the user.',
+		step_blocked: 'That step waits on steps that are not done or skipped.',
 		template_not_found: 'No workflow template has that id.',
 		internal: 'The control operation failed.',
 	};
@@ -2157,7 +2157,7 @@ function isControlErrorCode(value: unknown): value is ControlError['code'] {
 		value === 'workflow_exists' ||
 		value === 'no_workflow' ||
 		value === 'step_not_found' ||
-		value === 'step_active' ||
+		value === 'step_blocked' ||
 		value === 'template_not_found' ||
 		value === 'internal'
 	);

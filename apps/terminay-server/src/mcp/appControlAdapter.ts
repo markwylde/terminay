@@ -614,15 +614,19 @@ export function serverControlError(error: unknown): ControlEndpointError {
 		reason === 'workflow_exists' ||
 		reason === 'no_workflow' ||
 		reason === 'step_not_found' ||
-		reason === 'step_active' ||
+		reason === 'step_blocked' ||
 		reason === 'template_not_found'
 	) {
 		const details = isRecord(record?.details) ? record.details : {};
 		const named = details.workflowId ?? details.stepId ?? details.templateId;
+		// step_blocked names every step the refused one still waits on.
+		const many = Array.isArray(details.stepIds)
+			? details.stepIds.filter((id): id is string => typeof id === 'string')
+			: undefined;
 		return new ControlEndpointError(
 			reason,
 			message.slice(0, 512),
-			typeof named === 'string' ? [named] : undefined,
+			many ?? (typeof named === 'string' ? [named] : undefined),
 		);
 	}
 	const bounded = `${message}${detail}`.slice(0, 512);

@@ -80,15 +80,24 @@ import { registerAppWindowPane } from '../workspace/appWindows/appWindowPanes';
 import { isLocalConnection } from '../workspace/serverUpgradeModel';
 import { appWindowPaneKey } from '../workspace/appWindows/useServerAppWindows';
 import { useTerminalWorkflow } from '../workspace/workflows/useServerWorkflows';
-import { WorkflowPanel } from '../workspace/workflows/WorkflowPanel';
+import { WorkflowDrawer } from '../workspace/workflows/WorkflowDrawer';
 import {
+	WorkflowPanel,
+	workflowRailWidth,
+} from '../workspace/workflows/WorkflowPanel';
+import { metroLayout } from '../workspace/workflows/workflowGraph';
+import {
+	drawerLayout,
 	overlayWidth,
 	panelLayout,
+	reservedHeight,
 	reservedWidth,
 	tabSummary,
 	WORKFLOW_RAIL_WIDTH,
 } from '../workspace/workflows/workflowPanelModel';
 import {
+	useWorkflowDrawerSetting,
+	useWorkflowLayout,
 	useWorkflowPanelNotes,
 	useWorkflowPanelSetting,
 	useWorkflowPanelWidth,
@@ -649,6 +658,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		props.params.isFocused === true,
 	);
 	const workflowSetting = useWorkflowPanelSetting();
+	const workflowDrawerSetting = useWorkflowDrawerSetting();
+	const workflowLayoutChoice = useWorkflowLayout();
 	const workflowChosenWidth = useWorkflowPanelWidth();
 	const workflowNotes = useWorkflowPanelNotes();
 	// While the user drags the panel's separator, this pane draws the width
@@ -661,11 +672,27 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				readonly columnsBesideRail: number;
 				readonly cellWidth: number;
 				readonly paneWidth: number;
+				readonly paneHeight: number;
+				readonly cellHeight: number;
 		  }
 		| undefined
 	>(undefined);
+	const workflowView = terminalWorkflow.view;
+	const workflowHorizontal = workflowLayoutChoice === 'horizontal';
+	// The rail widens as brackets nest, and the drawer grows with the map's lanes.
+	const workflowRail = useMemo(
+		() => (workflowView === undefined ? undefined : workflowRailWidth(workflowView)),
+		[workflowView],
+	);
+	const workflowLanes = useMemo(
+		() =>
+			workflowView?.state === 'attached'
+				? metroLayout(workflowView.workflow.steps).lanes
+				: 1,
+		[workflowView],
+	);
 	const workflowLayout =
-		terminalWorkflow.view === undefined
+		workflowView === undefined || workflowHorizontal
 			? undefined
 			: panelLayout(
 					workflowSetting,
@@ -673,9 +700,23 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					workflowGeometry?.columnsBesideRail,
 					workflowGeometry?.cellWidth,
 				);
-	const workflowReserved = reservedWidth(workflowLayout);
+	const workflowDrawer =
+		workflowView === undefined || !workflowHorizontal
+			? undefined
+			: drawerLayout(
+					workflowDrawerSetting,
+					workflowLanes,
+					workflowGeometry?.paneHeight,
+					workflowGeometry?.cellHeight,
+				);
+	const workflowReserved = reservedWidth(workflowLayout, workflowRail);
 	const workflowReservedRef = useRef(workflowReserved);
 	workflowReservedRef.current = workflowReserved;
+	const workflowRailRef = useRef(workflowRail);
+	workflowRailRef.current = workflowRail;
+	const workflowReservedHeight = reservedHeight(workflowDrawer);
+	const workflowReservedHeightRef = useRef(workflowReservedHeight);
+	workflowReservedHeightRef.current = workflowReservedHeight;
 	// An attach or renewal that failed on the dying transport is the reconnect's
 	// story, and the workspace overlay is already telling it. The rebind onto
 	// the replacement connection clears the error either way.
@@ -1870,18 +1911,26 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			// the renderer's own cell width and the fit's own overhead, so the
 			// answer does not drift as the panel's width changes the fit.
 			const cellWidth = terminal.dimensions?.css.cell.width ?? 0;
+			const cellHeight = terminal.dimensions?.css.cell.height ?? 0;
 			if (cellWidth > 0) {
 				const paneWidth = root.clientWidth + workflowReservedRef.current;
+				// The pane's height with nothing reserved at its bottom, which decides
+				// whether the expanded drawer leaves the terminal its ten rows.
+				const paneHeight = root.clientHeight + workflowReservedHeightRef.current;
 				const columnsBesideRail = Math.floor(
-					(paneWidth - WORKFLOW_RAIL_WIDTH - terminalFitOverhead(terminal)) /
+					(paneWidth -
+						(workflowRailRef.current ?? WORKFLOW_RAIL_WIDTH) -
+						terminalFitOverhead(terminal)) /
 						cellWidth,
 				);
 				setWorkflowGeometry((previous) =>
 					previous?.columnsBesideRail === columnsBesideRail &&
 					previous.paneWidth === paneWidth &&
-					Math.abs(previous.cellWidth - cellWidth) < 0.01
+					previous.paneHeight === paneHeight &&
+					Math.abs(previous.cellWidth - cellWidth) < 0.01 &&
+					Math.abs(previous.cellHeight - cellHeight) < 0.01
 						? previous
-						: { columnsBesideRail, cellWidth, paneWidth },
+						: { columnsBesideRail, cellWidth, paneWidth, paneHeight, cellHeight },
 				);
 			}
 			if (
@@ -3422,6 +3471,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		...(workflowReserved > 0
 			? { paddingRight: `${workflowReserved}px`, boxSizing: 'border-box' }
 			: {}),
+		...(workflowReservedHeight > 0
+			? { paddingBottom: `${workflowReservedHeight}px`, boxSizing: 'border-box' }
+			: {}),
 	} as CSSProperties;
 
 	const copyTouchSelection = () => {
@@ -3624,11 +3676,31 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 					notes={workflowNotes}
 					width={workflowLayout.width}
 					maxWidth={workflowLayout.maxWidth}
+					{...(workflowRail === undefined ? {} : { railWidth: workflowRail })}
 					overlayWidth={overlayWidth(
 						workflowChosenWidth,
 						workflowGeometry?.paneWidth,
 					)}
 					onPreviewWidth={setWorkflowPreviewWidth}
+					target={{
+						serverId: terminalClientContext.serverId,
+						projectId: terminalClientContext.projectId,
+						sessionId: props.params.sessionId,
+					}}
+					{...(terminalWorkflow.server === undefined
+						? {}
+						: { client: terminalWorkflow.server.client })}
+					focusTerminal={() => terminalRef.current?.focus()}
+				/>
+			)}
+			{terminalWorkflow.view === undefined ||
+			workflowDrawer === undefined ||
+			!terminalClientContext ? null : (
+				<WorkflowDrawer
+					view={terminalWorkflow.view}
+					mode={workflowDrawer.mode}
+					height={workflowDrawer.height}
+					overlayHeight={workflowDrawer.overlayHeight}
 					target={{
 						serverId: terminalClientContext.serverId,
 						projectId: terminalClientContext.projectId,

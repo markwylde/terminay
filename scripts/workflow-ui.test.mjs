@@ -38,6 +38,8 @@ const model = await bundle('src/workspace/workflows/workflowPanelModel.ts', 'mod
 const setting = await bundle('src/workspace/workflows/workflowPanelSetting.ts', 'setting.cjs');
 const panel = await bundle('src/workspace/workflows/WorkflowPanel.tsx', 'panel.cjs');
 const badge = await bundle('src/workspace/workflows/WorkflowTabBadge.tsx', 'badge.cjs');
+const drawer = await bundle('src/workspace/workflows/WorkflowDrawer.tsx', 'drawer.cjs');
+const optionsMenu = await bundle('src/workspace/workflows/WorkflowOptionsMenu.tsx', 'menu.cjs');
 const clientCore = await bundle('packages/client-core/src/workflows.ts', 'client-core.cjs');
 // From source: the fast CI gate runs before any package is built.
 const serverCore = await bundle('packages/server-core/src/workflowService/types.ts', 'server-types.cjs');
@@ -73,7 +75,14 @@ const step = (id, status, extra = {}) => ({
 const attached = (steps, extra = {}) => ({
 	sessionId: 'session-a',
 	state: 'attached',
-	workflow: { id: 'wf-1', name: 'Standard flow', openingPrompt: '', templateId: null, createdAt: 0, steps },
+	workflow: {
+		id: 'wf-1',
+		name: 'Standard flow',
+		openingPrompt: '',
+		templateId: null,
+		createdAt: 0,
+		steps: steps.map((item, index) => ({ after: index === 0 ? [] : [steps[index - 1].id], ...item })),
+	},
 	resumeStepId: null,
 	unfinished: true,
 	...extra,
@@ -145,16 +154,12 @@ test('the expanded panel shows name, progress, brief, times and notes, and highl
 				step('c', 'not_started'),
 			]),
 			workflow: {
-				id: 'wf-1',
-				name: 'Standard flow',
-				openingPrompt: 'Ship it.',
-				templateId: null,
-				createdAt: 0,
-				steps: [
+				...attached([
 					step('a', 'done', { startedAt: 0, endedAt: 65_000, note: 'proposal written' }),
 					step('b', 'needs_input', { startedAt: 65_000, note: 'Keep workflows per terminal?' }),
 					step('c', 'not_started'),
-				],
+				]).workflow,
+				openingPrompt: 'Ship it.',
 			},
 		},
 	});
@@ -163,7 +168,7 @@ test('the expanded panel shows name, progress, brief, times and notes, and highl
 	assert.match(full, /<span class="workflow-step-title">Step a<span class="workflow-visually-hidden">, done<\/span><\/span>/);
 	assert.match(full, /<span class="workflow-step-time">1m<\/span>/);
 	assert.match(full, /proposal written/);
-	assert.match(full, /class="workflow-step workflow-step--active" data-status="needs_input" aria-current="step"/);
+	assert.match(full, /class="workflow-step workflow-step--active" data-status="needs_input" data-workflow-step-id="b" aria-current="step"/);
 	assert.match(full, /Keep workflows per terminal\?/);
 });
 
@@ -173,7 +178,7 @@ test('workflow text is rendered literally, never as markup', () => {
 		mode: 'expanded',
 		view: {
 			...attached([]),
-			workflow: { id: 'wf-1', name: hostile, openingPrompt: hostile, templateId: null, createdAt: 0, steps: [step('a', 'done', { title: hostile, note: hostile })] },
+			workflow: { id: 'wf-1', name: hostile, openingPrompt: hostile, templateId: null, createdAt: 0, steps: [step('a', 'done', { title: hostile, note: hostile, after: [] })] },
 		},
 	});
 	assert.ok(!markup.includes('<img'));
@@ -192,18 +197,28 @@ test('the collapse setting is one device-local choice every panel follows', () =
 	assert.deepEqual(seen, ['expanded', 'collapsed']);
 	// Nothing in the setting module reaches a server: it takes no client at all.
 	assert.deepEqual(Object.keys(setting).sort(), [
+		'WORKFLOW_DRAWER_STORAGE_KEY',
+		'WORKFLOW_LAYOUT_STORAGE_KEY',
 		'WORKFLOW_PANEL_NOTES_STORAGE_KEY',
 		'WORKFLOW_PANEL_STORAGE_KEY',
 		'WORKFLOW_PANEL_WIDTH_STORAGE_KEY',
+		'setWorkflowDrawerSetting',
+		'setWorkflowLayout',
 		'setWorkflowPanelNotes',
 		'setWorkflowPanelSetting',
 		'setWorkflowPanelWidth',
+		'subscribeWorkflowDrawerSetting',
+		'subscribeWorkflowLayout',
 		'subscribeWorkflowPanelNotes',
 		'subscribeWorkflowPanelSetting',
 		'subscribeWorkflowPanelWidth',
+		'useWorkflowDrawerSetting',
+		'useWorkflowLayout',
 		'useWorkflowPanelNotes',
 		'useWorkflowPanelSetting',
 		'useWorkflowPanelWidth',
+		'workflowDrawerSetting',
+		'workflowLayout',
 		'workflowPanelNotes',
 		'workflowPanelSetting',
 		'workflowPanelWidth',
@@ -301,18 +316,16 @@ test('the expanded header offers Full, 2 lines and Current only, and the panel s
 	const at = (notes) => render({ mode: 'expanded', view: attached(steps), ...(notes ? { notes } : {}) });
 	const full = at();
 	assert.match(full, /class="workflow-panel workflow-panel--expanded workflow-panel--notes-full"/);
-	assert.match(full, /<select class="workflow-notes-select" aria-label="Step notes" title="Step notes">/);
-	assert.match(full, /<option value="full" selected="">Full<\/option><option value="short">2 lines<\/option><option value="current">Current only<\/option>/);
+	// The density is chosen in the ⋯ menu, not the header (ADR-0128).
+	assert.ok(!/<select/.test(full));
 	for (const note of ['note a', 'note b', 'note c', 'note d']) assert.match(full, new RegExp(note));
 	assert.ok(!/workflow-step-note[^>]*title=/.test(full), 'no title while notes show in full');
 
 	const short = at('short');
 	assert.match(short, /workflow-panel--notes-short/);
-	assert.match(short, /<option value="short" selected="">2 lines<\/option>/);
 	assert.match(short, /<span class="workflow-step-note workflow-text" title="note a">note a<\/span>/);
 
 	const currentOnly = at('current');
-	assert.match(currentOnly, /<option value="current" selected="">Current only<\/option>/);
 	assert.deepEqual(currentOnly.match(/note [a-e]/g), ['note b', 'note d']);
 	assert.equal(currentOnly.match(/class="workflow-step[ "]/g).length, 5, 'every step is still listed');
 
@@ -346,11 +359,13 @@ test('the expanded header offers Full, 2 lines and Current only, and the panel s
 	assert.ok(!/workflow-notes-select/.test(rail));
 });
 
-test('a workflow that could not be restored says so and offers removal', () => {
+test('a workflow that could not be restored says so and offers its options menu, which holds removal', () => {
 	const client = { remove: async () => {} };
 	const markup = render({ mode: 'expanded', view: { sessionId: 'session-a', state: 'unrestorable' }, client });
 	assert.match(markup, /could not be restored/);
-	assert.match(markup, /Remove…/);
+	assert.match(markup, /aria-label="Workflow options"[^>]*aria-haspopup="menu"/);
+	// No control outside the menu removes a workflow.
+	assert.doesNotMatch(markup, /Remove/);
 	const rail = render({ view: { sessionId: 'session-a', state: 'unrestorable' }, client });
 	assert.match(rail, /aria-label="Workflow could not be restored"/);
 });
@@ -645,7 +660,7 @@ const savedTemplate = (id, extra = {}) => ({
 	description: '',
 	category: '',
 	openingPrompt: '',
-	steps: [{ id: `${id}-s1`, title: 'Explore', prompt: 'look around', icon: '' }],
+	steps: [{ id: `${id}-s1`, title: 'Explore', prompt: 'look around', icon: '', after: [] }],
 	...extra,
 });
 
@@ -653,7 +668,7 @@ test('the library groups by category, shows step counts, and the filter reaches 
 	const draft = library.draftFrom(
 		templateState(
 			[
-				savedTemplate('a', { category: 'OpenSpec', steps: [{ id: 's1', title: 'Propose', prompt: 'write the proposal', icon: '' }, { id: 's2', title: 'Apply', prompt: 'zebracorn', icon: '' }] }),
+				savedTemplate('a', { category: 'OpenSpec', steps: [{ id: 's1', title: 'Propose', prompt: 'write the proposal', icon: '', after: [] }, { id: 's2', title: 'Apply', prompt: 'zebracorn', icon: '', after: ['s1'] }] }),
 				savedTemplate('b', { category: 'Release' }),
 				savedTemplate('c'),
 			],
@@ -683,20 +698,31 @@ test('a saved step keeps its id on save, and a new step is sent without one', ()
 	assert.equal(library.templateFingerprint(draft.templates[0]), library.templateFingerprint(library.draftFrom(templateState([savedTemplate('a')])).templates[0]));
 });
 
-test('Alt+Arrow moves a step by one place and never past either end', () => {
-	assert.deepEqual(library.moveBy(['a', 'b', 'c'], 2, -1), ['a', 'c', 'b']);
-	const same = ['a', 'b'];
-	assert.equal(library.moveBy(same, 0, -1), same);
-	assert.equal(library.moveBy(same, 1, 1), same);
-	assert.deepEqual(library.moveBefore(['a', 'b', 'c'], 0, 3), ['b', 'c', 'a']);
-	assert.deepEqual(library.moveBefore(['a', 'b', 'c'], 2, 0), ['c', 'a', 'b']);
+test('the outline editor draws a bracket, its actions, and a handle per step', () => {
+	const template = library.withSteps(
+		{ id: 't', name: 'T', description: '', category: '', openingPrompt: '' },
+		[
+			{ key: 'p', title: 'Propose', prompt: '', icon: '', after: [] },
+			{ key: 'c', title: 'Codex review', prompt: '', icon: '', after: ['p'] },
+			{ key: 's', title: 'Spec review', prompt: '', icon: '', after: ['p'] },
+			{ key: 'a', title: 'Amend', prompt: '', icon: '', after: ['c', 's'] },
+		],
+	);
+	const noop = () => {};
 	const markup = renderToStaticMarkup(
-		React.createElement(category.StepList, {
-			editor: { addStep() {}, removeStep() {}, updateStep() {}, moveStep() {}, reorderSteps() {} },
-			template: library.draftFrom(templateState([savedTemplate('a')])).templates[0],
+		React.createElement(category.StepOutline, {
+			editor: { addStep: noop, addStepThen: noop, addStepAlongside: noop, addStepTrack: noop, removeStep: noop, updateStep: noop, moveStep: noop, moveStepBefore: noop },
+			template,
 		}),
 	);
 	assert.match(markup, /aria-label="Move step 1" aria-keyshortcuts="Alt\+ArrowUp Alt\+ArrowDown"/);
+	assert.equal(markup.match(/class="workflow-outline-group"/g).length, 1);
+	assert.equal(markup.match(/class="workflow-outline-track"/g).length, 2);
+	assert.equal(markup.match(/>\+ then</g).length, 4);
+	assert.equal(markup.match(/>\+ alongside</g).length, 4);
+	assert.match(markup, />\+ another track alongside</);
+	assert.match(markup, />\+ Add step at the end</);
+	assert.doesNotMatch(markup, /workflow-outline-after|workflow-outline-notice/);
 });
 
 test('the icon picker offers none and every icon, and shows the chosen one', () => {
@@ -751,7 +777,7 @@ test('the editor shows the size against 56 KiB and the exact launch text', () =>
 	assert.ok(!/[\r\n\t]/.test(preview));
 	assert.equal(preview, library.launchPreview(`${template.openingPrompt}\n\n`));
 	assert.ok(markup.includes(preview.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#x27;')));
-	assert.ok(!/collapse|expanded/i.test(markup), 'no template field chooses how the panel opens');
+	assert.ok(!/collapse|(?<!aria-)expanded/i.test(markup), 'no template field chooses how the panel opens');
 	assert.match(markup, /<fieldset class="workflow-editor-fieldset">/);
 });
 
@@ -833,7 +859,7 @@ test('a stale save explains itself, and a refusal is read through the facade wra
 
 const templateFor = (id, name, category = '') => ({
 	id, name, description: '', category, openingPrompt: '', revision: 1,
-	steps: [{ id: `${id}-1`, title: 'Investigate', prompt: '', icon: '' }],
+	steps: [{ id: `${id}-1`, title: 'Investigate', prompt: '', icon: '', after: [] }],
 });
 const commandTemplates = templateState(
 	[templateFor('loose', 'Loose ends'), { ...templateFor('std', 'Standard flow', 'OpenSpec'), description: 'Not the lite one' }, templateFor('hot', 'Hotfix', 'Release'), templateFor('lite', 'Lite flow', 'OpenSpec')],
@@ -1080,4 +1106,201 @@ test('the client sends a step update with its note and expected status to update
 		['workflow.update-step', { target, stepId: 'step-1', status: 'skipped', note: 'Skipped from the panel', expectedStatus: 'failed' }],
 		['workflow.update-step', { target, stepId: 'step-1', status: 'not_started', expectedStatus: 'skipped' }],
 	]);
+});
+
+// dag-workflows (ADR-0128): layouts, the options menu, brackets, capsules, the drawer.
+
+const renderDrawer = (props) =>
+	renderToStaticMarkup(
+		React.createElement(drawer.WorkflowDrawer, {
+			target,
+			focusTerminal: () => {},
+			mode: 'collapsed',
+			height: 164,
+			overlayHeight: 164,
+			...props,
+		}),
+	);
+const dag = (steps) => ({
+	sessionId: 'session-a',
+	state: 'attached',
+	workflow: { id: 'wf-1', name: 'Standard flow', openingPrompt: '', templateId: null, createdAt: 0, steps },
+	resumeStepId: null,
+	unfinished: true,
+});
+const reviews = (statuses = {}) =>
+	dag([
+		step('propose', statuses.propose ?? 'done', { title: 'Propose', after: [] }),
+		step('codex', statuses.codex ?? 'running', { title: 'Codex review', after: ['propose'] }),
+		step('specs', statuses.specs ?? 'running', { title: 'Spec review', after: ['propose'] }),
+		step('amend', statuses.amend ?? 'not_started', { title: 'Amend', after: ['codex', 'specs'] }),
+	]);
+
+test('the layout and the drawer collapse are device-local, with vertical and collapsed as fallbacks', () => {
+	const stored = new Map([
+		[setting.WORKFLOW_LAYOUT_STORAGE_KEY, 'diagonal'],
+		[setting.WORKFLOW_DRAWER_STORAGE_KEY, 'open'],
+	]);
+	globalThis.localStorage = {
+		getItem: (key) => stored.get(key) ?? null,
+		setItem: (key, value) => stored.set(key, value),
+	};
+	try {
+		assert.equal(setting.workflowLayout(), 'vertical');
+		assert.equal(setting.workflowDrawerSetting(), 'collapsed');
+		const seen = [];
+		const stopLayout = setting.subscribeWorkflowLayout(() => seen.push(setting.workflowLayout()));
+		setting.setWorkflowLayout('horizontal');
+		setting.setWorkflowLayout('horizontal');
+		assert.equal(stored.get(setting.WORKFLOW_LAYOUT_STORAGE_KEY), 'horizontal');
+		// Each layout keeps its own collapse: the drawer's choice leaves the panel's alone.
+		const panelBefore = setting.workflowPanelSetting();
+		setting.setWorkflowDrawerSetting('expanded');
+		assert.equal(setting.workflowPanelSetting(), panelBefore);
+		assert.equal(stored.get(setting.WORKFLOW_DRAWER_STORAGE_KEY), 'expanded');
+		// Another window's choice reaches this one through the storage event.
+		const listeners = [];
+		const realAdd = globalThis.addEventListener;
+		globalThis.addEventListener = (type, listener) => type === 'storage' && listeners.push(listener);
+		const stopStorage = setting.subscribeWorkflowLayout(() => seen.push(`storage:${setting.workflowLayout()}`));
+		stored.set(setting.WORKFLOW_LAYOUT_STORAGE_KEY, 'vertical');
+		for (const listener of listeners) listener({ key: setting.WORKFLOW_LAYOUT_STORAGE_KEY });
+		stopStorage();
+		globalThis.addEventListener = realAdd;
+		stopLayout();
+		assert.deepEqual(seen, ['horizontal', 'storage:vertical']);
+	} finally {
+		setting.setWorkflowLayout('vertical');
+		setting.setWorkflowDrawerSetting('collapsed');
+		delete globalThis.localStorage;
+	}
+});
+
+test('the drawer is header plus map, at most 240px, and keeps the strip unless the terminal keeps ten rows', () => {
+	assert.equal(model.drawerHeight(1), 36 + 16 + 56);
+	assert.equal(model.drawerHeight(2), 36 + 16 + 112);
+	assert.equal(model.drawerHeight(9), 240);
+	// 600px pane, 17px rows: 164px drawer leaves 436px, over 170.
+	assert.deepEqual(model.drawerLayout('expanded', 2, 600, 17), { mode: 'expanded', height: 164, overlayHeight: 164 });
+	assert.equal(model.reservedHeight(model.drawerLayout('expanded', 2, 600, 17)), 164);
+	// 300px pane: 164px leaves 136px, under ten 17px rows; the overlay is at most 85% of the pane.
+	const short = model.drawerLayout('expanded', 4, 300, 17);
+	assert.deepEqual(short, { mode: 'forced-collapsed', height: 240, overlayHeight: 240 });
+	assert.equal(model.drawerLayout('expanded', 4, 200, 17).overlayHeight, 170);
+	assert.equal(model.reservedHeight(short), 46);
+	assert.equal(model.reservedHeight(model.drawerLayout('collapsed', 2, 600, 17)), 46);
+	assert.equal(model.reservedHeight(undefined), 0);
+	// The rail's reservation is its computed width.
+	assert.equal(model.reservedWidth({ mode: 'collapsed', width: 264, maxWidth: 640 }, 44), 44);
+});
+
+test('the progress line counts running and needs-you steps, and the strip names every active step in order', () => {
+	const steps = [
+		step('a', 'done', { title: 'Plan' }),
+		step('b', 'running', { title: 'Server' }),
+		step('c', 'running', { title: 'Panel UI' }),
+		step('d', 'needs_input', { title: 'Docs' }),
+	];
+	assert.equal(model.progressLabel({ steps }, 0), '1 of 4 done · 2 running · 1 needs you');
+	assert.deepEqual(model.stripWords(steps), [
+		{ title: 'Server', needsYou: false },
+		{ title: 'Panel UI', needsYou: false },
+		{ title: 'Docs', needsYou: true },
+	]);
+	assert.equal(model.stripWords([step('a', 'done'), step('b', 'skipped')]), 'Finished');
+	assert.equal(model.stripWords([step('a', 'done'), step('b', 'not_started')]), 'Waiting');
+});
+
+test('two reviews of one proposal show as a bracket of two tracks with no after text, and both are highlighted', () => {
+	const markup = render({ mode: 'expanded', view: reviews() });
+	assert.equal(markup.match(/class="workflow-group /g).length, 1);
+	assert.match(markup, /class="workflow-group workflow-group--running"/);
+	assert.equal(markup.match(/class="workflow-track"/g).length, 2);
+	assert.doesNotMatch(markup, /workflow-step-after/);
+	assert.equal(markup.match(/workflow-step--active/g).length, 2);
+	assert.match(markup, /1 of 4 done<\/span><span aria-hidden="true"> · <\/span><span class="workflow-progress-part">2 running/);
+	// Propose, the bracket, then Amend, in that order.
+	assert.ok(markup.indexOf('Propose') < markup.indexOf('workflow-group') && markup.indexOf('workflow-group') < markup.indexOf('Amend'));
+});
+
+test('a dependency the brackets cannot show reads "after" under its step only', () => {
+	const markup = render({
+		mode: 'expanded',
+		view: dag([
+			step('amend', 'done', { title: 'Amend', after: [] }),
+			step('server', 'running', { title: 'Server', after: ['amend'] }),
+			step('ui', 'running', { title: 'UI', after: ['amend'] }),
+			step('docs', 'needs_input', { title: 'Docs', after: ['amend'] }),
+			step('verify', 'not_started', { title: 'Verify', after: ['server', 'ui'] }),
+			step('e2e', 'not_started', { title: 'E2E', after: ['ui'] }),
+			step('pr', 'not_started', { title: 'PR', after: ['verify', 'e2e', 'docs'] }),
+		]),
+	});
+	assert.equal(markup.match(/workflow-step-after/g).length, 1);
+	assert.match(markup, /<span class="workflow-step-after">after UI<\/span>/);
+	// The outer bracket holds a needs-you step: red. Its sequence track is divided from the other.
+	assert.match(markup, /class="workflow-group workflow-group--alert workflow-group--divided"/);
+});
+
+test('the collapsed rail draws a capsule per bracket at the computed width', () => {
+	const flat = render({ view: attached([step('a', 'done'), step('b', 'running'), step('c', 'not_started')]) });
+	assert.match(flat, /--workflow-rail-width:36px/);
+	assert.doesNotMatch(flat, /workflow-capsule/);
+	const nested = dag([
+		step('a', 'done', { after: [] }),
+		step('b', 'running', { after: ['a'] }),
+		step('c', 'running', { after: ['a'] }),
+		step('d', 'not_started', { after: ['a'] }),
+		step('e', 'not_started', { after: ['b', 'c'] }),
+		step('f', 'not_started', { after: ['c'] }),
+		step('g', 'not_started', { after: ['e', 'f', 'd'] }),
+	]);
+	const rail = render({ view: nested });
+	assert.match(rail, /--workflow-rail-width:44px/);
+	assert.equal(panel.workflowRailWidth(nested), 44);
+	assert.equal(rail.match(/class="workflow-capsule /g).length, 3);
+	assert.match(rail, /workflow-capsule-rule/);
+	assert.equal(rail.match(/class="workflow-rail-step[ "]/g).length, 7);
+	// The rail offers its options menu too.
+	assert.match(rail, /aria-label="Workflow options"/);
+});
+
+test('the options menu offers Show as Vertical and Horizontal, the current one checked, then Remove workflow…', () => {
+	// Static markup renders the closed control; open the menu through its click handler.
+	const markup = renderToStaticMarkup(
+		React.createElement(optionsMenu.WorkflowOptionsMenu, { view: reviews(), target, client: { remove: async () => {} } }),
+	);
+	assert.match(markup, /aria-haspopup="menu" aria-expanded="false"/);
+	assert.doesNotMatch(markup, /role="menu"/);
+});
+
+test('the strip shows the count, the small map and every active step; the expanded drawer shows the metro map', () => {
+	const strip = renderDrawer({ view: reviews({ specs: 'needs_input' }) });
+	assert.match(strip, /data-workflow-layout="horizontal"/);
+	assert.match(strip, /--workflow-drawer-height:46px/);
+	assert.match(strip, /<span class="workflow-strip-count">1\/4<\/span>/);
+	assert.equal(strip.match(/class="workflow-strip-dot /g).length, 4);
+	assert.match(strip, /<b class="">Codex review<\/b>|<b>Codex review<\/b>/);
+	assert.match(strip, /<b class="workflow-strip-word--alert">Spec review<\/b> needs you/);
+	assert.match(strip, /aria-label="Workflow options"/);
+	assert.match(strip, /aria-label="Expand workflow"/);
+
+	const expanded = renderDrawer({ mode: 'expanded', view: reviews() });
+	assert.match(expanded, /--workflow-drawer-height:164px/);
+	assert.match(expanded, /1 of 4 done<\/span><span aria-hidden="true"> · <\/span><span class="workflow-progress-part">2 running/);
+	// Propose in column 0, the reviews stacked in column 1, Amend in column 2.
+	const at = (id) => {
+		const match = expanded.match(new RegExp(`data-workflow-step-id="${id}"[^>]*style="left:(\\d+)px;top:(\\d+)px"`));
+		return [Number(match[1]), Number(match[2])];
+	};
+	assert.deepEqual(at('propose'), [50, 8]);
+	assert.deepEqual(at('codex'), [170, 8]);
+	assert.deepEqual(at('specs'), [170, 64]);
+	assert.deepEqual(at('amend'), [290, 8]);
+	// Lines leaving Propose are solid green; those into Amend wait.
+	assert.match(expanded, /class="workflow-edge workflow-edge--done" data-workflow-edge="propose&gt;codex"/);
+	assert.match(expanded, /class="workflow-edge workflow-edge--waiting" data-workflow-edge="codex&gt;amend"/);
+	// One station is in the tab order; the rest are reached with the arrow keys.
+	assert.equal(expanded.match(/class="workflow-station[^"]*"[^>]*tabindex="0"/g).length, 1);
+	assert.match(expanded, /aria-label="Collapse workflow"/);
 });

@@ -8,8 +8,9 @@
 import { type ReactElement, useEffect, useState } from 'react';
 import { useTerminalWorkflow } from './useServerWorkflows';
 import {
+	currentSteps,
+	currentStepTitle,
 	finishedLabel,
-	isSettledStatus,
 	tabSummary,
 	type WorkflowTabSummary,
 } from './workflowPanelModel';
@@ -95,19 +96,15 @@ export function workflowStepLine(
 	const { steps } = view.workflow;
 	const total = steps.length;
 	if (total === 0) return undefined;
-	const position = (index: number) => `${index + 1}/${total}`;
-	const waiting = steps.findIndex((step) => step.status === 'needs_input');
-	if (waiting >= 0)
-		return `Needs input · ${position(waiting)} ${steps[waiting]?.title ?? ''}`.trim();
-	const running = steps.findIndex((step) => step.status === 'running');
-	if (running >= 0)
-		return `${position(running)} ${steps[running]?.title ?? ''}`.trim();
-	const failed = steps.findIndex((step) => step.status === 'failed');
-	if (failed >= 0)
-		return `Failed · ${position(failed)} ${steps[failed]?.title ?? ''}`.trim();
-	const next = steps.findIndex((step) => !isSettledStatus(step.status));
-	if (next < 0) return finishedLabel(steps);
-	return `Next · ${position(next)} ${steps[next]?.title ?? ''}`.trim();
+	const current = currentSteps(steps);
+	const first = current[0];
+	if (first === undefined) return finishedLabel(steps);
+	const index = steps.indexOf(first);
+	const at = `${index + 1}/${total} ${currentStepTitle(steps) ?? first.title}`.trim();
+	if (first.status === 'needs_input') return `Needs input · ${at}`;
+	if (first.status === 'running') return at;
+	if (first.status === 'failed') return `Failed · ${at}`;
+	return `Next · ${at}`;
 }
 
 /**

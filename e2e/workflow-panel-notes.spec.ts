@@ -68,9 +68,28 @@ function mcpFrom(page: Page, userDataDir: string) {
 
 const workflowPanel = (page: Page, sessionId: string): Locator =>
 	terminalPanelForSession(page, sessionId).locator('.workflow-panel');
-const notesSelect = (scope: Locator): Locator => scope.getByRole('combobox', { name: 'Step notes' });
+type Density = 'full' | 'short' | 'current';
+const DENSITY_LABEL: Record<Density, string> = { full: 'Full', short: '2 lines', current: 'Current only' };
+const optionsButton = (scope: Locator): Locator => scope.getByRole('button', { name: 'Workflow options' });
+const densityItem = (scope: Locator, density: Density): Locator =>
+	scope.getByRole('menuitemradio', { name: `Step notes: ${DENSITY_LABEL[density]}` });
 const shownNotes = (scope: Locator): Promise<string[]> =>
 	scope.locator('.workflow-step-note').allTextContents();
+
+/** Choose a note density from the panel's ⋯ menu (ADR-0128). */
+async function chooseNotes(scope: Locator, density: Density): Promise<void> {
+	await optionsButton(scope).click();
+	await densityItem(scope, density).click();
+	await expect(scope.getByRole('menu')).toHaveCount(0);
+}
+
+/** The ⋯ menu marks this density as the chosen one; the menu is closed again after. */
+async function expectNotes(scope: Locator, density: Density): Promise<void> {
+	await optionsButton(scope).click();
+	await expect(densityItem(scope, density)).toHaveAttribute('aria-checked', 'true');
+	await scope.page().keyboard.press('Escape');
+	await expect(scope.getByRole('menu')).toHaveCount(0);
+}
 
 async function boxOf(locator: Locator): Promise<{ x: number; y: number; width: number; height: number }> {
 	const box = await locator.boundingBox();
@@ -149,11 +168,11 @@ test('the panel shows notes Full, cut to 2 lines, or for Current only, and remem
 	await setFromAnotherWindow(mainWindow, SETTING_KEY, 'expanded');
 	const panel = workflowPanel(mainWindow, terminal);
 	await expect(panel).toHaveAttribute('data-workflow-mode', 'expanded', { timeout: READY_TIMEOUT_MS });
-	const select = notesSelect(panel);
 	const firstNote = panel.locator('.workflow-step .workflow-step-note').first();
 
-	// Full by default: every note, whole.
-	await expect(select).toHaveValue('full');
+	// Full by default: every note, whole. The header holds no density control.
+	await expect(panel.locator('.workflow-header select')).toHaveCount(0);
+	await expectNotes(panel, 'full');
 	expect(await storedNotes(mainWindow)).toBeNull();
 	await expect.poll(() => shownNotes(panel)).toEqual([LONG_NOTE, 'codex: 2 findings', 'not needed', 'writing the select']);
 	const fullHeight = (await boxOf(firstNote)).height;
@@ -163,7 +182,7 @@ test('the panel shows notes Full, cut to 2 lines, or for Current only, and remem
 	await panel.screenshot({ path: testInfo.outputPath('notes-full-panel.png') });
 
 	// 2 lines: the long note is cut to two lines; its text is unchanged.
-	await select.selectOption('short');
+	await chooseNotes(panel, 'short');
 	await expect(panel).toHaveClass(/workflow-panel--notes-short/);
 	await expect.poll(() => storedNotes(mainWindow)).toBe('short');
 	await expect.poll(async () => (await boxOf(firstNote)).height).toBeLessThanOrEqual(lineHeight * 2 + 1);
@@ -172,7 +191,7 @@ test('the panel shows notes Full, cut to 2 lines, or for Current only, and remem
 	await panel.screenshot({ path: testInfo.outputPath('notes-2-lines-panel.png') });
 
 	// Current only: the failed and running steps' notes; every step still listed.
-	await select.selectOption('current');
+	await chooseNotes(panel, 'current');
 	await expect.poll(() => shownNotes(panel)).toEqual(['codex: 2 findings', 'writing the select']);
 	await expect(panel.locator('.workflow-step')).toHaveCount(5);
 	await panel.screenshot({ path: testInfo.outputPath('notes-current-only-panel.png') });
@@ -185,30 +204,35 @@ test('the panel shows notes Full, cut to 2 lines, or for Current only, and remem
 	// Home keeps its own choice, and its changes leave the panel alone.
 	expect(JSON.parse((await mainWindow.evaluate((key) => localStorage.getItem(key), HOME_VIEW_KEY)) ?? '{}').notes).toBe('full');
 	await setFromAnotherWindow(mainWindow, HOME_VIEW_KEY, JSON.stringify({ notes: 'short' }));
-	await expect(select).toHaveValue('current');
+	await expectNotes(panel, 'current');
 
 	// Back to Full: every note, whole again.
-	await select.selectOption('full');
+	await chooseNotes(panel, 'full');
 	await expect.poll(() => shownNotes(panel)).toEqual([LONG_NOTE, 'codex: 2 findings', 'not needed', 'writing the select', 'Merge now?']);
 	await expect.poll(async () => (await boxOf(firstNote)).height).toBeGreaterThan(lineHeight * 2.5);
 
 	// The choice survives a reload.
-	await select.selectOption('current');
+	await chooseNotes(panel, 'current');
 	await mainWindow.reload({ waitUntil: 'domcontentloaded' });
 	await expect(workflowPanel(mainWindow, terminal)).toHaveAttribute('data-workflow-mode', 'expanded', { timeout: READY_TIMEOUT_MS });
-	await expect(notesSelect(workflowPanel(mainWindow, terminal))).toHaveValue('current');
+	await expectNotes(workflowPanel(mainWindow, terminal), 'current');
 	await expect.poll(() => shownNotes(workflowPanel(mainWindow, terminal))).toEqual(['codex: 2 findings', 'Merge now?']);
 
 	// A stored value that is not one of the three reads as Full.
 	await setFromAnotherWindow(mainWindow, NOTES_KEY, 'none');
-	await expect(notesSelect(workflowPanel(mainWindow, terminal))).toHaveValue('full');
+	await expectNotes(workflowPanel(mainWindow, terminal), 'full');
 
-	// At the narrowest panel, a long name wraps and both controls stay whole.
+	// At the narrowest panel, a long name wraps and both controls stay whole;
+	// the menu, wider than the panel, stays inside the window.
 	await setFromAnotherWindow(mainWindow, WIDTH_KEY, '200');
 	const narrow = workflowPanel(mainWindow, terminal);
 	await expect.poll(async () => Math.round((await boxOf(narrow)).width)).toBe(200);
-	await expectInside(notesSelect(narrow), narrow);
+	await expectInside(optionsButton(narrow), narrow);
 	await expectInside(narrow.getByRole('button', { name: 'Collapse workflow' }), narrow);
+	await optionsButton(narrow).click();
+	await expectInside(narrow.getByRole('menu'), mainWindow.locator('body'));
+	await mainWindow.screenshot({ path: testInfo.outputPath('notes-panel-200px-menu.png') });
+	await mainWindow.keyboard.press('Escape');
 	await narrow.screenshot({ path: testInfo.outputPath('notes-panel-200px.png') });
 
 	await mainWindow.evaluate((keys) => {
@@ -240,10 +264,10 @@ test('split panes share one note density', async ({ electronApp, mainWindow, use
 	for (const terminal of [caller, other])
 		await expect(workflowPanel(mainWindow, terminal)).toHaveAttribute('data-workflow-mode', 'expanded', { timeout: READY_TIMEOUT_MS });
 
-	await notesSelect(workflowPanel(mainWindow, other)).selectOption('short');
+	await chooseNotes(workflowPanel(mainWindow, other), 'short');
 	for (const terminal of [caller, other]) {
 		await expect(workflowPanel(mainWindow, terminal)).toHaveClass(/workflow-panel--notes-short/);
-		await expect(notesSelect(workflowPanel(mainWindow, terminal))).toHaveValue('short');
+		await expectNotes(workflowPanel(mainWindow, terminal), 'short');
 	}
 	await mainWindow.evaluate((keys) => {
 		for (const key of keys) localStorage.removeItem(key);
@@ -280,18 +304,24 @@ test('in a narrow pane the overlay takes a density from the keyboard without rea
 	await expect.poll(() => shownNotes(overlay)).toEqual(['first done', 'second running']);
 
 	// The header fits however narrow the overlay is.
-	const select = notesSelect(overlay);
-	await expectInside(select, overlay);
+	const options = optionsButton(overlay);
+	await expectInside(options, overlay);
 	await expectInside(overlay.getByRole('button', { name: 'Collapse workflow' }), overlay);
 	testInfo.annotations.push({ type: 'overlay width', description: String(Math.round((await boxOf(overlay)).width)) });
 
-	// Choose Current only with the keyboard: the overlay stays, the terminal hears nothing.
+	// Choose Current only from the ⋯ menu with the keyboard: Vertical, Horizontal,
+	// then the three densities. The overlay stays, the terminal hears nothing.
 	const rows = terminalPanel.locator('.xterm-rows');
 	const typedBefore = (await rows.textContent()) ?? '';
-	await select.focus();
+	await options.focus();
 	await mainWindow.keyboard.press('ArrowDown');
-	await mainWindow.keyboard.press('ArrowDown');
-	await expect(select).toHaveValue('current');
+	await expect(overlay.getByRole('menuitemradio', { name: /Vertical/u })).toBeFocused();
+	await expectInside(overlay.getByRole('menu'), mainWindow.locator('body'));
+	for (let index = 0; index < 4; index += 1) await mainWindow.keyboard.press('ArrowDown');
+	await expect(densityItem(overlay, 'current')).toBeFocused();
+	await mainWindow.keyboard.press('Enter');
+	await expect(overlay.getByRole('menu')).toHaveCount(0);
+	await expect(options).toBeFocused();
 	await expect(overlay).toBeVisible();
 	await expect.poll(() => shownNotes(overlay)).toEqual(['second running']);
 	expect((await rows.textContent()) ?? '').toBe(typedBefore);
@@ -302,7 +332,8 @@ test('in a narrow pane the overlay takes a density from the keyboard without rea
 	await expect(overlay).toHaveCount(0);
 	await panel.getByRole('button', { name: 'Expand workflow' }).click();
 	await expect(overlay).toBeFocused();
-	await expect(notesSelect(overlay)).toHaveValue('current');
+	await expectNotes(overlay, 'current');
+	await expect(overlay).toBeVisible();
 	await mainWindow.keyboard.press('Escape');
 	await expect(overlay).toHaveCount(0);
 
@@ -317,9 +348,14 @@ test('in a narrow pane the overlay takes a density from the keyboard without rea
 	await panel.getByRole('button', { name: 'Expand workflow' }).click();
 	await expect(overlay).toBeFocused();
 	expect((await boxOf(overlay)).width).toBeLessThan(200);
-	await expectInside(notesSelect(overlay), overlay);
+	await expectInside(optionsButton(overlay), overlay);
 	await expectInside(overlay.getByRole('button', { name: 'Collapse workflow' }), overlay);
+	// The 236px menu is wider than the window; it stays within it and scrolls rather than leaving it.
+	await optionsButton(overlay).click();
+	await expect.poll(async () => (await boxOf(overlay.getByRole('menu'))).x).toBeGreaterThanOrEqual(0);
 	await mainWindow.screenshot({ path: testInfo.outputPath('notes-overlay-narrowest.png') });
+	await mainWindow.keyboard.press('Escape');
+	await expect(overlay).toBeVisible();
 	await mainWindow.keyboard.press('Escape');
 	await mainWindow.evaluate((key) => localStorage.removeItem(key), NOTES_KEY);
 });

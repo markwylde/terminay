@@ -17,8 +17,8 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0128-a-bot-desktop-shares-the-clipboard-only-while-the-user-controls-it.md - clipboard sharing in control mode only. Host to bot only through the native paste of the user's shortcut. Bot to host only while the user is focused on the visible desktop, through the host's semantic write. PRIMARY is never sent, and every running container is enforced at control open. Extended UTF-8 cut text is admitted within 1 MiB.
+- openspec/adr/0129-a-bot-desktop-shares-the-clipboard-only-while-the-user-controls-it.md - clipboard sharing in control mode only. Host to bot only through the native paste of the user's shortcut. Bot to host only while the user is focused on the visible desktop, through the host's semantic write. PRIMARY is never sent, and every running container is enforced at control open. Extended UTF-8 cut text is admitted within 1 MiB.
 
 ## Notes
 
-ADR-0128 is new in this change and is listed in `openspec/adr/README.md`.
+ADR-0129 is new in this change and is listed in `openspec/adr/README.md`.

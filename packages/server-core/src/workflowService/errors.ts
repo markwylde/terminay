@@ -4,7 +4,7 @@ export type WorkflowErrorCode =
 	| 'workflow_exists'
 	| 'no_workflow'
 	| 'step_not_found'
-	| 'step_active'
+	| 'step_blocked'
 	| 'step_changed'
 	| 'unauthorized_target'
 	| 'write_failed';
