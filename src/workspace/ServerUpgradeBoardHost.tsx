@@ -56,10 +56,10 @@ export function ServerUpgradeBoardHost({
 	const [board] = useState(
 		() => new ServerUpgradeBoard({ memory: createServerUpgradeMemory() }),
 	);
-	const { connections, profiles } = useConnections();
+	const { connections, currentProfileId, profiles } = useConnections();
 	const sources = useMemo(
-		() => serverUpgradeSources(connections, profiles),
-		[connections, profiles],
+		() => serverUpgradeSources(connections, profiles, currentProfileId),
+		[connections, currentProfileId, profiles],
 	);
 	useEffect(() => {
 		board.sync(sources);

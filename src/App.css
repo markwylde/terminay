@@ -4999,6 +4999,8 @@ button.macro-launcher-close:focus-visible {
 	margin-bottom: 0;
 	font-size: 13px;
 	line-height: 1.5;
+	/* A long server name or build version wraps inside the window. */
+	overflow-wrap: anywhere;
 }
 
 .server-upgrade-dialog__consequence {

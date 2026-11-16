@@ -427,7 +427,7 @@ export function InPageWindow({
 								{icon}
 							</span>
 						)}
-						<h2 className="in-page-window__title" id={titleId}>
+						<h2 className="in-page-window__title" id={titleId} title={title}>
 							{title}
 						</h2>
 						<div className="in-page-window__controls">

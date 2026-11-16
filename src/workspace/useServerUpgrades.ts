@@ -63,11 +63,13 @@ export function useServerUpgrades(
 	options: Readonly<{
 		connections: readonly WorkspaceConnection[];
 		profiles: readonly ConnectionProfileSummary[];
+		/** The profile the host says this window shows. */
+		currentProfileId?: string;
 		/** The connection the active tab belongs to. */
 		activeProfileId: string | undefined;
 	}>,
 ): ServerUpgrades {
-	const { activeProfileId, connections, profiles } = options;
+	const { activeProfileId, connections, currentProfileId, profiles } = options;
 	// The window's board outlives this workspace, which is mounted afresh on
 	// every reconnect; without a host to hold it, this workspace keeps its own,
 	// and what was followed is kept on the device.
@@ -80,8 +82,8 @@ export function useServerUpgrades(
 	const board = provided ?? (own as ServerUpgradeBoard);
 	const snapshot = useServerUpgradeBoardSnapshot(board);
 	const sources = useMemo(
-		() => serverUpgradeSources(connections, profiles),
-		[connections, profiles],
+		() => serverUpgradeSources(connections, profiles, currentProfileId),
+		[connections, currentProfileId, profiles],
 	);
 	useEffect(() => {
 		if (own !== undefined) own.sync(sources);
