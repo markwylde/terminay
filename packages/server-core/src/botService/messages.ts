@@ -921,7 +921,7 @@ export class BotMessageStore extends EventEmitter {
 		uploads: readonly string[],
 	): BotMessageAttachment[] {
 		if (new Set(uploads).size !== uploads.length)
-			throw new BotError('validation', 'An image was attached twice');
+			throw new BotError('validation', 'A file was attached twice');
 		const staged = this.live(botId);
 		return uploads.map((token) => {
 			const entry =
@@ -931,7 +931,7 @@ export class BotMessageStore extends EventEmitter {
 			if (!entry)
 				throw new BotError(
 					'validation',
-					'An attached image is no longer available; attach it again',
+					'An attached file is no longer available; attach it again',
 				);
 			return { ...entry.asset };
 		});
