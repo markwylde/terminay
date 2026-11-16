@@ -1738,19 +1738,125 @@ test('shared history loads older messages on demand without rendering provider t
 		await page.close();
 	}
 });
+const composerLines = (count) =>
+	Array.from({ length: count }, (_, i) => `line ${i + 1}`).join('\n');
+const composerHeight = (composer) =>
+	composer.evaluate((el) => el.getBoundingClientRect().height);
+
+// These are browser component tests, not the Electron E2E suite.
+test('empty composer stays at three lines with a wrapped placeholder and a tiny viewport', async () => {
+	const page = await open(TAB({ bots: [bot(BIRD, 'W'.repeat(40))] }));
+	try {
+		const composer = page.locator('[data-terminay-bot-composer]');
+		await composer.waitFor();
+		await page.locator('[data-terminay-bot-composer-form]').evaluate((el) => {
+			el.style.maxWidth = '200px';
+		});
+		await page.waitForFunction(() => {
+			const el = document.querySelector('[data-terminay-bot-composer]');
+			return (
+				Math.abs(
+					el.getBoundingClientRect().height -
+						3 * Number.parseFloat(getComputedStyle(el).lineHeight),
+				) < 1
+			);
+		});
+		assert.equal(
+			await composer.evaluate((el) => getComputedStyle(el).overflowY),
+			'hidden',
+		);
+		await composer.fill(composerLines(6));
+		assert.ok((await composerHeight(composer)) > 5 * 19.5);
+		await composer.fill('');
+		assert.ok(Math.abs((await composerHeight(composer)) - 3 * 19.5) < 1);
+		await page.setViewportSize({ width: 1280, height: 100 });
+		await composer.fill(composerLines(40));
+		assert.ok(Math.abs((await composerHeight(composer)) - 3 * 19.5) < 1);
+	} finally {
+		await page.close();
+	}
+});
+
+test('composer keeps a grown draft when posting fails', async () => {
+	const page = await open(TAB({ sendRefusal: 'Post refused for testing' }));
+	try {
+		const composer = page.locator('[data-terminay-bot-composer]');
+		await composer.fill(composerLines(6));
+		const height = await composerHeight(composer);
+		await composer.press('Enter');
+		await page.locator('[data-terminay-bot-chat-error]').waitFor();
+		assert.match(
+			await page.locator('[data-terminay-bot-chat-error]').textContent(),
+			/Post refused for testing/,
+		);
+		assert.equal(await composer.inputValue(), composerLines(6));
+		assert.equal(await composerHeight(composer), height);
+		assert.ok(height > 5 * 19.5);
+	} finally {
+		await page.close();
+	}
+});
+
+test('composing Enter preserves the grown composer and sends nothing', async () => {
+	const page = await open(TAB());
+	try {
+		const composer = page.locator('[data-terminay-bot-composer]');
+		await composer.fill(composerLines(6));
+		const height = await composerHeight(composer);
+		await composer.dispatchEvent('keydown', {
+			key: 'Enter',
+			code: 'Enter',
+			isComposing: true,
+			bubbles: true,
+		});
+		assert.equal(await composer.inputValue(), composerLines(6));
+		assert.equal(await composerHeight(composer), height);
+		assert.equal(
+			(await calls(page, 'transport.command')).filter(
+				(c) => c.args[0] === 'bots.messages.post',
+			).length,
+			0,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('composer keeps the caret visible while editing past its height cap', async () => {
+	const page = await open(TAB());
+	try {
+		const composer = page.locator('[data-terminay-bot-composer]');
+		await composer.fill(composerLines(40));
+		await composer.press('ControlOrMeta+End');
+		await composer.press('End');
+		await composer.press('x');
+		const position = await composer.evaluate((el) => ({
+			top: el.scrollTop,
+			height: el.clientHeight,
+			full: el.scrollHeight,
+		}));
+		assert.ok(
+			position.top + position.height >= position.full - 1,
+			`caret scrolled out of view: ${JSON.stringify(position)}`,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
 test('a pending post preserves text typed for the next message', async () => {
 	const page = await open(TAB({ postDelayMs: 400 }));
 	try {
 		const composer = page.locator('[data-terminay-bot-composer]');
 		await composer.fill('First message');
 		await page.locator('[data-terminay-bot-send]').click();
-		await composer.fill('Second message still being written');
+		await composer.fill(composerLines(7));
+		const height = await composerHeight(composer);
 		await page.getByRole('button', { name: 'Send', exact: true }).waitFor();
-		assert.equal(
-			await composer.inputValue(),
-			'Second message still being written',
-		);
+		assert.equal(await composer.inputValue(), composerLines(7));
 		await page.getByText('First message', { exact: true }).waitFor();
+		assert.equal(await composerHeight(composer), height);
+		assert.ok(height > 6 * 19.5);
 	} finally {
 		await page.close();
 	}
