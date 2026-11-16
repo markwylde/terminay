@@ -434,26 +434,35 @@ test.describe('Home: Bots', () => {
 		await openBots(mainWindow);
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
 		const wide = await nativeWindow.evaluate((window) => window.getBounds());
-		await nativeWindow.evaluate(
-			(window, next) => window.setBounds(next),
-			{ ...wide, width: 390, height: 780 },
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), {
+			...wide,
+			width: 390,
+			height: 780,
+		});
+		const page = frontHomeTab(mainWindow).locator(
+			'[data-compact-section="bots"]',
 		);
-		const page = frontHomeTab(mainWindow).locator('[data-compact-section="bots"]');
 		await expect(page).toBeVisible({ timeout: 20_000 });
 		for (const id of ['all', 'working', 'needs-you', 'stopped'])
 			await expect(page.locator(`[data-compact-tab="${id}"]`)).toBeVisible();
-		await expect(page.locator('[data-compact-tab="all"] [data-compact-tab-count]')).toHaveText('1');
+		await expect(
+			page.locator('[data-compact-tab="all"] [data-compact-tab-count]'),
+		).toHaveText('1');
 		await expect(page).toContainText('Phone Bot');
 		// The engine is one card; it opens the sheet and focus comes back to it.
 		const card = page.locator('[data-terminay-bots-engine-card]');
 		await card.click();
 		const sheet = mainWindow.locator('[data-compact-sheet="true"]');
 		await expect(sheet).toBeVisible();
-		await mainWindow.screenshot({ path: testInfo.outputPath('bots-phone-engine.png') });
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bots-phone-engine.png'),
+		});
 		await mainWindow.keyboard.press('Escape');
 		await expect(sheet).toHaveCount(0);
 		await expect(card).toBeFocused();
-		await mainWindow.screenshot({ path: testInfo.outputPath('bots-phone.png') });
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bots-phone.png'),
+		});
 		await nativeWindow.evaluate((window, next) => window.setBounds(next), wide);
 		await expect(page).toHaveCount(0, { timeout: 20_000 });
 	});
@@ -729,6 +738,248 @@ test.describe('Home: Bots', () => {
 				(await readdir(fakeRoot(tempDir))).filter((n) => n.startsWith('pid-')),
 			)
 			.toEqual([]);
+	});
+
+	test('Files row actions live in the app context menu, by button, right-click and keyboard', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(90_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Filer');
+		await tab.locator('[data-terminay-bot-config-tab="environment"]').click();
+		await tab.locator('[data-terminay-bot-env-tab="files"]').click();
+		const files = tab.locator('[data-terminay-bot-files]');
+		const row = (name: string) =>
+			files.locator(`[data-terminay-bot-file="${name}"]`);
+		const more = (name: string) =>
+			files.getByRole('button', { name: `More actions for ${name}` });
+		const menu = mainWindow.locator('.context-menu');
+		const labels = () =>
+			menu
+				.locator('.context-menu__item .context-menu__label')
+				.allTextContents();
+		await expect(row('hello')).toBeVisible({ timeout: 30_000 });
+		await expect(row('notes')).toBeVisible();
+
+		// The row has one menu button and none of the old inline actions.
+		for (const name of ['hello', 'notes']) {
+			await expect(more(name)).toBeVisible();
+			for (const old of ['Download', 'Rename', 'Delete'])
+				await expect(
+					row(name).getByRole('button', { name: `${old} ${name}` }),
+				).toHaveCount(0);
+		}
+		const button = (await more('hello').boundingBox())!;
+		expect(button.width).toBeGreaterThanOrEqual(24);
+		expect(button.height).toBeGreaterThanOrEqual(24);
+		const icon = (await more('hello').locator('svg').boundingBox())!;
+		expect(icon.width).toBe(16);
+		expect(icon.height).toBe(16);
+
+		// A file's menu, from its button.
+		await more('hello').click();
+		await expect(menu).toBeVisible();
+		await expect(more('hello')).toHaveAttribute('aria-expanded', 'true');
+		expect(await labels()).toEqual(['Preview', 'Download', 'Rename', 'Delete']);
+		await expect(
+			menu.locator('.context-menu__item--danger .context-menu__label'),
+		).toHaveText('Delete');
+		for (const scheme of ['dark', 'light'] as const) {
+			await mainWindow.emulateMedia({ colorScheme: scheme });
+			await mainWindow.screenshot({
+				path: testInfo.outputPath(`bot-files-row-menu-${scheme}.png`),
+			});
+		}
+		await mainWindow.emulateMedia({ colorScheme: 'dark' });
+		// A press on the open menu's own button closes it.
+		await more('hello').click();
+		await expect(menu).toHaveCount(0);
+
+		// A folder's menu, by right-click at the pointer.
+		await row('notes').click({ button: 'right', position: { x: 60, y: 8 } });
+		await expect(menu).toBeVisible();
+		expect(await labels()).toEqual(['Open', 'Download', 'Rename', 'Delete']);
+		const rowBox = (await row('notes').boundingBox())!;
+		const menuBox = (await menu.boundingBox())!;
+		expect(Math.abs(menuBox.x - (rowBox.x + 60))).toBeLessThanOrEqual(2);
+		await menu.locator('.context-menu__item', { hasText: 'Open' }).click();
+		await expect(files).toHaveAttribute('data-terminay-bot-files', 'notes');
+		await expect(row('todo.md')).toBeVisible();
+		await expect(files.locator('[data-terminay-bot-file]')).toHaveCount(1);
+		// No menu on the parent-folder row.
+		await expect(
+			files.locator('tr', { hasText: '..' }).getByRole('button', {
+				name: /More actions/,
+			}),
+		).toHaveCount(0);
+		await more('todo.md').click();
+		await menu.locator('.context-menu__item', { hasText: 'Preview' }).click();
+		await expect(
+			tab.getByRole('complementary', { name: 'Preview' }),
+		).toContainText('try the row menu');
+		await files.getByRole('button', { name: '/home/bot' }).click();
+		await expect(files).toHaveAttribute('data-terminay-bot-files', '.');
+
+		// A credential link is locked and opens no menu by any means.
+		const locked = row('.credentials.json');
+		await expect(locked).toContainText('Locked');
+		await expect(
+			locked.getByRole('button', { name: /More actions/ }),
+		).toHaveCount(0);
+		await locked.click({ button: 'right' });
+		await expect(menu).toHaveCount(0);
+
+		// The keyboard: Enter opens with the first item focused, the arrows
+		// wrap, Home and End jump, and Escape returns focus to the button.
+		await more('hello').focus();
+		await mainWindow.keyboard.press('Enter');
+		await expect(
+			mainWindow.getByRole('menu', { name: 'Actions for hello' }),
+		).toBeVisible();
+		const item = (name: string) => menu.getByRole('menuitem', { name });
+		await expect(item('Preview')).toBeFocused();
+		expect(
+			await item('Preview').evaluate((el) => getComputedStyle(el).outlineStyle),
+		).not.toBe('none');
+		await mainWindow.keyboard.press('ArrowDown');
+		await expect(item('Download')).toBeFocused();
+		await mainWindow.keyboard.press('ArrowUp');
+		await mainWindow.keyboard.press('ArrowUp');
+		await expect(item('Delete')).toBeFocused();
+		await mainWindow.keyboard.press('ArrowDown');
+		await expect(item('Preview')).toBeFocused();
+		await mainWindow.keyboard.press('End');
+		await expect(item('Delete')).toBeFocused();
+		await mainWindow.keyboard.press('Home');
+		await expect(item('Preview')).toBeFocused();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-files-row-menu-keyboard.png'),
+		});
+		await mainWindow.keyboard.press('Escape');
+		await expect(menu).toHaveCount(0);
+		await expect(more('hello')).toBeFocused();
+
+		// Shift+F10 on a focused row opens the menu at the row, first item focused.
+		await files.getByRole('button', { name: 'hello', exact: true }).focus();
+		await mainWindow.keyboard.press('Shift+F10');
+		await expect(item('Preview')).toBeFocused();
+		const nameBox = (await files
+			.getByRole('button', { name: 'hello', exact: true })
+			.boundingBox())!;
+		expect(
+			Math.abs((await menu.boundingBox())!.y - (nameBox.y + nameBox.height)),
+		).toBeLessThanOrEqual(2);
+		await mainWindow.keyboard.press('Escape');
+		await expect(menu).toHaveCount(0);
+		// The row's controls are disabled, so send the keyboard's contextmenu.
+		await locked.dispatchEvent('contextmenu', { button: 0 });
+		await expect(menu).toHaveCount(0);
+
+		// Rename through the menu; the field keeps focus.
+		await more('hello').click();
+		await menu.locator('.context-menu__item', { hasText: 'Rename' }).click();
+		const field = row('hello').locator('input[name="name"]');
+		await expect(field).toBeFocused();
+		await field.fill('greeting.txt');
+		await field.press('Enter');
+		await expect(row('greeting.txt')).toBeVisible();
+		await expect(row('hello')).toHaveCount(0);
+
+		// Delete asks first: Cancel and Escape both keep the file.
+		await more('greeting.txt').click();
+		await menu.locator('.context-menu__item', { hasText: 'Delete' }).click();
+		const confirm = row('greeting.txt').getByRole('button', {
+			name: 'Delete greeting.txt',
+		});
+		await expect(confirm).toBeFocused();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-files-row-delete-confirm.png'),
+		});
+		await row('greeting.txt').getByRole('button', { name: 'Cancel' }).click();
+		await expect(row('greeting.txt')).toBeVisible();
+		await expect(more('greeting.txt')).toBeFocused();
+		await more('greeting.txt').click();
+		await menu.locator('.context-menu__item', { hasText: 'Delete' }).click();
+		await expect(confirm).toBeFocused();
+		await mainWindow.keyboard.press('Escape');
+		await expect(confirm).toHaveCount(0);
+		await expect(more('greeting.txt')).toBeFocused();
+		await more('greeting.txt').click();
+		await menu.locator('.context-menu__item', { hasText: 'Delete' }).click();
+		await confirm.click();
+		await expect(row('greeting.txt')).toHaveCount(0);
+
+		// A confirmation does not survive a change of folder.
+		await more('notes').click();
+		await menu.locator('.context-menu__item', { hasText: 'Delete' }).click();
+		await expect(
+			row('notes').getByRole('button', { name: 'Delete notes' }),
+		).toBeVisible();
+		await files.getByRole('button', { name: 'notes', exact: true }).click();
+		await expect(files).toHaveAttribute('data-terminay-bot-files', 'notes');
+		await files.getByRole('button', { name: '/home/bot' }).click();
+		await expect(more('notes')).toBeVisible();
+		await expect(
+			row('notes').getByRole('button', { name: 'Delete notes' }),
+		).toHaveCount(0);
+
+		// An entry removed elsewhere takes its open menu with it.
+		await more('notes').click();
+		await expect(menu).toBeVisible();
+		await writeFile(path.join(fakeRoot(tempDir), 'files-remove'), 'notes\n');
+		await expect(row('notes')).toHaveCount(0, { timeout: 10_000 });
+		await expect(menu).toHaveCount(0);
+	});
+
+	test('Files rows stay bound to their folder while listing replies arrive late', async ({
+		mainWindow,
+		tempDir,
+	}) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Delayed files');
+		await tab.locator('[data-terminay-bot-config-tab="environment"]').click();
+		await tab.locator('[data-terminay-bot-env-tab="files"]').click();
+		const files = tab.locator('[data-terminay-bot-files]');
+		const row = (name: string) =>
+			files.locator(`[data-terminay-bot-file="${name}"]`);
+		await expect(row('hello')).toBeVisible({ timeout: 30_000 });
+		const root = fakeRoot(tempDir);
+		await writeFile(
+			path.join(root, 'files-list-delay'),
+			JSON.stringify({ '.': 2000, notes: 800 }),
+		);
+		// A watch invalidation starts a slow refresh of the old folder.
+		await writeFile(path.join(root, 'files-remove'), 'missing-entry\n');
+		await expect
+			.poll(() => existsSync(path.join(root, 'files-list-pending-home')))
+			.toBe(true);
+		await files.getByRole('button', { name: 'More actions for notes' }).click();
+		await mainWindow
+			.getByRole('menuitem', { name: 'Open', exact: true })
+			.click();
+		await expect(files).toHaveAttribute('data-terminay-bot-files', 'notes');
+		// Previous-folder rows must disappear immediately, before the reply.
+		expect(await row('hello').count()).toBe(0);
+		await expect(row('todo.md')).toBeVisible();
+		await expect
+			.poll(() => existsSync(path.join(root, 'files-list-delivered-home')))
+			.toBe(true);
+		await rm(path.join(root, 'files-list-delay'));
+		// A transport round trip fences the delivered old reply.
+		await files
+			.getByRole('button', { name: 'More actions for todo.md' })
+			.click();
+		await mainWindow
+			.getByRole('menuitem', { name: 'Preview', exact: true })
+			.click();
+		await expect(
+			tab.getByRole('complementary', { name: 'Preview' }),
+		).toContainText('try the row menu');
+		await expect(row('todo.md')).toBeVisible();
+		await expect(row('hello')).toHaveCount(0);
 	});
 
 	test('deleting a bot can keep its home', async ({ mainWindow, tempDir }) => {

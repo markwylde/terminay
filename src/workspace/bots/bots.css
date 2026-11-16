@@ -1138,3 +1138,20 @@ button.bots-build-step__toggle:hover {
 	gap: 2px;
 	overflow-wrap: anywhere;
 }
+
+/* Environment › Files: each row's actions open the app's context menu. */
+.bots-files__more {
+	padding: 0;
+	color: var(--bots-fg);
+	opacity: 0.75;
+}
+.bots-files__more:hover,
+.bots-files__more:focus-visible,
+.bots-files__more[aria-expanded="true"] {
+	opacity: 1;
+	background: var(--bots-hover);
+}
+.bots-files__confirm {
+	justify-content: flex-end;
+	gap: 6px;
+}

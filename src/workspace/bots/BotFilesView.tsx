@@ -9,16 +9,31 @@ import type { BotFileEntry, BotProfile } from '@terminay/protocol';
 import {
 	ChevronRight,
 	Download,
+	Eye,
 	File,
 	Folder,
+	FolderOpen,
 	FolderPlus,
 	Link2,
 	Lock,
+	MoreHorizontal,
 	Pencil,
 	Trash2,
 	Upload,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+	type KeyboardEvent as ReactKeyboardEvent,
+	type MouseEvent as ReactMouseEvent,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
+import {
+	ContextMenu,
+	type ContextMenuItem,
+} from '../../components/ContextMenu';
 import { formatBytes } from './BotEnvironmentPanel';
 import { shortAge } from './botsModel';
 import { useNow } from './useNow';
@@ -87,6 +102,40 @@ type Preview =
 	| { kind: 'text'; path: string; text: string; cut: boolean }
 	| { kind: 'image'; path: string; url: string };
 
+/** An open row menu, bound to the folder and entry it was opened for. */
+type RowMenu = {
+	entry: BotFileEntry;
+	dir: string;
+	x: number;
+	y: number;
+	keyboard: boolean;
+};
+
+/** Whether an entry has a row menu at all. Credential links never do. */
+export function hasRowMenu(entry: BotFileEntry): boolean {
+	return entry.kind !== 'credential-link';
+}
+
+/** The row menu's actions for an entry's kind, in menu order. */
+export function rowMenuActions(
+	entry: BotFileEntry,
+): readonly ('open' | 'preview' | 'download' | 'rename' | 'delete')[] {
+	if (entry.kind === 'credential-link') return [];
+	if (entry.kind === 'dir') return ['open', 'download', 'rename', 'delete'];
+	if (entry.kind === 'file') return ['preview', 'download', 'rename', 'delete'];
+	return ['rename', 'delete'];
+}
+
+/** A `contextmenu` from the keyboard (context-menu key, Shift+F10) has no pointer. */
+function fromKeyboard(event: ReactMouseEvent): boolean {
+	return event.button !== 2 || (event.clientX === 0 && event.clientY === 0);
+}
+
+function belowElement(element: Element): { x: number; y: number } {
+	const box = element.getBoundingClientRect();
+	return { x: box.left, y: box.bottom };
+}
+
 export function BotFilesView({
 	server,
 	bot,
@@ -98,12 +147,28 @@ export function BotFilesView({
 	);
 	const [files, setFiles] = useState<BotFilesClient>();
 	const [dir, setDir] = useState('.');
-	const [entries, setEntries] = useState<readonly BotFileEntry[]>();
-	const [truncated, setTruncated] = useState(false);
+	const [listing, setListing] = useState<{
+		files: BotFilesClient;
+		dir: string;
+		entries: readonly BotFileEntry[];
+		truncated: boolean;
+	}>();
+	const entries =
+		listing?.files === files && listing?.dir === dir
+			? listing.entries
+			: undefined;
+	const listingScope = useMemo(
+		() => ({ active: true, request: 0 }),
+		[files, dir],
+	);
+	const truncated = entries !== undefined && listing?.truncated === true;
 	const [error, setError] = useState<string>();
 	const [preview, setPreview] = useState<Preview>();
 	const [renaming, setRenaming] = useState<string>();
 	const [confirmDelete, setConfirmDelete] = useState<string>();
+	const [menu, setMenu] = useState<RowMenu>();
+	const triggers = useRef(new Map<string, HTMLButtonElement>());
+	const restoreFocus = useRef<string | undefined>(undefined);
 	const [progress, setProgress] = useState<string>();
 	const [newFolder, setNewFolder] = useState(false);
 	const upload = useRef<HTMLInputElement>(null);
@@ -130,17 +195,32 @@ export function BotFilesView({
 	}, [io, bot.id]);
 
 	const list = useCallback(() => {
-		if (files === undefined) return;
+		if (files === undefined || !listingScope.active) return;
+		const request = ++listingScope.request;
 		files
 			.list(dir)
-			.then((listing) => {
-				setEntries(sortEntries(listing.entries));
-				setTruncated(listing.truncated);
+			.then((result) => {
+				if (!listingScope.active || request !== listingScope.request) return;
+				setListing({
+					files,
+					dir,
+					entries: sortEntries(result.entries),
+					truncated: result.truncated,
+				});
 				setError(undefined);
 			})
-			.catch((cause: unknown) => setError(refusalText(cause)));
-	}, [files, dir]);
-	useEffect(list, [list]);
+			.catch((cause: unknown) => {
+				if (listingScope.active && request === listingScope.request)
+					setError(refusalText(cause));
+			});
+	}, [files, dir, listingScope]);
+	useEffect(() => {
+		listingScope.active = true;
+		list();
+		return () => {
+			listingScope.active = false;
+		};
+	}, [list, listingScope]);
 
 	// The folder updates when its contents change.
 	useEffect(() => {
@@ -167,6 +247,79 @@ export function BotFilesView({
 		[preview],
 	);
 
+	// A menu or confirmation never outlives its folder or its entry.
+	useEffect(() => {
+		setMenu((open) => (open && open.dir !== dir ? undefined : open));
+		setConfirmDelete(undefined);
+		setRenaming(undefined);
+		restoreFocus.current = undefined;
+	}, [dir]);
+	useEffect(() => {
+		if (entries === undefined) return;
+		const byName = new Map(entries.map((entry) => [entry.name, entry]));
+		setMenu((open) =>
+			open && byName.get(open.entry.name)?.kind !== open.entry.kind
+				? undefined
+				: open,
+		);
+		setConfirmDelete((name) =>
+			name !== undefined &&
+			(!byName.has(name) || byName.get(name)?.kind === 'credential-link')
+				? undefined
+				: name,
+		);
+	}, [entries]);
+
+	// Once a menu or confirmation has gone, focus returns to the row's button
+	// unless something else (the rename field, a clicked control) took it.
+	useEffect(() => {
+		const name = restoreFocus.current;
+		if (name === undefined || menu !== undefined || confirmDelete !== undefined)
+			return;
+		restoreFocus.current = undefined;
+		const active = document.activeElement;
+		if (active !== null && active !== document.body && active.isConnected)
+			return;
+		triggers.current.get(name)?.focus();
+	});
+
+	const openMenu = (
+		entry: BotFileEntry,
+		at: { x: number; y: number },
+		keyboard: boolean,
+	) => {
+		if (!hasRowMenu(entry)) return;
+		setConfirmDelete(undefined);
+		setMenu({ entry, dir, ...at, keyboard });
+	};
+	const closeMenu = useCallback(() => {
+		setMenu((open) => {
+			if (open) restoreFocus.current = open.entry.name;
+			return undefined;
+		});
+	}, []);
+	const rowContextMenu = (entry: BotFileEntry, event: ReactMouseEvent) => {
+		event.preventDefault();
+		if (!hasRowMenu(entry)) return;
+		if (fromKeyboard(event)) {
+			const target =
+				document.activeElement instanceof Element &&
+				event.currentTarget.contains(document.activeElement)
+					? document.activeElement
+					: event.currentTarget;
+			openMenu(entry, belowElement(target), true);
+		} else openMenu(entry, { x: event.clientX, y: event.clientY }, false);
+	};
+	const rowKeyDown = (entry: BotFileEntry, event: ReactKeyboardEvent) => {
+		if (event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey))
+			return;
+		event.preventDefault();
+		if (!hasRowMenu(entry)) return;
+		const target =
+			event.target instanceof Element ? event.target : event.currentTarget;
+		openMenu(entry, belowElement(target), true);
+	};
+
 	const run = (label: string, work: () => Promise<unknown>) => {
 		setProgress(label);
 		setError(undefined);
@@ -176,9 +329,9 @@ export function BotFilesView({
 			.finally(() => setProgress(undefined));
 	};
 
-	const open = (entry: BotFileEntry) => {
+	const openEntry = (entry: BotFileEntry, from = dir) => {
 		if (files === undefined || entry.kind === 'credential-link') return;
-		const path = joinPath(dir, entry.name);
+		const path = joinPath(from, entry.name);
 		if (entry.kind === 'dir') {
 			setDir(path);
 			setPreview(undefined);
@@ -208,9 +361,9 @@ export function BotFilesView({
 			.catch((cause: unknown) => setError(refusalText(cause)));
 	};
 
-	const download = (entry: BotFileEntry) => {
+	const download = (entry: BotFileEntry, from = dir) => {
 		if (files === undefined) return;
-		const path = joinPath(dir, entry.name);
+		const path = joinPath(from, entry.name);
 		run(`Downloading ${entry.name}…`, async () => {
 			const { bytes } = await collect(
 				entry.kind === 'dir' ? files.downloadFolder(path) : files.read(path),
@@ -240,10 +393,65 @@ export function BotFilesView({
 		);
 	};
 
+	const menuItems = (open: RowMenu): ContextMenuItem[] => {
+		const { entry } = open;
+		const items: ContextMenuItem[] = [];
+		for (const action of rowMenuActions(entry)) {
+			if (action === 'open')
+				items.push({
+					label: 'Open',
+					icon: <FolderOpen size={14} />,
+					onClick: () => {
+						setDir(joinPath(open.dir, entry.name));
+						setPreview(undefined);
+					},
+				});
+			else if (action === 'preview')
+				items.push({
+					label: 'Preview',
+					icon: <Eye size={14} />,
+					onClick: () => openEntry(entry, open.dir),
+				});
+			else if (action === 'download')
+				items.push({
+					label: 'Download',
+					icon: <Download size={14} />,
+					onClick: () => download(entry, open.dir),
+				});
+			else if (action === 'rename')
+				items.push({
+					label: 'Rename',
+					icon: <Pencil size={14} />,
+					onClick: () => setRenaming(entry.name),
+				});
+			else {
+				items.push({ label: '', separator: true, key: 'before-delete' });
+				items.push({
+					label: 'Delete',
+					icon: <Trash2 size={14} />,
+					danger: true,
+					onClick: () => setConfirmDelete(entry.name),
+				});
+			}
+		}
+		return items;
+	};
+
 	const crumbs = dir === '.' ? [] : dir.split('/');
 
 	return (
 		<div className="bots-files" data-terminay-bot-files={dir}>
+			{menu ? (
+				<ContextMenu
+					key={`${menu.dir}/${menu.entry.name}`}
+					x={menu.x}
+					y={menu.y}
+					items={menuItems(menu)}
+					onClose={closeMenu}
+					keyboard={{ autoFocus: menu.keyboard }}
+					label={`Actions for ${menu.entry.name}`}
+				/>
+			) : null}
 			<div className="bots-files__bar">
 				<nav className="bots-crumbs" aria-label="Folder">
 					<button
@@ -368,6 +576,8 @@ export function BotFilesView({
 											className={preview?.path === path ? 'bots-tbl--sel' : ''}
 											data-terminay-bot-file={entry.name}
 											data-terminay-bot-file-kind={entry.kind}
+											onContextMenu={(event) => rowContextMenu(entry, event)}
+											onKeyDown={(event) => rowKeyDown(entry, event)}
 										>
 											<td>
 												{renaming === entry.name ? (
@@ -409,7 +619,7 @@ export function BotFilesView({
 															entry.kind === 'link' ||
 															entry.kind === 'other'
 														}
-														onClick={() => open(entry)}
+														onClick={() => openEntry(entry)}
 														title={
 															locked
 																? 'A credential link. It cannot be opened, downloaded, renamed, or deleted.'
@@ -438,49 +648,73 @@ export function BotFilesView({
 											<td>
 												{locked ? (
 													<span className="bots-faint">Locked</span>
-												) : (
-													<div className="bots-row-actions">
-														{entry.kind === 'file' || entry.kind === 'dir' ? (
-															<button
-																type="button"
-																className="bots-icon-btn"
-																aria-label={`Download ${entry.name}`}
-																onClick={() => download(entry)}
-															>
-																<Download size={14} aria-hidden="true" />
-															</button>
-														) : null}
+												) : confirmDelete === entry.name ? (
+													<div
+														className="bots-row-actions bots-files__confirm"
+														onKeyDown={(event) => {
+															if (event.key !== 'Escape') return;
+															event.stopPropagation();
+															restoreFocus.current = entry.name;
+															setConfirmDelete(undefined);
+														}}
+													>
 														<button
 															type="button"
-															className="bots-icon-btn"
-															aria-label={`Rename ${entry.name}`}
-															onClick={() => setRenaming(entry.name)}
+															className="bots-btn bots-btn--sm bots-btn--danger"
+															autoFocus
+															aria-label={`Delete ${entry.name}`}
+															onClick={() => {
+																setConfirmDelete(undefined);
+																if (files)
+																	run('Deleting…', () => files.delete(path));
+															}}
 														>
-															<Pencil size={14} aria-hidden="true" />
+															Delete
 														</button>
-														{confirmDelete === entry.name ? (
-															<button
-																type="button"
-																className="bots-btn bots-btn--sm bots-btn--danger"
-																onClick={() => {
-																	setConfirmDelete(undefined);
-																	if (files)
-																		run('Deleting…', () => files.delete(path));
-																}}
-															>
-																Delete
-															</button>
-														) : (
-															<button
-																type="button"
-																className="bots-icon-btn"
-																aria-label={`Delete ${entry.name}`}
-																onClick={() => setConfirmDelete(entry.name)}
-															>
-																<Trash2 size={14} aria-hidden="true" />
-															</button>
-														)}
+														<button
+															type="button"
+															className="bots-btn bots-btn--sm"
+															onClick={() => {
+																restoreFocus.current = entry.name;
+																setConfirmDelete(undefined);
+															}}
+														>
+															Cancel
+														</button>
 													</div>
+												) : (
+													<button
+														type="button"
+														ref={(button) => {
+															if (button)
+																triggers.current.set(entry.name, button);
+															else triggers.current.delete(entry.name);
+														}}
+														className="bots-icon-btn bots-files__more"
+														aria-label={`More actions for ${entry.name}`}
+														aria-haspopup="menu"
+														aria-expanded={menu?.entry.name === entry.name}
+														data-terminay-bot-file-more={entry.name}
+														onMouseDown={(event) => {
+															// The open menu closes on any outside press; a press
+															// on its own button toggles it instead.
+															if (menu?.entry.name === entry.name)
+																event.nativeEvent.stopPropagation();
+														}}
+														onClick={(event) => {
+															if (menu?.entry.name === entry.name) {
+																closeMenu();
+																return;
+															}
+															openMenu(
+																entry,
+																belowElement(event.currentTarget),
+																event.detail === 0,
+															);
+														}}
+													>
+														<MoreHorizontal size={16} aria-hidden="true" />
+													</button>
 												)}
 											</td>
 										</tr>

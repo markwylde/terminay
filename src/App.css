@@ -4450,6 +4450,19 @@ button.macro-launcher-close:focus-visible {
   color: #ffd56b;
 }
 
+.context-menu__item:focus-visible,
+.context-menu__trailing:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  outline: 1px solid rgba(255, 255, 255, 0.45);
+  outline-offset: -1px;
+}
+
+.context-menu__item--danger:focus-visible {
+  background: rgba(255, 68, 68, 0.15);
+  color: #ff9999;
+}
+
 .context-menu__trailing:disabled {
   color: #7f8794;
   cursor: default;
