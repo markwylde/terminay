@@ -11,6 +11,7 @@ import {
 	type ClipboardEvent,
 	type DragEvent,
 	type KeyboardEvent,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -32,6 +33,7 @@ import {
 	formatFileSize,
 } from './botsModel';
 import { appendQuote, quoteMessage } from './quoteMessage';
+import { useFitTextarea } from './useFitTextarea';
 import { refusalText, type ServerBots } from './useServerBots';
 
 interface PendingFile {
@@ -200,6 +202,15 @@ export function BotChat({
 	const generation = useRef(0),
 		draftRef = useRef(draft);
 	draftRef.current = draft;
+	// The composer grows with its draft; the element is also kept for quoting.
+	const fitComposer = useFitTextarea(draft),
+		composerRef = useCallback(
+			(element: HTMLTextAreaElement | null) => {
+				composer.current = element;
+				fitComposer(element);
+			},
+			[fitComposer],
+		);
 	const olderRef = useRef(older);
 	olderRef.current = older;
 	const full = async (id: string): Promise<BotMessage> => {
@@ -1002,9 +1013,9 @@ export function BotChat({
 							</p>
 						) : null}
 						<textarea
-							ref={composer}
+							ref={composerRef}
 							value={draft}
-							rows={2}
+							rows={1}
 							aria-label={`Message ${bot.name}`}
 							placeholder={`Message ${bot.name} · Enter to send`}
 							onChange={(event) => onDraftChange(event.target.value)}

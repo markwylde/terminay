@@ -1996,6 +1996,115 @@ test.describe('Home: Bots', () => {
 		await tab.locator('[data-terminay-bot-stop]').click();
 	});
 
+	test('the composer grows with its text to a maximum, then scrolls, and shrinks when sent', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		await mainWindow.setViewportSize({ width: 1280, height: 850 });
+		const tab = await chat(await createBot(mainWindow, 'Heron'));
+		const composer = tab.locator('[data-terminay-bot-composer]');
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		const box = () =>
+			composer.evaluate((el) => ({
+				height: el.getBoundingClientRect().height,
+				scrolls: el.scrollHeight > el.clientHeight + 1,
+				line: Number.parseFloat(getComputedStyle(el).lineHeight),
+			}));
+		const shot = (name: string) =>
+			tab
+				.locator('[data-terminay-bot-composer-form]')
+				.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+		// Heights are written as whole pixels, so allow rounding.
+		const near = (target: number) =>
+			expect
+				.poll(async () => Math.abs((await box()).height - target))
+				.toBeLessThan(2);
+		const lines = (count: number) =>
+			Array.from({ length: count }, (_, i) => `line ${i + 1}`).join('\n');
+
+		// Empty: three lines, nothing to scroll.
+		const empty = await box();
+		expect(empty.line).toBeCloseTo(19.5, 0);
+		expect(Math.abs(empty.height - 3 * empty.line)).toBeLessThan(2);
+		expect(empty.scrolls).toBe(false);
+		await shot('composer-empty');
+
+		// Shift+Enter adds lines and grows the box; nothing is sent.
+		await composer.click();
+		for (let i = 1; i <= 5; i++) {
+			if (i > 1) await mainWindow.keyboard.press('Shift+Enter');
+			await mainWindow.keyboard.type(`line ${i}`);
+		}
+		await expect(composer).toHaveValue(lines(5));
+		await near(5 * empty.line);
+		expect((await box()).scrolls).toBe(false);
+		await expect(transcript.locator('.bots-msg')).toHaveCount(0);
+		await shot('composer-grown');
+
+		// One long line wraps and grows the box.
+		await composer.fill('');
+		await composer.fill('wrap '.repeat(400).trim());
+		await expect
+			.poll(async () => (await box()).height)
+			.toBeGreaterThan(4 * empty.line);
+
+		// Forty inserted lines stop at twelve, then scroll.
+		await composer.fill('');
+		await composer.click();
+		await mainWindow.keyboard.insertText(lines(40));
+		await near(12 * empty.line);
+		expect((await box()).scrolls).toBe(true);
+		await composer.evaluate((el) => {
+			el.scrollTop = el.scrollHeight;
+		});
+		await shot('composer-max');
+
+		// A short window lowers the maximum to 40vh with no text change.
+		await mainWindow.setViewportSize({ width: 1280, height: 400 });
+		await near(160);
+		expect((await box()).scrolls).toBe(true);
+		await mainWindow.setViewportSize({ width: 1280, height: 850 });
+		await near(12 * empty.line);
+
+		// Deleting text shrinks it; never under three lines.
+		await composer.fill(lines(4));
+		await near(4 * empty.line);
+		await composer.fill('one\ntwo');
+		await near(3 * empty.line);
+		await composer.fill('');
+		await near(empty.height);
+
+		// Narrowing re-wraps the text and grows the box.
+		await composer.fill('narrow '.repeat(60).trim());
+		const wide = (await box()).height;
+		await tab.locator('[data-terminay-bot-composer-form]').evaluate((el) => {
+			(el as HTMLElement).style.maxWidth = '320px';
+		});
+		await expect
+			.poll(async () => (await box()).height)
+			.toBeGreaterThan(wide + empty.line);
+		await tab.locator('[data-terminay-bot-composer-form]').evaluate((el) => {
+			(el as HTMLElement).style.maxWidth = '';
+		});
+		await near(wide);
+
+		// A multi-line draft comes back at its height.
+		await composer.fill(lines(6));
+		await near(6 * empty.line);
+		await openBots(mainWindow);
+		await openBotChat(mainWindow, 'Heron');
+		await expect(composer).toHaveValue(lines(6));
+		await near(6 * empty.line);
+
+		// Enter sends and the box returns to three lines.
+		await composer.press('Enter');
+		await expect(transcript).toContainText('line 6', { timeout: 30_000 });
+		await expect(composer).toHaveValue('');
+		await near(empty.height);
+	});
+
 	test('images are attached by button, paste and drop, refused when invalid, and sent inline', async ({
 		mainWindow,
 		tempDir,

@@ -23,8 +23,8 @@ Renderer-only change: no Node/Electron imports, IPC, filesystem, network, protoc
 - Unit: `node --test --test-force-exit --test-timeout=120000 --experimental-strip-types src/workspace/bots/quoteMessage.test.ts` — 15 passed.
 - TypeScript: `npx tsc --noEmit -p .` — no errors in changed files (the only errors are in `DocumentationAutosaveController.test.ts`, which needs an unbuilt `server-core` dist).
 - Biome: no errors; two `suppressions/unused` warnings in `BotTranscript.tsx` also occur on `main`.
-- Docker: `npm run test:e2e -- e2e/bots.spec.ts` — 34 passed (3.9 min), including the new Quote test.
+- Docker: `npm run test:e2e -- e2e/bots.spec.ts` — 34 passed (3.9 min) before merging main; 35 passed (3.7 min) after merging #596, including the new Quote test.
 - `openspec validate quote-bot-messages` passed. `openspec validate --all`: 120 passed, 7 failed, all in other changes that already fail on `main` (add-terminay-bots, linked-folders, one-window-one-server, outbound-bot-triggers, phone-review-fixes, server-notification-manager, unified-settings-window).
 - `git diff --check` passed.
 
-The composer is two rows high, so a long quote scrolls inside it; composer height is issue #596.
+After merging #596 (composer auto-grow), the composer and `useFitTextarea` share one callback ref. `scripts/bots-ui.test.mjs` (`npm run test:bots-ui`, not in CI) asserted the message menu items as buttons; they are `menuitem`s in keyboard mode, so the test now uses that role and passes.
