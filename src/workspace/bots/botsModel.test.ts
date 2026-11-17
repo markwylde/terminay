@@ -13,8 +13,11 @@ import {
 	hasTerminayMcpAccess,
 	initials,
 	investigatesFailures,
+	isActiveSession,
 	needsYou,
+	recentSessions,
 	recoveryNotice,
+	retainRecentSessions,
 	SESSION_ORIGIN_CHIPS,
 	SESSION_ORIGIN_FILTER_LABELS,
 	sessionOriginLabel,
@@ -370,5 +373,106 @@ test('startup attempts read as plain words', () => {
 			},
 		}),
 		'Failed after 2 attempts.',
+	);
+});
+
+const at = (
+	id: string,
+	state: BotSessionRecord['state'],
+	startedAt: number,
+): BotSessionRecord => session(id, state, { startedAt });
+const ids = (list: readonly BotSessionRecord[]) => list.map((s) => s.id);
+
+test('queued, running and needs you are active; every other state is not', () => {
+	for (const state of ['queued', 'running', 'needs-you'] as const)
+		assert.equal(isActiveSession(session(state, state)), true, state);
+	for (const state of [
+		'suspended',
+		'completed',
+		'stopped',
+		'timed-out',
+		'failed',
+		'interrupted',
+	] as const)
+		assert.equal(isActiveSession(session(state, state)), false, state);
+});
+
+test('recent sessions pin active above inactive, each group newest first', () => {
+	const input = [
+		at('done-new', 'completed', 500),
+		at('run-old', 'running', 100),
+		at('fail-mid', 'failed', 400),
+		at('queued-new', 'queued', 450),
+		at('needs-mid', 'needs-you', 300),
+		at('stopped-old', 'stopped', 200),
+	];
+	const before = ids(input);
+	assert.deepEqual(ids(recentSessions(input, 6)), [
+		'queued-new',
+		'needs-mid',
+		'run-old',
+		'done-new',
+		'fail-mid',
+		'stopped-old',
+	]);
+	assert.deepEqual(ids(input), before, 'input is not mutated');
+});
+
+test('a suspended session is not pinned', () => {
+	assert.deepEqual(
+		ids(
+			recentSessions(
+				[at('paused', 'suspended', 100), at('done', 'completed', 200)],
+				6,
+			),
+		),
+		['done', 'paused'],
+	);
+});
+
+test('the cap applies after pinning, so an old active session stays', () => {
+	const ended = Array.from({ length: 8 }, (_, i) =>
+		at(`done-${i}`, 'completed', 200 + i),
+	);
+	const shown = recentSessions([...ended, at('run', 'running', 1)], 6);
+	assert.equal(shown.length, 6);
+	assert.equal(shown[0]?.id, 'run');
+	assert.deepEqual(ids(shown.slice(1)), [
+		'done-7',
+		'done-6',
+		'done-5',
+		'done-4',
+		'done-3',
+	]);
+});
+
+test('with more active sessions than rows, the newest active are shown', () => {
+	const active = Array.from({ length: 8 }, (_, i) =>
+		at(`q-${i}`, 'queued', 100 + i),
+	);
+	const shown = recentSessions([at('done', 'completed', 999), ...active], 6);
+	assert.deepEqual(ids(shown), ['q-7', 'q-6', 'q-5', 'q-4', 'q-3', 'q-2']);
+});
+
+test('retained sessions keep the newest plus older active ones, newest first', () => {
+	const ended = Array.from({ length: 25 }, (_, i) =>
+		at(`done-${i}`, 'completed', 100 + i),
+	);
+	const kept = retainRecentSessions(
+		[at('needs', 'needs-you', 1), ...ended, at('old-done', 'failed', 2)],
+		20,
+	);
+	assert.equal(kept.length, 21);
+	assert.equal(kept.at(-1)?.id, 'needs');
+	assert.ok(!kept.some((s) => s.id === 'old-done'));
+	for (let i = 1; i < kept.length; i++)
+		assert.ok(
+			(kept[i - 1]?.startedAt ?? 0) >= (kept[i]?.startedAt ?? 0),
+			'newest first',
+		);
+	assert.equal(
+		recentSessions(kept, 6)[0]?.id,
+		'needs',
+		'the rail pins it first',
 	);
 });

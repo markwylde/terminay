@@ -29,6 +29,7 @@ import {
 	type TranscriptThread,
 } from './BotTranscript';
 import type { BotActionReveal } from './botActions';
+import { isActiveSession } from './botsModel';
 import { appendQuote, quoteMessage } from './quoteMessage';
 import {
 	deleteLabel,
@@ -443,9 +444,7 @@ export function BotChat({
 		observer.observe(viewport);
 		return () => observer.disconnect();
 	}, [visible]);
-	const active = sessions.filter((s) =>
-		['running', 'needs-you', 'queued'].includes(s.state),
-	);
+	const active = sessions.filter(isActiveSession);
 	const act = async (work: () => Promise<unknown>) => {
 		setMutating(true);
 		setError(undefined);

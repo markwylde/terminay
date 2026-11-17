@@ -2157,6 +2157,14 @@
 .bots-sess__dot--queued {
 	background: var(--bots-work-dot);
 }
+.bots-sess__dot--live {
+	animation: bots-pulse 1.2s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.bots-sess__dot--live {
+		animation: none;
+	}
+}
 .bots-sess__dot--completed {
 	background: var(--bots-done-dot);
 }
