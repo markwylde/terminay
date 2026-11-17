@@ -15,6 +15,8 @@ export type LinuxPasteChord = 'ctrl+v' | 'ctrl+shift+v' | 'shift+insert';
 export const DESKTOP_CLIPBOARD_BYTES = 1024 * 1024;
 
 const XK = {
+	Shift_L: 0xffe1,
+	Shift_R: 0xffe2,
 	Control_L: 0xffe3,
 	Control_R: 0xffe4,
 	Alt_L: 0xffe9,
@@ -55,6 +57,8 @@ export function heldModifierKeysym(
 	code: string,
 	isMac: boolean,
 ): number | undefined {
+	if (code === 'ShiftLeft') return XK.Shift_L;
+	if (code === 'ShiftRight') return XK.Shift_R;
 	if (isMac) {
 		// noVNC swaps Cmd for the remote: left Cmd is Alt_L, right Cmd Super_L.
 		if (code === 'MetaLeft') return XK.Alt_L;
@@ -72,8 +76,8 @@ export type KeyStep = Readonly<{ keysym: number; code: string; down: boolean }>;
  * The exact key sequence that presses `chord` in the bot, independent of the
  * modifiers noVNC holds there: release the held host modifiers that are not
  * part of the chord, press the chord, then press those modifiers again so
- * noVNC's own release later is consistent. Shift is never released: when the
- * chord has it the user is holding it, and noVNC has already pressed it.
+ * noVNC's own release later is consistent. The complete chord, including
+ * Shift, is synthesized even if the host modifiers have since been released.
  */
 export function pasteChordKeys(
 	chord: LinuxPasteChord,
@@ -92,6 +96,7 @@ export function pasteChordKeys(
 		pressed.unshift({ keysym, code, down: false });
 	};
 	if (chord !== 'shift+insert') press(XK.Control_L, 'ControlLeft');
+	if (chord !== 'ctrl+v') press(XK.Shift_L, 'ShiftLeft');
 	const key =
 		chord === 'shift+insert'
 			? { keysym: XK.Insert, code: 'Insert' }
@@ -162,6 +167,8 @@ export interface ClipboardRfb {
 
 export type DesktopClipboardEnvironment = Readonly<{
 	isMac: boolean;
+	/** Continuous sharing owns bot-to-host writes; keep this listener idle. */
+	sharingOwnsClipboard?: () => boolean;
 	/** Whether keyboard focus is inside the desktop layer. */
 	focusedInside: () => boolean;
 	documentFocused: () => boolean;
@@ -205,6 +212,7 @@ export function attachDesktopClipboard(
 	rfb: ClipboardRfb,
 	env: DesktopClipboardEnvironment,
 ): () => void {
+	let attached = true;
 	const held = new Set<string>();
 	const diverted = new Set<string>();
 	let pending: LinuxPasteChord | null = null;
@@ -225,6 +233,7 @@ export function attachDesktopClipboard(
 		env.catcher.restore();
 	};
 	const send = (text: string, chord: LinuxPasteChord) => {
+		if (!attached) return;
 		if (text.length === 0) return;
 		if (!pasteTextFits(text)) {
 			env.onPasteTooLarge();
@@ -238,7 +247,11 @@ export function attachDesktopClipboard(
 	};
 	const keydown = (event: Event) => {
 		const e = event as KeyLike;
-		if (heldModifierKeysym(e.code, env.isMac) !== undefined) held.add(e.code);
+		if (
+			heldModifierKeysym(e.code, env.isMac) !== undefined &&
+			!(env.isMac && e.metaKey && e.code.startsWith('Shift'))
+		)
+			held.add(e.code);
 		const chord = pasteShortcut(e, env.isMac);
 		if (chord === null) return;
 		const readHostText = env.readHostText;
@@ -299,6 +312,7 @@ export function attachDesktopClipboard(
 		send(e.clipboardData?.getData('text/plain') ?? '', chord);
 	};
 	const clipboard = (event: Event) => {
+		if (env.sharingOwnsClipboard?.()) return;
 		const detail = (event as CustomEvent<{ text?: unknown }>).detail;
 		if (
 			!mayWriteHostClipboard({
@@ -320,6 +334,7 @@ export function attachDesktopClipboard(
 	env.pasteRoot.addEventListener('paste', paste, { capture: true });
 	rfb.addEventListener('clipboard', clipboard);
 	return () => {
+		attached = false;
 		cancelTimer?.();
 		layer.removeEventListener('keydown', keydown, { capture: true });
 		layer.removeEventListener('keyup', keyup, { capture: true });

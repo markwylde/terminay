@@ -20,6 +20,7 @@ export class LocalServerUiSession {
   constructor(private readonly options: LocalServerUiSessionOptions) {
     this.bundleHost = new DesktopServerBundleHost({ capabilities: {
       clipboardWrite: 1,
+      clipboardSync: 1,
       filePicker: 1,
       nativeMenus: 1,
       nativeWindows: 1,

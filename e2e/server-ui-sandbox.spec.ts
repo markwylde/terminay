@@ -514,6 +514,16 @@ function pagesByTitle(): [Page, Page] {
 	return [profileA, profileB];
 }
 
+
+test('a document without the declared clipboard capability cannot subscribe to native clipboard text', async () => {
+ const [, profileB] = pagesByTitle();
+ expect(await profileB.evaluate(async () => {
+  const host = window.terminayHost as unknown as { startClipboardSync(token: string): Promise<unknown> };
+  try { await host.startClipboardSync('unavailable_clipboard_session'); return 'accepted'; }
+  catch { return 'rejected'; }
+ })).toBe('rejected');
+});
+
 async function readHostContext(page: Page): Promise<unknown> {
 	return page.evaluate(async () => {
 		const bridge = (

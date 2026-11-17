@@ -1,4 +1,5 @@
 import type {
+	TerminayHostClipboardSnapshot,
 	TerminayHostAction,
 	TerminayHostActionRequest,
 	TerminayHostContext,
@@ -7,6 +8,16 @@ import type {
 import type { AppUpdateStatus } from '../types/terminay';
 
 type NativeHostBridge = Readonly<{
+	startClipboardSync?(token: string): Promise<TerminayHostClipboardSnapshot>;
+	stopClipboardSync?(token: string): Promise<void>;
+	writeClipboardSync?(
+		token: string,
+		revision: number,
+		text: string,
+	): Promise<TerminayHostClipboardSnapshot>;
+	subscribeClipboardSync?(
+		listener: (snapshot: TerminayHostClipboardSnapshot) => void,
+	): () => void;
 	getContext(): Promise<TerminayHostContext>;
 	requestAction(request: TerminayHostActionRequest): Promise<unknown>;
 	resolveDroppedFilePath?(file: File): string | undefined;
@@ -147,7 +158,10 @@ export function desktopClipboardUploadRoute():
 	const read = host?.readTerminalClipboardForUpload;
 	const readFilePart = host?.readTerminalClipboardFilePart;
 	if (read === undefined || readFilePart === undefined) return undefined;
-	return { read: () => read(), readFilePart: (...args) => readFilePart(...args) };
+	return {
+		read: () => read(),
+		readFilePart: (...args) => readFilePart(...args),
+	};
 }
 
 export function canUseDesktopTerminalClipboard(): boolean {
@@ -156,7 +170,9 @@ export function canUseDesktopTerminalClipboard(): boolean {
 
 /** Desktop-only native File lookup for user-initiated terminal drops. Browser
  * clients never receive a local pathname and use their server upload flow. */
-export function resolveDesktopDroppedFilePath(file: unknown): string | undefined {
+export function resolveDesktopDroppedFilePath(
+	file: unknown,
+): string | undefined {
 	if (!(file instanceof File)) return undefined;
 	try {
 		return bridge()?.resolveDroppedFilePath?.(file);
@@ -226,7 +242,10 @@ export async function savePreviewDownload(input: {
 		bytesBase64: base64(input.bytes),
 	});
 	if (response.handled) return;
-	const copy = input.bytes.buffer.slice(input.bytes.byteOffset, input.bytes.byteOffset + input.bytes.byteLength) as ArrayBuffer;
+	const copy = input.bytes.buffer.slice(
+		input.bytes.byteOffset,
+		input.bytes.byteOffset + input.bytes.byteLength,
+	) as ArrayBuffer;
 	const url = URL.createObjectURL(new Blob([copy], { type: input.mimeType }));
 	const anchor = document.createElement('a');
 	anchor.href = url;
@@ -272,7 +291,8 @@ export async function saveDownload(input: {
 	const opened = response.handled
 		? (response.result as { canceled?: boolean; token?: string } | undefined)
 		: undefined;
-	if (opened?.canceled !== false || typeof opened.token !== 'string') return false;
+	if (opened?.canceled !== false || typeof opened.token !== 'string')
+		return false;
 	const token = opened.token;
 	const iterator = input.chunks()[Symbol.asyncIterator]();
 	try {
@@ -304,7 +324,9 @@ function withoutIpcPrefix(error: unknown): unknown {
 	const message = error.message
 		.replace(/^Error invoking remote method '[^']+':\s*/u, '')
 		.replace(/^(?:[A-Z][A-Za-z]*)?Error:\s*/u, '');
-	return message === error.message ? error : new Error(message, { cause: error });
+	return message === error.message
+		? error
+		: new Error(message, { cause: error });
 }
 
 function safeSaveFilename(value: string): string {
@@ -313,17 +335,23 @@ function safeSaveFilename(value: string): string {
 }
 
 function safeDownloadFilename(value: string): string {
-	const result = [...value].map((character) => {
-		const code = character.codePointAt(0) ?? 0;
-		return code < 0x20 || /[\\/:*?"<>|]/u.test(character) ? '_' : character;
-	}).join('').trim().slice(0, 128);
+	const result = [...value]
+		.map((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code < 0x20 || /[\\/:*?"<>|]/u.test(character) ? '_' : character;
+		})
+		.join('')
+		.trim()
+		.slice(0, 128);
 	return result.length > 0 ? result : 'download';
 }
 
 function base64(bytes: Uint8Array): string {
 	let output = '';
 	for (let offset = 0; offset < bytes.length; offset += 0x8000)
-		output += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+		output += String.fromCharCode(
+			...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)),
+		);
 	return window.btoa(output);
 }
 
@@ -542,4 +570,53 @@ export async function presentWorkspaceView(
 	});
 	if (!response.handled)
 		throw new Error('Native workspace windows are unavailable.');
+}
+
+export interface DesktopClipboardSharing {
+	start(
+		token: string,
+		changed: (snapshot: TerminayHostClipboardSnapshot) => void,
+	): Promise<TerminayHostClipboardSnapshot | undefined>;
+	stop(token: string): Promise<void>;
+	write(
+		token: string,
+		revision: number,
+		text: string,
+	): Promise<TerminayHostClipboardSnapshot>;
+	dispose(): void;
+}
+
+/** Narrow negotiated Desktop-only capability; browsers retain native paste. */
+export function desktopClipboardSharing(): DesktopClipboardSharing | undefined {
+	const host = bridge();
+	if (
+		!host?.startClipboardSync ||
+		!host.stopClipboardSync ||
+		!host.writeClipboardSync ||
+		!host.subscribeClipboardSync
+	)
+		return undefined;
+	let unsubscribe: (() => void) | undefined;
+	let disposed = false;
+	return {
+		start: async (token, changed) => {
+			if (disposed) return undefined;
+			const context = await host.getContext();
+			if (disposed || context.capabilities.clipboardSync !== 1)
+				return undefined;
+			unsubscribe?.();
+			unsubscribe = host.subscribeClipboardSync!((snapshot) => {
+				if (snapshot.token === token) changed(snapshot);
+			});
+			return host.startClipboardSync!(token);
+		},
+		stop: (token) => host.stopClipboardSync!(token),
+		write: (token, revision, text) =>
+			host.writeClipboardSync!(token, revision, text),
+		dispose: () => {
+			disposed = true;
+			unsubscribe?.();
+			unsubscribe = undefined;
+		},
+	};
 }
