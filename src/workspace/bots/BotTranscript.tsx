@@ -8,7 +8,11 @@ import {
  * a checklist. Shared by Chat and the Sessions tab.
  */
 
-import type { BotMessageAttachment, BotProfile } from '@terminay/protocol';
+import type {
+	BotMessageAttachment,
+	BotProfile,
+	BotThreadSummary,
+} from '@terminay/protocol';
 import {
 	Check,
 	ChevronRight,
@@ -16,6 +20,7 @@ import {
 	Download,
 	FileText,
 	LoaderCircle,
+	MessageSquareReply,
 	X,
 } from 'lucide-react';
 import {
@@ -30,6 +35,82 @@ import {
 import { saveDownload } from '../../host/nativeActions';
 import { BotAvatar } from './BotAvatar';
 import { attachmentView, formatFileSize } from './botsModel';
+import { replyCountLabel } from './threadModel';
+
+/** A root's thread, as the reply bar under it shows it. */
+export type TranscriptThread = Readonly<{
+	summary: BotThreadSummary;
+	/** It holds a bot reply this device has not read. */
+	isNew: boolean;
+}>;
+
+/** Shown on a top-level message while it is hovered or holds focus. */
+function MessageActions({
+	messageKey,
+	onOpenThread,
+}: Readonly<{ messageKey: string; onOpenThread: (key: string) => void }>) {
+	return (
+		<div className="bots-msg__actions">
+			<button
+				type="button"
+				className="bots-msg__action"
+				aria-label="Reply in thread"
+				title="Reply in thread"
+				data-terminay-bot-reply-in-thread={messageKey}
+				onClick={() => onOpenThread(messageKey)}
+			>
+				<MessageSquareReply size={15} aria-hidden="true" />
+			</button>
+		</div>
+	);
+}
+
+/** Under a root with replies: who replied, how many, and when. */
+function ReplyBar({
+	messageKey,
+	thread,
+	bot,
+	onOpenThread,
+}: Readonly<{
+	messageKey: string;
+	thread: TranscriptThread;
+	bot: Pick<BotProfile, 'id' | 'name' | 'colour' | 'avatar'>;
+	onOpenThread: (key: string) => void;
+}>) {
+	const { summary, isNew } = thread;
+	return (
+		<button
+			type="button"
+			className={isNew ? 'bots-replies bots-replies--new' : 'bots-replies'}
+			data-terminay-bot-thread-replies={summary.replyCount}
+			data-terminay-bot-thread-new={isNew ? 'true' : undefined}
+			aria-label={`${replyCountLabel(summary.replyCount)}${isNew ? ', new' : ''}. Open thread`}
+			onClick={() => onOpenThread(messageKey)}
+		>
+			<span className="bots-replies__faces" aria-hidden="true">
+				{summary.authors.slice(0, 2).map((author) =>
+					author === 'bot' ? (
+						<BotAvatar key={author} bot={bot} size="sm" />
+					) : (
+						<span key={author} className="bots-replies__you">
+							You
+						</span>
+					),
+				)}
+			</span>
+			<span className="bots-replies__count">
+				{replyCountLabel(summary.replyCount)}
+			</span>
+			<span className="bots-replies__time">
+				Last reply {messageTime(summary.lastReplyAt)}
+			</span>
+			<span className="bots-replies__open" aria-hidden="true">
+				View thread
+				<ChevronRight size={13} />
+			</span>
+		</button>
+	);
+}
 
 /** A sent non-image attachment. It is never rendered: activating it saves
  * its bytes through the host save (ADR-0130). */
@@ -172,7 +253,13 @@ export const BotTranscript = memo(function BotTranscript({
 	containerRef,
 	messageTimes,
 	unread,
+	threads,
+	onOpenThread,
 }: Readonly<{
+	/** Chat: roots' threads, by message key. */
+	threads?: ReadonlyMap<string, TranscriptThread>;
+	/** Chat: offers Reply in thread on each message and opens a thread. */
+	onOpenThread?: (key: string) => void;
 	active?: boolean;
 	/** Chat: each message's posting time. When given, every message is its own
 	 * block with avatar, author and time instead of folding into one turn. */
@@ -254,6 +341,12 @@ export const BotTranscript = memo(function BotTranscript({
 					onMouseDown={menuHandlers.onMouseDown}
 					onContextMenu={menuHandlers.onContextMenu}
 				>
+					{onOpenThread ? (
+						<MessageActions
+							messageKey={block.item.key}
+							onOpenThread={onOpenThread}
+						/>
+					) : null}
 					<span className="bots-msg__you" aria-hidden="true">
 						You
 					</span>
@@ -301,6 +394,7 @@ export const BotTranscript = memo(function BotTranscript({
 									))}
 							</ul>
 						) : null}
+						{replyBar(block.item.key)}
 					</div>
 				</div>
 			);
@@ -325,6 +419,9 @@ export const BotTranscript = memo(function BotTranscript({
 		// tool runs and replies, in order.
 		return (
 			<div className="bots-msg" key={block.key}>
+				{onOpenThread && separate ? (
+					<MessageActions messageKey={block.key} onOpenThread={onOpenThread} />
+				) : null}
 				<BotAvatar bot={bot} size="sm" />
 				<div className="bots-msg__main bots-msg__turn">
 					<MessageHead who={bot.name} at={at} />
@@ -362,9 +459,21 @@ export const BotTranscript = memo(function BotTranscript({
 							);
 						return null;
 					})}
+					{separate ? replyBar(block.key) : null}
 				</div>
 			</div>
 		);
+	}
+	function replyBar(key: string) {
+		const thread = threads?.get(key);
+		return thread && onOpenThread ? (
+			<ReplyBar
+				messageKey={key}
+				thread={thread}
+				bot={bot}
+				onOpenThread={onOpenThread}
+			/>
+		) : null;
 	}
 });
 

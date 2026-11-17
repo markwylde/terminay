@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+	deleteLabel,
+	observedThrough,
+	replyCountLabel,
+	threadIsNew,
+	visibleStartFailures,
+} from './threadModel.ts';
+
+const summary = (lastBotReplySequence: number | null) => ({
+	replyCount: 2,
+	lastReplyAt: 0,
+	lastReplySequence: 9,
+	lastBotReplySequence,
+	authors: ['user' as const],
+});
+
+test('reply count labels', () => {
+	assert.equal(replyCountLabel(1), '1 reply');
+	assert.equal(replyCountLabel(3), '3 replies');
+});
+
+test('a thread is new only for a bot reply past the read position', () => {
+	assert.equal(threadIsNew(summary(8), 5), true);
+	assert.equal(
+		threadIsNew(summary(4), 5),
+		false,
+		'only the user replied since',
+	);
+	assert.equal(threadIsNew(summary(null), 0), false, 'user-only thread');
+	assert.equal(
+		threadIsNew(summary(8), undefined),
+		false,
+		'no read position yet',
+	);
+	assert.equal(threadIsNew(undefined, 1), false);
+});
+
+test('observed sequence covers roots and their latest replies', () => {
+	assert.equal(observedThrough([]), undefined);
+	assert.equal(
+		observedThrough([
+			{ sequence: 3 },
+			{ sequence: 5, thread: { ...summary(7), lastReplySequence: 12 } },
+			{ sequence: 9 },
+		]),
+		12,
+	);
+});
+
+test('start failures hide behind a later started message or a dismissal', () => {
+	const failed = {
+		author: 'user' as const,
+		dispatch: { state: 'failed' as const, executionId: null },
+	};
+	const started = {
+		author: 'user' as const,
+		dispatch: { state: 'started' as const, executionId: 'x' },
+	};
+	const dismissed = {
+		author: 'user' as const,
+		dispatch: { state: 'failed' as const, executionId: null, dismissed: true },
+	};
+	const bot = { author: 'bot' as const };
+	assert.deepEqual(visibleStartFailures([failed, started]), []);
+	assert.deepEqual(visibleStartFailures([started, failed, bot]), [failed]);
+	assert.deepEqual(visibleStartFailures([dismissed]), []);
+});
+
+test('deleting a root with replies says so', () => {
+	assert.equal(
+		deleteLabel({ thread: summary(1) }),
+		'Delete message and replies',
+	);
+	assert.equal(deleteLabel({}), 'Delete message');
+	assert.equal(deleteLabel({ threadId: 'a'.repeat(24) }), 'Delete message');
+});

@@ -27,7 +27,7 @@ export const BOT_RUNTIME_TOOLS = [
 	{
 		name: 'chat_list',
 		description:
-			'Read message summaries only; paginate for older context. Without threadId it lists top-level messages, each root showing its thread summary; with threadId it lists that thread\'s replies. search spans every message.',
+			"Read message summaries only; paginate for older context. Without threadId it lists top-level messages, each root showing its thread summary; with threadId it lists that thread's replies. search spans every message.",
 		inputSchema: schema({ ...page, search: string, threadId: string }),
 	},
 	{
@@ -38,7 +38,7 @@ export const BOT_RUNTIME_TOOLS = [
 	{
 		name: 'chat_post',
 		description:
-			'Post a user-visible bot message. Stdout is private diagnostics. Attachments are captured durably from container files. Pass threadId (a message ID) to reply in that message\'s thread; without it the post is top-level.',
+			"Post a user-visible bot message. Stdout is private diagnostics. Attachments are captured durably from container files. Pass threadId (a message ID) to reply in that message's thread; without it the post is top-level.",
 		inputSchema: schema(
 			{
 				text: string,
@@ -464,7 +464,12 @@ export class BotExecutionRuntime {
 			  }
 			| undefined;
 		if (threadId) {
-			thread = { rootId: threadId, root: null, replyCount: 0, latestReplies: [] };
+			thread = {
+				rootId: threadId,
+				root: null,
+				replyCount: 0,
+				latestReplies: [],
+			};
 			try {
 				const root = messages.detail(r.botId, threadId, undefined, 1024);
 				thread.root = { author: root.message.author, excerpt: root.text };

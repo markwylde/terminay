@@ -1,0 +1,110 @@
+/** Thread helpers for bot Chat. */
+import type { BotMessagesClient } from '@terminay/client-core';
+import type {
+	BotMessage,
+	BotMessageDetail,
+	BotThreadSummary,
+	TranscriptItem,
+} from '@terminay/protocol';
+
+/** A message with its whole text, read in as many slices as it takes. */
+export async function fullMessage(
+	client: Pick<BotMessagesClient, 'get'>,
+	botId: string,
+	id: string,
+): Promise<BotMessage> {
+	let part: BotMessageDetail = await client.get(botId, id);
+	let text = part.text;
+	let next = part.nextCursor;
+	while (next) {
+		part = await client.get(botId, id, next);
+		text += part.text;
+		next = part.nextCursor;
+	}
+	return { ...part.message, text };
+}
+
+/** How Chat shows a message: the user's with its files, the bot's as Markdown with its images. */
+export function messageItem(message: BotMessage): TranscriptItem {
+	return message.author === 'user'
+		? {
+				kind: 'user',
+				key: message.id,
+				text: message.text,
+				attachments: message.attachments,
+			}
+		: {
+				kind: 'agent',
+				key: message.id,
+				text:
+					message.text +
+					message.attachments
+						.map(
+							(a) =>
+								`\n\n![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
+						)
+						.join(''),
+			};
+}
+
+/** "1 reply", "3 replies". */
+export function replyCountLabel(count: number): string {
+	return `${count} ${count === 1 ? 'reply' : 'replies'}`;
+}
+
+/** A thread is new to this device when its latest bot reply is past the read position. */
+export function threadIsNew(
+	summary: Pick<BotThreadSummary, 'lastBotReplySequence'> | undefined,
+	readThrough: number | undefined,
+): boolean {
+	return (
+		readThrough !== undefined &&
+		summary?.lastBotReplySequence != null &&
+		summary.lastBotReplySequence > readThrough
+	);
+}
+
+/** The latest sequence a view has observed: its messages and their roots' latest replies. */
+export function observedThrough(
+	messages: readonly Pick<BotMessage, 'sequence' | 'thread'>[],
+): number | undefined {
+	let latest: number | undefined;
+	for (const m of messages) {
+		const at = Math.max(m.sequence, m.thread?.lastReplySequence ?? 0);
+		if (latest === undefined || at > latest) latest = at;
+	}
+	return latest;
+}
+
+/**
+ * User messages whose start failed and still need a warning, oldest first.
+ * A failure stays visible until it is dismissed or a later user message in
+ * the same list has started an execution.
+ */
+export function visibleStartFailures<
+	T extends Pick<BotMessage, 'author' | 'dispatch'>,
+>(ordered: readonly T[]): T[] {
+	let laterStarted = false;
+	const shown: T[] = [];
+	for (let i = ordered.length - 1; i >= 0; i--) {
+		const m = ordered[i]!;
+		if (m.author !== 'user') continue;
+		if (m.dispatch?.state === 'started') laterStarted = true;
+		else if (
+			m.dispatch?.state === 'failed' &&
+			!m.dispatch.dismissed &&
+			!laterStarted
+		)
+			shown.unshift(m);
+	}
+	return shown;
+}
+
+/** The Delete label for a message: a root with replies deletes them too. */
+export function deleteLabel(
+	message: Pick<BotMessage, 'threadId' | 'thread'>,
+): string {
+	return !message.threadId && message.thread?.replyCount
+		? 'Delete message and replies'
+		: 'Delete message';
+}

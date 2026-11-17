@@ -129,8 +129,7 @@ function parse(value: unknown): State {
 			!Number.isSafeInteger(r.change) ||
 			!Array.isArray(r.attachments) ||
 			(r.threadId !== undefined &&
-				(typeof r.threadId !== 'string' ||
-					!/^[a-f0-9]{24}$/.test(r.threadId)))
+				(typeof r.threadId !== 'string' || !/^[a-f0-9]{24}$/.test(r.threadId)))
 		)
 			throw new Error('Invalid stored message');
 	}
@@ -612,10 +611,11 @@ export class BotMessageStore extends EventEmitter {
 		const items: BotMessageSummary[] = [];
 		let bytes = 0;
 		for (const row of candidates) {
-			const { text: body, attachments, ...message } = this.public(
-				row,
-				row.threadId ? undefined : threads.get(row.id),
-			);
+			const {
+				text: body,
+				attachments,
+				...message
+			} = this.public(row, row.threadId ? undefined : threads.get(row.id));
 			const item = {
 				...message,
 				excerpt: utf8(body, 256),
