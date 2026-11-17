@@ -24,4 +24,4 @@ Land the workflow and scripts together. Existing failed runs still execute their
 
 ## Open Questions
 
-The Windows packaging exit must be reproduced before choosing its correction. No accepted ADR needs supersession.
+The original Windows exit 127 did not reproduce in a focused native Windows build using the same script, Electron and electron-builder versions. Both the original fixture installer and its next-version installer built successfully. Preserve stage/exit diagnostics rather than applying an unproven workaround. No accepted ADR needs supersession.
