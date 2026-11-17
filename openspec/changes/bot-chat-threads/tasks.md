@@ -1,0 +1,29 @@
+## 1. Protocol and store
+
+- [ ] 1.1 Add `threadId?: string` and `thread?: BotThreadSummary` to `BotMessage`/`BotMessageSummary` in `packages/protocol/src/botMessages.ts`, and export `BotThreadSummary`. Verify: `npx turbo run build --filter=@terminay/protocol` passes.
+- [ ] 1.2 In `BotMessageStore`: accept an optional 24-hex `threadId` in `parse()`; `post(..., threadId?)` checks the idempotency key first (digest includes the requested `threadId` when set), then resolves the root (unknown/deleted → `not_found` "Thread not found", reply → its root), stores the resolved root and emits `message.posted` then `message.thread`. Verify: new cases in `packages/server-core/test/bot-messages.test.mjs` for reply storage, reply-to-reply, unknown/deleted root refused with no message, idempotent replay of a reply, replay after the named reply was deleted, same key with a different thread refused, a retried reply whose upload tokens were consumed, and the two events.
+- [ ] 1.3 Derive thread summaries (`replyCount`, `lastReplyAt`, `lastReplySequence`, `lastBotReplySequence`, `authors`) for roots, never persisted (internal mutations build from stored rows), in `get`, `detail` and `list`; `list` gains `threadId`: top-level only by default, the thread's replies with `threadId`, all messages for a search without `threadId`; cursor filters bound to scope. Verify: tests for main stream excluding replies with a summary, thread paging with a cursor, cursor refused across threads and against the top-level list, search finding a reply, a root without replies carrying no summary, `lastBotReplySequence` in a mixed-author thread and after its latest bot reply is deleted, and the persisted JSON after a root edit and a dispatch update holding no `thread` field (reload keeps the summary and the root revision).
+- [ ] 1.4 Deleting a reply emits `message.thread` for its root; deleting a root deletes its replies in the same save and prunes their attachments. Verify: tests for deleting one reply (count drops, root stays) and a root with replies (all gone, attachment files removed); clear removes threads.
+
+## 2. Server services and runtime
+
+- [ ] 2.1 `BotService.postUserMessage` and `postBotMessage` accept `threadId`; `bots.messages.post` and `bots.messages.list` accept `threadId` (24-hex). Verify: `bot-messages`/`bot-protocol` tests post a user reply through the protocol and see an execution dispatched with that message.
+- [ ] 2.2 `chat_post` and `chat_list` accept `threadId`; descriptions say so; a foreign or unknown thread is refused as not found. Verify: `bot-runtime.test.mjs` posts a bot reply in a thread, lists a thread, and is refused for another bot's message ID.
+- [ ] 2.3 Briefing: add `thread` context for executions triggered by a reply, trimmed before recent messages, and the instruction line. Verify: `bot-runtime.test.mjs` checks the briefing of a reply execution names the root, carries latest replies and stays within 8 KiB with 200 long replies; that with long thread context and ten long recent messages the replies are dropped and the root cut before any recent message; a top-level trigger has no `thread`; the existing trim-order test still passes.
+
+## 3. Client
+
+- [ ] 3.1 `BotMessagesClient.post` and `list` accept `threadId`. Verify: client-core typecheck/build and an existing or new client-core test.
+
+## 4. UI
+
+- [ ] 4.1 Extract `BotComposer.tsx` from `BotChat.tsx` (pending files, upload tokens, paste/drop, idempotent send attempt, errors) with `threadId`, `draft`, `onDraftChange`, `placeholder`, `onPosted`; `threadId` captured at send start; the thread panel mounts it keyed by thread. Verify: existing bots e2e for attachments, paste, quote and send still pass; e2e attaches an image in thread M, opens thread N and sees no pending file there.
+- [ ] 4.2 `BotTranscript`: hover/focus "Reply in thread" action and reply bar (avatars, count, last reply time, new marker) for top-level messages. Verify: e2e hovers a message, activates Reply in thread, and sees the reply bar with the count after replying.
+- [ ] 4.3 `BotThreadPanel.tsx`: root, reply divider, replies in an ID-keyed map with older paging merged, composer, per-message live updates (never reloading the newest page), root refresh on edit/dispatch/thread events, stale-response guard by thread and generation, start failures with Retry/Dismiss, close button and Escape returning focus to the root; replaces the context rail, overlays the chat when narrow. Verify: e2e opens a thread, replies, sees a bot reply arrive live, edits and quotes a reply in the panel, deletes a reply and sees the count drop, closes with Escape and finds focus on the root, and checks the main stream has no reply message.
+- [ ] 4.4 `BotChat`: open-thread state, per-thread drafts, event routing (`message.thread` refresh, reply events to the panel, deleted root or clear closes it), menu "Reply in thread" and "Delete message and replies", Quote into the active composer, acknowledgement through thread sequences (no new acknowledgement cause), new-reply marker from `lastBotReplySequence`. Verify: e2e for separate drafts, deleting a root with replies, clearing the chat closing the panel, and the menu labels.
+- [ ] 4.5 Styles in `botPanels.css` for the action bar, reply bar and panel, in both themes and the narrow layout. Verify: screenshots of a reply bar, the open thread panel and the narrow overlay.
+
+## 5. End to end and checks
+
+- [ ] 5.1 Add thread coverage to `e2e/bots.spec.ts` (a scripted bot posting replies through the runtime, as existing tests do) and capture screenshots of the hover action, reply bar, thread panel with replies and the narrow layout. Verify: `npm run test:e2e` for the bots suite passes in Docker.
+- [ ] 5.2 Run typecheck, Biome, server-core and client-core tests, `openspec validate bot-chat-threads` and `openspec validate --all`. Verify: all pass, or pre-existing failures on `main` are listed as unrelated.
