@@ -14,11 +14,15 @@ import { Eye, Maximize2, MousePointer2, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	desktopClipboardUploadRoute,
+	desktopClipboardSharing,
 	writeClipboardText,
 } from '../../host/nativeActions';
 import { attachDesktopClipboard } from './desktopClipboard';
+import { attachDesktopClipboardSharing } from './desktopClipboardSharing';
 import { RfbStreamChannel } from './rfbChannel';
 import { refusalText, type ServerBots } from './useServerBots';
+
+type SharingState = 'syncing' | 'active' | 'inactive' | 'unavailable';
 
 type DesktopState = 'connecting' | 'open' | 'closed' | 'failed';
 
@@ -32,6 +36,7 @@ export function BotDesktopCanvas({
 	attempt = 0,
 	onState,
 	onPasteTooLarge,
+	onSharing,
 }: Readonly<{
 	server: ServerBots;
 	bot: Pick<BotProfile, 'id'>;
@@ -40,6 +45,7 @@ export function BotDesktopCanvas({
 	attempt?: number;
 	onState?: (state: DesktopState, error?: string) => void;
 	onPasteTooLarge?: () => void;
+	onSharing?: (state: SharingState) => void;
 }>) {
 	const host = useRef<HTMLDivElement>(null);
 	const io = useMemo(
@@ -50,6 +56,8 @@ export function BotDesktopCanvas({
 	report.current = onState;
 	const tooLarge = useRef(onPasteTooLarge);
 	tooLarge.current = onPasteTooLarge;
+	const sharingReport = useRef(onSharing);
+	sharingReport.current = onSharing;
 	// The thumbnail is always view-only. Otherwise each mode is its own
 	// server stream, so the server enforces view-only.
 	const streamMode: BotDesktopMode = thumbnail ? 'view-only' : mode;
@@ -94,6 +102,32 @@ export function BotDesktopCanvas({
 				// Clipboard sharing is control mode only (ADR-0129). View-only
 				// streams never read or write either clipboard.
 				if (streamMode === 'control' && !thumbnail) {
+					const clipboardHost = desktopClipboardSharing();
+					let sharingState: SharingState = clipboardHost
+						? 'syncing'
+						: 'unavailable';
+					const sharing = clipboardHost
+						? attachDesktopClipboardSharing(rfb, clipboardHost, {
+								onState: (next) => {
+									sharingState = next;
+									sharingReport.current?.(next);
+								},
+								onTooLarge: () => tooLarge.current?.(),
+							})
+						: undefined;
+					layer.sharing = sharing;
+					sharingReport.current?.(sharingState);
+					const select = () => {
+						if (!sharing?.selected()) sharing?.claim();
+					};
+					el.addEventListener('pointerdown', select, { capture: true });
+					el.addEventListener('focusin', select, { capture: true });
+					layer.detachSharing = () => {
+						el.removeEventListener('pointerdown', select, { capture: true });
+						el.removeEventListener('focusin', select, { capture: true });
+						sharing?.dispose();
+					};
+					rfb.addEventListener('connect', () => sharing?.claim());
 					// The paste shortcut lands here: an editable target is what
 					// makes Chromium (and macOS Edit › Paste) raise a native paste.
 					const catcher = document.createElement('textarea');
@@ -104,6 +138,8 @@ export function BotDesktopCanvas({
 					catcher.spellcheck = false;
 					el.appendChild(catcher);
 					layer.detachClipboard = attachDesktopClipboard(el, rfb, {
+						sharingOwnsClipboard: () =>
+							sharing !== undefined && sharingState !== 'unavailable',
 						isMac: /mac|iphone|ipad|ipod/i.test(navigator.platform),
 						focusedInside: () => el.contains(document.activeElement),
 						documentFocused: () => document.hasFocus(),
@@ -139,6 +175,8 @@ export function BotDesktopCanvas({
 		return () => {
 			// A layer still connecting is abandoned. The one on screen stays
 			// until its replacement connects, or until the canvas unmounts.
+			layer.detachSharing?.();
+			layer.detachClipboard?.();
 			if (!layer.shown) retire(layers.current, layer);
 		};
 	}, [io, bot.id, streamMode, thumbnail, attempt]);
@@ -179,6 +217,8 @@ type DesktopLayer = {
 	rfb?: RFB;
 	channel?: RfbStreamChannel;
 	detachClipboard?: () => void;
+	detachSharing?: () => void;
+	sharing?: ReturnType<typeof attachDesktopClipboardSharing>;
 };
 
 function retire(list: DesktopLayer[], layer: DesktopLayer): void {
@@ -187,6 +227,7 @@ function retire(list: DesktopLayer[], layer: DesktopLayer): void {
 	const at = list.indexOf(layer);
 	if (at >= 0) list.splice(at, 1);
 	layer.detachClipboard?.();
+	layer.detachSharing?.();
 	try {
 		layer.rfb?.disconnect();
 	} catch {
@@ -202,6 +243,7 @@ export function BotDesktopView({
 	visible,
 }: Readonly<{ server: ServerBots; bot: BotProfile; visible: boolean }>) {
 	const [mode, setMode] = useState<BotDesktopMode>('view-only');
+	const [sharing, setSharing] = useState<SharingState>('inactive');
 	const [state, setState] = useState<DesktopState>('connecting');
 	const [error, setError] = useState<string>();
 	const [attempt, setAttempt] = useState(0);
@@ -248,7 +290,13 @@ export function BotDesktopView({
 								? 'Viewing. Your keyboard and mouse do not reach the bot.'
 								: pasteTooLarge
 									? 'Too large to paste into the bot.'
-									: 'Controlling the bot’s desktop. Copy and paste work both ways.'
+									: sharing === 'active'
+										? 'Clipboard text is synced both ways while this desktop is open.'
+										: sharing === 'syncing'
+											? 'Starting clipboard sharing…'
+											: sharing === 'unavailable'
+												? 'Clipboard sync is unavailable. Use the device’s paste shortcut to send text.'
+												: 'Clipboard sharing is inactive. Click the desktop to share here.'
 							: state === 'closed'
 								? 'Disconnected.'
 								: 'The desktop could not open.'}
@@ -287,6 +335,7 @@ export function BotDesktopView({
 							setState(next);
 							setError(why);
 						}}
+						onSharing={setSharing}
 						onPasteTooLarge={() => setPasteTooLarge(true)}
 					/>
 				) : null}

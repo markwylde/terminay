@@ -16,7 +16,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0133-bot-message-threads-live-in-the-message-log.md - one-level threads stored as replies in the bot's message log, with derived summaries, thread-scoped reads and explicit threading for bot posts.
+- openspec/adr/0134-bot-message-threads-live-in-the-message-log.md - one-level threads stored as replies in the bot's message log, with derived summaries, thread-scoped reads and explicit threading for bot posts.
 
 ## Notes
 
