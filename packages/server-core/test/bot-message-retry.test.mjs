@@ -276,3 +276,25 @@ test('restart reconciles a pending retry without starting more work', async (t) 
 		});
 	}
 });
+
+test('a user reply in a thread starts a fresh execution linked to the reply', async (t) => {
+	const r = await setup(t);
+	const root = await r.service.postUserMessage(r.bot.id, 'Root task', 'root');
+	await settled(r, root.sessionId);
+	const reply = await r.service.postUserMessage(
+		r.bot.id,
+		'Follow-up in thread',
+		'reply',
+		[],
+		root.message.id,
+	);
+	assert.equal(reply.message.threadId, root.message.id);
+	assert.ok(reply.sessionId);
+	assert.notEqual(reply.sessionId, root.sessionId);
+	assert.equal(r.sessions.get(reply.sessionId).origin.messageId, reply.message.id);
+	await settled(r, reply.sessionId);
+	await assert.rejects(
+		r.service.postUserMessage(r.bot.id, 'Nope', 'bad', [], 'f'.repeat(24)),
+		/Thread not found/,
+	);
+});

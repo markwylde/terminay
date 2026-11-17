@@ -101,7 +101,7 @@ test('trigger facade rejects malformed definitions, outcomes and upcoming cursor
 });
 test('message client sends bounded page options without undefined values and fetches binary attachments separately',async()=>{
  const {BotMessagesClient}=await import('../dist/index.js');const calls=[];const wire={query:async(op,payload)=>{calls.push({op,payload});return {items:[],nextCursor:null,eventsCursor:'events',total:0,truncated:false};},command:async()=>null,queryWithBody:async()=>({result:{mime:'image/png'},body:new Uint8Array([1,2,3])}),subscribe:()=>()=>{}};
- const client=new BotMessagesClient(wire);await client.list(profile.id,{cursor:undefined,limit:10});assert.deepEqual(calls[0].payload,{botId:profile.id,limit:10});const attachment=await client.attachment(profile.id,'a'.repeat(24));assert.equal(attachment.bytes.length,3);assert.equal(attachment.mime,'image/png');
+ const client=new BotMessagesClient(wire);await client.list(profile.id,{cursor:undefined,limit:10});assert.deepEqual(calls[0].payload,{botId:profile.id,limit:10});const attachment=await client.attachment(profile.id,'a'.repeat(24));assert.equal(attachment.bytes.length,3);assert.equal(attachment.mime,'image/png'); await client.list(profile.id,{threadId:'e'.repeat(24),limit:5});assert.deepEqual(calls.at(-1).payload,{botId:profile.id,threadId:'e'.repeat(24),limit:5});
 });
 
 test('Investigate failures off is saved explicitly and still reads off after a reload', async () => {
@@ -154,7 +154,7 @@ test('message uploads stage images and posts carry their tokens',async()=>{
  const client=new BotMessagesClient(wire);const upload=await client.upload(profile.id,'shot.png',new Uint8Array([1,2]));
  assert.equal(upload.token,token);assert.equal(calls[0].op,'bots.messages.upload');assert.deepEqual(calls[0].payload,{botId:profile.id,name:'shot.png'});
  await client.post(profile.id,'','key-1',[token]);assert.deepEqual(calls[1].payload,{botId:profile.id,text:'',key:'key-1',uploads:[token]});
- await client.post(profile.id,'hi','key-2');assert.deepEqual(calls[2].payload,{botId:profile.id,text:'hi',key:'key-2'});
+ await client.post(profile.id,'hi','key-2');assert.deepEqual(calls[2].payload,{botId:profile.id,text:'hi',key:'key-2'}); await client.post(profile.id,'re','key-3',[],'e'.repeat(24));assert.deepEqual(calls[3].payload,{botId:profile.id,text:'re',key:'key-3',threadId:'e'.repeat(24)});
  const bad=new BotMessagesClient({...wire,commandWithBody:async()=>({token:'x',attachment:{name:'a',mime:'text/plain',size:1}})});
  await assert.rejects(bad.upload(profile.id,'a',new Uint8Array([1])),/Invalid upload/);
 });

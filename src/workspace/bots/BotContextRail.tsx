@@ -8,13 +8,13 @@ import {
 	Zap,
 } from 'lucide-react';
 import { BotDesktopCanvas } from './BotDesktopView';
+import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
+import type { BotConfigTab } from './BotTab';
 import { formatWhen } from './BotTriggersPanel';
 import { SESSION_STATE_LABELS, sessionTitle, shortAge } from './botsModel';
 import { distinctUpcoming } from './triggersModel';
 import { useNow } from './useNow';
 import type { ServerBots } from './useServerBots';
-import type { BotConfigTab } from './BotTab';
-import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
 export function BotContextRail({
 	server,
 	bot,

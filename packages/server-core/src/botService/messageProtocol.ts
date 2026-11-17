@@ -34,6 +34,8 @@ export function createBotMessageOperations(
 	};
 	const cursor = (p: Record<string, unknown>) =>
 		p.cursor === undefined ? undefined : text(p.cursor, 4096, 'cursor');
+	const thread = (p: Record<string, unknown>) =>
+		p.threadId === undefined ? undefined : text(p.threadId, 24, 'thread id');
 	const queries: OperationRegistries['queries'] = {
 		[op.list]: async (r) => {
 			const p = data(r);
@@ -42,6 +44,7 @@ export function createBotMessageOperations(
 					cursor: cursor(p),
 					limit: p.limit as number | undefined,
 					search: p.search as string | undefined,
+					threadId: thread(p),
 				}),
 			);
 		},
@@ -88,6 +91,7 @@ export function createBotMessageOperations(
 				text(p.text, 65536, 'message', uploads.length > 0),
 				text(p.key, 128, 'idempotency key'),
 				uploads.map((u) => text(u, 24, 'upload token')),
+				thread(p),
 			);
 			assertBotAuthority(r.context);
 			// The bot's Terminay tools act on the window that messaged it.

@@ -171,6 +171,20 @@ export interface BotMessage {
 	readonly attachments: readonly BotMessageAttachment[];
 	/** Present on a recorded Terminay action, never on a post (ADR-0134). */
 	readonly activity?: BotMessageActivity;
+	/** The thread's root, for a reply; absent for a top-level message. */
+	readonly threadId?: string;
+	/** Derived for a root with replies; never stored. */
+	readonly thread?: BotThreadSummary;
+}
+/** A root's replies, as derived when the root is read. */
+export interface BotThreadSummary {
+	readonly replyCount: number;
+	readonly lastReplyAt: number;
+	readonly lastReplySequence: number;
+	/** The latest bot reply's sequence; null when only the user replied. */
+	readonly lastBotReplySequence: number | null;
+	/** Who has replied, most recent first, each once. */
+	readonly authors: readonly ('user' | 'bot')[];
 }
 export interface BotMessageSummary
 	extends Omit<BotMessage, 'text' | 'attachments'> {

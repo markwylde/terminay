@@ -8,13 +8,13 @@
 
 import { Box, MessageSquare } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
-import { CompactSectionPage } from '../compact/CompactSectionPage';
 import {
 	CompactChip,
 	CompactEmpty,
 	CompactLinkRow,
 	CompactRow,
 } from '../compact/CompactRow';
+import { CompactSectionPage } from '../compact/CompactSectionPage';
 import type { CompactTab } from '../compact/compactSectionModel';
 import { BotAvatar } from './BotAvatar';
 import { BuildBanner } from './BotBuildProgress';

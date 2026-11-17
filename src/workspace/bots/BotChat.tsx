@@ -3,15 +3,10 @@ import { BotMessagesClient } from '@terminay/client-core';
 import type {
 	BotActionTarget,
 	BotMessage,
-	BotMessageDetail,
 	BotProfile,
 	BotSessionRecord,
 } from '@terminay/protocol';
-import { FileText, Paperclip, X } from 'lucide-react';
 import {
-	type ClipboardEvent,
-	type DragEvent,
-	type KeyboardEvent,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -22,33 +17,30 @@ import {
 import { createPortal } from 'react-dom';
 import { ContextMenu } from '../../components/ContextMenu';
 import { recallBotChatRead, rememberBotChatRead } from '../localViewState';
+import { BotComposer, type BotPostResult } from './BotComposer';
 import { BotContextRail } from './BotContextRail';
 import { BotsRailSeparator } from './BotsRailSeparator';
 import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
+import { BotStartFailures } from './BotStartFailures';
 import type { BotConfigTab } from './BotTab';
-import { BotTranscript } from './BotTranscript';
-import type { BotActionReveal } from './botActions';
+import { BotThreadPanel } from './BotThreadPanel';
 import {
-	acceptChatFiles,
-	type ChatSendAttempt,
-	chatFileKind,
-	chatSendAttempt,
-	formatFileSize,
-} from './botsModel';
+	BotTranscript,
+	type MessageMenuRequest,
+	type TranscriptThread,
+} from './BotTranscript';
+import type { BotActionReveal } from './botActions';
 import { appendQuote, quoteMessage } from './quoteMessage';
+import {
+	deleteLabel,
+	fullMessage,
+	messageItem,
+	observedThrough,
+	threadIsNew,
+	visibleStartFailures,
+} from './threadModel';
 import { botsRailStyle, useBotsRailWidth } from './useBotsRailWidth';
-import { useFitTextarea } from './useFitTextarea';
 import { refusalText, type ServerBots } from './useServerBots';
-
-interface PendingFile {
-	readonly key: string;
-	readonly file: File;
-	readonly kind: 'image' | 'file';
-	/** Display name sent with the upload; pasted files get a generated one. */
-	readonly name: string;
-	/** Thumbnail object URL, for images only. */
-	readonly url: string | undefined;
-}
 
 export function BotChat({
 	server,
@@ -84,15 +76,32 @@ export function BotChat({
 		() => new BotMessagesClient(server.transport as never),
 		[server.transport],
 	);
+	// Top-level messages only; replies live in their thread's panel.
 	const [messages, setMessages] = useState<ReadonlyMap<string, BotMessage>>(
 		new Map(),
 	);
 	const [older, setOlder] = useState<string | null>(null),
 		[loading, setLoading] = useState(true),
 		[error, setError] = useState<string>(),
-		[sending, setSending] = useState(false),
 		[mutating, setMutating] = useState(false),
 		[recovering, setRecovering] = useState<string>();
+	// The open thread's root, and each thread's draft while this tab lives.
+	const [thread, setThread] = useState<string>(),
+		[threadDrafts, setThreadDrafts] = useState<ReadonlyMap<string, string>>(
+			new Map(),
+		);
+	// The newest reply the thread panel has shown: the main stream may not
+	// have refreshed that thread's summary yet.
+	const [panelSeen, setPanelSeen] = useState<number>();
+	const observePanel = useCallback(
+		(sequence: number) =>
+			setPanelSeen((now) =>
+				now === undefined || sequence > now ? sequence : now,
+			),
+		[],
+	);
+	const threadRef = useRef(thread);
+	threadRef.current = thread;
 	const [menu, setMenu] = useState<{
 		id: string;
 		/** The full stored text, which Edit message edits. */
@@ -100,12 +109,19 @@ export function BotChat({
 		/** The formatted quote (of the selection, or else of `text`); '' when there is nothing to quote. */
 		quote: string;
 		revision: number;
+		/** The thread the message is shown in, for a reply or the open root. */
+		inThread: string | undefined;
+		/** Reply in thread is offered for a top-level message. */
+		topLevel: boolean;
+		deleteLabel: string;
 		x: number;
 		y: number;
 		keyboard: boolean;
 	}>();
-	const composer = useRef<HTMLTextAreaElement>(null),
-		caretPending = useRef(false),
+	const composer = useRef<HTMLTextAreaElement | null>(null),
+		threadComposer = useRef<HTMLTextAreaElement | null>(null),
+		// Which composer a quote just went into, to focus it after render.
+		caretPending = useRef<'main' | 'thread' | undefined>(undefined),
 		menuFor = useRef<string | undefined>(undefined);
 	const [editing, setEditing] = useState<{
 			id: string;
@@ -120,119 +136,23 @@ export function BotChat({
 		pinned = useRef(true),
 		cursor = useRef<string | undefined>(undefined),
 		reload = useRef<() => void>(() => {});
-	// Files waiting to be sent. Each keeps the upload token it was given, so a
-	// retry of the same attempt does not upload or post it twice.
-	const [pending, setPending] = useState<readonly PendingFile[]>([]),
-		[attachError, setAttachError] = useState<string>(),
-		[dragging, setDragging] = useState(false);
-	const picker = useRef<HTMLInputElement>(null),
-		mounted = useRef(false),
-		pendingRef = useRef(pending),
-		attempt = useRef<ChatSendAttempt | undefined>(undefined),
-		tokens = useRef(new Map<string, string>()),
-		pasted = useRef(0);
-	pendingRef.current = pending;
-	useEffect(() => {
-		mounted.current = true;
-		return () => {
-			mounted.current = false;
-			for (const item of pendingRef.current)
-				if (item.url) URL.revokeObjectURL(item.url);
-		};
-	}, []);
-	// Files are classified by their first bytes, as the server does, so a
-	// thumbnail is shown only for content the server will store as an image.
-	const addFiles = async (files: readonly File[]) => {
-		if (!files.length) return;
-		const offered = await Promise.all(
-			files.map(async (file) => ({
-				file,
-				size: file.size,
-				kind: chatFileKind(
-					new Uint8Array(await file.slice(0, 12).arrayBuffer()),
-				),
-			})),
-		).catch(() => {
-			if (mounted.current)
-				setAttachError(
-					'The selected files could not be read. Try attaching them again.',
-				);
-			return undefined;
-		});
-		if (!mounted.current || !offered) return;
-		const { accepted, refusal } = acceptChatFiles(
-			pendingRef.current.length,
-			offered,
-		);
-		setAttachError(refusal);
-		if (!accepted.length) return;
-		const added = accepted.map(({ file, kind }) => ({
-			key: crypto.randomUUID(),
-			file,
-			kind,
-			name:
-				file.name && file.name !== 'image.png'
-					? file.name
-					: kind === 'image'
-						? `pasted-${++pasted.current}.${file.type.split('/')[1] || 'png'}`
-						: `pasted-${++pasted.current}`,
-			url: kind === 'image' ? URL.createObjectURL(file) : undefined,
-		}));
-		pendingRef.current = [...pendingRef.current, ...added];
-		setPending((current) => [...current, ...added]);
-	};
-	const removeFile = (key: string) => {
-		setPending((current) => {
-			const gone = current.find((item) => item.key === key);
-			if (gone?.url) URL.revokeObjectURL(gone.url);
-			return current.filter((item) => item.key !== key);
-		});
-		tokens.current.delete(key);
-		setAttachError(undefined);
-	};
-	const clearFiles = (sent: readonly PendingFile[]) => {
-		const keys = new Set(sent.map((item) => item.key));
-		for (const item of sent) {
-			if (item.url) URL.revokeObjectURL(item.url);
-			tokens.current.delete(item.key);
-		}
-		setPending((current) => current.filter((item) => !keys.has(item.key)));
-	};
-	const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-		const files = [...event.clipboardData.files];
-		if (!files.length) return;
-		// A screenshot paste carries no text; text alongside a file still pastes.
-		if (!event.clipboardData.types.includes('text/plain'))
-			event.preventDefault();
-		void addFiles(files);
-	};
-	const hasFiles = (event: DragEvent) =>
-		[...event.dataTransfer.types].includes('Files');
 	const generation = useRef(0),
-		draftRef = useRef(draft);
+		draftRef = useRef(draft),
+		threadDraftsRef = useRef(threadDrafts);
 	draftRef.current = draft;
-	// The composer grows with its draft; the element is also kept for quoting.
-	const fitComposer = useFitTextarea(draft),
-		composerRef = useCallback(
-			(element: HTMLTextAreaElement | null) => {
-				composer.current = element;
-				fitComposer(element);
-			},
-			[fitComposer],
-		);
+	threadDraftsRef.current = threadDrafts;
+	const mainComposerRef = useCallback((element: HTMLTextAreaElement | null) => {
+			composer.current = element;
+		}, []),
+		threadComposerRef = useCallback((element: HTMLTextAreaElement | null) => {
+			threadComposer.current = element;
+		}, []);
 	const olderRef = useRef(older);
 	olderRef.current = older;
-	const full = async (id: string): Promise<BotMessage> => {
-		let part: BotMessageDetail = await client.get(bot.id, id);
-		let text = part.text;
-		let next = part.nextCursor;
-		while (next) {
-			part = await client.get(bot.id, id, next);
-			text += part.text;
-			next = part.nextCursor;
-		}
-		return { ...part.message, text };
-	};
+	const full = useCallback(
+		(id: string) => fullMessage(client, bot.id, id),
+		[client, bot.id],
+	);
 	useEffect(() => {
 		let live = true,
 			busy = false,
@@ -271,6 +191,8 @@ export function BotChat({
 						generation.current++;
 						setMessages(new Map());
 						setOlder(null);
+						setThread(undefined);
+						setPanelSeen(undefined);
 						initialized = false;
 						again = true;
 						break;
@@ -283,14 +205,19 @@ export function BotChat({
 							continue;
 						if (event.type === 'message.deleted') {
 							generation.current++;
+							if (event.subjectId === threadRef.current) setThread(undefined);
 							setMessages((current) => {
+								if (!current.has(event.subjectId)) return current;
 								const next = new Map(current);
 								next.delete(event.subjectId);
 								return next;
 							});
 							continue;
 						}
+						// A reply changed a root's summary; refresh it if it is shown.
+						const known = event.type === 'message.thread';
 						if (
+							known ||
 							[
 								'message.posted',
 								'message.edited',
@@ -300,13 +227,16 @@ export function BotChat({
 						) {
 							try {
 								const message = await full(event.subjectId);
-								if (live)
-									setMessages((current) =>
-										new Map(current).set(message.id, message),
-									);
+								if (!live) continue;
+								setMessages((current) =>
+									message.threadId || (known && !current.has(message.id))
+										? current
+										: new Map(current).set(message.id, message),
+								);
 							} catch {
 								if (live)
 									setMessages((current) => {
+										if (!current.has(event.subjectId)) return current;
 										const next = new Map(current);
 										next.delete(event.subjectId);
 										return next;
@@ -336,6 +266,7 @@ export function BotChat({
 		generation.current++;
 		setMessages(new Map());
 		setLoading(true);
+		setThread(undefined);
 		cursor.current = undefined;
 		pinned.current = true;
 		const unwatch = client.watch(bot.id, () => {
@@ -352,34 +283,25 @@ export function BotChat({
 			live = false;
 			unwatch();
 		};
-	}, [client, bot.id]);
+	}, [client, bot.id, full]);
 	const ordered = useMemo(
 		() => [...messages.values()].sort((a, b) => a.sequence - b.sequence),
 		[messages],
 	);
-	// Read position: snapshotted when Chat is entered so the divider stays put
-	// while the user reads; written back when they leave.
 	// A start failure stays visible until it is dismissed or a later user
-	// message has started an execution.
-	const startFailures = useMemo(() => {
-		let laterStarted = false;
-		const shown: BotMessage[] = [];
-		for (let i = ordered.length - 1; i >= 0; i--) {
-			const m = ordered[i]!;
-			if (m.author !== 'user') continue;
-			if (m.dispatch?.state === 'started') laterStarted = true;
-			else if (
-				m.dispatch?.state === 'failed' &&
-				!m.dispatch.dismissed &&
-				!laterStarted
-			)
-				shown.unshift(m);
-		}
-		return shown;
-	}, [ordered]);
-	const latest = ordered.at(-1)?.sequence;
+	// message has started an execution. Replies' failures show in their thread.
+	const startFailures = useMemo(() => visibleStartFailures(ordered), [ordered]);
+	// What this view has observed: top-level messages and, through their
+	// summaries, the replies in their threads.
+	const latest = useMemo(() => {
+		const main = observedThrough(ordered);
+		if (panelSeen === undefined) return main;
+		return main === undefined ? panelSeen : Math.max(main, panelSeen);
+	}, [ordered, panelSeen]);
 	const latestRef = useRef(latest);
 	latestRef.current = latest;
+	// Read position: snapshotted when Chat is entered so the divider stays put
+	// while the user reads; written back when they leave.
 	const [readThrough, setReadThrough] = useState<number>();
 	const [shown, setShown] = useState(
 		() => document.visibilityState !== 'hidden',
@@ -473,39 +395,17 @@ export function BotChat({
 		() => new Map(ordered.map((m) => [m.id, m.createdAt])),
 		[ordered],
 	);
-	const items = useMemo(
-		() =>
-			ordered.map((message) =>
-				message.activity !== undefined
-					? {
-							kind: 'action' as const,
-							key: message.id,
-							text: message.text,
-							at: message.createdAt,
-							activity: message.activity,
-						}
-					: message.author === 'user'
-						? {
-								kind: 'user' as const,
-								key: message.id,
-								text: message.text,
-								attachments: message.attachments,
-							}
-						: {
-								kind: 'agent' as const,
-								key: message.id,
-								text:
-									message.text +
-									message.attachments
-										.map(
-											(a) =>
-												`\n\n![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
-										)
-										.join(''),
-							},
-			),
-		[ordered],
-	);
+	const items = useMemo(() => ordered.map(messageItem), [ordered]);
+	const threads = useMemo(() => {
+		const found = new Map<string, TranscriptThread>();
+		for (const m of ordered)
+			if (m.thread?.replyCount)
+				found.set(m.id, {
+					summary: m.thread,
+					isNew: threadIsNew(m.thread, readThrough),
+				});
+		return found;
+	}, [ordered, readThrough]);
 	useLayoutEffect(() => {
 		const viewport = scroller.current;
 		if (!visible || !viewport) return;
@@ -583,76 +483,50 @@ export function BotChat({
 			setRecovering(undefined);
 		}
 	};
-	const send = async () => {
-		const images = pendingRef.current;
-		if (sending || (!draft.trim() && !images.length)) return;
-		const text = draft,
-			view = generation.current;
-		// The same text and images reuse the previous attempt's key, so a post
-		// whose response was lost is replayed, not duplicated.
-		const current = chatSendAttempt(
-			attempt.current,
-			JSON.stringify([text, images.map((image) => image.key)]),
-			() => crypto.randomUUID(),
-		);
-		attempt.current = current;
-		setSending(true);
-		setError(undefined);
-		setAttachError(undefined);
-		try {
-			const uploads: string[] = [];
-			for (const image of images) {
-				let token = tokens.current.get(image.key);
-				if (!token) {
-					const bytes = new Uint8Array(await image.file.arrayBuffer());
-					token = (await client.upload(bot.id, image.name, bytes)).token;
-					tokens.current.set(image.key, token);
-				}
-				uploads.push(token);
-			}
-			const result = await client.post(bot.id, text, current.key, uploads);
-			attempt.current = undefined;
-			if (view === generation.current)
-				setMessages((current) =>
-					new Map(current).set(result.message.id, result.message),
-				);
-			if (draftRef.current === text) onDraftChange('');
-			clearFiles(images);
+	// Replying means the user has caught up.
+	const posted = (result: BotPostResult) => {
+		const message = result.message;
+		if (!message.threadId) {
+			setMessages((current) => new Map(current).set(message.id, message));
 			pinned.current = true;
-			// Replying means the user has caught up.
-			rememberBotChatRead(bot.id, result.message.sequence);
-			setReadThrough(result.message.sequence);
-			// A start failure shows as the message's warning with Retry and
-			// Dismiss; only a missing sign-in also needs the composer's link.
-			if (
-				result.error &&
-				(result.message.dispatch?.state !== 'failed' ||
-					/not signed in/.test(result.error))
-			)
-				setError(result.error);
-			server.refreshBot(bot.id);
-		} catch (cause) {
-			const message = refusalText(cause);
-			// Staged uploads expire or vanish on restart: upload again next time.
-			if (/no longer available/i.test(message)) {
-				for (const image of images) tokens.current.delete(image.key);
-				attempt.current = undefined;
-			}
-			setError(message);
-		} finally {
-			setSending(false);
 		}
+		rememberBotChatRead(bot.id, message.sequence);
+		setReadThrough(message.sequence);
+		server.refreshBot(bot.id);
 	};
-	const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-		if (
-			event.key === 'Enter' &&
-			!event.shiftKey &&
-			!event.nativeEvent.isComposing
-		) {
-			event.preventDefault();
-			void send();
-		}
-	};
+	const setThreadDraft = useCallback((root: string, value: string) => {
+		setThreadDrafts((current) => {
+			if ((current.get(root) ?? '') === value) return current;
+			const next = new Map(current);
+			if (value) next.set(root, value);
+			else next.delete(root);
+			return next;
+		});
+	}, []);
+	// A reply that completes after its panel closed clears only the draft it
+	// sent, never one typed since.
+	const clearSentThreadDraft = useCallback((root: string, sent: string) => {
+		setThreadDrafts((current) => {
+			if ((current.get(root) ?? '') !== sent) return current;
+			const next = new Map(current);
+			next.delete(root);
+			return next;
+		});
+	}, []);
+	const openThread = useCallback((root: string) => setThread(root), []);
+	// Closing hands focus back to the root in the main stream.
+	const closeThread = useCallback(() => {
+		const root = threadRef.current;
+		setThread(undefined);
+		if (!root) return;
+		requestAnimationFrame(() =>
+			transcript.current
+				?.querySelector<HTMLElement>(
+					`[data-terminay-message-key="${CSS.escape(root)}"][tabindex]`,
+				)
+				?.focus(),
+		);
+	}, []);
 	const loadOlder = async () => {
 		const next = olderRef.current,
 			view = generation.current;
@@ -691,15 +565,17 @@ export function BotChat({
 		window.addEventListener('keydown', onEscape);
 		return () => window.removeEventListener('keydown', onEscape);
 	}, [mutating]);
-	// A quote leaves the composer focused with the caret after it.
+	// A quote leaves its composer focused with the caret after it.
 	useLayoutEffect(() => {
-		const input = composer.current;
-		if (!caretPending.current || !input) return;
-		caretPending.current = false;
+		const target = caretPending.current;
+		const input =
+			target === 'thread' ? threadComposer.current : composer.current;
+		if (!target || !input) return;
+		caretPending.current = undefined;
 		input.focus();
 		input.setSelectionRange(input.value.length, input.value.length);
 		input.scrollTop = input.scrollHeight;
-	}, [draft]);
+	}, [draft, threadDrafts]);
 	// A menu closed without moving focus elsewhere (Escape) hands it back to its message.
 	useEffect(() => {
 		if (menu) {
@@ -711,9 +587,9 @@ export function BotChat({
 		const focused = document.activeElement;
 		if (!key || editing || clearing) return;
 		if (focused && focused !== document.body && focused.isConnected) return;
-		transcript.current
-			?.querySelector<HTMLElement>(
-				`[data-terminay-message-key="${CSS.escape(key)}"][tabindex]`,
+		document
+			.querySelector<HTMLElement>(
+				`.bots-chatwrap [data-terminay-message-key="${CSS.escape(key)}"][tabindex]`,
 			)
 			?.focus();
 	}, [menu, editing, clearing]);
@@ -729,13 +605,41 @@ export function BotChat({
 		},
 		[server.client, bot.id, onConfigure, onRevealAction],
 	);
-	const quote = (text: string) => {
-		caretPending.current = true;
+	const quote = (text: string, inThread: string | undefined) => {
+		if (inThread) {
+			caretPending.current = 'thread';
+			setThreadDraft(
+				inThread,
+				appendQuote(threadDraftsRef.current.get(inThread) ?? '', text),
+			);
+			return;
+		}
+		caretPending.current = 'main';
 		onDraftChange(appendQuote(draftRef.current, text));
 	};
+	const openMenu = (
+		{ key, x, y, keyboard, selection }: MessageMenuRequest,
+		message: BotMessage,
+		inThread: string | undefined,
+	) =>
+		setMenu({
+			id: key,
+			text: message.text,
+			quote: quoteMessage(selection ?? message.text),
+			revision: message.revision,
+			inThread,
+			topLevel: !message.threadId && !inThread,
+			deleteLabel: deleteLabel(message),
+			x,
+			y,
+			keyboard,
+		});
+	const signIn = () => onConfigure('profile');
 	return (
 		<div
-			className="bots-chatwrap"
+			className={
+				thread ? 'bots-chatwrap bots-chatwrap--thread' : 'bots-chatwrap'
+			}
 			ref={rail.rowRef}
 			style={botsRailStyle(rail)}
 		>
@@ -752,7 +656,15 @@ export function BotChat({
 							? [
 									{
 										label: 'Quote',
-										onClick: () => quote(menu.quote),
+										onClick: () => quote(menu.quote, menu.inThread),
+									},
+								]
+							: []),
+						...(menu.topLevel
+							? [
+									{
+										label: 'Reply in thread',
+										onClick: () => openThread(menu.id),
 									},
 								]
 							: []),
@@ -767,7 +679,7 @@ export function BotChat({
 								}),
 						},
 						{
-							label: 'Delete message',
+							label: menu.deleteLabel,
 							danger: true,
 							disabled: mutating,
 							onClick: () =>
@@ -827,7 +739,11 @@ export function BotChat({
 										onClick={() =>
 											void act(() =>
 												clearing
-													? client.clear(bot.id)
+													? client.clear(bot.id).then(() => {
+															setThread(undefined);
+															setThreadDrafts(new Map());
+															setPanelSeen(undefined);
+														})
 													: client.edit(
 															bot.id,
 															editing!.id,
@@ -906,235 +822,108 @@ export function BotChat({
 						unread={unread ? { ...unread, ref: divider } : undefined}
 						bot={bot}
 						transport={server.transport}
+						threads={threads}
 						onRevealAction={revealAction}
-						onMessageMenu={({ key, x, y, keyboard, selection }) => {
-							const message = messages.get(key);
-							if (message)
-								setMenu({
-									id: key,
-									text: message.text,
-									quote: quoteMessage(selection ?? message.text),
-									revision: message.revision,
-									x,
-									y,
-									keyboard,
-								});
+						onOpenThread={openThread}
+						onMessageMenu={(request) => {
+							const message = messages.get(request.key);
+							if (message) openMenu(request, message, undefined);
 						}}
 					/>
-					{startFailures.map((m) => (
-						<div
-							key={m.id}
-							className="bots-note bots-note--warn bots-start-failure"
-							data-terminay-bot-start-failure={m.id}
+					<BotStartFailures
+						failures={startFailures}
+						recovering={recovering}
+						onRecover={(m, action) => void recover(m, action)}
+					/>
+				</div>
+				{error && !editing && !clearing ? (
+					<div
+						className="bots-note bots-note--error bots-chat-error"
+						role="alert"
+						data-terminay-bot-chat-error="true"
+					>
+						{error}
+						<button
+							type="button"
+							className="bots-link"
+							onClick={() => {
+								setError(undefined);
+								reload.current();
+							}}
 						>
-							<span>{m.dispatch?.error}</span>
-							<span className="bots-start-failure__actions">
-								<button
-									type="button"
-									className="bots-btn bots-btn--sm"
-									disabled={recovering !== undefined}
-									data-terminay-bot-start-failure-retry="true"
-									onClick={() => void recover(m, 'retry')}
-								>
-									{recovering === m.id ? 'Retrying…' : 'Retry'}
-								</button>
+							Reload messages
+						</button>
+					</div>
+				) : null}
+				<BotComposer
+					client={client}
+					botId={bot.id}
+					draft={draft}
+					onDraftChange={onDraftChange}
+					label={`Message ${bot.name}`}
+					placeholder={`Message ${bot.name} · Enter to send`}
+					inputRef={mainComposerRef}
+					onPosted={posted}
+					onSignIn={signIn}
+					actions={
+						<>
+							{messages.size ? (
 								<button
 									type="button"
 									className="bots-btn bots-btn--sm bots-btn--ghost"
-									disabled={recovering !== undefined}
-									data-terminay-bot-start-failure-dismiss="true"
-									onClick={() => void recover(m, 'dismiss')}
+									disabled={mutating}
+									onClick={() => setClearing(true)}
 								>
-									Dismiss
-								</button>
-							</span>
-						</div>
-					))}
-				</div>
-				<div className="bots-composer">
-					{error ? (
-						<div
-							className="bots-note bots-note--error"
-							role="alert"
-							data-terminay-bot-chat-error="true"
-						>
-							{error}
-							{error.includes('sign') ? (
-								<button
-									type="button"
-									className="bots-link"
-									data-terminay-bot-open-signin="true"
-									onClick={() => onConfigure('profile')}
-								>
-									Open Sign-in
+									Clear chat
 								</button>
 							) : null}
-							<button
-								type="button"
-								className="bots-link"
-								onClick={() => reload.current()}
-							>
-								Reload messages
-							</button>
-						</div>
-					) : null}
-					<form
-						className={dragging ? 'bots-composer--drop' : undefined}
-						data-terminay-bot-composer-form="true"
-						onSubmit={(event) => {
-							event.preventDefault();
-							void send();
-						}}
-						onDragOver={(event) => {
-							if (!hasFiles(event)) return;
-							event.preventDefault();
-							event.dataTransfer.dropEffect = 'copy';
-							setDragging(true);
-						}}
-						onDragLeave={(event) => {
-							if (!event.currentTarget.contains(event.relatedTarget as Node))
-								setDragging(false);
-						}}
-						onDrop={(event) => {
-							if (!hasFiles(event)) return;
-							event.preventDefault();
-							setDragging(false);
-							void addFiles([...event.dataTransfer.files]);
-						}}
-					>
-						{pending.length ? (
-							<ul
-								className="bots-composer__images"
-								aria-label="Files to send"
-								data-terminay-bot-pending-images="true"
-							>
-								{pending.map((item) => (
-									<li
-										key={item.key}
-										className={
-											item.url
-												? 'bots-composer__image'
-												: 'bots-composer__image bots-composer__file'
-										}
-										data-terminay-bot-pending-kind={item.kind}
-									>
-										{item.url ? (
-											<img src={item.url} alt={item.name} />
-										) : (
-											<>
-												<FileText size={18} aria-hidden="true" />
-												<span className="bots-composer__file-text">
-													<span
-														className="bots-composer__file-name"
-														title={item.name}
-													>
-														{item.name}
-													</span>
-													<span className="bots-composer__file-size">
-														{formatFileSize(item.file.size)}
-													</span>
-												</span>
-											</>
-										)}
-										<button
-											type="button"
-											className="bots-composer__remove"
-											aria-label={`Remove ${item.name}`}
-											title={`Remove ${item.name}`}
-											disabled={sending}
-											onClick={() => removeFile(item.key)}
-										>
-											<X size={12} aria-hidden="true" />
-										</button>
-									</li>
-								))}
-							</ul>
-						) : null}
-						{attachError ? (
-							<p
-								className="bots-composer__refusal"
-								role="status"
-								data-terminay-bot-attach-error="true"
-							>
-								{attachError}
-							</p>
-						) : null}
-						<textarea
-							ref={composerRef}
-							value={draft}
-							rows={1}
-							aria-label={`Message ${bot.name}`}
-							placeholder={`Message ${bot.name} · Enter to send`}
-							onChange={(event) => onDraftChange(event.target.value)}
-							onKeyDown={keyDown}
-							onPaste={onPaste}
-							data-terminay-bot-composer="true"
-						/>
-						<input
-							ref={picker}
-							type="file"
-							hidden
-							multiple
-							data-terminay-bot-attach-input="true"
-							onChange={(event) => {
-								void addFiles([...(event.target.files ?? [])]);
-								event.target.value = '';
-							}}
-						/>
-						<div className="bots-composer__row">
-							<div className="bots-composer__actions">
-								<button
-									type="button"
-									className="bots-btn bots-btn--sm bots-btn--ghost bots-composer__attach"
-									aria-label="Attach files"
-									title="Attach files"
-									disabled={sending}
-									data-terminay-bot-attach="true"
-									onClick={() => picker.current?.click()}
-								>
-									<Paperclip size={16} aria-hidden="true" />
-								</button>
-								{messages.size ? (
-									<button
-										type="button"
-										className="bots-btn bots-btn--sm bots-btn--ghost"
-										disabled={mutating}
-										onClick={() => setClearing(true)}
-									>
-										Clear chat
-									</button>
-								) : null}
-								<span className="bots-faint">
-									{active.length
-										? `${active.length} session${active.length === 1 ? '' : 's'} active`
-										: 'Ready'}
-								</span>
-							</div>
-							<button
-								type="submit"
-								className="bots-btn bots-btn--primary"
-								disabled={sending || (!draft.trim() && !pending.length)}
-								data-terminay-bot-send="true"
-							>
-								{sending ? 'Posting…' : 'Send'}
-							</button>
-						</div>
-					</form>
-				</div>
+							<span className="bots-faint">
+								{active.length
+									? `${active.length} session${active.length === 1 ? '' : 's'} active`
+									: 'Ready'}
+							</span>
+						</>
+					}
+				/>
 			</div>
-			<BotsRailSeparator rail={rail} />
-			<BotContextRail
-				server={server}
-				bot={bot}
-				sessions={sessions}
-				environment={environment}
-				visible={visible}
-				onConfigure={onConfigure}
-				onExecution={(id) => {
-					onSessionChange(id);
-					onConfigure('sessions');
-				}}
-			/>
+			{thread ? (
+				<BotThreadPanel
+					key={thread}
+					client={client}
+					bot={bot}
+					transport={server.transport}
+					rootId={thread}
+					initialRoot={messages.get(thread)}
+					draft={threadDrafts.get(thread) ?? ''}
+					onDraftChange={(value) => setThreadDraft(thread, value)}
+					clearSentDraft={(sent) => clearSentThreadDraft(thread, sent)}
+					inputRef={threadComposerRef}
+					onClose={closeThread}
+					onRootGone={() => setThread(undefined)}
+					onObserved={observePanel}
+					onMessageMenu={(request, message) =>
+						openMenu(request, message, thread)
+					}
+					onPosted={posted}
+					onSignIn={signIn}
+				/>
+			) : (
+				<>
+					<BotsRailSeparator rail={rail} />
+					<BotContextRail
+					server={server}
+					bot={bot}
+					sessions={sessions}
+					environment={environment}
+					visible={visible}
+					onConfigure={onConfigure}
+					onExecution={(id) => {
+						onSessionChange(id);
+						onConfigure('sessions');
+					}}
+				/>
+				</>
+			)}
 		</div>
 	);
 }
