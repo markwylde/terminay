@@ -52,6 +52,8 @@ Threads add no cause of acknowledgement (ADR-0104: only what the user does ackno
 - **Keyboard** — opening a thread focuses its composer; Escape closes the panel when focus is inside it and no menu or dialog is open, returning focus to the root message in the main stream.
 - **Events in `BotChat`** — `message.posted|edited|dispatch` for a reply updates the open panel (if its thread) and not the main map; `message.thread` refetches the root if loaded; `message.deleted` of the open root closes the panel.
 
+- **Recorded Terminay actions (ADR-0134)** — action rows share the message log but are not messages to reply to: they stay in the main stream, are never thread roots (a post or thread list naming one is refused as "Thread not found"), never count as replies, and have no reply action or reply bar. An action recorded by an execution that a thread reply started still appears in the main stream; showing it inside the thread is a follow-up. List cursors are bound to both the thread scope and whether actions are included.
+
 ## Risks / Trade-offs
 
 - [Deriving summaries scans the log per read] → One O(n) index per `list`/`get`, n ≤ 10,000, in memory; the same cost class as `latest()` already paid on every read.
