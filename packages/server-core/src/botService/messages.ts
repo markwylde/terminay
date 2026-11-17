@@ -21,6 +21,8 @@ import {
 	botAttachmentLimit,
 	botAttachmentType,
 	botEnvironmentId,
+	botMessageActivity,
+	type BotMessageActivity,
 	isBotImageMime,
 } from '@terminay/protocol';
 import {
@@ -84,7 +86,21 @@ export interface MessagePageOptions {
 	cursor?: string;
 	limit?: number;
 	search?: string;
+	/** False leaves recorded Terminay actions out (briefings). */
+	actions?: boolean;
 }
+/** A Terminay action to record; `text` is its description (ADR-0134). */
+export interface BotActionRecord {
+	readonly text: string;
+	readonly tool: string;
+	readonly outcome: BotMessageActivity['outcome'];
+	readonly reason?: string;
+	readonly target?: BotMessageActivity['target'];
+}
+/** Most action entries one bot's log keeps (ADR-0134). */
+export const BOT_MAX_ACTIONS = 2000;
+const ACTION_TEXT_BYTES = 512,
+	ACTION_REASON_BYTES = 200;
 /** The longest prefix of `value` within `limit` bytes, cut on a UTF-8 boundary. */
 export function utf8(value: string, limit: number): string {
 	const bytes = Buffer.from(value);
@@ -124,7 +140,9 @@ function parse(value: unknown): State {
 			!Number.isSafeInteger(r.revision) ||
 			!Number.isSafeInteger(r.sequence) ||
 			!Number.isSafeInteger(r.change) ||
-			!Array.isArray(r.attachments)
+			!Array.isArray(r.attachments) ||
+			(r.activity !== undefined &&
+				(r.author !== 'bot' || botMessageActivity(r.activity) === undefined))
 		)
 			throw new Error('Invalid stored message');
 	}
@@ -306,7 +324,10 @@ export class BotMessageStore extends EventEmitter {
 		const s = this.state(botId),
 			through = s.acknowledged ?? s.sequence,
 			posts = this.latest(s).filter(
-				(row) => row.author === 'bot' && row.sequence > through,
+				(row) =>
+					row.author === 'bot' &&
+					row.activity === undefined &&
+					row.sequence > through,
 			);
 		const latest = posts[0];
 		if (latest === undefined) return undefined;
@@ -358,7 +379,10 @@ export class BotMessageStore extends EventEmitter {
 		}
 		if (uploads.length)
 			attachments = [...attachments, ...this.staged(botId, uploads)];
-		if (this.latest(s).length >= 10000 || Object.keys(s.keys).length >= 20000)
+		if (
+			this.latest(s).filter((r) => r.activity === undefined).length >= 10000 ||
+			Object.keys(s.keys).length >= 20000
+		)
 			throw new BotError('resource', 'Message history limit reached');
 		const next = structuredClone(s),
 			messageId = randomBytes(12).toString('hex'),
@@ -389,6 +413,88 @@ export class BotMessageStore extends EventEmitter {
 		for (const token of uploads) this.staging.get(botId)?.delete(token);
 		return this.public(row);
 	}
+	/**
+	 * Record one Terminay action of an execution (ADR-0134). When the newest
+	 * entry is the same action of the same execution, with the same text,
+	 * outcome, reason and target, it is folded into that entry instead.
+	 */
+	recordActivity(
+		botId: string,
+		executionId: string,
+		action: BotActionRecord,
+	): BotMessage {
+		const body = utf8(action.text.replace(/\s+/gu, ' ').trim(), ACTION_TEXT_BYTES);
+		const reason =
+			action.reason === undefined
+				? undefined
+				: utf8(action.reason.replace(/\s+/gu, ' ').trim(), ACTION_REASON_BYTES);
+		const activity = botMessageActivity({
+			tool: action.tool,
+			outcome: action.outcome,
+			...(reason ? { reason } : {}),
+			...(action.target ? { target: action.target } : {}),
+			count: 1,
+		});
+		if (!body || activity === undefined)
+			throw new BotError('validation', 'Invalid Terminay action');
+		const s = this.state(botId),
+			newest = this.latest(s)[0],
+			same =
+				newest?.activity !== undefined &&
+				newest.executionId === executionId &&
+				newest.text === body &&
+				newest.activity.tool === activity.tool &&
+				newest.activity.outcome === activity.outcome &&
+				newest.activity.reason === activity.reason &&
+				JSON.stringify(newest.activity.target ?? null) ===
+					JSON.stringify(activity.target ?? null);
+		const next = structuredClone(s);
+		if (same) {
+			// In place: an action keeps no revision history, so repeats cost no
+			// storage. It keeps its place in the log.
+			const row: Row = {
+				...structuredClone(newest),
+				activity: {
+					...activity,
+					count: Math.min(newest.activity!.count + 1, 1_000_000),
+				},
+				revision: newest.revision + 1,
+				updatedAt: this.now(),
+			};
+			this.change(next, 'action.recorded', newest.id, row.revision);
+			next.rows = next.rows.map((r) => (r.id === newest.id ? row : r));
+			this.save(botId, next);
+			return this.public(row);
+		}
+		const messageId = randomBytes(12).toString('hex'),
+			change = this.change(next, 'action.recorded', messageId, 1);
+		const row: Row = {
+			id: messageId,
+			botId,
+			sequence: change,
+			revision: 1,
+			author: 'bot',
+			executionId,
+			createdAt: this.now(),
+			updatedAt: this.now(),
+			text: body,
+			attachments: [],
+			activity,
+			change,
+			deleted: false,
+		};
+		next.rows.push(row);
+		// The oldest actions go first; a message is never removed for one.
+		const actions = this.latest(next).filter((r) => r.activity !== undefined);
+		if (actions.length > BOT_MAX_ACTIONS) {
+			const gone = new Set(
+				actions.slice(BOT_MAX_ACTIONS).map((r) => r.id),
+			);
+			next.rows = next.rows.filter((r) => !gone.has(r.id));
+		}
+		this.save(botId, next);
+		return this.public(row);
+	}
 	private public(row: Row): BotMessage {
 		const { change: _, deleted: __, ...message } = row;
 		return structuredClone(message);
@@ -406,6 +512,11 @@ export class BotMessageStore extends EventEmitter {
 		body: string | null,
 	): BotMessage | null {
 		const previous = this.get(botId, messageId);
+		if (previous.activity !== undefined)
+			throw new BotError(
+				'validation',
+				'A recorded Terminay action cannot be edited or deleted',
+			);
 		if (previous.revision !== revision)
 			throw new BotError('conflict', 'Message changed; reload before editing');
 		if (body !== null) text(body, 65536, 'message');
@@ -486,10 +597,13 @@ export class BotMessageStore extends EventEmitter {
 	}
 	list(botId: string, options: MessagePageOptions = {}): BotMessagePage {
 		const s = this.state(botId),
-			filter =
+			search =
 				options.search === undefined
 					? ''
 					: text(options.search, 256, 'search', true),
+			posts = options.actions === false,
+			// The cursor is bound to whether actions are included.
+			filter = posts ? `posts\0${search}` : search,
 			limit = this.limit(options.limit);
 		const c = options.cursor
 			? this.decode(botId, options.cursor, 'messages', filter)
@@ -503,8 +617,9 @@ export class BotMessageStore extends EventEmitter {
 				};
 		const rows = this.latest(s, c.through).filter(
 			(r) =>
-				!filter ||
-				r.text.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
+				(!posts || r.activity === undefined) &&
+				(!search ||
+					r.text.toLocaleLowerCase().includes(search.toLocaleLowerCase())),
 		);
 		const candidates = rows.filter((r) => r.sequence < c.position);
 		const items: BotMessageSummary[] = [];

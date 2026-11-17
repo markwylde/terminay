@@ -1,6 +1,7 @@
 /** Shared communication log. Provider output lives exclusively in execution details. */
 import { BotMessagesClient } from '@terminay/client-core';
 import type {
+	BotActionTarget,
 	BotMessage,
 	BotMessageDetail,
 	BotProfile,
@@ -25,6 +26,7 @@ import { BotContextRail } from './BotContextRail';
 import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
 import type { BotConfigTab } from './BotTab';
 import { BotTranscript } from './BotTranscript';
+import type { BotActionReveal } from './botActions';
 import {
 	acceptChatFiles,
 	type ChatSendAttempt,
@@ -57,7 +59,11 @@ export function BotChat({
 	onConfigure,
 	visible,
 	interaction,
+	onRevealAction,
 }: Readonly<{
+	/** Reveal what a recorded Terminay action touched (ADR-0134); a trigger is
+	 * handled here. Without it, action rows offer no other link. */
+	onRevealAction?: (target: BotActionTarget) => Promise<BotActionReveal>;
 	server: ServerBots;
 	bot: BotProfile;
 	sessions: readonly BotSessionRecord[];
@@ -267,7 +273,11 @@ export function BotChat({
 						break;
 					}
 					for (const event of page.items) {
-						if (!event.type.startsWith('message.')) continue;
+						if (
+							!event.type.startsWith('message.') &&
+							event.type !== 'action.recorded'
+						)
+							continue;
 						if (event.type === 'message.deleted') {
 							generation.current++;
 							setMessages((current) => {
@@ -278,9 +288,12 @@ export function BotChat({
 							continue;
 						}
 						if (
-							['message.posted', 'message.edited', 'message.dispatch'].includes(
-								event.type,
-							)
+							[
+								'message.posted',
+								'message.edited',
+								'message.dispatch',
+								'action.recorded',
+							].includes(event.type)
 						) {
 							try {
 								const message = await full(event.subjectId);
@@ -435,7 +448,10 @@ export function BotChat({
 			return;
 		const divided = ordered.some(
 			(m) =>
-				m.sequence > readThrough && m.sequence <= before && m.author !== 'user',
+				m.sequence > readThrough &&
+				m.sequence <= before &&
+				m.author !== 'user' &&
+				m.activity === undefined,
 		);
 		if (!divided && pinned.current && document.hasFocus())
 			setReadThrough(latest);
@@ -443,7 +459,10 @@ export function BotChat({
 	const unread = useMemo(() => {
 		if (readThrough === undefined) return undefined;
 		const fresh = ordered.filter(
-			(m) => m.sequence > readThrough && m.author !== 'user',
+			(m) =>
+				m.sequence > readThrough &&
+				m.author !== 'user' &&
+				m.activity === undefined,
 		);
 		return fresh[0] ? { key: fresh[0].id, count: fresh.length } : undefined;
 	}, [ordered, readThrough]);
@@ -454,25 +473,33 @@ export function BotChat({
 	const items = useMemo(
 		() =>
 			ordered.map((message) =>
-				message.author === 'user'
+				message.activity !== undefined
 					? {
-							kind: 'user' as const,
+							kind: 'action' as const,
 							key: message.id,
 							text: message.text,
-							attachments: message.attachments,
+							at: message.createdAt,
+							activity: message.activity,
 						}
-					: {
-							kind: 'agent' as const,
-							key: message.id,
-							text:
-								message.text +
-								message.attachments
-									.map(
-										(a) =>
-											`\n\n![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
-									)
-									.join(''),
-						},
+					: message.author === 'user'
+						? {
+								kind: 'user' as const,
+								key: message.id,
+								text: message.text,
+								attachments: message.attachments,
+							}
+						: {
+								kind: 'agent' as const,
+								key: message.id,
+								text:
+									message.text +
+									message.attachments
+										.map(
+											(a) =>
+												`\n\n![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
+										)
+										.join(''),
+							},
 			),
 		[ordered],
 	);
@@ -687,6 +714,18 @@ export function BotChat({
 			)
 			?.focus();
 	}, [menu, editing, clearing]);
+	const revealAction = useCallback(
+		async (target: BotActionTarget): Promise<BotActionReveal> => {
+			if (target.kind === 'trigger') {
+				const { triggers } = await server.client.triggers(bot.id);
+				if (!triggers.some((t) => t.id === target.triggerId)) return 'missing';
+				onConfigure('triggers');
+				return 'shown';
+			}
+			return onRevealAction ? onRevealAction(target) : 'elsewhere';
+		},
+		[server.client, bot.id, onConfigure, onRevealAction],
+	);
 	const quote = (text: string) => {
 		caretPending.current = true;
 		onDraftChange(appendQuote(draftRef.current, text));
@@ -860,6 +899,7 @@ export function BotChat({
 						unread={unread ? { ...unread, ref: divider } : undefined}
 						bot={bot}
 						transport={server.transport}
+						onRevealAction={revealAction}
 						onMessageMenu={({ key, x, y, keyboard, selection }) => {
 							const message = messages.get(key);
 							if (message)
