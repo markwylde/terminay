@@ -15,6 +15,7 @@ import { BotTranscript } from './BotTranscript';
 import { formatWhen } from './BotTriggersPanel';
 import {
 	FAILURE_KIND_LABELS,
+	OUTCOME_LABELS,
 	SESSION_ORIGIN_CHIPS,
 	SESSION_ORIGIN_FILTER_LABELS,
 	SESSION_STATE_LABELS,
@@ -22,7 +23,6 @@ import {
 	sessionOriginLabel,
 	sessionTitle,
 	shortAge,
-	OUTCOME_LABELS,
 	startupSummary,
 } from './botsModel';
 import { foldTranscript } from './transcriptModel';

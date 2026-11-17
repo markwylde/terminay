@@ -149,3 +149,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0132](./0132-desktop-pastes-into-a-bot-desktop-through-the-terminal-paste-bridge.md) | Desktop pastes into a bot desktop through the terminal paste bridge | accepted, supersedes 0129 in part | 2026-11-16 |
 | [0133](./0133-a-selected-control-desktop-synchronizes-clipboard-text.md) | A selected control desktop synchronizes clipboard text independently of paste shortcuts | accepted, supersedes 0129 and 0132 in part | 2026-11-16 |
 | [0134](./0134-a-bots-terminay-actions-are-recorded-by-the-server-in-its-message-log.md) | A bot's Terminay actions are recorded by the server in its message log | accepted | 2026-11-17 |
+| [0135](./0135-bot-message-threads-live-in-the-message-log.md) | Bot message threads are one level deep and live in the message log | accepted | 2026-11-17 |

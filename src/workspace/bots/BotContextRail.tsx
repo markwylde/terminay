@@ -8,6 +8,8 @@ import {
 	Zap,
 } from 'lucide-react';
 import { BotDesktopCanvas } from './BotDesktopView';
+import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
+import type { BotConfigTab } from './BotTab';
 import { formatWhen } from './BotTriggersPanel';
 import {
 	isActiveSession,
@@ -19,8 +21,7 @@ import {
 import { distinctUpcoming } from './triggersModel';
 import { useNow } from './useNow';
 import type { ServerBots } from './useServerBots';
-import type { BotConfigTab } from './BotTab';
-import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
+
 /** How many sessions the rail lists, active ones first. */
 const RAIL_SESSIONS = 6;
 

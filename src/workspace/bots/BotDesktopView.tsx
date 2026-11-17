@@ -13,8 +13,8 @@ import type { BotDesktopMode, BotProfile } from '@terminay/protocol';
 import { Eye, Maximize2, MousePointer2, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-	desktopClipboardUploadRoute,
 	desktopClipboardSharing,
+	desktopClipboardUploadRoute,
 	writeClipboardText,
 } from '../../host/nativeActions';
 import { attachDesktopClipboard } from './desktopClipboard';

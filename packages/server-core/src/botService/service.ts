@@ -834,6 +834,8 @@ export class BotService extends EventEmitter {
 		body: string,
 		key: string,
 		uploads: readonly string[] = [],
+		/** A root's ID: post as a reply in that thread. */
+		threadId?: string,
 	): Promise<{
 		message: BotMessage;
 		sessionId?: string;
@@ -857,6 +859,7 @@ export class BotService extends EventEmitter {
 				safeKey,
 				[],
 				uploads,
+				threadId,
 			);
 		});
 		if (message.dispatch?.state === 'started' && message.dispatch.executionId)
@@ -1001,6 +1004,8 @@ export class BotService extends EventEmitter {
 		body: string,
 		key: string,
 		captured: readonly { name: string; bytes: Uint8Array }[] = [],
+		/** A root's ID: post as a reply in that thread. */
+		threadId?: string,
 	): Promise<BotMessage> {
 		this.runtime.assertPosting(executionId);
 		const record = this.sessions.get(executionId);
@@ -1024,6 +1029,8 @@ export class BotService extends EventEmitter {
 				executionId,
 				safeKey,
 				attachments,
+				[],
+				threadId,
 			);
 		} catch (error) {
 			this.messages.pruneAttachments(record.botId);

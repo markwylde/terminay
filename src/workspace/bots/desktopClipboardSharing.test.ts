@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { TerminayHostClipboardSnapshot as Snapshot } from '@terminay/protocol';
 import { attachDesktopClipboardSharing } from './desktopClipboardSharing.ts';
+
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 function setup() {
 	const rfb = Object.assign(new EventTarget(), {
