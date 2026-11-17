@@ -8,12 +8,16 @@ import type {
 } from '@terminay/protocol';
 
 /** A message with its whole text, read in as many slices as it takes. */
-/** Whether a refusal says the message is gone, not that the read failed. */
+/** Whether a refusal says the message is gone, not that the read failed.
+ * The code does not survive the preload bridge, so the refusal's own words
+ * ("Message not found", "Thread not found") count too. */
 export function isNotFound(error: unknown): boolean {
+	if (typeof error !== 'object' || error === null) return false;
+	const { code, message } = error as { code?: unknown; message?: unknown };
 	return (
-		typeof error === 'object' &&
-		error !== null &&
-		(error as { code?: unknown }).code === 'not_found'
+		code === 'not_found' ||
+		(typeof message === 'string' &&
+			/\b(message|thread) not found\b/i.test(message))
 	);
 }
 

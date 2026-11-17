@@ -94,3 +94,16 @@ test('a page skips a message deleted since it was listed but fails on other erro
 	);
 	await assert.rejects(fullMessages(client, 'b', ['a', 'down']), /unavailable/);
 });
+
+test('not found is read from the code or, across the bridge, the refusal text', async () => {
+	const { isNotFound } = await import('./threadModel.ts');
+	assert.equal(isNotFound({ code: 'not_found' }), true);
+	assert.equal(isNotFound(new Error('Message not found')), true);
+	assert.equal(
+		isNotFound(new Error('Error invoking remote method: Thread not found')),
+		true,
+	);
+	assert.equal(isNotFound(new Error('Attachment not found')), false);
+	assert.equal(isNotFound(new Error('disconnected')), false);
+	assert.equal(isNotFound(undefined), false);
+});

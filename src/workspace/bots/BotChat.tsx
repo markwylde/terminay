@@ -703,7 +703,11 @@ export function BotChat({
 										onClick={() =>
 											void act(() =>
 												clearing
-													? client.clear(bot.id)
+													? client.clear(bot.id).then(() => {
+															setThread(undefined);
+															setThreadDrafts(new Map());
+															setPanelSeen(undefined);
+														})
 													: client.edit(
 															bot.id,
 															editing!.id,
