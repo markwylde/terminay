@@ -5,7 +5,7 @@ Canary desktop updates stop publishing when a failed job is retried after a stab
 ## What Changes
 
 - Preserve the release base tag selected by the version planner through desktop retries.
-- Reproduce and repair Windows update-test packaging without weakening installation or update verification.
+- Verify Windows update-test packaging on a native runner and preserve stage/exit diagnostics without weakening installation or update verification.
 - Add regression coverage and preserve useful build failure diagnostics.
 
 ## Capabilities
