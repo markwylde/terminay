@@ -8,6 +8,33 @@ import type {
 } from '@terminay/protocol';
 
 /** A message with its whole text, read in as many slices as it takes. */
+/** Whether a refusal says the message is gone, not that the read failed. */
+export function isNotFound(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		(error as { code?: unknown }).code === 'not_found'
+	);
+}
+
+/** Full messages for a page; one deleted since the page was listed is left
+ * out rather than failing the page. */
+export async function fullMessages(
+	client: Pick<BotMessagesClient, 'get'>,
+	botId: string,
+	ids: readonly string[],
+): Promise<BotMessage[]> {
+	const got = await Promise.all(
+		ids.map((id) =>
+			fullMessage(client, botId, id).catch((error: unknown) => {
+				if (isNotFound(error)) return null;
+				throw error;
+			}),
+		),
+	);
+	return got.filter((m): m is BotMessage => m !== null);
+}
+
 export async function fullMessage(
 	client: Pick<BotMessagesClient, 'get'>,
 	botId: string,

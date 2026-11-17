@@ -44,6 +44,7 @@ export function BotComposer({
 	botId,
 	draft,
 	onDraftChange,
+	clearSentDraft,
 	threadId,
 	label,
 	placeholder,
@@ -56,6 +57,9 @@ export function BotComposer({
 	botId: string;
 	draft: string;
 	onDraftChange: (value: string) => void;
+	/** Clears the draft if it still reads `sent`, against the owner's current
+	 * state; for a composer that can unmount before its post completes. */
+	clearSentDraft?: (sent: string) => void;
 	/** Post replies into this thread; absent for the main stream. */
 	threadId?: string;
 	label: string;
@@ -205,7 +209,8 @@ export function BotComposer({
 				thread,
 			);
 			attempt.current = undefined;
-			if (draftRef.current === text) onDraftChange('');
+			if (clearSentDraft) clearSentDraft(text);
+			else if (mounted.current && draftRef.current === text) onDraftChange('');
 			onPosted(result);
 			if (!mounted.current) return;
 			clearFiles(images);

@@ -81,6 +81,16 @@ export function BotChat({
 		[threadDrafts, setThreadDrafts] = useState<ReadonlyMap<string, string>>(
 			new Map(),
 		);
+	// The newest reply the thread panel has shown: the main stream may not
+	// have refreshed that thread's summary yet.
+	const [panelSeen, setPanelSeen] = useState<number>();
+	const observePanel = useCallback(
+		(sequence: number) =>
+			setPanelSeen((now) =>
+				now === undefined || sequence > now ? sequence : now,
+			),
+		[],
+	);
 	const threadRef = useRef(thread);
 	threadRef.current = thread;
 	const [menu, setMenu] = useState<{
@@ -173,6 +183,7 @@ export function BotChat({
 						setMessages(new Map());
 						setOlder(null);
 						setThread(undefined);
+						setPanelSeen(undefined);
 						initialized = false;
 						again = true;
 						break;
@@ -266,7 +277,11 @@ export function BotChat({
 	const startFailures = useMemo(() => visibleStartFailures(ordered), [ordered]);
 	// What this view has observed: top-level messages and, through their
 	// summaries, the replies in their threads.
-	const latest = useMemo(() => observedThrough(ordered), [ordered]);
+	const latest = useMemo(() => {
+		const main = observedThrough(ordered);
+		if (panelSeen === undefined) return main;
+		return main === undefined ? panelSeen : Math.max(main, panelSeen);
+	}, [ordered, panelSeen]);
 	const latestRef = useRef(latest);
 	latestRef.current = latest;
 	// Read position: snapshotted when Chat is entered so the divider stays put
@@ -463,6 +478,16 @@ export function BotChat({
 			const next = new Map(current);
 			if (value) next.set(root, value);
 			else next.delete(root);
+			return next;
+		});
+	}, []);
+	// A reply that completes after its panel closed clears only the draft it
+	// sent, never one typed since.
+	const clearSentThreadDraft = useCallback((root: string, sent: string) => {
+		setThreadDrafts((current) => {
+			if ((current.get(root) ?? '') !== sent) return current;
+			const next = new Map(current);
+			next.delete(root);
 			return next;
 		});
 	}, []);
@@ -830,9 +855,11 @@ export function BotChat({
 					initialRoot={messages.get(thread)}
 					draft={threadDrafts.get(thread) ?? ''}
 					onDraftChange={(value) => setThreadDraft(thread, value)}
+					clearSentDraft={(sent) => clearSentThreadDraft(thread, sent)}
 					inputRef={threadComposerRef}
 					onClose={closeThread}
 					onRootGone={() => setThread(undefined)}
+					onObserved={observePanel}
 					onMessageMenu={(request, message) =>
 						openMenu(request, message, thread)
 					}

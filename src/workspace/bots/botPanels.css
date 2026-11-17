@@ -3422,7 +3422,7 @@
 	font-weight: 600;
 }
 .bots-replies--new .bots-replies__count::after {
-	content: '';
+	content: "";
 	display: inline-block;
 	width: 6px;
 	height: 6px;
@@ -3511,7 +3511,7 @@
 	font-weight: 600;
 }
 .bots-thread__divider::after {
-	content: '';
+	content: "";
 	flex: 1;
 	height: 1px;
 	background: var(--bots-line);
@@ -3526,7 +3526,9 @@
 	max-width: none;
 	padding: 10px 12px 8px;
 }
-@media (max-width: 860px) {
+/* The bot tab's own width decides, so a narrow pane in a wide window
+ * overlays too. */
+@container bot-tab (max-width: 860px) {
 	.bots-thread {
 		position: absolute;
 		inset: 0;

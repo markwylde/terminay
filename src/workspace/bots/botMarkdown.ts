@@ -30,7 +30,7 @@ export function botMarkdownImagePaths(text: string): string[] {
 	return [...paths];
 }
 function localImagePath(path: string): boolean {
-if(/^bot-attachment:[a-f0-9]{24}$/.test(path))return true;
+	if (/^bot-attachment:[a-f0-9]{24}$/.test(path)) return true;
 	return (
 		(path.startsWith('/tmp/') || path.startsWith('/home/bot/')) &&
 		![...path].some((char) => char.charCodeAt(0) < 32) &&

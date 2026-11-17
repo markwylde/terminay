@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	deleteLabel,
+	fullMessages,
 	observedThrough,
 	replyCountLabel,
 	threadIsNew,
@@ -75,4 +76,21 @@ test('deleting a root with replies says so', () => {
 	);
 	assert.equal(deleteLabel({}), 'Delete message');
 	assert.equal(deleteLabel({ threadId: 'a'.repeat(24) }), 'Delete message');
+});
+
+test('a page skips a message deleted since it was listed but fails on other errors', async () => {
+	const fail = (code: string) => Object.assign(new Error(code), { code });
+	const client = {
+		get: async (_bot: string, id: string) => {
+			if (id === 'gone') throw fail('not_found');
+			if (id === 'down') throw fail('unavailable');
+			return { message: { id }, text: id, nextCursor: null } as never;
+		},
+	};
+	const got = await fullMessages(client, 'b', ['a', 'gone', 'c']);
+	assert.deepEqual(
+		got.map((m) => m.id),
+		['a', 'c'],
+	);
+	await assert.rejects(fullMessages(client, 'b', ['a', 'down']), /unavailable/);
 });

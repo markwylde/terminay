@@ -20,6 +20,8 @@ import { BotStartFailures } from './BotStartFailures';
 import { BotTranscript, type MessageMenuRequest } from './BotTranscript';
 import {
 	fullMessage,
+	fullMessages,
+	isNotFound,
 	messageItem,
 	replyCountLabel,
 	visibleStartFailures,
@@ -34,9 +36,11 @@ export function BotThreadPanel({
 	initialRoot,
 	draft,
 	onDraftChange,
+	clearSentDraft,
 	inputRef,
 	onClose,
 	onRootGone,
+	onObserved,
 	onMessageMenu,
 	onPosted,
 	onSignIn,
@@ -49,10 +53,13 @@ export function BotThreadPanel({
 	initialRoot: BotMessage | undefined;
 	draft: string;
 	onDraftChange: (value: string) => void;
+	clearSentDraft: (sent: string) => void;
 	inputRef?: (element: HTMLTextAreaElement | null) => void;
 	onClose: () => void;
 	/** The root was deleted or the chat cleared. */
 	onRootGone: () => void;
+	/** The newest sequence the panel shows, so acknowledgement covers it. */
+	onObserved: (sequence: number) => void;
 	onMessageMenu: (request: MessageMenuRequest, message: BotMessage) => void;
 	onPosted: (result: BotPostResult) => void;
 	onSignIn: () => void;
@@ -95,8 +102,12 @@ export function BotThreadPanel({
 			try {
 				const message = await fullMessage(client, bot.id, rootId);
 				if (current()) setRoot(message);
-			} catch {
-				if (current()) gone.current();
+			} catch (cause) {
+				if (!current()) return;
+				// Only a confirmed deletion closes the thread; a failed read keeps
+				// it open with the error shown.
+				if (isNotFound(cause)) gone.current();
+				else setError(refusalText(cause));
 			}
 		};
 		const load = async () => {
@@ -104,8 +115,10 @@ export function BotThreadPanel({
 				fullMessage(client, bot.id, rootId),
 				client.list(bot.id, { threadId: rootId, limit: 25 }),
 			]);
-			const details = await Promise.all(
-				page.items.map((m) => fullMessage(client, bot.id, m.id)),
+			const details = await fullMessages(
+				client,
+				bot.id,
+				page.items.map((m) => m.id),
 			);
 			if (!current()) return;
 			setRoot(rootMessage);
@@ -165,8 +178,9 @@ export function BotThreadPanel({
 							try {
 								const message = await fullMessage(client, bot.id, id);
 								if (current() && message.threadId === rootId) upsert(message);
-							} catch {
-								// Deleted since; its own event follows.
+							} catch (error) {
+								// Deleted since: its own event follows.
+								if (!isNotFound(error)) throw error;
 							}
 						}
 					}
@@ -176,7 +190,7 @@ export function BotThreadPanel({
 				if (current()) setLoading(false);
 			} catch (cause) {
 				if (!current()) return;
-				if (/not found/i.test(refusalText(cause))) gone.current();
+				if (isNotFound(cause)) gone.current();
 				else {
 					setError(refusalText(cause));
 					setLoading(false);
@@ -205,6 +219,10 @@ export function BotThreadPanel({
 		[replies],
 	);
 	const items = useMemo(() => ordered.map(messageItem), [ordered]);
+	const shown = ordered.at(-1)?.sequence ?? root?.sequence;
+	useEffect(() => {
+		if (shown !== undefined) onObserved(shown);
+	}, [shown, onObserved]);
 	const rootItems = useMemo(() => (root ? [messageItem(root)] : []), [root]);
 	const times = useMemo(
 		() =>
@@ -230,8 +248,10 @@ export function BotThreadPanel({
 				cursor: next,
 				limit: 25,
 			});
-			const details = await Promise.all(
-				page.items.map((m) => fullMessage(client, bot.id, m.id)),
+			const details = await fullMessages(
+				client,
+				bot.id,
+				page.items.map((m) => m.id),
 			);
 			if (view !== generation.current) return;
 			pinned.current = false;
@@ -369,6 +389,7 @@ export function BotThreadPanel({
 				threadId={rootId}
 				draft={draft}
 				onDraftChange={onDraftChange}
+				clearSentDraft={clearSentDraft}
 				label={`Reply in thread to ${bot.name}`}
 				placeholder="Reply in thread…"
 				inputRef={composerRef}
