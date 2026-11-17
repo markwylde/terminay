@@ -1425,7 +1425,7 @@ test.describe('Home: Bots', () => {
 		await expect(panel).toBeVisible();
 		await tab.getByRole('button', { name: 'Clear chat', exact: true }).click();
 		await mainWindow
-			.getByRole('dialog', { name: 'Clear chat history?' })
+			.getByRole('alertdialog', { name: 'Clear chat history?' })
 			.getByRole('button', { name: 'Clear chat', exact: true })
 			.click();
 		await expect(panel).toHaveCount(0);
