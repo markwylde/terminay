@@ -744,6 +744,7 @@ test.describe('Home: Bots', () => {
 				existsSync(trace) ? await readFile(trace, 'utf8') : '(no trace)',
 			)
 			.toContain('"id":6');
+		console.log(`terminay-actions trace:\n${await readFile(trace, 'utf8')}`);
 		const actions = transcript.locator('[data-terminay-bot-action]');
 		const row = (tool: string) =>
 			transcript.locator(`[data-terminay-bot-action="${tool}"]`);

@@ -167,12 +167,13 @@ async function terminayActions() {
 				const reply = JSON.parse(buffer.slice(0, at));
 				buffer = buffer.slice(at + 1);
 				traceActions(JSON.stringify(reply).slice(0, 600));
-				try {
-					const value = JSON.parse(reply.result?.content?.[0]?.text ?? '{}');
-					if (typeof value.project === 'string') state.project = value.project;
-					if (typeof value.terminal === 'string')
-						state.terminal = value.terminal;
-				} catch {}
+				// A long result may be cut short of valid JSON, so read the
+				// handles by pattern.
+				const text = reply.result?.content?.[0]?.text ?? '';
+				const project = /"project":"([^"]+)"/.exec(text)?.[1];
+				const terminal = /"terminal":"([^"]+)"/.exec(text)?.[1];
+				if (project) state.project = project;
+				if (terminal) state.terminal = terminal;
 				if (++index === steps.length) {
 					socket.end();
 					resolve();

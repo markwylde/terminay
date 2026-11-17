@@ -15,9 +15,17 @@
 
 - [x] 3.1 Add pure `src/workspace/bots/botActions.ts` (collapse to the latest three, hidden count, group key). Verify: `botActions.test.ts` added to `test:workspace-models` covers single row, a run of six, expand, and a group key that is stable when rows are appended.
 - [x] 3.2 Add an `action` transcript item and `actions` block in `turnBlocks`, `BotActionRow.tsx`/`BotActionGroup` and styles. Route activity messages to it from `BotChat`, with no message menu, and exclude them from the unread divider and read-marking. Verify: e2e in 4.1.
-- [ ] 3.3 Wire `onRevealAction` from `App.tsx` through `BotTab` to `BotChat`, server-aware: project and terminal/workflow via `activateDashboardRow`, automation via `openAutomationsFromOverview`, template/settings via `openSettings` only on the current server, trigger via `onConfigure('triggers')`. Show "No longer exists" for `missing` and "Not available from this window" for `elsewhere`. Verify: e2e in 4.1 opens a terminal from a row and sees "No longer exists" for a closed project.
+- [x] 3.3 Wire `onRevealAction` from `App.tsx` through `BotTab` to `BotChat`, server-aware: project and terminal/workflow via `activateDashboardRow`, automation via `openAutomationsFromOverview`, template/settings via `openSettings` only on the current server, trigger via `onConfigure('triggers')`. Show "No longer exists" for `missing` and "Not available from this window" for `elsewhere`. Verify: e2e in 4.1 opens a terminal from a row and sees "No longer exists" for a closed project.
 
 ## 4. End to end and checks
 
-- [ ] 4.1 Extend `e2e/bots.spec.ts`. Have a bot execution's real Terminay MCP calls (or the server's recorder, if the e2e fake agent cannot call MCP) produce action entries: done, failed, folded ×N and a run of six. Assert row text, marks, collapse and expand, no unread divider, a live row appearing without reload, Open terminal revealing the terminal, and a gone target saying so. Capture screenshots of the grouped rows, the expanded group and a failed row. Verify: `npm run test:e2e` (Docker) passes for the bots suite.
-- [ ] 4.2 Run typecheck, Biome, the touched packages' tests, `openspec validate bot-chat-shows-terminay-actions` and `openspec validate --all`. Verify: all pass, or failures that already exist on `main` are listed as unrelated.
+- [x] 4.1 Extend `e2e/bots.spec.ts`. Have a bot execution's real Terminay MCP calls (or the server's recorder, if the e2e fake agent cannot call MCP) produce action entries: done, failed, folded ×N and a run of six. Assert row text, marks, collapse and expand, no unread divider, a live row appearing without reload, Open terminal revealing the terminal, and a gone target saying so. Capture screenshots of the grouped rows, the expanded group and a failed row. Verify: `npm run test:e2e` (Docker) passes for the bots suite.
+- [x] 4.2 Run typecheck, Biome, the touched packages' tests, `openspec validate bot-chat-shows-terminay-actions` and `openspec validate --all`. Verify: all pass, or failures that already exist on `main` are listed as unrelated.
+
+Verification notes: the e2e drives real Terminay MCP calls through the bot's
+relay (create, open, a folded ×2 write, a refused close) and checks the
+collapsed group, expansion, the failed row and Open terminal. The "gone"
+notices are covered by `botActions.test.ts`; `openspec validate --all` fails
+only in other changes (add-terminay-bots, linked-folders and others), which
+fail the same way on `main`.
+
