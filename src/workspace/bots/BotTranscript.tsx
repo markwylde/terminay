@@ -21,6 +21,7 @@ import {
 	FileText,
 	LoaderCircle,
 	MessageSquareReply,
+	User,
 	X,
 } from 'lucide-react';
 import {
@@ -92,8 +93,8 @@ function ReplyBar({
 					author === 'bot' ? (
 						<BotAvatar key={author} bot={bot} size="sm" />
 					) : (
-						<span key={author} className="bots-replies__you">
-							You
+						<span key={author} className="bots-replies__you" title="You">
+							<User size={12} aria-hidden />
 						</span>
 					),
 				)}

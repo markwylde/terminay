@@ -1322,6 +1322,31 @@ test.describe('Home: Bots', () => {
 		await expect(panelComposer).toBeFocused();
 		await panelComposer.fill('draft A');
 
+		// Edit and delete a reply inside the panel.
+		await panelReplies
+			.locator('.bots-md[data-terminay-message-key]')
+			.filter({ hasText: 'Ship it to staging' })
+			.click({ button: 'right' });
+		await menu
+			.getByRole('menuitem', { name: 'Edit message', exact: true })
+			.click();
+		const editor = mainWindow.getByRole('dialog', { name: 'Edit message' });
+		await editor.getByLabel('Message text').fill('Ship it to production');
+		await editor.getByRole('button', { name: 'Save message' }).click();
+		await expect(editor).toHaveCount(0);
+		await expect(panelReplies).toContainText('Ship it to production');
+		await panelReplies
+			.locator('.bots-md[data-terminay-message-key]')
+			.filter({ hasText: 'secret' })
+			.click({ button: 'right' });
+		await menu
+			.getByRole('menuitem', { name: 'Delete message', exact: true })
+			.click();
+		await expect(panelReplies.locator(':scope > .bots-msg')).toHaveCount(1);
+		await expect(bar).toHaveAttribute('data-terminay-bot-thread-replies', '1');
+		await expect(bar).toContainText('1 reply');
+		await expect(panelComposer).toHaveValue('draft A');
+
 		// Escape closes the panel and returns focus to the root.
 		await panelComposer.press('Escape');
 		await expect(panel).toHaveCount(0);
@@ -1344,8 +1369,20 @@ test.describe('Home: Bots', () => {
 			.getByRole('menuitem', { name: 'Reply in thread', exact: true })
 			.click();
 		await expect(panelComposer).toHaveValue('');
+		// A pending file belongs to the thread it was attached in.
+		await panel.locator('[data-terminay-bot-attach-input]').setInputFiles({
+			name: 'notes.txt',
+			mimeType: 'text/plain',
+			buffer: Buffer.from('notes'),
+		});
+		await expect(
+			panel.locator('[data-terminay-bot-pending-images] li'),
+		).toHaveCount(1);
 		await bar.click();
 		await expect(panelComposer).toHaveValue('draft A');
+		await expect(
+			panel.locator('[data-terminay-bot-pending-images] li'),
+		).toHaveCount(0);
 
 		// On a narrow window the panel covers the chat.
 		const nativeWindow = await electronApp.browserWindow(mainWindow);
@@ -1381,6 +1418,18 @@ test.describe('Home: Bots', () => {
 			.click();
 		await expect(panel).toHaveCount(0);
 		await expect(transcript.locator(':scope > .bots-msg')).toHaveCount(1);
+
+		// Clearing the chat closes an open thread.
+		await userMessage.hover();
+		await userMessage.locator('[data-terminay-bot-reply-in-thread]').click();
+		await expect(panel).toBeVisible();
+		await tab.getByRole('button', { name: 'Clear chat', exact: true }).click();
+		await mainWindow
+			.getByRole('dialog', { name: 'Clear chat history?' })
+			.getByRole('button', { name: 'Clear chat', exact: true })
+			.click();
+		await expect(panel).toHaveCount(0);
+		await expect(transcript.locator(':scope > .bots-msg')).toHaveCount(0);
 	});
 
 	test('Quote puts any message into the composer as a blockquote, by pointer and keyboard', async ({
