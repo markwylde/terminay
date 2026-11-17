@@ -110,6 +110,24 @@ test('a reply execution is briefed with its thread; a top-level one is not', asy
 	assert.equal(contextOf(r, r.create().id).thread, undefined);
 });
 
+test('a top-level briefing shows reply counts, not replies, and says how to read a thread', async t => {
+	const r = setup(t);
+	const root = r.messages.post(bot, 'user', 'Plan the release', null, 'root');
+	for (let i = 0; i < 6; i++)
+		r.messages.post(bot, 'user', `note ${i}`, null, `r${i}`, [], [], root.id);
+	const me = r.create();
+	const context = contextOf(r, me.id), briefing = r.runtime.briefing(me.id);
+	const listed = context.recentMessages.items.find((m) => m.id === root.id);
+	assert.equal(listed.thread.replyCount, 6);
+	assert.equal(
+		context.recentMessages.items.some((m) => m.threadId),
+		false,
+		'replies stay out of the top-level list',
+	);
+	assert.match(briefing, /one-level threads/);
+	assert.match(briefing, /read it with chat_list threadId/);
+});
+
 test('thread context trims first and keeps the root id within the budget', async t => {
 	const r = setup(t);
 	for (let i = 0; i < 10; i++) r.messages.post(bot, 'user', worst(1500), null, 'm' + i);

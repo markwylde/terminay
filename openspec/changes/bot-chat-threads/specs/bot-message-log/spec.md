@@ -84,11 +84,15 @@ Posting or deleting a reply SHALL emit, besides the reply's own event, a `messag
 
 ### Requirement: Executions from a thread reply
 
-A user reply in a thread SHALL start a fresh execution, as any accepted user message does. That execution's briefing SHALL name the thread's root ID, carry a bounded excerpt of the root with its author, the thread's reply count and bounded excerpts of its latest replies, and SHALL tell the agent to answer in that thread by passing `threadId` to `chat_post` and to read more of it with `chat_list`. Thread context SHALL count towards the briefing budget and SHALL be trimmed as Briefings trim in a fixed order requires. An execution started by a top-level message SHALL carry no thread context.
+A user reply in a thread SHALL start a fresh execution, as any accepted user message does. That execution's briefing SHALL name the thread's root ID, carry a bounded excerpt of the root with its author, the thread's reply count and bounded excerpts of its latest replies, and SHALL tell the agent to answer in that thread by passing `threadId` to `chat_post` and to read more of it with `chat_list`. Thread context SHALL count towards the briefing budget and SHALL be trimmed as Briefings trim in a fixed order requires. An execution started by a top-level message SHALL carry no thread context. Every briefing SHALL explain that threads are one level deep, that top-level lists show only top-level messages with a reply-count summary and not the replies, and that the agent should read a thread with `chat_list` and its `threadId` when the thread looks relevant to its task.
 
 #### Scenario: Reply starts a threaded execution
 - **WHEN** the user replies "and the logs?" in thread M
 - **THEN** a fresh execution starts whose briefing names M, its root excerpt and latest replies, and instructs the agent to post with `threadId` M
+
+#### Scenario: Top-level message beside an active thread
+- **WHEN** the user posts a top-level message while message M has 6 replies
+- **THEN** the briefing lists M with a reply count of 6 and no reply text, and explains that the agent can read M's thread with `chat_list` and `threadId` M when it is relevant
 
 #### Scenario: Large thread
 - **WHEN** the user replies in a thread with 200 long replies
