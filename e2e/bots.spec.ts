@@ -714,6 +714,71 @@ test.describe('Home: Bots', () => {
 		});
 	});
 
+	test("a bot's Terminay actions show as compact rows in Chat, fold repeats, explain failures, and link to what they touched", async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(180_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Builder');
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		const toggle = tab.locator('[data-terminay-bot-terminay-mcp]');
+		await toggle.click();
+		await tab.locator('[data-terminay-bot-profile-save]').click();
+		await expect(tab.locator('.bots-done')).toContainText('Saved');
+
+		await chat(tab);
+		await send(tab, 'set up terminay-actions');
+		const transcript = tab.locator('[data-terminay-bot-transcript]');
+		await expect(transcript).toContainText('secret', { timeout: 60_000 });
+		const actions = transcript.locator('[data-terminay-bot-action]');
+		const row = (tool: string) =>
+			transcript.locator(`[data-terminay-bot-action="${tool}"]`);
+		// Four rows: the repeated keystrokes fold into one counted row.
+		await expect(actions).toHaveCount(4);
+		await expect(row('create_project')).toContainText(
+			'Created the project “fixture-api”',
+		);
+		await expect(row('open_terminal')).toContainText('Opened a terminal');
+		await expect(
+			row('write_terminal').locator('[data-terminay-bot-action-count]'),
+		).toHaveText('×2');
+		await expect(row('close_terminal')).toHaveAttribute(
+			'data-terminay-bot-action-outcome',
+			'failed',
+		);
+		await expect(row('close_terminal')).toContainText("Couldn't close");
+		await expect(
+			row('close_terminal').locator('.bots-action__link'),
+		).toHaveCount(0);
+		// Actions are not posts: only the request and the reply are messages,
+		// and no unread divider opens for them.
+		await expect(transcript.locator('.bots-msg')).toHaveCount(2);
+		await expect(tab.locator('[data-terminay-bot-unread]')).toHaveCount(0);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-chat-terminay-actions.png'),
+		});
+		await row('create_project').hover();
+		await row('create_project').screenshot({
+			path: testInfo.outputPath('bot-chat-terminay-action-row.png'),
+		});
+
+		const open = row('create_project').locator('.bots-action__link');
+		await expect(open).toHaveText('Open project');
+		await open.click();
+		await expect(
+			row('create_project').locator('.bots-action__notice'),
+		).toHaveCount(0);
+		await expect(
+			mainWindow.getByText('fixture-api', { exact: true }).first(),
+		).toBeVisible();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-chat-terminay-action-opened.png'),
+		});
+	});
+
 	test('Stop ends a held turn, whether the agent honours the cancel or not', async ({
 		mainWindow,
 		tempDir,
