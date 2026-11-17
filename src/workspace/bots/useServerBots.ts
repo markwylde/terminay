@@ -23,7 +23,11 @@ import type {
 	BotUpcomingFiring,
 } from '@terminay/protocol';
 import { useEffect, useRef, useState } from 'react';
-import type { BotEntry, BotEnvironmentSummary } from './botsModel';
+import {
+	type BotEntry,
+	type BotEnvironmentSummary,
+	retainRecentSessions,
+} from './botsModel';
 
 export type BotConnectionEntry = Readonly<{
 	serverId: string;
@@ -236,9 +240,7 @@ function startController(
 			if (sessions.status === 'fulfilled')
 				sessionMap.set(
 					botId,
-					[...sessions.value]
-						.sort((a, b) => b.startedAt - a.startedAt)
-						.slice(0, RECENT_SESSIONS),
+					retainRecentSessions(sessions.value, RECENT_SESSIONS),
 				);
 			// A failed read keeps the last known state, so views that depend on
 			// it (the live desktop) do not unmount and reconnect.

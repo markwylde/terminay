@@ -9,12 +9,21 @@ import {
 } from 'lucide-react';
 import { BotDesktopCanvas } from './BotDesktopView';
 import { formatWhen } from './BotTriggersPanel';
-import { SESSION_STATE_LABELS, sessionTitle, shortAge } from './botsModel';
+import {
+	isActiveSession,
+	recentSessions,
+	SESSION_STATE_LABELS,
+	sessionTitle,
+	shortAge,
+} from './botsModel';
 import { distinctUpcoming } from './triggersModel';
 import { useNow } from './useNow';
 import type { ServerBots } from './useServerBots';
 import type { BotConfigTab } from './BotTab';
 import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
+/** How many sessions the rail lists, active ones first. */
+const RAIL_SESSIONS = 6;
+
 export function BotContextRail({
 	server,
 	bot,
@@ -93,8 +102,14 @@ export function BotContextRail({
 					<p className="bots-faint">No sessions yet.</p>
 				) : (
 					<ul className="bots-sesslist">
-						{sessions.slice(0, 6).map((s) => (
-							<li key={s.id}>
+						{recentSessions(sessions, RAIL_SESSIONS).map((s) => (
+							<li
+								key={s.id}
+								data-terminay-bot-sess={s.id}
+								data-terminay-bot-sess-active={
+									isActiveSession(s) ? 'true' : undefined
+								}
+							>
 								<button
 									type="button"
 									className="bots-sess"
@@ -103,7 +118,7 @@ export function BotContextRail({
 									}}
 								>
 									<span
-										className={`bots-sess__dot bots-sess__dot--${s.state}`}
+										className={`bots-sess__dot bots-sess__dot--${s.state}${isActiveSession(s) ? ' bots-sess__dot--live' : ''}`}
 										aria-hidden="true"
 									/>
 									<span className="bots-sess__body">
@@ -114,7 +129,7 @@ export function BotContextRail({
 										</span>
 									</span>
 								</button>
-								{['queued', 'running', 'needs-you'].includes(s.state) ? (
+								{isActiveSession(s) ? (
 									<button
 										type="button"
 										className="bots-btn bots-btn--sm"

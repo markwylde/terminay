@@ -2062,10 +2062,10 @@ test.describe('Home: Bots', () => {
 		await expect(tab.locator('.bots-srow--on')).toContainText('Alpha check');
 	});
 
-	test('a new message completes while an older execution is held', async ({
+	test('a new message completes while an older execution is held, and the held session stays pinned at the top', async ({
 		mainWindow,
 		tempDir,
-	}) => {
+	}, testInfo) => {
 		await setEngineDown(tempDir, false);
 		await engineReady(mainWindow);
 		const tab = await chat(await createBot(mainWindow, 'Wagtail'));
@@ -2079,8 +2079,55 @@ test.describe('Home: Bots', () => {
 			{ timeout: 30000 },
 		);
 		await expect(tab.locator('.bots-sess')).toHaveCount(2);
+		await send(tab, 'later');
+		await expect(tab.locator('.bots-sess')).toHaveCount(3, { timeout: 30000 });
 		await expect(tab.locator('[data-terminay-bot-stop]')).toHaveCount(1);
+
+		// The held session is the oldest, yet it is pinned above the newer
+		// finished ones, which keep newest-first order beneath it.
+		const rows = tab.locator('.bots-sesslist > li');
+		const states = tab.locator('.bots-sess__m');
+		await expect(rows.nth(0)).toHaveAttribute(
+			'data-terminay-bot-sess-active',
+			'true',
+		);
+		await expect(states).toHaveText([/^Running/, /^Completed/, /^Completed/], {
+			timeout: 30000,
+		});
+		const held = await rows.nth(0).getAttribute('data-terminay-bot-sess');
+		expect(held).toBeTruthy();
+		await expect(rows.nth(0).locator('[data-terminay-bot-stop]')).toBeVisible();
+		await expect(tab.locator('[data-terminay-bot-sess-active]')).toHaveCount(1);
+
+		// Only the live row's dot pulses, and not under reduced motion.
+		const dotAnimation = (index: number) =>
+			tab
+				.locator('.bots-sess__dot')
+				.nth(index)
+				.evaluate((el) => getComputedStyle(el).animationName);
+		expect(await dotAnimation(0)).toBe('bots-pulse');
+		expect(await dotAnimation(1)).toBe('none');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('recent-sessions-active-pinned.png'),
+		});
+		await mainWindow.emulateMedia({ reducedMotion: 'reduce' });
+		await expect.poll(() => dotAnimation(0)).toBe('none');
+		await mainWindow.emulateMedia({ reducedMotion: 'no-preference' });
+
+		// Once stopped, it drops into the ended group at its newest-first place.
 		await tab.locator('[data-terminay-bot-stop]').click();
+		await expect(tab.locator('[data-terminay-bot-stop]')).toHaveCount(0, {
+			timeout: 30000,
+		});
+		await expect(states).toHaveText([/^Completed/, /^Completed/, /^Stopped/]);
+		await expect(rows.nth(2)).toHaveAttribute(
+			'data-terminay-bot-sess',
+			held ?? '',
+		);
+		await expect(tab.locator('[data-terminay-bot-sess-active]')).toHaveCount(0);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('recent-sessions-after-stop.png'),
+		});
 	});
 
 	test('the composer grows with its text to a maximum, then scrolls, and shrinks when sent', async ({

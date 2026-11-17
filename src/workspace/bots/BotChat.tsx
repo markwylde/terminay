@@ -33,6 +33,7 @@ import {
 	chatFileKind,
 	chatSendAttempt,
 	formatFileSize,
+	isActiveSession,
 } from './botsModel';
 import { appendQuote, quoteMessage } from './quoteMessage';
 import { useFitTextarea } from './useFitTextarea';
@@ -543,9 +544,7 @@ export function BotChat({
 		observer.observe(viewport);
 		return () => observer.disconnect();
 	}, [visible]);
-	const active = sessions.filter((s) =>
-		['running', 'needs-you', 'queued'].includes(s.state),
-	);
+	const active = sessions.filter(isActiveSession);
 	const act = async (work: () => Promise<unknown>) => {
 		setMutating(true);
 		setError(undefined);
