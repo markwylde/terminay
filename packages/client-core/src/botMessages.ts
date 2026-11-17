@@ -7,6 +7,7 @@ import {
 	type BotMessageUpload,
 	type BotRuntimeEventPage,
 	botAttachmentLimit,
+	botMessageActivity,
 	isBotImageMime,
 	type JsonValue,
 	BOT_MESSAGE_OPERATIONS as op,
@@ -28,6 +29,17 @@ function record(value: unknown): Record<string, unknown> {
 		throw new TypeError('Invalid message response');
 	return value as Record<string, unknown>;
 }
+/**
+ * A message whose recorded action is well formed, or undefined when its
+ * action data is malformed: such a row is dropped, never shown as a post.
+ */
+export function withValidActivity<T extends { activity?: unknown }>(
+	message: T,
+): T | undefined {
+	if (message.activity === undefined) return message;
+	const activity = botMessageActivity(message.activity);
+	return activity === undefined ? undefined : { ...message, activity };
+}
 export class BotMessagesClient {
 	constructor(private readonly transport: BotTransport) {}
 	async list(
@@ -43,7 +55,14 @@ export class BotMessagesClient {
 			typeof value.eventsCursor !== 'string'
 		)
 			throw new TypeError('Invalid message page');
-		return value as unknown as BotMessagePage;
+		const page = value as unknown as BotMessagePage;
+		return {
+			...page,
+			items: page.items.flatMap((item) => {
+				const valid = withValidActivity(item);
+				return valid === undefined ? [] : [valid];
+			}),
+		};
 	}
 	async get(
 		botId: string,
@@ -62,7 +81,10 @@ export class BotMessagesClient {
 			typeof value.message !== 'object'
 		)
 			throw new TypeError('Invalid message detail');
-		return value as unknown as BotMessageDetail;
+		const detail = value as unknown as BotMessageDetail;
+		const message = withValidActivity(detail.message);
+		if (message === undefined) throw new TypeError('Invalid message action');
+		return { ...detail, message };
 	}
 	async post(
 		botId: string,

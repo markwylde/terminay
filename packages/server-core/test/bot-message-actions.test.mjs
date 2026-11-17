@@ -3,11 +3,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { describeBotAction } from '../dist/botService/actionWording.js';
 import {
 	BOT_MAX_ACTIONS,
 	BotMessageStore,
 } from '../dist/botService/messages.js';
-import { describeBotAction } from '../dist/botService/actionWording.js';
 
 const bot = 'abc123def456';
 const exec = 'a'.repeat(24);
@@ -40,7 +40,10 @@ test('an action is a bot row with activity and survives reload', (t) => {
 	});
 	const reloaded = new BotMessageStore(root);
 	assert.deepEqual(reloaded.get(bot, row.id).activity, row.activity);
-	assert.equal(reloaded.events(bot, reloaded.eventCursor(bot, 0)).items.at(-1).type, 'action.recorded');
+	assert.equal(
+		reloaded.events(bot, reloaded.eventCursor(bot, 0)).items.at(-1).type,
+		'action.recorded',
+	);
 });
 
 test('identical consecutive actions fold in place; anything different does not', (t) => {
@@ -53,11 +56,39 @@ test('identical consecutive actions fold in place; anything different does not',
 	assert.equal(folded.sequence, first.sequence);
 	assert.equal(store.count(bot), 1);
 	// Different text (another command), target, outcome, execution: new rows.
-	store.recordActivity(bot, exec, typed({ text: 'Ran `npm test` in api', tool: 'run_command' }));
-	store.recordActivity(bot, exec, typed({ text: 'Ran `npm run build` in api', tool: 'run_command' }));
-	store.recordActivity(bot, exec, typed({ target: { ...terminal, sessionId: 's-2' } }));
-	store.recordActivity(bot, exec, typed({ target: { ...terminal, sessionId: 's-2' }, outcome: 'failed', reason: 'x: y' }));
-	store.recordActivity(bot, other, typed({ target: { ...terminal, sessionId: 's-2' }, outcome: 'failed', reason: 'x: y' }));
+	store.recordActivity(
+		bot,
+		exec,
+		typed({ text: 'Ran `npm test` in api', tool: 'run_command' }),
+	);
+	store.recordActivity(
+		bot,
+		exec,
+		typed({ text: 'Ran `npm run build` in api', tool: 'run_command' }),
+	);
+	store.recordActivity(
+		bot,
+		exec,
+		typed({ target: { ...terminal, sessionId: 's-2' } }),
+	);
+	store.recordActivity(
+		bot,
+		exec,
+		typed({
+			target: { ...terminal, sessionId: 's-2' },
+			outcome: 'failed',
+			reason: 'x: y',
+		}),
+	);
+	store.recordActivity(
+		bot,
+		other,
+		typed({
+			target: { ...terminal, sessionId: 's-2' },
+			outcome: 'failed',
+			reason: 'x: y',
+		}),
+	);
 	assert.equal(store.count(bot), 6);
 	// A message between two identical actions stops folding.
 	store.recordActivity(bot, exec, typed());
@@ -69,7 +100,10 @@ test('identical consecutive actions fold in place; anything different does not',
 test('actions cannot be edited or deleted, and clear removes them', (t) => {
 	const { store } = setup(t);
 	const row = store.recordActivity(bot, exec, typed());
-	assert.throws(() => store.edit(bot, row.id, 1, 'changed'), /cannot be edited/);
+	assert.throws(
+		() => store.edit(bot, row.id, 1, 'changed'),
+		/cannot be edited/,
+	);
 	assert.throws(() => store.edit(bot, row.id, 1, null), /cannot be edited/);
 	assert.equal(store.get(bot, row.id).text, row.text);
 	store.clear(bot);
@@ -81,7 +115,11 @@ test('actions never become unacknowledged posts', (t) => {
 	store.recordActivity(bot, exec, typed());
 	assert.equal(store.unacknowledged(bot), undefined);
 	store.post(bot, 'bot', 'One post', exec, 'k1');
-	store.recordActivity(bot, exec, typed({ text: 'Opened a terminal', tool: 'open_terminal' }));
+	store.recordActivity(
+		bot,
+		exec,
+		typed({ text: 'Opened a terminal', tool: 'open_terminal' }),
+	);
 	store.recordActivity(bot, exec, typed());
 	const posts = store.unacknowledged(bot);
 	assert.equal(posts.count, 1);
@@ -92,7 +130,11 @@ test('list can leave actions out, and binds that choice into its cursor', (t) =>
 	const { store } = setup(t);
 	for (let i = 0; i < 12; i++) {
 		store.post(bot, 'bot', `Post ${i}`, exec, `k${i}`);
-		store.recordActivity(bot, exec, typed({ text: `Opened ${i}`, tool: 'open_terminal' }));
+		store.recordActivity(
+			bot,
+			exec,
+			typed({ text: `Opened ${i}`, tool: 'open_terminal' }),
+		);
 	}
 	const all = store.list(bot, { limit: 25 });
 	assert.equal(all.total, 24);
@@ -101,7 +143,11 @@ test('list can leave actions out, and binds that choice into its cursor', (t) =>
 	assert.equal(posts.total, 12);
 	assert.ok(posts.items.every((m) => m.activity === undefined));
 	assert.throws(() => store.list(bot, { cursor: posts.nextCursor }), /query/);
-	assert.equal(store.list(bot, { cursor: posts.nextCursor, limit: 5, actions: false }).items.length, 5);
+	assert.equal(
+		store.list(bot, { cursor: posts.nextCursor, limit: 5, actions: false })
+			.items.length,
+		5,
+	);
 });
 
 test('text and reason are cut on UTF-8 boundaries', (t) => {
@@ -116,8 +162,15 @@ test('text and reason are cut on UTF-8 boundaries', (t) => {
 	assert.ok(Buffer.byteLength(row.activity.reason) <= 200);
 	assert.ok(!row.text.includes('�'));
 	assert.ok(!row.activity.reason.includes('�'));
-	assert.throws(() => store.recordActivity(bot, exec, { ...typed(), tool: 'Bad Tool' }), /Invalid/);
-	assert.throws(() => store.recordActivity(bot, exec, { ...typed(), target: { kind: 'nope' } }), /Invalid/);
+	assert.throws(
+		() => store.recordActivity(bot, exec, { ...typed(), tool: 'Bad Tool' }),
+		/Invalid/,
+	);
+	assert.throws(
+		() =>
+			store.recordActivity(bot, exec, { ...typed(), target: { kind: 'nope' } }),
+		/Invalid/,
+	);
 });
 
 test('the oldest actions go past the cap, never a message, and posting stays allowed', (t) => {
@@ -171,23 +224,42 @@ test('wording: past tense when done, "Couldn\'t" when failed, quoting only what 
 		"Couldn't create the project “api”",
 	);
 	assert.equal(
-		describeBotAction('run_command', { command: 'npm test' }, 'done', { terminal: 'api' }),
+		describeBotAction('run_command', { command: 'npm test' }, 'done', {
+			terminal: 'api',
+		}),
 		'Ran `npm test` in the terminal “api”',
 	);
-	const long = describeBotAction('run_command', { command: 'x'.repeat(200) }, 'done');
+	const long = describeBotAction(
+		'run_command',
+		{ command: 'x'.repeat(200) },
+		'done',
+	);
 	assert.ok(long.includes(`${'x'.repeat(79)}…`));
 	assert.ok(!long.includes('x'.repeat(80)));
 	assert.equal(
-		describeBotAction('write_terminal', { data: 'secret output' }, 'done', { terminal: 'api' }),
+		describeBotAction('write_terminal', { data: 'secret output' }, 'done', {
+			terminal: 'api',
+		}),
 		'Typed into the terminal “api”',
 	);
 	assert.equal(
-		describeBotAction('update_settings', { settings: { theme: 'dark-secret' } }, 'done'),
+		describeBotAction(
+			'update_settings',
+			{ settings: { theme: 'dark-secret' } },
+			'done',
+		),
 		'Changed the setting theme',
 	);
 	assert.equal(
-		describeBotAction('triggers_create', { draft: { name: 'Nightly' } }, 'done'),
+		describeBotAction(
+			'triggers_create',
+			{ draft: { name: 'Nightly' } },
+			'done',
+		),
 		'Created the trigger “Nightly”',
 	);
-	assert.equal(describeBotAction('mystery_tool', {}, 'done'), 'Used mystery_tool');
+	assert.equal(
+		describeBotAction('mystery_tool', {}, 'done'),
+		'Used mystery_tool',
+	);
 });

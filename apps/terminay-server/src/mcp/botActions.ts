@@ -119,9 +119,9 @@ export interface BotActionDeps {
 	/** The project a live terminal session is in now. */
 	sessionProject(sessionId: string): string | undefined;
 	/** A project handle as a project ID and display name. */
-	project(handle: string):
-		| { readonly projectId: string; readonly name?: string }
-		| undefined;
+	project(
+		handle: string,
+	): { readonly projectId: string; readonly name?: string } | undefined;
 	record(
 		botId: string,
 		executionId: string,
@@ -223,9 +223,7 @@ export function withBotActions(
 						? outcome.result
 						: {};
 				const target =
-					outcome.outcome === 'done'
-						? doneTarget(result)
-						: failedTarget();
+					outcome.outcome === 'done' ? doneTarget(result) : failedTarget();
 				const text = describeBotAction(op, params, outcome.outcome, {
 					...(terminal?.title ? { terminal: terminal.title } : {}),
 					...(project?.name ? { project: project.name } : {}),
@@ -280,7 +278,8 @@ export function withBotActions(
 			switch (op) {
 				case 'create_project': {
 					const handle = str(result.project);
-					const created = handle === undefined ? undefined : deps.project(handle);
+					const created =
+						handle === undefined ? undefined : deps.project(handle);
 					return created === undefined
 						? undefined
 						: { kind: 'project', projectId: created.projectId };

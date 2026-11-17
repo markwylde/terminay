@@ -11,8 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { BotCleanupError } from '../dist/botService/agentProcess.js';
-import { SourceRunError } from '../dist/botService/sourceRunner.js';
 import { EngineCommandError } from '../dist/botService/index.js';
+import { SourceRunError } from '../dist/botService/sourceRunner.js';
 import {
 	AutomationRepository,
 	AutomationRunLog,
@@ -292,7 +292,10 @@ test('runtime trigger CRUD shares UI persistence, validation and events', async 
 	const call = (name, args = {}) =>
 		r.service.runtime.call(sessionId, name, args);
 	const initial = await call('triggers_list');
-	assert.equal('ownsWork' in (await call('sessions_get', { sessionId })), false);
+	assert.equal(
+		'ownsWork' in (await call('sessions_get', { sessionId })),
+		false,
+	);
 	const created = await call('triggers_create', {
 		revision: initial.revision,
 		draft: draft(),
@@ -2511,7 +2514,11 @@ test('runtime trigger changes are recorded as actions in the chat (ADR-0134)', a
 	await settle();
 	const failed = actions()[0];
 	assert.equal(failed.activity.outcome, 'failed');
-	assert.equal(failed.activity.target, undefined, 'unknown trigger is not linked');
+	assert.equal(
+		failed.activity.target,
+		undefined,
+		'unknown trigger is not linked',
+	);
 	assert.match(failed.excerpt, /^Couldn't change a trigger/);
 	await call('triggers_delete', {
 		triggerId: created.trigger.id,
@@ -2529,7 +2536,9 @@ test('runtime trigger changes are recorded as actions in the chat (ADR-0134)', a
 	};
 	// Briefings leave actions out of their recent messages.
 	assert.ok(await r.service.recordAction(r.bot.id, sessionId, opened));
-	assert.ok(!r.service.runtime.briefing(sessionId).includes('Opened a terminal'));
+	assert.ok(
+		!r.service.runtime.briefing(sessionId).includes('Opened a terminal'),
+	);
 	// A foreign bot, or a log cleared since the call began, records nothing.
 	assert.equal(
 		await r.service.recordAction('fedcba987654', sessionId, opened),

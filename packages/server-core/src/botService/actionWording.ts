@@ -93,7 +93,9 @@ function phraseFor(
 			const command = quoted(params.command, 80);
 			return phrase(
 				'run',
-				command === '' ? `a command in ${terminal}` : `\`${command}\` in ${terminal}`,
+				command === ''
+					? `a command in ${terminal}`
+					: `\`${command}\` in ${terminal}`,
 			);
 		}
 		case 'close_terminal':
@@ -199,9 +201,7 @@ function phraseFor(
 					: [];
 			return phrase(
 				'change',
-				keys.length === 1
-					? `the setting ${quoted(keys[0], 60)}`
-					: 'settings',
+				keys.length === 1 ? `the setting ${quoted(keys[0], 60)}` : 'settings',
 			);
 		}
 		case 'save_shell_profile':
@@ -232,7 +232,10 @@ function phraseFor(
 			return phrase('dismiss', 'a notification');
 		case 'call_connected_tool': {
 			const name = quoted(params.tool ?? params.name, 60);
-			return phrase('use', name === '' ? 'a connected tool' : `the tool ${name}`);
+			return phrase(
+				'use',
+				name === '' ? 'a connected tool' : `the tool ${name}`,
+			);
 		}
 		case 'triggers_create':
 			return phrase(
@@ -247,7 +250,10 @@ function phraseFor(
 		case 'triggers_delete':
 			return phrase('delete', 'a trigger');
 		case 'triggers_enable':
-			return phrase(params.enabled === false ? 'turn off' : 'turn on', 'a trigger');
+			return phrase(
+				params.enabled === false ? 'turn off' : 'turn on',
+				'a trigger',
+			);
 		case 'triggers_run':
 			return phrase('run', 'a trigger');
 		case 'triggers_reset':

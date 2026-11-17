@@ -5,6 +5,7 @@ import { BotRecovery } from './BotRecovery';
  * dashboard, so a card and its tab never disagree.
  */
 
+import type { BotActionTarget } from '@terminay/protocol';
 import { useEffect, useRef, useState } from 'react';
 import { BotAvatar } from './BotAvatar';
 import { BotChat } from './BotChat';
@@ -17,6 +18,7 @@ import { BotProfilePanel } from './BotProfilePanel';
 import { BotSessionsPanel, type SessionsTrigger } from './BotSessionsPanel';
 import { BotSettingsMenu } from './BotSettingsMenu';
 import { BotTriggersPanel } from './BotTriggersPanel';
+import type { BotActionReveal } from './botActions';
 import { subscribeBotFocus } from './botFocus';
 import { BOT_ACTIVITY_LABELS, botActivity } from './botsModel';
 import type { BotTabHost } from './botTabHost';
@@ -45,10 +47,16 @@ export function BotTab({
 	server,
 	botId,
 	host,
+	onRevealAction,
 }: Readonly<{
 	server: ServerBots | undefined;
 	botId: string;
 	host: BotTabHost;
+	/** Reveal what a bot's recorded Terminay action touched, on its server. */
+	onRevealAction?: (
+		serverId: string,
+		target: BotActionTarget,
+	) => Promise<BotActionReveal>;
 }>) {
 	const [mode, setMode] = useState<'chat' | 'configure'>('chat');
 	const [configTab, setConfigTab] = useState<BotConfigTab>('profile');
@@ -225,6 +233,12 @@ export function BotTab({
 					onDraftChange={setDraft}
 					visible={host.isVisible}
 					interaction={interaction}
+					{...(onRevealAction
+						? {
+								onRevealAction: (target: BotActionTarget) =>
+									onRevealAction(server.serverId, target),
+							}
+						: {})}
 					onConfigure={(tab, sub) => {
 						if (tab === 'sessions') setSessionsTrigger(undefined);
 						setConfigTab(tab);

@@ -1,5 +1,9 @@
 import type { FileViewerClient } from '@terminay/client-core';
-import { FEATURE_CAPABILITIES, type JsonValue } from '@terminay/protocol';
+import {
+	type BotActionTarget,
+	FEATURE_CAPABILITIES,
+	type JsonValue,
+} from '@terminay/protocol';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
@@ -505,6 +509,7 @@ import {
 	type AutomationConnectionEntry,
 	useServerAutomations,
 } from './workspace/automations/useServerAutomations';
+import type { BotActionReveal } from './workspace/bots/botActions';
 import { BotTab } from './workspace/bots/BotTab';
 import { BotsSection } from './workspace/bots/BotsSection';
 import { BotTabIcon, BotsSidebarList } from './workspace/bots/BotsSidebarList';
@@ -9799,6 +9804,99 @@ function App({
 			terminalClientContext?.workspaceSnapshotStore,
 		],
 	);
+	/**
+	 * Reveal what a bot's recorded Terminay action touched (ADR-0134), through
+	 * the same navigation the rest of the workspace uses. Only server IDs the
+	 * server recorded reach here; each is resolved against what exists now.
+	 */
+	const revealBotAction = useCallback(
+		async (
+			serverId: string,
+			target: BotActionTarget,
+		): Promise<BotActionReveal> => {
+			const here = serverId === currentServerId;
+			const projectRow = (projectId: string) => ({
+				color: '',
+				counts: {
+					attention: 0,
+					done: 0,
+					idle: 0,
+					panels: 0,
+					untracked: 0,
+					working: 0,
+				},
+				emoji: '',
+				kind: 'project' as const,
+				projectId,
+				title: '',
+			});
+			const known = (projectId: string) =>
+				projectsRef.current.some((project) => project.id === projectId);
+			switch (target.kind) {
+				case 'project':
+					if (here && !known(target.projectId)) return 'missing';
+					activateDashboardRow(serverId, projectRow(target.projectId));
+					return 'shown';
+				case 'terminal':
+				case 'workflow': {
+					if (!here) {
+						// Another server's panels are not held here: go to its project.
+						activateDashboardRow(serverId, projectRow(target.projectId));
+						return 'shown';
+					}
+					const entry = Object.values(inventoryByProject)
+						.flat()
+						.find((item) => item.sessionId === target.sessionId);
+					if (entry === undefined || !known(entry.projectId)) return 'missing';
+					activateDashboardRow(serverId, {
+						agents: [],
+						color: entry.color ?? '',
+						emoji: entry.emoji ?? '',
+						isAgentStatus: entry.isAgentStatus ?? false,
+						kind: 'panel',
+						panelId: entry.panelId,
+						panelKind: entry.kind,
+						projectId: entry.projectId,
+						status: 'idle',
+						title: entry.title ?? '',
+						sessionId: target.sessionId,
+						...(entry.folderId === undefined
+							? {}
+							: { folderId: entry.folderId }),
+					});
+					return 'shown';
+				}
+				case 'automation':
+					openAutomationsFromOverview({
+						kind: 'automation',
+						serverId,
+						automationId: target.automationId,
+					});
+					return 'shown';
+				case 'workflowTemplate':
+					if (!here) return 'elsewhere';
+					await auxiliaryRouteController.openSettings(
+						'workflows',
+						target.templateId,
+					);
+					return 'shown';
+				case 'settings':
+					if (!here) return 'elsewhere';
+					await auxiliaryRouteController.openSettings();
+					return 'shown';
+				case 'trigger':
+					return 'elsewhere';
+			}
+		},
+		[
+			activateDashboardRow,
+			auxiliaryRouteController,
+			currentServerId,
+			inventoryByProject,
+			openAutomationsFromOverview,
+			projectsRef,
+		],
+	);
 	// Activating an agent is activating the panel it runs in, resolved the same
 	// way and at the same moment, so a finished agent is as safe as a stale row.
 	/**
@@ -11848,6 +11946,7 @@ function App({
 								server={serverBots.get(target.serverId)}
 								botId={target.botId}
 								host={host}
+								onRevealAction={revealBotAction}
 							/>
 						)}
 						renderSidebarBots={({ activeBot, openBot, openBots }) => (

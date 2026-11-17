@@ -139,8 +139,7 @@ export function botMessageActivity(
 			(typeof v.reason !== 'string' || v.reason.length > 200))
 	)
 		return undefined;
-	const target =
-		v.target === undefined ? undefined : botActionTarget(v.target);
+	const target = v.target === undefined ? undefined : botActionTarget(v.target);
 	if (v.target !== undefined && target === undefined) return undefined;
 	return {
 		tool: v.tool,
