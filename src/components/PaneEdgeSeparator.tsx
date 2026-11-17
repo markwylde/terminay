@@ -1,15 +1,24 @@
 /**
- * The left edge of Home's Pull Requests and Issues detail preview. It follows
- * the workspace separators' gesture rules: a drag starts from the drawn width
- * and previews live; releasing commits once, and only if the pointer moved; a
- * cancelled drag, a lost window, or unmounting commits nothing.
+ * The left edge of a pane on the right of its row: Home's Pull Requests and
+ * Issues detail preview, and the Bots rail. It follows the workspace
+ * separators' gesture rules: a drag starts from the drawn width and previews
+ * live; releasing commits once, and only if the pointer moved; a cancelled
+ * drag, a lost window, or unmounting commits nothing.
  */
 
 import { useEffect, useRef } from 'react';
-import { FORGE_DETAIL_RESIZE_STEP } from './forgeModel.ts';
+import './paneEdgeSeparator.css';
 
-export type ForgeDetailSeparatorProps = Readonly<{
-	/** The width the preview is drawn at now. */
+export type PaneEdgeSeparatorProps = Readonly<{
+	/** Positions the separator in its row; the shared look comes with it. */
+	className: string;
+	/** The accessible name, say "Resize preview". */
+	label: string;
+	/** How far one arrow key moves the edge, in pixels. */
+	step: number;
+	/** Data attributes that identify this separator to tests and styles. */
+	data?: Readonly<Record<`data-${string}`, string>>;
+	/** The width the pane is drawn at now. */
 	width: number;
 	min: number;
 	max: number;
@@ -27,13 +36,17 @@ type Drag = {
 	removeListeners: () => void;
 };
 
-export function ForgeDetailSeparator({
+export function PaneEdgeSeparator({
+	className,
+	label,
+	step: arrowStep,
+	data,
 	width,
 	min,
 	max,
 	onPreview,
 	onCommit,
-}: ForgeDetailSeparatorProps) {
+}: PaneEdgeSeparatorProps) {
 	const dragRef = useRef<Drag | null>(null);
 	const latest = useRef({ min, max, onPreview, onCommit });
 	latest.current = { min, max, onPreview, onCommit };
@@ -54,14 +67,14 @@ export function ForgeDetailSeparator({
 	const endRef = useRef(end);
 	endRef.current = end;
 
-	// Unmounting mid-drag, say because the selection closed, commits nothing.
+	// Unmounting mid-drag, say because the pane closed, commits nothing.
 	useEffect(() => () => endRef.current(false), []);
 
 	return (
 		<hr
-			className="forge-home__separator"
-			data-forge-detail-separator="true"
-			aria-label="Resize preview"
+			{...data}
+			className={`pane-edge-separator ${className}`}
+			aria-label={label}
 			aria-orientation="vertical"
 			aria-valuemin={min}
 			aria-valuemax={max}
@@ -69,12 +82,12 @@ export function ForgeDetailSeparator({
 			aria-valuetext={`${width} pixels`}
 			tabIndex={0}
 			onKeyDown={(event) => {
-				// The preview sits on the right, so moving its edge left widens it.
+				// The pane sits on the right, so moving its edge left widens it.
 				const step =
 					event.key === 'ArrowLeft'
-						? FORGE_DETAIL_RESIZE_STEP
+						? arrowStep
 						: event.key === 'ArrowRight'
-							? -FORGE_DETAIL_RESIZE_STEP
+							? -arrowStep
 							: 0;
 				if (step === 0) return;
 				event.preventDefault();

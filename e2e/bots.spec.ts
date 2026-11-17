@@ -425,6 +425,170 @@ test.describe('Home: Bots', () => {
 		).toBe(true);
 	});
 
+	test('the Bots rail resizes by drag and keyboard, is shared with bot tabs, and has no separator in a narrow window', async ({
+		electronApp,
+		mainWindow,
+	}, testInfo) => {
+		await engineReady(mainWindow);
+		await createBot(mainWindow, 'Rail Bot');
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		const original = await nativeWindow.evaluate((window) =>
+			window.getBounds(),
+		);
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), {
+			...original,
+			width: 1280,
+			height: 860,
+		});
+		const remembered = () =>
+			mainWindow.evaluate(
+				() =>
+					JSON.parse(
+						localStorage.getItem('terminay.view.column-widths.v1') ?? '{}',
+					).botsRail as number | undefined,
+			);
+		const widthOf = async (locator: Locator) =>
+			Math.round((await locator.boundingBox())?.width ?? 0);
+
+		const dashboard = await openBots(mainWindow);
+		const rail = dashboard.locator('aside.bots-rail');
+		const separator = dashboard.locator('[data-bots-rail-separator]');
+		await expect(separator).toBeVisible();
+		await expect(separator).toHaveAttribute('aria-valuenow', '300');
+		await expect(separator).toHaveAttribute('aria-valuemin', '240');
+		await expect(separator).toHaveAttribute('aria-valuemax', '560');
+		await expect.poll(() => widthOf(rail)).toBe(300);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bots-rail-01-default.png'),
+		});
+
+		const box = await separator.boundingBox();
+		if (box === null) throw new Error('the separator has no box');
+		const x = box.x + box.width / 2;
+		const y = box.y + box.height / 2;
+
+		// A drag previews live and commits once on release.
+		await mainWindow.mouse.move(x, y);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(x - 50, y, { steps: 5 });
+		await expect.poll(() => widthOf(rail)).toBe(350);
+		expect(await remembered()).toBeUndefined();
+		await mainWindow.mouse.move(x - 100, y, { steps: 5 });
+		await mainWindow.mouse.up();
+		await expect.poll(() => widthOf(rail)).toBe(400);
+		expect(await remembered()).toBe(400);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bots-rail-02-widened.png'),
+		});
+
+		// A press without a move changes nothing.
+		await mainWindow.mouse.move(x - 100, y);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.up();
+		expect(await remembered()).toBe(400);
+		await expect.poll(() => widthOf(rail)).toBe(400);
+
+		// A cancelled drag returns to the width from before it.
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(x - 160, y, { steps: 5 });
+		await expect.poll(() => widthOf(rail)).toBe(460);
+		await mainWindow.evaluate(() =>
+			window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 })),
+		);
+		await mainWindow.mouse.up();
+		await expect.poll(() => widthOf(rail)).toBe(400);
+		expect(await remembered()).toBe(400);
+
+		// The drag stops at the bounds.
+		await mainWindow.mouse.move(x - 100, y);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(x - 600, y, { steps: 5 });
+		await expect.poll(() => widthOf(rail)).toBe(560);
+		await mainWindow.mouse.move(x + 300, y, { steps: 5 });
+		await expect.poll(() => widthOf(rail)).toBe(240);
+		await mainWindow.mouse.move(x - 100, y, { steps: 5 });
+		await mainWindow.mouse.up();
+		await expect.poll(() => widthOf(rail)).toBe(400);
+
+		// Arrow Left widens and Arrow Right narrows, 16 pixels at a time.
+		await separator.focus();
+		await mainWindow.keyboard.press('ArrowLeft');
+		await mainWindow.keyboard.press('ArrowLeft');
+		await mainWindow.keyboard.press('ArrowRight');
+		await expect.poll(() => widthOf(rail)).toBe(416);
+		expect(await remembered()).toBe(416);
+
+		// A bot tab's context rail draws the same chosen width.
+		const tab = await openBotChat(mainWindow, 'Rail Bot');
+		const context = tab.locator('aside.bots-rail');
+		await expect(tab.locator('[data-bots-rail-separator]')).toHaveAttribute(
+			'aria-valuenow',
+			'416',
+		);
+		await expect.poll(() => widthOf(context)).toBe(416);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bots-rail-03-chat.png'),
+		});
+
+		// A Chat area too narrow to resize, say beside another Home tab, draws
+		// the rail at its minimum with no separator, and keeps the choice.
+		const wrap = tab.locator('.bots-chatwrap');
+		await wrap.evaluate((element) => {
+			(element as HTMLElement).style.width = '600px';
+		});
+		await expect(tab.locator('[data-bots-rail-separator]')).toHaveCount(0);
+		await expect.poll(() => widthOf(context)).toBe(240);
+		expect(await remembered()).toBe(416);
+		await wrap.evaluate((element) => {
+			(element as HTMLElement).style.width = '';
+		});
+		await expect(tab.locator('[data-bots-rail-separator]')).toBeVisible();
+		await expect.poll(() => widthOf(context)).toBe(416);
+
+		// In a narrow window Chat hides its rail and the overview stacks it.
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), {
+			...original,
+			width: 800,
+			height: 860,
+		});
+		await expect(context).toBeHidden({ timeout: 20_000 });
+		await expect(tab.locator('[data-bots-rail-separator]')).toHaveCount(0);
+		const narrow = await openBots(mainWindow);
+		await expect(narrow.locator('[data-bots-rail-separator]')).toHaveCount(0);
+		const stacked = narrow.locator('aside.bots-rail');
+		const main = narrow.locator('.bots-dmain');
+		await expect
+			.poll(async () => {
+				const [railBox, mainBox] = await Promise.all([
+					stacked.boundingBox(),
+					main.boundingBox(),
+				]);
+				return railBox !== null && mainBox !== null
+					? railBox.y >= mainBox.y + mainBox.height - 1
+					: false;
+			})
+			.toBe(true);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bots-rail-04-narrow.png'),
+		});
+		expect(await remembered()).toBe(416);
+
+		// Widening again brings the chosen width back.
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), {
+			...original,
+			width: 1280,
+			height: 860,
+		});
+		await expect(narrow.locator('[data-bots-rail-separator]')).toBeVisible({
+			timeout: 20_000,
+		});
+		await expect.poll(() => widthOf(stacked)).toBe(416);
+		await nativeWindow.evaluate(
+			(window, next) => window.setBounds(next),
+			original,
+		);
+	});
+
 	test('on a phone, Bots is a compact section page with status tabs, avatar rows, and the engine card', async ({
 		electronApp,
 		mainWindow,

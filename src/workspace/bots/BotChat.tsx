@@ -19,6 +19,7 @@ import { ContextMenu } from '../../components/ContextMenu';
 import { recallBotChatRead, rememberBotChatRead } from '../localViewState';
 import { BotComposer, type BotPostResult } from './BotComposer';
 import { BotContextRail } from './BotContextRail';
+import { BotsRailSeparator } from './BotsRailSeparator';
 import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
 import { BotStartFailures } from './BotStartFailures';
 import type { BotConfigTab } from './BotTab';
@@ -39,6 +40,7 @@ import {
 	threadIsNew,
 	visibleStartFailures,
 } from './threadModel';
+import { botsRailStyle, useBotsRailWidth } from './useBotsRailWidth';
 import { refusalText, type ServerBots } from './useServerBots';
 
 export function BotChat({
@@ -70,6 +72,7 @@ export function BotChat({
 	/** Counts what the user has done with this bot; see `BotTab`. */
 	interaction: number;
 }>) {
+	const rail = useBotsRailWidth();
 	const client = useMemo(
 		() => new BotMessagesClient(server.transport as never),
 		[server.transport],
@@ -636,6 +639,8 @@ export function BotChat({
 			className={
 				thread ? 'bots-chatwrap bots-chatwrap--thread' : 'bots-chatwrap'
 			}
+			ref={rail.rowRef}
+			style={botsRailStyle(rail)}
 		>
 			{menu ? (
 				<ContextMenu
@@ -902,7 +907,9 @@ export function BotChat({
 					onSignIn={signIn}
 				/>
 			) : (
-				<BotContextRail
+				<>
+					<BotsRailSeparator rail={rail} />
+					<BotContextRail
 					server={server}
 					bot={bot}
 					sessions={sessions}
@@ -914,6 +921,7 @@ export function BotChat({
 						onConfigure('sessions');
 					}}
 				/>
+				</>
 			)}
 		</div>
 	);

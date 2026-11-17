@@ -10,6 +10,7 @@ import {
 	belongsToAccount,
 	DEFAULT_FORGE_GIT_PANE_LAYOUT,
 	drawnForgeDetailWidth,
+	FORGE_DETAIL_RESIZE_STEP,
 	effectiveAccount,
 	type ForgeAccountRef,
 	type ForgeAccountsAnswer,
@@ -47,7 +48,7 @@ import {
 import { useForgeChanges, useForgeDetail, useForgeList } from './useForge.ts';
 import { useCompactHome } from '../workspace/compact/CompactHomeContext';
 import { ForgeCompactPage, forgeCountKey, type ForgeScopeCount } from './ForgeCompactPage.tsx';
-import { ForgeDetailSeparator } from './ForgeDetailSeparator.tsx';
+import { PaneEdgeSeparator } from '../components/PaneEdgeSeparator.tsx';
 import { useRememberedColumnWidth } from '../workspace/useRememberedColumnWidth.ts';
 
 const HOME_PAGE_SIZE = 50;
@@ -465,7 +466,11 @@ export function ForgeHomeSection({ client, kind, environment, sources, focus, vi
 					/>
 				)}
 				{entry === undefined || detailWidth.stacked ? null : (
-					<ForgeDetailSeparator
+					<PaneEdgeSeparator
+						className="forge-home__separator"
+						label="Resize preview"
+						step={FORGE_DETAIL_RESIZE_STEP}
+						data={{ 'data-forge-detail-separator': 'true' }}
 						width={detailWidth.drawn}
 						min={detailWidth.bounds.min}
 						max={detailWidth.bounds.max}

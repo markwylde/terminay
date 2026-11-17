@@ -414,16 +414,22 @@ export function recallHomeSidebarVisible(): boolean {
  * the project sidebar another, shared by every project, so switching projects
  * never makes a column jump. Home's sidebar keeps its own, and so does the
  * detail preview beside Home's Pull Requests and Issues lists, which both
- * sections share. Nothing here travels to a server. A device with no answer, or an answer it cannot read, uses the
+ * sections share, and so does the Bots rail, which the Bots section and every
+ * bot tab share. Nothing here travels to a server. A device with no answer, or an answer it cannot read, uses the
  * column's default.
  */
-export type ResizableColumn = 'folders' | 'sidebar' | 'home' | 'forgeDetail';
+export type ResizableColumn =
+	| 'folders'
+	| 'sidebar'
+	| 'home'
+	| 'forgeDetail'
+	| 'botsRail';
 
 export const COLUMN_WIDTHS_STORAGE_KEY = 'terminay.view.column-widths.v1';
 
 /** Home's sidebar is a short menu, so it starts narrower than a project's. */
 export const DEFAULT_COLUMN_WIDTHS: Readonly<Record<ResizableColumn, number>> =
-	{ folders: 232, sidebar: 280, home: 220, forgeDetail: 380 };
+	{ folders: 232, sidebar: 280, home: 220, forgeDetail: 380, botsRail: 300 };
 
 const MINIMUM_COLUMN_WIDTH = 30;
 const MAXIMUM_COLUMN_WIDTH = 2_000;
