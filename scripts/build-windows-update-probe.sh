@@ -13,12 +13,16 @@ if [ "$#" -ne 2 ]; then
   echo "Usage: $0 <version> <output directory>" >&2
   exit 64
 fi
+stage='derive the next version'
+trap 'status=$?; if [ "$status" -ne 0 ]; then echo "Windows update probe failed to $stage (exit $status)" >&2; fi' 0
 next=$(node scripts/update-probe-version.mjs "$1")
+stage='package the next-version installer'
 node_modules/.bin/electron-builder --win nsis --x64 --publish never \
   "-c.directories.output=$2" \
   -c.publish.channel=nightly \
   "-c.extraMetadata.version=$next" \
   "-c.win.artifactName=terminay-update-probe-Setup.exe" >&2
+stage='verify the next-version installer and metadata'
 test -f "$2/nightly.yml"
 test -f "$2/terminay-update-probe-Setup.exe"
 echo "$next"
