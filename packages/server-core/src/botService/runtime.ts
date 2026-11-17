@@ -6,11 +6,21 @@ import {
 	botTriggerOrigin,
 } from '@terminay/protocol';
 import { executionAttachmentPath, readBotImage } from './images.js';
+import { describeBotAction } from './actionWording.js';
 import { utf8 } from './messages.js';
 import { BOT_TRIGGER_TOOLS, callTriggerTool } from './runtimeTriggers.js';
 import type { BotService } from './service.js';
 import { BotError, object, text } from './store.js';
 import { triggerId } from './triggerState.js';
+
+/** Trigger tools that change or run a trigger, and so are recorded. */
+const TRIGGER_ACTIONS: ReadonlySet<string> = new Set([
+	'triggers_create',
+	'triggers_update',
+	'triggers_delete',
+	'triggers_enable',
+	'triggers_run',
+]);
 
 const schema = (
 	properties: Record<string, unknown>,
@@ -456,7 +466,7 @@ export class BotExecutionRuntime {
 			executionId: id,
 			triggerType: r.origin.kind,
 			triggerMessage: trigger,
-			recentMessages: messages.list(r.botId, { limit: recentLimit }),
+			recentMessages: messages.list(r.botId, { limit: recentLimit, actions: false }),
 			otherExecutions: others,
 			recentFailures,
 			waitingTriggers,
@@ -468,6 +478,7 @@ export class BotExecutionRuntime {
 			if (recentLimit > 1) {
 				context.recentMessages = messages.list(r.botId, {
 					limit: --recentLimit,
+					actions: false,
 				});
 				continue;
 			}
@@ -510,6 +521,65 @@ export class BotExecutionRuntime {
 			JSON.stringify(context),
 		].join('\n');
 	}
+	/**
+	 * Run a trigger tool, recording a change or a run in the message log
+	 * (ADR-0134). Reads and previews record nothing.
+	 */
+	private async recordingTriggerAction(
+		botId: string,
+		executionId: string,
+		name: string,
+		a: Record<string, unknown>,
+	): Promise<unknown> {
+		if (!TRIGGER_ACTIONS.has(name))
+			return callTriggerTool(this.service, botId, name, a);
+		const epoch = this.service.messages.epoch(botId);
+		const record = (
+			outcome: 'done' | 'failed',
+			triggerId: unknown,
+			reason?: string,
+		) =>
+			this.service
+				.recordAction(botId, executionId, {
+					text: describeBotAction(name, a, outcome),
+					tool: name,
+					outcome,
+					...(reason === undefined ? {} : { reason }),
+					...(name !== 'triggers_delete' &&
+					typeof triggerId === 'string' &&
+					triggerId !== ''
+						? { target: { kind: 'trigger' as const, triggerId } }
+						: {}),
+				}, epoch)
+				.catch(() => undefined);
+		try {
+			const result = await callTriggerTool(this.service, botId, name, a);
+			const created = (result as { trigger?: { id?: unknown } } | null)?.trigger
+				?.id;
+			void record('done', created ?? a.triggerId);
+			return result;
+		} catch (error) {
+			const code = error instanceof BotError ? error.code : 'internal';
+			const message = error instanceof Error ? error.message : String(error);
+			// Link only to a trigger this bot really has; the argument is the
+			// agent's and may name nothing.
+			const known = (() => {
+				try {
+					return this.service.triggers
+						.list(botId)
+						.triggers.some((t) => t.id === a.triggerId);
+				} catch {
+					return false;
+				}
+			})();
+			void record(
+				'failed',
+				known ? a.triggerId : undefined,
+				`${code}: ${message}`,
+			);
+			throw error;
+		}
+	}
 	async call(
 		id: string,
 		name: string,
@@ -543,7 +613,7 @@ export class BotExecutionRuntime {
 			case 'triggers_enable':
 			case 'triggers_preview':
 			case 'triggers_run':
-				result = await callTriggerTool(this.service, source.botId, name, a);
+				result = await this.recordingTriggerAction(source.botId, id, name, a);
 				break;
 			case 'chat_list':
 				result = this.service.messages.list(source.botId, {

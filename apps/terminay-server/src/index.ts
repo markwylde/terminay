@@ -17,6 +17,7 @@ export * from './localUiServer.js';
 export * from './releaseUpgrader.js';
 export * from './stateUnreadable.js';
 export * from './mcp/appControlAdapter.js';
+export * from './mcp/botActions.js';
 export * from './mcp/appControlTools.js';
 export * from './mcp/macroAdapter.js';
 export * from './mcp/macroTools.js';

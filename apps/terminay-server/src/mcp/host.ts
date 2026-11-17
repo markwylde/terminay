@@ -48,6 +48,7 @@ import {
 	type AutomationControlAdapter,
 	automationControlError,
 } from './automationTools.js';
+import { type BotActionDeps, withBotActions } from './botActions.js';
 import { createBotTerminayMcpHost } from './botTerminayMcp.js';
 import { ConnectedServerGateway } from './connectedServers.js';
 import {
@@ -428,7 +429,7 @@ export function createMcpHost(options: McpHostOptions): McpHost {
 			socketPath: placement.path,
 			tightenParentDirectory: placement.location !== 'runtime-directory',
 			capabilities: mcpCapabilities,
-			dispatch: createTerminalControlAdapter({
+			dispatch: withBotActions(createTerminalControlAdapter({
 				adapter: createMcpTerminalAdapter(),
 				automations: createMcpAutomationAdapter(),
 				appWindows: createMcpAppWindowAdapter(),
@@ -444,7 +445,7 @@ export function createMcpHost(options: McpHostOptions): McpHost {
 						maxBytes,
 					) ?? [],
 				permissions: createHostPermissionGate(),
-			}),
+			}), createBotActionDeps()),
 			onError: (error) => console.error('[mcp] control endpoint failed', error),
 		});
 		mcpControlEndpoint = endpoint;
@@ -1537,6 +1538,59 @@ export function createMcpHost(options: McpHostOptions): McpHost {
 		const label =
 			entry?.harnessDisplayName?.trim() || entry?.providerDisplayName?.trim();
 		return label === undefined || label === '' ? 'An agent' : label;
+	}
+
+	/** What the bot action recorder needs from the composed server (ADR-0134). */
+	function createBotActionDeps(): BotActionDeps {
+		const bots = () => boundServer?.composition.bots;
+		return {
+			epoch: (botId) => {
+				try {
+					return bots()?.messages.epoch(botId);
+				} catch {
+					return undefined;
+				}
+			},
+			terminal: (context, reference) => {
+				try {
+					const target = resolveMcpTerminal(context, reference);
+					const title = mcpTerminalTitle(target.id, target.projectId);
+					return { sessionId: target.id, ...(title ? { title } : {}) };
+				} catch {
+					return undefined;
+				}
+			},
+			sessionProject: (sessionId) => {
+				try {
+					const entry = requireMcpServer()
+						.list()
+						.find((candidate) => candidate.id === sessionId);
+					if (entry === undefined) return undefined;
+					return requireMcpServer().workspace.state.projects[
+						entry.projectId
+					] === undefined
+						? undefined
+						: entry.projectId;
+				} catch {
+					return undefined;
+				}
+			},
+			project: (handle) => {
+				try {
+					const state = requireMcpServer().workspace.state;
+					const projectId = mcpProjectHandles.resolve(handle, state);
+					if (projectId === undefined) return undefined;
+					const name = state.projects[projectId]?.name;
+					return { projectId, ...(name ? { name } : {}) };
+				} catch {
+					return undefined;
+				}
+			},
+			record: async (botId, executionId, action, epoch) =>
+				bots()?.recordAction(botId, executionId, action, epoch),
+			onError: (error) =>
+				console.error('[mcp] recording a bot action failed', error),
+		};
 	}
 
 	function createHostPermissionGate(): ControlPermissionGate {

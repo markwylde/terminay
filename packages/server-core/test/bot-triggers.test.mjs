@@ -2470,3 +2470,77 @@ test('a restart ends an execution waiting for a startup retry as interrupted and
 	assert.equal(after.retryAt, null);
 	assert.equal(after.attempts.length, 1);
 });
+
+test('runtime trigger changes are recorded as actions in the chat (ADR-0134)', async (t) => {
+	const r = await setup(t);
+	const { sessionId } = await r.service.send(r.bot.id, 'Manage my triggers');
+	const call = (name, args = {}) =>
+		r.service.runtime.call(sessionId, name, args);
+	const settle = async () => {
+		for (let i = 0; i < 5; i++) await flush();
+	};
+	const actions = () =>
+		r.service.messages
+			.list(r.bot.id, { limit: 25 })
+			.items.filter((m) => m.activity !== undefined);
+	const initial = await call('triggers_list');
+	await call('triggers_preview', { condition: draft().condition });
+	await settle();
+	assert.equal(actions().length, 0, 'reads and previews record nothing');
+	const created = await call('triggers_create', {
+		revision: initial.revision,
+		draft: draft(),
+	});
+	await settle();
+	const [create] = actions();
+	assert.equal(create.activity.tool, 'triggers_create');
+	assert.equal(create.activity.outcome, 'done');
+	assert.deepEqual(create.activity.target, {
+		kind: 'trigger',
+		triggerId: created.trigger.id,
+	});
+	assert.equal(create.executionId, sessionId);
+	assert.equal(create.excerpt, 'Created the trigger “Nightly”');
+	await assert.rejects(
+		call('triggers_update', {
+			triggerId: 'f'.repeat(24),
+			revision: created.revision,
+			draft: draft(),
+		}),
+	);
+	await settle();
+	const failed = actions()[0];
+	assert.equal(failed.activity.outcome, 'failed');
+	assert.equal(failed.activity.target, undefined, 'unknown trigger is not linked');
+	assert.match(failed.excerpt, /^Couldn't change a trigger/);
+	await call('triggers_delete', {
+		triggerId: created.trigger.id,
+		revision: created.revision,
+	});
+	await settle();
+	const deleted = actions()[0];
+	assert.equal(deleted.activity.tool, 'triggers_delete');
+	assert.equal(deleted.activity.target, undefined);
+	assert.equal(r.service.messages.unacknowledged(r.bot.id), undefined);
+	const opened = {
+		text: 'Opened a terminal',
+		tool: 'open_terminal',
+		outcome: 'done',
+	};
+	// Briefings leave actions out of their recent messages.
+	assert.ok(await r.service.recordAction(r.bot.id, sessionId, opened));
+	assert.ok(!r.service.runtime.briefing(sessionId).includes('Opened a terminal'));
+	// A foreign bot, or a log cleared since the call began, records nothing.
+	assert.equal(
+		await r.service.recordAction('fedcba987654', sessionId, opened),
+		undefined,
+	);
+	const epoch = r.service.messages.epoch(r.bot.id);
+	r.service.messages.clear(r.bot.id);
+	assert.equal(
+		await r.service.recordAction(r.bot.id, sessionId, opened, epoch),
+		undefined,
+	);
+	assert.equal(actions().length, 0);
+	await finish(r, sessionId);
+});
