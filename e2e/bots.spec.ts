@@ -1324,7 +1324,7 @@ test.describe('Home: Bots', () => {
 
 		// Edit and delete a reply inside the panel.
 		await panelReplies
-			.locator('.bots-md[data-terminay-message-key]')
+			.locator('[data-terminay-message-key]')
 			.filter({ hasText: 'Ship it to staging' })
 			.click({ button: 'right' });
 		await menu
