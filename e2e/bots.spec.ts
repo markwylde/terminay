@@ -1338,6 +1338,187 @@ test.describe('Home: Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('any message can grow a thread: reply action, reply bar, panel, drafts and deletion', async ({
+		mainWindow,
+		electronApp,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(180_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Weaver'));
+		const transcript = tab.locator('[data-terminay-bot-transcript]').first();
+		const panel = tab.locator('[data-terminay-bot-thread]');
+		const panelComposer = panel.locator('[data-terminay-bot-composer]');
+		const panelReplies = panel.locator('.bots-thread__body > .bots-tx').last();
+		const menu = mainWindow.locator('.context-menu');
+		const labels = () =>
+			menu
+				.locator('.context-menu__item .context-menu__label')
+				.allTextContents();
+		const shot = (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+
+		// A top-level exchange: the user's message and the bot's reply.
+		await send(tab, 'Plan the release');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		await expect(transcript.locator(':scope > .bots-msg')).toHaveCount(2);
+		const botMessage = transcript.locator(':scope > .bots-msg').nth(1);
+		const userMessage = transcript.locator(':scope > .bots-msg').first();
+
+		// Hovering a message reveals Reply in thread.
+		await botMessage.hover();
+		const action = botMessage.locator('[data-terminay-bot-reply-in-thread]');
+		await expect(action).toBeVisible();
+		await shot('thread-hover-action');
+		await action.click();
+		await expect(panel).toBeVisible();
+		await expect(panelComposer).toBeFocused();
+		await expect(panel.locator('[data-terminay-bot-thread-count]')).toHaveText(
+			'No replies yet',
+		);
+		await expect(tab.locator('.bots-rail')).toHaveCount(0);
+
+		// A reply from the panel starts an execution, which answers in the thread.
+		await panelComposer.fill('Ship it to staging');
+		await panelComposer.press('Enter');
+		await expect(panelReplies).toContainText('Ship it to staging');
+		await expect(panelReplies.locator(':scope > .bots-msg')).toHaveCount(2, {
+			timeout: 30_000,
+		});
+		await expect(panelReplies).toContainText('secret');
+		await expect(
+			panel.locator('[data-terminay-bot-thread-count]'),
+		).toHaveAttribute('data-terminay-bot-thread-count', '2');
+		// The main stream keeps its two messages and gains a reply bar.
+		await expect(transcript.locator(':scope > .bots-msg')).toHaveCount(2);
+		const bar = botMessage.locator('[data-terminay-bot-thread-replies]');
+		await expect(bar).toHaveAttribute('data-terminay-bot-thread-replies', '2');
+		await expect(bar).toContainText('2 replies');
+		await expect(bar).toContainText('Last reply');
+		await shot('thread-panel');
+
+		// Quote a reply inside the panel: it goes to the thread's draft.
+		await panelReplies
+			.locator('.bots-md[data-terminay-message-key]')
+			.filter({ hasText: 'secret' })
+			.click({ button: 'right' });
+		expect(await labels()).toEqual(['Quote', 'Edit message', 'Delete message']);
+		await menu.getByRole('menuitem', { name: 'Quote', exact: true }).click();
+		await expect(panelComposer).toHaveValue('> secret\n\n');
+		await expect(panelComposer).toBeFocused();
+		await panelComposer.fill('draft A');
+
+		// Edit and delete a reply inside the panel.
+		await panelReplies
+			.locator('[data-terminay-message-key]')
+			.filter({ hasText: 'Ship it to staging' })
+			.click({ button: 'right' });
+		await menu
+			.getByRole('menuitem', { name: 'Edit message', exact: true })
+			.click();
+		const editor = mainWindow.getByRole('dialog', { name: 'Edit message' });
+		await editor.getByLabel('Message text').fill('Ship it to production');
+		await editor.getByRole('button', { name: 'Save message' }).click();
+		await expect(editor).toHaveCount(0);
+		await expect(panelReplies).toContainText('Ship it to production');
+		await panelReplies
+			.locator('.bots-md[data-terminay-message-key]')
+			.filter({ hasText: 'secret' })
+			.click({ button: 'right' });
+		await menu
+			.getByRole('menuitem', { name: 'Delete message', exact: true })
+			.click();
+		await expect(panelReplies.locator(':scope > .bots-msg')).toHaveCount(1);
+		await expect(bar).toHaveAttribute('data-terminay-bot-thread-replies', '1');
+		await expect(bar).toContainText('1 reply');
+		await expect(panelComposer).toHaveValue('draft A');
+
+		// Escape closes the panel and returns focus to the root.
+		await panelComposer.press('Escape');
+		await expect(panel).toHaveCount(0);
+		await expect(tab.locator('.bots-rail')).toBeVisible();
+		await expect(
+			botMessage.locator('.bots-md[data-terminay-message-key]'),
+		).toBeFocused();
+		await bar.hover();
+		await shot('thread-reply-bar');
+
+		// Each thread keeps its own draft.
+		await userMessage.click({ button: 'right' });
+		expect(await labels()).toEqual([
+			'Quote',
+			'Reply in thread',
+			'Edit message',
+			'Delete message',
+		]);
+		await menu
+			.getByRole('menuitem', { name: 'Reply in thread', exact: true })
+			.click();
+		await expect(panelComposer).toHaveValue('');
+		// A pending file belongs to the thread it was attached in.
+		await panel.locator('[data-terminay-bot-attach-input]').setInputFiles({
+			name: 'notes.txt',
+			mimeType: 'text/plain',
+			buffer: Buffer.from('notes'),
+		});
+		await expect(
+			panel.locator('[data-terminay-bot-pending-images] li'),
+		).toHaveCount(1);
+		await bar.click();
+		await expect(panelComposer).toHaveValue('draft A');
+		await expect(
+			panel.locator('[data-terminay-bot-pending-images] li'),
+		).toHaveCount(0);
+
+		// On a narrow window the panel covers the chat.
+		const nativeWindow = await electronApp.browserWindow(mainWindow);
+		const bounds = await nativeWindow.evaluate((window) => window.getBounds());
+		await nativeWindow.evaluate((window, next) => window.setBounds(next), {
+			...bounds,
+			width: 760,
+		});
+		await expect
+			.poll(() => panel.evaluate((el) => getComputedStyle(el).position))
+			.toBe('absolute');
+		await shot('thread-panel-narrow');
+		await nativeWindow.evaluate(
+			(window, next) => window.setBounds(next),
+			bounds,
+		);
+
+		// Deleting the root deletes its thread and closes the panel.
+		await botMessage
+			.locator('.bots-md[data-terminay-message-key]')
+			.click({ button: 'right' });
+		expect(await labels()).toEqual([
+			'Quote',
+			'Reply in thread',
+			'Edit message',
+			'Delete message and replies',
+		]);
+		await menu
+			.getByRole('menuitem', {
+				name: 'Delete message and replies',
+				exact: true,
+			})
+			.click();
+		await expect(panel).toHaveCount(0);
+		await expect(transcript.locator(':scope > .bots-msg')).toHaveCount(1);
+
+		// Clearing the chat closes an open thread.
+		await userMessage.hover();
+		await userMessage.locator('[data-terminay-bot-reply-in-thread]').click();
+		await expect(panel).toBeVisible();
+		await tab.getByRole('button', { name: 'Clear chat', exact: true }).click();
+		await mainWindow
+			.getByRole('alertdialog', { name: 'Clear chat history?' })
+			.getByRole('button', { name: 'Clear chat', exact: true })
+			.click();
+		await expect(panel).toHaveCount(0);
+		await expect(transcript.locator(':scope > .bots-msg')).toHaveCount(0);
+	});
+
 	test('Quote puts any message into the composer as a blockquote, by pointer and keyboard', async ({
 		mainWindow,
 		tempDir,
@@ -1396,7 +1577,12 @@ test.describe('Home: Bots', () => {
 		// Right-click a bot message: Quote comes first, above Edit and Delete.
 		await reply.click({ button: 'right' });
 		await expect(menu).toBeVisible();
-		expect(await labels()).toEqual(['Quote', 'Edit message', 'Delete message']);
+		expect(await labels()).toEqual([
+			'Quote',
+			'Reply in thread',
+			'Edit message',
+			'Delete message',
+		]);
 		await shot('bot-message-quote-menu');
 		await item('Quote').click();
 		await expect(menu).toHaveCount(0);
@@ -1452,7 +1638,7 @@ test.describe('Home: Bots', () => {
 			Math.abs((await menu.boundingBox())!.y - (box.y + box.height)),
 		).toBeLessThanOrEqual(2);
 		await mainWindow.keyboard.press('ArrowDown');
-		await expect(item('Edit message')).toBeFocused();
+		await expect(item('Reply in thread')).toBeFocused();
 		await mainWindow.keyboard.press('End');
 		await expect(item('Delete message')).toBeFocused();
 		await mainWindow.keyboard.press('ArrowDown');
@@ -1502,7 +1688,11 @@ test.describe('Home: Bots', () => {
 		await expect(imageOnly.locator('img')).toBeVisible({ timeout: 30_000 });
 		await imageOnly.click({ button: 'right' });
 		await expect(menu).toBeVisible();
-		expect(await labels()).toEqual(['Edit message', 'Delete message']);
+		expect(await labels()).toEqual([
+			'Reply in thread',
+			'Edit message',
+			'Delete message',
+		]);
 		await mainWindow.keyboard.press('Escape');
 
 		// A quoted reply, in the composer and once sent.

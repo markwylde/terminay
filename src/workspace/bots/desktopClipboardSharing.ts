@@ -1,6 +1,6 @@
 import type { TerminayHostClipboardSnapshot } from '@terminay/protocol';
 import type { DesktopClipboardSharing } from '../../host/nativeActions';
-import { clipboardTextForHost, type ClipboardRfb } from './desktopClipboard.ts';
+import { type ClipboardRfb, clipboardTextForHost } from './desktopClipboard.ts';
 
 const canonical = (text: string) => text.replace(/\r\n|\r/g, '\n');
 

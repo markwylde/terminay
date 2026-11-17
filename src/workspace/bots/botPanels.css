@@ -3437,3 +3437,230 @@
 .bots-action__notice {
 	font-style: italic;
 }
+
+/* Threads: a reply action on each message, a reply bar under a root, and
+ * the thread panel beside the chat (over it where the chat is narrow). */
+.bots-chatwrap {
+	position: relative;
+}
+.bots-chat-error {
+	margin: 0 28px 4px;
+}
+.bots-tx--chat > .bots-msg {
+	position: relative;
+}
+.bots-msg__actions {
+	position: absolute;
+	top: -12px;
+	right: 10px;
+	z-index: 2;
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border: 1px solid var(--bots-line2);
+	border-radius: 8px;
+	background: var(--bots-card);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+	opacity: 0;
+	pointer-events: none;
+	transform: translateY(2px);
+	transition:
+		opacity 120ms ease,
+		transform 120ms ease;
+}
+.bots-tx--chat > .bots-msg:hover > .bots-msg__actions,
+.bots-tx--chat > .bots-msg:focus-within > .bots-msg__actions {
+	opacity: 1;
+	pointer-events: auto;
+	transform: none;
+}
+.bots-msg__action {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 26px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--bots-muted);
+	cursor: pointer;
+}
+.bots-msg__action:hover,
+.bots-msg__action:focus-visible {
+	background: var(--bots-hover);
+	color: var(--bots-strong);
+}
+.bots-replies {
+	align-self: flex-start;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 100%;
+	margin: 6px 0 0 -6px;
+	padding: 4px 8px 4px 6px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--bots-muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	transition:
+		background-color 120ms ease,
+		border-color 120ms ease;
+}
+.bots-replies:hover,
+.bots-replies:focus-visible {
+	border-color: var(--bots-line2);
+	background: var(--bots-card);
+}
+.bots-replies__faces {
+	display: inline-flex;
+}
+.bots-replies__faces > * {
+	width: 20px;
+	height: 20px;
+	border-radius: 5px;
+	font-size: 9px;
+	box-shadow: 0 0 0 2px var(--bots-main);
+}
+.bots-replies__faces > * + * {
+	margin-left: -5px;
+}
+.bots-replies__you {
+	display: grid;
+	place-items: center;
+	background: var(--bots-card2);
+	color: var(--bots-fg);
+	font-size: 8px;
+	font-weight: 600;
+}
+.bots-replies__count {
+	color: var(--bots-accent);
+	font-weight: 600;
+}
+.bots-replies--new .bots-replies__count::after {
+	content: "";
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-left: 6px;
+	border-radius: 50%;
+	background: var(--bots-accent);
+	vertical-align: middle;
+}
+.bots-replies__time {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.bots-replies__open {
+	display: none;
+	align-items: center;
+	gap: 2px;
+	color: var(--bots-fg);
+}
+.bots-replies:hover .bots-replies__time,
+.bots-replies:focus-visible .bots-replies__time {
+	display: none;
+}
+.bots-replies:hover .bots-replies__open,
+.bots-replies:focus-visible .bots-replies__open {
+	display: inline-flex;
+}
+.bots-thread {
+	width: 400px;
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	border-left: 1px solid var(--bots-line);
+	background: var(--bots-rail);
+	animation: bots-thread-in 160ms ease-out;
+}
+@keyframes bots-thread-in {
+	from {
+		opacity: 0;
+		transform: translateX(12px);
+	}
+}
+.bots-thread__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 12px 12px 12px 18px;
+	border-bottom: 1px solid var(--bots-line);
+}
+.bots-thread__title {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+.bots-thread__title b {
+	color: var(--bots-strong);
+	font-size: 14px;
+}
+.bots-thread__title span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bots-thread__body {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 14px 18px;
+	line-height: 1.55;
+}
+.bots-thread__body > .bots-tx {
+	max-width: none;
+}
+.bots-thread__divider {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 4px 0;
+	color: var(--bots-faint);
+	font-size: 11.5px;
+	font-weight: 600;
+}
+.bots-thread__divider::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--bots-line);
+}
+.bots-thread__older {
+	align-self: center;
+}
+.bots-thread .bots-composer {
+	padding: 10px 14px 14px;
+}
+.bots-thread .bots-composer form {
+	max-width: none;
+	padding: 10px 12px 8px;
+}
+/* The bot tab's own width decides, so a narrow pane in a wide window
+ * overlays too. */
+@container bot-tab (max-width: 860px) {
+	.bots-thread {
+		position: absolute;
+		inset: 0;
+		z-index: 5;
+		width: auto;
+		border-left: 0;
+		background: var(--bots-main);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.bots-thread,
+	.bots-msg__actions,
+	.bots-replies {
+		animation: none;
+		transition: none;
+	}
+}
