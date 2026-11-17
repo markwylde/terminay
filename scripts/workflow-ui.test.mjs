@@ -480,7 +480,7 @@ test('the chosen width is device-local, clamped when set, and an unusable stored
 test('only the expanded panel has a resize separator, keyboard-reachable and bounded by its pane', () => {
 	const view = attached([step('a', 'running')]);
 	const expanded = render({ mode: 'expanded', view, width: 300, maxWidth: 420 });
-	const separator = expanded.match(/<hr [^>]*class="workflow-panel-separator"[^>]*\/?>/)?.[0];
+	const separator = expanded.match(/<hr [^>]*class="[^"]*\bworkflow-panel-separator\b[^"]*"[^>]*\/?>/)?.[0];
 	assert.ok(separator, 'the expanded panel has a separator');
 	assert.match(separator, /aria-label="Resize workflow panel"/);
 	assert.match(separator, /aria-orientation="vertical"/);

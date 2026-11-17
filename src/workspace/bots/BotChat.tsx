@@ -23,6 +23,7 @@ import { createPortal } from 'react-dom';
 import { ContextMenu } from '../../components/ContextMenu';
 import { recallBotChatRead, rememberBotChatRead } from '../localViewState';
 import { BotContextRail } from './BotContextRail';
+import { BotsRailSeparator } from './BotsRailSeparator';
 import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
 import type { BotConfigTab } from './BotTab';
 import { BotTranscript } from './BotTranscript';
@@ -35,6 +36,7 @@ import {
 	formatFileSize,
 } from './botsModel';
 import { appendQuote, quoteMessage } from './quoteMessage';
+import { botsRailStyle, useBotsRailWidth } from './useBotsRailWidth';
 import { useFitTextarea } from './useFitTextarea';
 import { refusalText, type ServerBots } from './useServerBots';
 
@@ -77,6 +79,7 @@ export function BotChat({
 	/** Counts what the user has done with this bot; see `BotTab`. */
 	interaction: number;
 }>) {
+	const rail = useBotsRailWidth();
 	const client = useMemo(
 		() => new BotMessagesClient(server.transport as never),
 		[server.transport],
@@ -731,7 +734,11 @@ export function BotChat({
 		onDraftChange(appendQuote(draftRef.current, text));
 	};
 	return (
-		<div className="bots-chatwrap">
+		<div
+			className="bots-chatwrap"
+			ref={rail.rowRef}
+			style={botsRailStyle(rail)}
+		>
 			{menu ? (
 				<ContextMenu
 					key={`${menu.id}:${menu.x}:${menu.y}`}
@@ -1115,6 +1122,7 @@ export function BotChat({
 					</form>
 				</div>
 			</div>
+			<BotsRailSeparator rail={rail} />
 			<BotContextRail
 				server={server}
 				bot={bot}

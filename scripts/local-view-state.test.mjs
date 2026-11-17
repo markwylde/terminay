@@ -738,6 +738,7 @@ test('a device with no remembered column widths uses each column default', async
     assert.equal(module.recallColumnWidth('sidebar'), 280)
     assert.equal(module.recallColumnWidth('home'), 220)
     assert.equal(module.recallColumnWidth('forgeDetail'), 380)
+    assert.equal(module.recallColumnWidth('botsRail'), 300)
   } finally {
     delete globalThis.localStorage
   }
@@ -752,6 +753,23 @@ test('the Home detail preview remembers its width apart from the columns', async
     assert.equal(module.recallColumnWidth('forgeDetail'), 512)
     assert.equal(module.recallColumnWidth('folders'), 300)
     assert.equal(module.recallColumnWidth('home'), 220)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('the Bots rail remembers its width apart from the columns, across a relaunch', async () => {
+  const storage = fakeStorage()
+  globalThis.localStorage = storage
+  try {
+    const { module } = await loadModule()
+    module.rememberColumnWidth('forgeDetail', 480)
+    module.rememberColumnWidth('botsRail', 400.6)
+    assert.equal(module.recallColumnWidth('botsRail'), 401)
+    assert.equal(module.recallColumnWidth('forgeDetail'), 480)
+    // A relaunch starts from what the device stored, and nothing else.
+    globalThis.localStorage = fakeStorage(Object.fromEntries(storage.raw))
+    assert.equal(module.recallColumnWidth('botsRail'), 401)
   } finally {
     delete globalThis.localStorage
   }

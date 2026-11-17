@@ -1,0 +1,51 @@
+/*
+ * The left edge of a pane on the right of its row. Each user positions it; the
+ * line it draws, and how that line answers hover, drag, and focus, is shared.
+ */
+.pane-edge-separator {
+	box-sizing: border-box;
+	width: 6px;
+	height: auto;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	cursor: col-resize;
+	outline: none;
+	background: transparent;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.pane-edge-separator::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+	background: transparent;
+	transition:
+		background 120ms ease,
+		width 120ms ease;
+}
+
+.pane-edge-separator:hover::before {
+	width: 4px;
+	background: var(--workspace-split-layout-separator-active-line, #ffffff);
+	transition-delay: 100ms;
+}
+
+.pane-edge-separator:active::before,
+.pane-edge-separator:focus-visible::before {
+	width: 4px;
+	background: var(--workspace-split-layout-separator-active-line, #ffffff);
+	transition-delay: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pane-edge-separator::before {
+		transition: none;
+	}
+}

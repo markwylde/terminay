@@ -35,7 +35,7 @@ async function bundle(entryPoint, outputName) {
 const views = await bundle('src/forge/ForgeViews.tsx', 'views.cjs');
 const settingsModule = await bundle('src/forge/ForgeSettings.tsx', 'settings.cjs');
 const homeModule = await bundle('src/forge/ForgeHome.tsx', 'forge-home.cjs');
-const separatorModule = await bundle('src/forge/ForgeDetailSeparator.tsx', 'forge-detail-separator.cjs');
+const separatorModule = await bundle('src/components/PaneEdgeSeparator.tsx', 'pane-edge-separator.cjs');
 const { HomeView } = await bundle('src/workspace/HomeView.tsx', 'home-view.cjs');
 const { FoldersColumn } = await bundle('src/components/folders/FoldersColumn.tsx', 'folders-column.cjs');
 
@@ -257,7 +257,12 @@ test('the detail shows the body as text and failed checks first', () => {
 
 test('the Home preview separator is a focusable vertical separator carrying its width and bounds', () => {
 	const markup = html(
-		h(separatorModule.ForgeDetailSeparator, { width: 380, min: 280, max: 580, onPreview() {}, onCommit() {} }),
+		h(separatorModule.PaneEdgeSeparator, {
+			className: 'forge-home__separator',
+			label: 'Resize preview',
+			step: 16,
+			data: { 'data-forge-detail-separator': 'true' },
+			width: 380, min: 280, max: 580, onPreview() {}, onCommit() {} }),
 	);
 	assert.match(markup, /^<hr /u);
 	assert.match(markup, /data-forge-detail-separator="true"/u);

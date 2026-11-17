@@ -505,7 +505,7 @@ button.bots-chip.bots-chip--on {
 	font-size: 14px;
 }
 .bots-rail {
-	width: 300px;
+	width: var(--bots-rail-width, 300px);
 	flex: none;
 	border-left: 1px solid var(--bots-line);
 	background: var(--bots-rail);
@@ -513,6 +513,14 @@ button.bots-chip.bots-chip--on {
 	display: flex;
 	flex-direction: column;
 	gap: 20px;
+}
+/* Straddles the rail's border without taking room from either side. */
+.bots-rail__separator {
+	position: relative;
+	z-index: 2;
+	flex: none;
+	align-self: stretch;
+	margin-inline: -3px;
 }
 .bots-engine {
 	min-width: 0;

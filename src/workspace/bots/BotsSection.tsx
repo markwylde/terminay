@@ -30,12 +30,14 @@ import {
 	visibleBots,
 } from './botsModel';
 import type { BotTabHost } from './botTabHost';
+import { BotsRailSeparator } from './BotsRailSeparator';
 import { NewBotDialog } from './NewBotDialog';
 import {
 	type BotEngineView,
 	ENGINE_REASON_TEXT,
 	useBotEngine,
 } from './useBotEngine';
+import { botsRailStyle, useBotsRailWidth } from './useBotsRailWidth';
 import { useNow } from './useNow';
 import { botEntries, type ServerBots } from './useServerBots';
 import '../../components/AgentStatusIndicator.css';
@@ -49,6 +51,7 @@ export type BotsSectionProps = Readonly<{
 
 export function BotsSection({ servers, host }: BotsSectionProps) {
 	const now = useNow();
+	const rail = useBotsRailWidth();
 	const [filter, setFilter] = useState<BotFilter>('all');
 	const [search, setSearch] = useState('');
 	const [creating, setCreating] = useState(false);
@@ -225,7 +228,7 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 					) : null}
 				</fieldset>
 			</header>
-			<div className="bots-dbody">
+			<div className="bots-dbody" ref={rail.rowRef} style={botsRailStyle(rail)}>
 				<div className="bots-scroll bots-dmain">
 					{[...servers.values()]
 						.filter((s) => s.warning)
@@ -308,6 +311,7 @@ export function BotsSection({ servers, host }: BotsSectionProps) {
 						</div>
 					)}
 				</div>
+				<BotsRailSeparator rail={rail} />
 				<aside className="bots-rail bots-scroll" aria-label="Bots overview">
 					<EngineSummary
 						engine={engine}
