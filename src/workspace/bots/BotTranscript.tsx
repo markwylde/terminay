@@ -173,6 +173,8 @@ function FileChip({
 	);
 }
 
+import { BotActionGroup, type RevealAction } from './BotActionRow';
+import type { BotActionItem } from './botActions';
 import {
 	botMarkdownImagePaths,
 	handleBotMarkdownClick,
@@ -256,11 +258,14 @@ export const BotTranscript = memo(function BotTranscript({
 	unread,
 	threads,
 	onOpenThread,
+	onRevealAction,
 }: Readonly<{
 	/** Chat: roots' threads, by message key. */
 	threads?: ReadonlyMap<string, TranscriptThread>;
 	/** Chat: offers Reply in thread on each message and opens a thread. */
 	onOpenThread?: (key: string) => void;
+	/** Chat: reveal what a recorded Terminay action touched. */
+	onRevealAction?: RevealAction;
 	active?: boolean;
 	/** Chat: each message's posting time. When given, every message is its own
 	 * block with avatar, author and time instead of folding into one turn. */
@@ -273,7 +278,7 @@ export const BotTranscript = memo(function BotTranscript({
 	}>;
 	containerRef?: Ref<HTMLDivElement>;
 	transport?: BotIoTransport;
-	items: readonly TranscriptItem[];
+	items: readonly (TranscriptItem | BotActionItem)[];
 	bot: Pick<BotProfile, 'id' | 'name' | 'colour' | 'avatar'>;
 	onMessageMenu?: (request: MessageMenuRequest) => void;
 }>) {
@@ -302,7 +307,7 @@ export const BotTranscript = memo(function BotTranscript({
 			data-terminay-bot-transcript={items.length}
 		>
 			{blocks.map((block) => {
-				const key = block.kind === 'agent' ? block.key : block.item.key;
+				const key = blockKey(block);
 				const rendered = renderBlock(block);
 				return unread?.key === key && rendered ? (
 					<Fragment key={key}>
@@ -324,9 +329,16 @@ export const BotTranscript = memo(function BotTranscript({
 		</div>
 	);
 	function renderBlock(block: TurnBlock) {
-		const at = messageTimes?.get(
-			block.kind === 'agent' ? block.key : block.item.key,
-		);
+		if (block.kind === 'actions')
+			return (
+				<BotActionGroup
+					key={block.key}
+					botId={bot.id}
+					items={block.items}
+					onReveal={onRevealAction}
+				/>
+			);
+		const at = messageTimes?.get(blockKey(block));
 		if (block.kind === 'user') {
 			const menuHandlers = messageMenuHandlers(
 				block.item.key,
@@ -523,17 +535,32 @@ type AgentPart = TranscriptItem | ToolItem[];
 type TurnBlock =
 	| { kind: 'user'; item: TranscriptItem & { kind: 'user' } }
 	| { kind: 'agent'; key: string; parts: AgentPart[] }
-	| { kind: 'other'; item: TranscriptItem };
+	| { kind: 'other'; item: TranscriptItem }
+	| { kind: 'actions'; key: string; items: BotActionItem[] };
+
+/** A block's key: what the unread divider and React keys use. */
+function blockKey(block: TurnBlock): string {
+	return block.kind === 'agent' || block.kind === 'actions'
+		? block.key
+		: block.item.key;
+}
 
 /** Groups the flat transcript into turns. Answered permission echoes are
  * dropped (a pending one is asked above the composer); runs of tool calls
  * fold into one line. */
 function turnBlocks(
-	items: readonly TranscriptItem[],
+	items: readonly (TranscriptItem | BotActionItem)[],
 	separate = false,
 ): TurnBlock[] {
 	const blocks: TurnBlock[] = [];
 	for (const item of items) {
+		if (item.kind === 'action') {
+			// Consecutive Terminay actions form one group (ADR-0134).
+			const last = blocks[blocks.length - 1];
+			if (last?.kind === 'actions') last.items.push(item);
+			else blocks.push({ kind: 'actions', key: item.key, items: [item] });
+			continue;
+		}
 		if (item.kind === 'permission') continue;
 		if (item.kind === 'user') {
 			blocks.push({ kind: 'user', item });

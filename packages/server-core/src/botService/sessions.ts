@@ -418,6 +418,14 @@ export class BotSessionStore extends EventEmitter {
 		}
 		return structuredClone(record);
 	}
+	/** The bot an execution belongs to, or undefined. Cheap: no copy. */
+	botOf(id: string): string | undefined {
+		try {
+			return this.entry(id).record.botId;
+		} catch {
+			return undefined;
+		}
+	}
 	get(id: string): BotSession {
 		const e = this.entry(id);
 		return structuredClone({

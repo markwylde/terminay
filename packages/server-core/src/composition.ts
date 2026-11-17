@@ -608,6 +608,8 @@ export interface ServerCoreComposition {
 	readonly mcpApprovals: McpApprovalService;
 	/** Server-owned agent chats, when composed. */
 	readonly agentChat?: AgentChatService;
+	/** The bot service, when the host composed one. */
+	readonly bots?: BotService;
 	/** Pixel, composed with agent chats. */
 	readonly pixel?: PixelService;
 	/** Connection timing samples, when composed. */
@@ -2505,6 +2507,7 @@ export function createServerCoreComposition(
 		...(automationMcp === undefined ? {} : { automationMcp }),
 		mcpApprovals,
 		...(agentChat === undefined ? {} : { agentChat }),
+		...(options.bots === undefined ? {} : { bots: options.bots }),
 		...(pixel === undefined ? {} : { pixel }),
 		...(connectionMetrics === undefined ? {} : { connectionMetrics }),
 		appWindows,

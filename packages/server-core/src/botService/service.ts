@@ -54,7 +54,11 @@ import {
 	writeExecutionAttachments,
 } from './images.js';
 import type { BotMemories } from './memories.js';
-import { BotMessageStore } from './messages.js';
+import {
+	type BotActionCall,
+	describeRedactedBotAction,
+} from './actionWording.js';
+import { type BotActionRecord, BotMessageStore } from './messages.js';
 import type { BotNativeClient } from './native.js';
 import {
 	botProcessCount,
@@ -1032,6 +1036,35 @@ export class BotService extends EventEmitter {
 			this.messages.pruneAttachments(record.botId);
 			throw error;
 		}
+	}
+
+	/**
+	 * Record a Terminay action one of this bot's executions took (ADR-0134).
+	 * Only an execution of `botId` records; the text and reason are redacted
+	 * like the bot's own posts, and a redaction failure records nothing (it
+	 * rejects). Returns undefined when nothing was recorded.
+	 */
+	async recordAction(
+		botId: string,
+		executionId: string,
+		action: BotActionCall & { readonly target?: BotActionRecord['target'] },
+		/** The log's epoch when the call began; a clear since then drops it. */
+		epoch?: string,
+	): Promise<BotMessage | undefined> {
+		if (this.sessions.botOf(executionId) !== botId) return undefined;
+		// Redacted whole, before anything is shortened into the description.
+		const { text, reason } = await describeRedactedBotAction(action, (value) =>
+			this.redactMessage(botId, value),
+		);
+		if (epoch !== undefined && this.messages.epoch(botId) !== epoch)
+			return undefined;
+		return this.messages.recordActivity(botId, executionId, {
+			text,
+			tool: action.tool,
+			outcome: action.outcome,
+			...(reason === undefined ? {} : { reason }),
+			...(action.target === undefined ? {} : { target: action.target }),
+		});
 	}
 
 	async clearMessages(botId: string): Promise<void> {

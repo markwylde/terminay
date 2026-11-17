@@ -228,7 +228,8 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 					'env',
 					'python3',
 					new URL('./bot-relay-host.py', import.meta.url).pathname,
-					sid.slice(4),
+					// The relay's own identity: the session, or a Terminay MCP relay's.
+					command.at(-1),
 				],
 				process.env,
 			);

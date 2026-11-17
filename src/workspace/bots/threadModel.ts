@@ -6,6 +6,7 @@ import type {
 	BotThreadSummary,
 	TranscriptItem,
 } from '@terminay/protocol';
+import type { BotActionItem } from './botActions';
 
 /** A message with its whole text, read in as many slices as it takes. */
 /** Whether a refusal says the message is gone, not that the read failed.
@@ -56,7 +57,17 @@ export async function fullMessage(
 }
 
 /** How Chat shows a message: the user's with its files, the bot's as Markdown with its images. */
-export function messageItem(message: BotMessage): TranscriptItem {
+export function messageItem(
+	message: BotMessage,
+): TranscriptItem | BotActionItem {
+	if (message.activity !== undefined)
+		return {
+			kind: 'action',
+			key: message.id,
+			text: message.text,
+			at: message.createdAt,
+			activity: message.activity,
+		};
 	return message.author === 'user'
 		? {
 				kind: 'user',

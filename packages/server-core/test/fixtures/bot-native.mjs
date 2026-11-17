@@ -107,6 +107,87 @@ async function postReply(needsHuman = false, threadId = undefined) {
 		});
 	});
 }
+/**
+ * Terminay MCP calls through the bot's own relay (ADR-0134): a project, a
+ * terminal in it, the same keystrokes twice (one folded row) and a refused
+ * close. Each later request may read the previous result.
+ */
+/** What the Terminay MCP calls saw, for a test to explain a failure. */
+function traceActions(line) {
+	if (process.env.TERMINAY_FAKE_BOT_ROOT)
+		appendFileSync(
+			`${process.env.TERMINAY_FAKE_BOT_ROOT}/terminay-actions.log`,
+			`${line}\n`,
+		);
+}
+async function terminayActions() {
+	const env = process.env;
+	traceActions(`socket=${env.TERMINAY_MCP_SOCKET ?? 'unset'}`);
+	if (!env.TERMINAY_MCP_SOCKET) return;
+	const call = (name, args) => ({
+		method: 'tools/call',
+		params: { name, arguments: args },
+	});
+	const steps = [
+		{
+			method: 'initialize',
+			params: {
+				protocolVersion: '2025-03-26',
+				clientInfo: { name: 'fixture', version: '1' },
+				capabilities: {},
+			},
+		},
+		() => call('create_project', { root: '~', name: 'fixture-api' }),
+		(state) => call('open_terminal', { project: state.project, name: 'build' }),
+		(state) =>
+			call('write_terminal', { terminal: state.terminal, text: 'echo ready' }),
+		(state) =>
+			call('write_terminal', { terminal: state.terminal, text: 'echo ready' }),
+		() => call('close_terminal', { terminal: 'missing-terminal' }),
+	];
+	const state = {};
+	await new Promise((resolve, reject) => {
+		const socket = connect(env.TERMINAY_MCP_SOCKET);
+		let index = 0,
+			buffer = '';
+		const next = () => {
+			const step = steps[index];
+			socket.write(
+				`${JSON.stringify({
+					token: env.TERMINAY_MCP_TOKEN,
+					message: {
+						jsonrpc: '2.0',
+						id: index + 1,
+						...(typeof step === 'function' ? step(state) : step),
+					},
+				})}\n`,
+			);
+		};
+		socket.on('error', reject);
+		socket.on('connect', next);
+		socket.on('data', (chunk) => {
+			buffer += chunk;
+			let at = buffer.indexOf('\n');
+			while (at >= 0) {
+				const reply = JSON.parse(buffer.slice(0, at));
+				buffer = buffer.slice(at + 1);
+				traceActions(JSON.stringify(reply).slice(0, 600));
+				// A long result may be cut short of valid JSON, so read the
+				// handles by pattern.
+				const text = reply.result?.content?.[0]?.text ?? '';
+				const project = /"project":"([^"]+)"/.exec(text)?.[1];
+				const terminal = /"terminal":"([^"]+)"/.exec(text)?.[1];
+				if (project) state.project = project;
+				if (terminal) state.terminal = terminal;
+				if (++index === steps.length) {
+					socket.end();
+					resolve();
+				} else next();
+				at = buffer.indexOf('\n');
+			}
+		});
+	});
+}
 let ignoreCancel = false;
 const result = () =>
 	send({ type: 'result', subtype: 'success', is_error: false });
@@ -199,6 +280,10 @@ lines.on('line', async (line) => {
 			});
 		}
 		if (prompt.includes('hold')) return;
+		if (prompt.includes('terminay-actions'))
+			await terminayActions().catch((error) =>
+				traceActions(`error=${error?.message ?? error}`),
+			);
 		await postReply(
 			prompt.includes('fixture-portal-refused'),
 			context?.thread?.rootId,

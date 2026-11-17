@@ -1,4 +1,4 @@
-# ADR-0134: Bot message threads are one level deep and live in the message log
+# ADR-0135: Bot message threads are one level deep and live in the message log
 
 Status: accepted
 Date: 2026-11-17

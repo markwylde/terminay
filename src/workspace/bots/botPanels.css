@@ -3320,6 +3320,124 @@
 	margin-left: auto;
 }
 
+/* A bot's recorded Terminay actions (ADR-0134): compact rows under the
+ * message text column, quieter than messages, with a link to what they did. */
+.bots-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: -10px 0 0 34px;
+	min-width: 0;
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--bots-muted);
+}
+.bots-actions__list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+.bots-actions__more,
+.bots-action__link {
+	appearance: none;
+	background: none;
+	border: 0;
+	padding: 0;
+	font: inherit;
+	color: var(--bots-muted);
+	cursor: pointer;
+}
+.bots-actions__more {
+	align-self: flex-start;
+	padding: 2px 6px;
+	margin-left: -6px;
+	border-radius: 4px;
+}
+.bots-actions__more:hover,
+.bots-actions__more:focus-visible {
+	color: var(--bots-fg);
+	background: rgba(255, 255, 255, 0.05);
+}
+.bots-action {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-height: 22px;
+	min-width: 0;
+	padding: 0 6px;
+	margin-left: -6px;
+	border-radius: 5px;
+}
+.bots-action:hover {
+	background: rgba(255, 255, 255, 0.035);
+}
+.bots-action__icon {
+	flex: none;
+	opacity: 0.8;
+}
+.bots-action__text {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bots-action__reason {
+	color: var(--status-attention, #ee6258);
+	opacity: 0.85;
+}
+.bots-action__mark {
+	flex: none;
+}
+.bots-action__mark--done {
+	color: var(--status-done, #45c874);
+}
+.bots-action__mark--failed {
+	color: var(--status-attention, #ee6258);
+}
+.bots-action__count {
+	flex: none;
+	font-variant-numeric: tabular-nums;
+	font-size: 11px;
+	padding: 0 5px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.07);
+}
+.bots-action__time {
+	flex: none;
+	font-size: 11px;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+.bots-action:hover .bots-action__time,
+.bots-action:focus-within .bots-action__time {
+	opacity: 0.8;
+}
+.bots-action__link,
+.bots-action__notice {
+	flex: none;
+	margin-left: auto;
+	font-size: 11.5px;
+}
+.bots-action__link {
+	color: var(--bots-accent, #7aa2ff);
+	text-underline-offset: 2px;
+}
+.bots-action__link:hover,
+.bots-action__link:focus-visible {
+	text-decoration: underline;
+}
+.bots-action__link:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+.bots-action__notice {
+	font-style: italic;
+}
+
 /* Threads: a reply action on each message, a reply bar under a root, and
  * the thread panel beside the chat (over it where the chat is narrow). */
 .bots-chatwrap {

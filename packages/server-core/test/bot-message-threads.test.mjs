@@ -203,3 +203,34 @@ test('clear removes threads', (t) => {
 	assert.equal(store.count(bot), 0);
 	assert.throws(() => store.list(bot, { threadId: m.id }), /Thread not found/);
 });
+
+test('a recorded Terminay action is never a thread root and stays out of threads', (t) => {
+	const { store } = setup(t);
+	const root = store.post(bot, 'user', 'Deploy', null, 'root');
+	const action = store.recordActivity(bot, exec, {
+		text: 'Typed into the terminal “api”',
+		tool: 'write_terminal',
+		outcome: 'done',
+		target: { kind: 'terminal', projectId: 'project-1', sessionId: 's-1' },
+	});
+	assert.throws(
+		() => store.post(bot, 'user', 'Why?', null, 'r1', [], [], action.id),
+		/Thread not found/,
+	);
+	assert.throws(() => store.list(bot, { threadId: action.id }), /Thread not found/);
+	const reply = store.post(bot, 'bot', 'Done', exec, 'r2', [], [], root.id);
+	assert.deepEqual(
+		store.list(bot, { threadId: root.id }).items.map((m) => m.id),
+		[reply.id],
+	);
+	// The main stream keeps the action; briefings leave it out.
+	assert.deepEqual(
+		store.list(bot).items.map((m) => m.id).sort(),
+		[root.id, action.id].sort(),
+	);
+	assert.deepEqual(
+		store.list(bot, { actions: false }).items.map((m) => m.id),
+		[root.id],
+	);
+	assert.equal(store.get(bot, root.id).thread.replyCount, 1);
+});
