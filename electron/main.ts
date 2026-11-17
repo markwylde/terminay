@@ -1,4 +1,5 @@
 import './headlessBootstrap';
+import { DesktopClipboardSync } from './desktopClipboardSync';
 import {
 	FolderLaunchQueue,
 	folderLaunchOperands,
@@ -789,6 +790,19 @@ async function readTerminalClipboard(): Promise<string> {
 }
 
 const terminalClipboardUploadReader = new TerminalClipboardUploadReader();
+const desktopClipboardSync = new DesktopClipboardSync({
+	read: async () => {
+		const items = await clipboard.read();
+		if ((await readClipboardFilePaths(items)).length > 0) return undefined;
+		return clipboard.readText();
+	},
+	write: (text) => clipboard.writeText(text),
+	schedule: (callback, ms) => {
+		const timer = setTimeout(callback, ms);
+		timer.unref();
+		return () => clearTimeout(timer);
+	},
+});
 
 /** A paste bound for a terminal on another server: copied files are named here
  * and their bytes read back in parts, so only the terminal's server paths are
@@ -2551,6 +2565,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 	remoteServerUiBundleHost = new DesktopServerBundleHost({
 		capabilities: {
 			clipboardWrite: 1,
+			clipboardSync: 1,
 			filePicker: 1,
 			nativeMenus: 1,
 			nativeWindows: 1,
@@ -4429,6 +4444,7 @@ function createWindow(options?: {
 			hostPartitionKey: launch.partitionKey,
 			initialUrl: entryUrl.toString(),
 			preloadPath,
+			clipboardSync: desktopClipboardSync,
 			readTerminalClipboard,
 			readTerminalClipboardForUpload,
 			readTerminalClipboardFilePart: (token, file, offset, length) =>

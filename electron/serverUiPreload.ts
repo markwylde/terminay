@@ -96,7 +96,25 @@ const hostEventWrapper = (
 		.catch(() => undefined);
 };
 
+const CLIPBOARD_SYNC = 'server-ui-host:clipboard-sync';
+
 const bridge: ServerUiHostBridge = Object.freeze({
+	startClipboardSync: (token) =>
+		ipcRenderer.invoke(`${CLIPBOARD_SYNC}:start`, token),
+	stopClipboardSync: (token) =>
+		ipcRenderer.invoke(`${CLIPBOARD_SYNC}:stop`, token),
+	writeClipboardSync: (token, revision, text) =>
+		ipcRenderer.invoke(`${CLIPBOARD_SYNC}:write`, token, revision, text),
+	subscribeClipboardSync: (listener) => {
+		const receive = (
+			_event: Electron.IpcRendererEvent,
+			snapshot: Parameters<typeof listener>[0],
+		) => listener(snapshot);
+		ipcRenderer.on(CLIPBOARD_SYNC, receive);
+		return () => {
+			ipcRenderer.off(CLIPBOARD_SYNC, receive);
+		};
+	},
 	getContext: context,
 	requestAction: async (request: TerminayHostActionRequest) => {
 		const bound = await context();
@@ -409,13 +427,21 @@ if (
 			// Unlike the fault above, nothing here touches the window's side:
 			// the server closes its end and the window has to notice.
 			refuseProjectCreations: (count: number) =>
-				ipcRenderer.invoke('test:refuse-project-creations', count) as Promise<void>,
+				ipcRenderer.invoke(
+					'test:refuse-project-creations',
+					count,
+				) as Promise<void>,
 			// The server refuses new terminal subscriptions for this session until
 			// called again with null, so the panel shows its retryable banner.
 			refuseTerminalAttaches: (sessionId: string | null) =>
-				ipcRenderer.invoke('test:refuse-terminal-attaches', sessionId) as Promise<void>,
+				ipcRenderer.invoke(
+					'test:refuse-terminal-attaches',
+					sessionId,
+				) as Promise<void>,
 			closeServerConnection: () =>
-				ipcRenderer.invoke('test:close-renderer-connections') as Promise<number>,
+				ipcRenderer.invoke(
+					'test:close-renderer-connections',
+				) as Promise<number>,
 		}),
 	);
 	contextBridge.exposeInMainWorld(

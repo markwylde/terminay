@@ -1,5 +1,10 @@
+import type { ClipboardSyncSnapshot } from './desktopClipboardSync';
 import type { TerminalClipboardForUpload } from './terminalClipboardUpload';
-import type { TerminayHostActionRequest, TerminayHostContext, TerminayHostEvent } from '@terminay/protocol';
+import type {
+	TerminayHostActionRequest,
+	TerminayHostContext,
+	TerminayHostEvent,
+} from '@terminay/protocol';
 
 /** Electron consumes the canonical protocol contract; this module only names
  * its closed host IPC operations and must never define a second action schema.
@@ -9,8 +14,20 @@ import type { TerminayHostActionRequest, TerminayHostContext, TerminayHostEvent 
 export type ServerUiHostBridge = Readonly<{
 	getContext(): Promise<TerminayHostContext>;
 	requestAction(request: TerminayHostActionRequest): Promise<unknown>;
-	subscribeEvent(listener: (event: TerminayHostEvent) => Promise<void> | void): () => void;
+	subscribeEvent(
+		listener: (event: TerminayHostEvent) => Promise<void> | void,
+	): () => void;
 	resolveDroppedFilePath(file: File): string | undefined;
+	startClipboardSync(token: string): Promise<ClipboardSyncSnapshot>;
+	stopClipboardSync(token: string): Promise<void>;
+	writeClipboardSync(
+		token: string,
+		revision: number,
+		text: string,
+	): Promise<ClipboardSyncSnapshot>;
+	subscribeClipboardSync(
+		listener: (snapshot: ClipboardSyncSnapshot) => void,
+	): () => void;
 	readTerminalClipboard(): Promise<string>;
 	readTerminalClipboardForUpload(): Promise<TerminalClipboardForUpload>;
 	readTerminalClipboardFilePart(
