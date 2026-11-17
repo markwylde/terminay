@@ -32,7 +32,13 @@ export class BotMessagesClient {
 	constructor(private readonly transport: BotTransport) {}
 	async list(
 		botId: string,
-		options: { cursor?: string; limit?: number; search?: string } = {},
+		options: {
+			cursor?: string;
+			limit?: number;
+			search?: string;
+			/** List this root's replies instead of top-level messages. */
+			threadId?: string;
+		} = {},
 	): Promise<BotMessagePage> {
 		const value = record(
 			await this.transport.query(op.list, json({ botId, ...options })),
@@ -69,6 +75,8 @@ export class BotMessagesClient {
 		text: string,
 		key: string,
 		uploads: readonly string[] = [],
+		/** A root's ID: post as a reply in that thread. */
+		threadId?: string,
 	): Promise<{ message: BotMessage; sessionId?: string; error?: string }> {
 		return record(
 			await this.transport.command(op.post, {
@@ -76,6 +84,7 @@ export class BotMessagesClient {
 				text,
 				key,
 				...(uploads.length ? { uploads: [...uploads] } : {}),
+				...(threadId ? { threadId } : {}),
 			}),
 		) as unknown as { message: BotMessage; sessionId?: string; error?: string };
 	}

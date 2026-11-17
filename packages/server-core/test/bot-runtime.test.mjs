@@ -8,7 +8,7 @@ import {BotMessageStore} from '../dist/botService/messages.js';
 import {BotSessionStore} from '../dist/botService/sessions.js';
 const bot='abc123def456',other='abc123def457';
 function setup(t){const root=mkdtempSync(join(tmpdir(),'bot-runtime-'));t.after(()=>rmSync(root,{recursive:true,force:true}));const messages=new BotMessageStore(join(root,'messages')),sessions=new BotSessionStore(join(root,'sessions'));t.after(()=>sessions.close());let runtime;
- const triggers=[];const service={messages,sessions,now:()=>Date.now(),triggers:{list:()=>({revision:1,triggers})},queue:{promote:()=>true,active:()=>[]},redactMessage:async(_bot,text)=>runtime.sanitizeSecrets(_bot,text).replaceAll('secret','[redacted]'),postBotMessage:async(id,text,key)=>{runtime.assert(id);const record=sessions.get(id);return messages.post(record.botId,'bot',text,id,key);},stop:async(_bot,id)=>{sessions.patch(id,{state:'stopped',open:false,endedAt:Date.now()});}};
+ const triggers=[];const service={messages,sessions,now:()=>Date.now(),triggers:{list:()=>({revision:1,triggers})},queue:{promote:()=>true,active:()=>[]},redactMessage:async(_bot,text)=>runtime.sanitizeSecrets(_bot,text).replaceAll('secret','[redacted]'),postBotMessage:async(id,text,key,_captured,threadId)=>{runtime.assert(id);const record=sessions.get(id);return messages.post(record.botId,'bot',text,id,key,[],[],threadId);},stop:async(_bot,id)=>{sessions.patch(id,{state:'stopped',open:false,endedAt:Date.now()});}};
  runtime=new BotExecutionRuntime(service,async()=>{throw Error('no engine access');},'server');
  const create=(botId=bot,text='Open BBC')=>{const message=messages.post(botId,'user',text,null,Math.random().toString());const record=sessions.create(botId,{kind:'chat',messageId:message.id},{agentId:'fake',modelId:null,signIn:{kind:'none'},approvalMode:'autonomous',instructions:'',context:'',maxTurnMs:10000});runtime.register(record.id);sessions.patch(record.id,{state:'running'});return sessions.get(record.id);};return {runtime,messages,sessions,service,create,triggers};}
 test('fresh execution context is bounded and provider output is not communication',async t=>{const r=setup(t);for(let i=0;i<50;i++)r.messages.post(bot,'user','Context '+i+'x'.repeat(2000),null,'history-'+i);const current=r.create();assert.ok(Buffer.byteLength(r.runtime.briefing(current.id))<12000);r.sessions.append(current.id,{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Private output'}});assert.ok(!r.messages.list(bot).items.some(i=>i.excerpt.includes('Private output')));const page=await r.runtime.call(current.id,'chat_list',{});assert.equal(page.items.length,10);assert.ok(Buffer.byteLength(JSON.stringify(page))<=8192);await assert.rejects(r.runtime.call(current.id,'chat_list',{limit:100}));});
@@ -73,4 +73,76 @@ test('the briefing counts only active peers, reports queued work and asks the ag
 		r.runtime.briefing(alone.id),
 		/currently 0 other active executions/,
 	);
+});
+
+// A reply's execution: its trigger message is a reply in `rootId`'s thread.
+const replyExecution=(r,rootId,text='and the logs?')=>{const message=r.messages.post(bot,'user',text,null,Math.random().toString(),[],[],rootId);const record=r.sessions.create(bot,{kind:'chat',messageId:message.id},{agentId:'fake',modelId:null,signIn:{kind:'none'},approvalMode:'autonomous',instructions:'',context:'',maxTurnMs:10000});r.runtime.register(record.id);r.sessions.patch(record.id,{state:'running'});return r.sessions.get(record.id);};
+const contextOf=(r,id)=>JSON.parse(r.runtime.briefing(id).split('\n').at(-1));
+
+test('chat_post and chat_list take a threadId scoped to the calling bot', async t => {
+	const r = setup(t), me = r.create();
+	const root = r.messages.post(bot, 'user', 'Deploy please', null, 'root');
+	const posted = await r.runtime.call(me.id, 'chat_post', { text: 'Done', key: 'k', threadId: root.id });
+	assert.equal(posted.threadId, root.id);
+	assert.equal(r.messages.get(bot, posted.messageId).threadId, root.id);
+	assert.ok(!(await r.runtime.call(me.id, 'chat_list', {})).items.some((m) => m.id === posted.messageId));
+	const thread = await r.runtime.call(me.id, 'chat_list', { threadId: root.id });
+	assert.deepEqual(thread.items.map((m) => m.id), [posted.messageId]);
+	assert.equal((await r.runtime.call(me.id, 'chat_get', { messageId: root.id })).message.thread.replyCount, 1);
+	const foreign = r.messages.post(other, 'user', 'Elsewhere', null, 'f');
+	await assert.rejects(r.runtime.call(me.id, 'chat_post', { text: 'x', key: 'f', threadId: foreign.id }), /Thread not found/);
+	await assert.rejects(r.runtime.call(me.id, 'chat_list', { threadId: foreign.id }), /Thread not found/);
+	assert.equal(r.messages.count(other), 1);
+});
+
+test('a reply execution is briefed with its thread; a top-level one is not', async t => {
+	const r = setup(t);
+	const root = r.messages.post(bot, 'bot', 'Build is green', 'a'.repeat(24), 'root');
+	r.messages.post(bot, 'bot', 'Logs attached', 'a'.repeat(24), 'r1', [], [], root.id);
+	const me = replyExecution(r, root.id);
+	const briefing = r.runtime.briefing(me.id), context = contextOf(r, me.id);
+	assert.equal(context.triggerMessage.message.threadId, root.id);
+	assert.equal(context.thread.rootId, root.id);
+	assert.deepEqual(context.thread.root, { author: 'bot', excerpt: 'Build is green' });
+	assert.equal(context.thread.replyCount, 2);
+	assert.equal(context.thread.latestReplies.length, 2);
+	assert.match(briefing, /passing that threadId to chat_post/);
+	assert.equal(contextOf(r, r.create().id).thread, undefined);
+});
+
+test('thread context trims first and keeps the root id within the budget', async t => {
+	const r = setup(t);
+	for (let i = 0; i < 10; i++) r.messages.post(bot, 'user', worst(1500), null, 'm' + i);
+	const root = r.messages.post(bot, 'user', worst(4000), null, 'root');
+	// Active executions with long prompts put the briefing under pressure.
+	for (let i = 0; i < 5; i++) r.create(bot, worst(1500));
+	for (let i = 0; i < 200; i++) r.messages.post(bot, i % 2 ? 'bot' : 'user', worst(1500), i % 2 ? 'a'.repeat(24) : null, 'r' + i, [], [], root.id);
+	const me = replyExecution(r, root.id);
+	const line = r.runtime.briefing(me.id).split('\n').at(-1), context = JSON.parse(line);
+	assert.ok(Buffer.byteLength(line) <= 8192);
+	assert.equal(context.thread.rootId, root.id);
+	assert.equal(context.thread.replyCount, 201);
+	assert.ok(lossless(context.thread.root.excerpt));
+	assert.equal(context.triggerMessage.text, 'and the logs?');
+	assert.ok(context.thread.latestReplies.length < 4, "the budget is under pressure");
+	// Recent messages are trimmed only once the thread context is spent.
+	if (context.recentMessages.items.length < 4) {
+		assert.equal(context.thread.latestReplies.length, 0);
+		assert.ok(Buffer.byteLength(context.thread.root.excerpt) <= 256);
+	}
+});
+
+test('short thread context costs no recent messages', async t => {
+	const r = setup(t);
+	for (let i = 0; i < 10; i++) r.messages.post(bot, 'user', worst(1500), null, 'm' + i);
+	const root = r.messages.post(bot, 'user', worst(900), null, 'root');
+	for (let i = 0; i < 4; i++) r.messages.post(bot, 'bot', worst(300), 'a'.repeat(24), 'r' + i, [], [], root.id);
+	const plain = contextOf(r, r.create(bot, 'Current task').id);
+	const threaded = contextOf(r, replyExecution(r, root.id, 'Current task').id);
+	// Thread replies go first: the threaded briefing keeps no fewer recent messages than it can.
+	assert.ok(threaded.thread.latestReplies.length < 4 || threaded.recentMessages.items.length === plain.recentMessages.items.length);
+	if (threaded.recentMessages.items.length < plain.recentMessages.items.length) {
+		assert.equal(threaded.thread.latestReplies.length, 0);
+		assert.ok(Buffer.byteLength(threaded.thread.root.excerpt) <= 256);
+	}
 });

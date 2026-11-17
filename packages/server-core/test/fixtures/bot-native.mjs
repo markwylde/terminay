@@ -11,7 +11,8 @@ if (process.env.FAKE_IGNORE_EOF === '1') {
 	port1.on('message', () => {});
 }
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
-async function postReply(needsHuman = false) {
+/** `threadId`: answer in the thread the briefing names, as a real agent is told to. */
+async function postReply(needsHuman = false, threadId = undefined) {
 	if (
 		!process.env.TERMINAY_RUNTIME_SOCKET ||
 		process.env.FAKE_MCP_DISCONNECTED === '1'
@@ -39,7 +40,11 @@ async function postReply(needsHuman = false) {
 						method: 'tools/call',
 						params: {
 							name: 'chat_post',
-							arguments: { text: 'secret', key: 'fixture-reply' },
+							arguments: {
+								text: 'secret',
+								key: 'fixture-reply',
+								...(threadId ? { threadId } : {}),
+							},
 						},
 					},
 		];
@@ -133,7 +138,8 @@ lines.on('line', async (line) => {
 		const briefing = prompt
 			.split('\n')
 			.find((line) => line.startsWith('{"executionId":'));
-		if (briefing) prompt = JSON.parse(briefing).triggerMessage?.text ?? prompt;
+		const context = briefing ? JSON.parse(briefing) : undefined;
+		if (context) prompt = context.triggerMessage?.text ?? prompt;
 		ignoreCancel = prompt.includes('ignore-cancel');
 		if (prompt.includes('eagain')) {
 			// What Node prints when the container has no processes left.
@@ -193,7 +199,10 @@ lines.on('line', async (line) => {
 			});
 		}
 		if (prompt.includes('hold')) return;
-		await postReply(prompt.includes('fixture-portal-refused'));
+		await postReply(
+			prompt.includes('fixture-portal-refused'),
+			context?.thread?.rootId,
+		);
 		result();
 	}
 });

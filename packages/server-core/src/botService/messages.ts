@@ -18,6 +18,7 @@ import {
 	type BotMessageSummary,
 	type BotRuntimeEvent,
 	type BotRuntimeEventPage,
+	type BotThreadSummary,
 	botAttachmentLimit,
 	botAttachmentType,
 	botEnvironmentId,
@@ -84,6 +85,8 @@ export interface MessagePageOptions {
 	cursor?: string;
 	limit?: number;
 	search?: string;
+	/** A root's ID: list that thread's replies instead of top-level messages. */
+	threadId?: string;
 }
 /** The longest prefix of `value` within `limit` bytes, cut on a UTF-8 boundary. */
 export function utf8(value: string, limit: number): string {
@@ -124,7 +127,10 @@ function parse(value: unknown): State {
 			!Number.isSafeInteger(r.revision) ||
 			!Number.isSafeInteger(r.sequence) ||
 			!Number.isSafeInteger(r.change) ||
-			!Array.isArray(r.attachments)
+			!Array.isArray(r.attachments) ||
+			(r.threadId !== undefined &&
+				(typeof r.threadId !== 'string' ||
+					!/^[a-f0-9]{24}$/.test(r.threadId)))
 		)
 			throw new Error('Invalid stored message');
 	}
@@ -216,6 +222,39 @@ export class BotMessageStore extends EventEmitter {
 		return [...latest.values()]
 			.filter((r) => !r.deleted)
 			.sort((a, b) => b.sequence - a.sequence);
+	}
+	/** The current stored row of a message, never a public copy. */
+	private row(s: State, messageId: string): Row {
+		id(messageId);
+		const row = this.latest(s).find((r) => r.id === messageId);
+		if (!row) throw new BotError('not_found', 'Message not found');
+		return row;
+	}
+	/** Every root's thread summary, derived from the current replies. */
+	private threads(rows: readonly Row[]): Map<string, BotThreadSummary> {
+		const found = new Map<string, Row[]>();
+		for (const row of rows)
+			if (row.threadId) {
+				const replies = found.get(row.threadId) ?? [];
+				replies.push(row);
+				found.set(row.threadId, replies);
+			}
+		const summaries = new Map<string, BotThreadSummary>();
+		for (const [root, replies] of found) {
+			replies.sort((a, b) => b.sequence - a.sequence);
+			const authors: ('user' | 'bot')[] = [];
+			for (const reply of replies)
+				if (!authors.includes(reply.author)) authors.push(reply.author);
+			summaries.set(root, {
+				replyCount: replies.length,
+				lastReplyAt: replies[0]!.createdAt,
+				lastReplySequence: replies[0]!.sequence,
+				lastBotReplySequence:
+					replies.find((r) => r.author === 'bot')?.sequence ?? null,
+				authors,
+			});
+		}
+		return summaries;
 	}
 	private cursor(s: State, c: Cursor): string {
 		const body = Buffer.from(JSON.stringify(c)).toString('base64url');
@@ -329,8 +368,10 @@ export class BotMessageStore extends EventEmitter {
 		key: string,
 		attachments: readonly BotMessageAttachment[] = [],
 		uploads: readonly string[] = [],
+		threadId?: string,
 	): BotMessage {
 		text(body, 65536, 'message', true);
+		if (threadId !== undefined) id(threadId);
 		if (!body.trim() && !attachments.length && !uploads.length)
 			throw new BotError('validation', 'Message cannot be empty');
 		text(key, 256, 'idempotency key');
@@ -340,11 +381,13 @@ export class BotMessageStore extends EventEmitter {
 		if (this.staging.has(botId)) this.pruneAttachments(botId);
 		const s = this.state(botId),
 			hash = digest(
-				JSON.stringify(
-					uploads.length
+				JSON.stringify({
+					...(uploads.length
 						? { author, body, executionId, uploads }
-						: { author, body, executionId, attachments },
-				),
+						: { author, body, executionId, attachments }),
+					// Only a reply names a thread, so earlier keys hash as before.
+					...(threadId === undefined ? {} : { threadId }),
+				}),
 			),
 			prior = s.keys[key];
 		// Replay first: a retried post succeeds even after its uploads were consumed.
@@ -355,6 +398,14 @@ export class BotMessageStore extends EventEmitter {
 					'Idempotency key was already used with different content',
 				);
 			return this.get(botId, prior.id);
+		}
+		// Resolved only for a new post: a replay above still succeeds after the
+		// message it named was deleted. Threads are one level deep.
+		let root: string | undefined;
+		if (threadId !== undefined) {
+			const target = this.latest(s).find((r) => r.id === threadId);
+			if (!target) throw new BotError('not_found', 'Thread not found');
+			root = target.threadId ?? target.id;
 		}
 		if (uploads.length)
 			attachments = [...attachments, ...this.staged(botId, uploads)];
@@ -374,6 +425,7 @@ export class BotMessageStore extends EventEmitter {
 			updatedAt: this.now(),
 			text: body,
 			attachments: [...attachments],
+			...(root ? { threadId: root } : {}),
 			...(author === 'user'
 				? { dispatch: { state: 'pending' as const, executionId: null } }
 				: {}),
@@ -381,6 +433,8 @@ export class BotMessageStore extends EventEmitter {
 			deleted: false,
 		};
 		next.rows.push(row);
+		if (root)
+			this.change(next, 'message.thread', root, this.row(next, root).revision);
 		next.keys[key] = { hash, id: messageId };
 		// A user posting has read what came before it.
 		if (author === 'user') next.acknowledged = change;
@@ -389,15 +443,17 @@ export class BotMessageStore extends EventEmitter {
 		for (const token of uploads) this.staging.get(botId)?.delete(token);
 		return this.public(row);
 	}
-	private public(row: Row): BotMessage {
+	private public(row: Row, thread?: BotThreadSummary): BotMessage {
 		const { change: _, deleted: __, ...message } = row;
-		return structuredClone(message);
+		return structuredClone(thread ? { ...message, thread } : message);
 	}
 	get(botId: string, messageId: string): BotMessage {
-		id(messageId);
-		const row = this.latest(this.state(botId)).find((r) => r.id === messageId);
-		if (!row) throw new BotError('not_found', 'Message not found');
-		return this.public(row);
+		const s = this.state(botId),
+			row = this.row(s, messageId);
+		return this.public(
+			row,
+			row.threadId ? undefined : this.threads(this.latest(s)).get(row.id),
+		);
 	}
 	edit(
 		botId: string,
@@ -405,11 +461,33 @@ export class BotMessageStore extends EventEmitter {
 		revision: number,
 		body: string | null,
 	): BotMessage | null {
-		const previous = this.get(botId, messageId);
+		const previous = this.row(this.state(botId), messageId);
 		if (previous.revision !== revision)
 			throw new BotError('conflict', 'Message changed; reload before editing');
 		if (body !== null) text(body, 65536, 'message');
 		const next = structuredClone(this.state(botId));
+		const gone: Row[] = [];
+		// Deleting a root deletes its whole thread, replies first.
+		if (body === null && !previous.threadId)
+			for (const reply of this.latest(next).filter(
+				(r) => r.threadId === messageId,
+			)) {
+				gone.push(reply);
+				next.rows.push({
+					...reply,
+					text: '',
+					attachments: [],
+					revision: reply.revision + 1,
+					updatedAt: this.now(),
+					change: this.change(
+						next,
+						'message.deleted',
+						reply.id,
+						reply.revision + 1,
+					),
+					deleted: true,
+				});
+			}
 		const change = this.change(
 			next,
 			body === null ? 'message.deleted' : 'message.edited',
@@ -426,9 +504,13 @@ export class BotMessageStore extends EventEmitter {
 			deleted: body === null,
 		};
 		next.rows.push(row);
+		if (body === null && previous.threadId) {
+			const root = this.latest(next).find((r) => r.id === previous.threadId);
+			if (root) this.change(next, 'message.thread', root.id, root.revision);
+		}
 		this.save(botId, next);
 		if (body === null)
-			for (const asset of previous.attachments)
+			for (const asset of [previous, ...gone].flatMap((r) => r.attachments))
 				if (
 					!this.latest(next).some((row) =>
 						row.attachments.some((a) => a.id === asset.id),
@@ -437,14 +519,14 @@ export class BotMessageStore extends EventEmitter {
 					rmSync(join(this.directory(botId), 'attachments', asset.id), {
 						force: true,
 					});
-		return body === null ? null : this.public(row);
+		return body === null ? null : this.get(botId, messageId);
 	}
 	setDispatch(
 		botId: string,
 		messageId: string,
 		dispatch: NonNullable<BotMessage['dispatch']>,
 	): void {
-		const message = this.get(botId, messageId);
+		const message = this.row(this.state(botId), messageId);
 		const next = structuredClone(this.state(botId));
 		const change = this.change(
 			next,
@@ -486,11 +568,26 @@ export class BotMessageStore extends EventEmitter {
 	}
 	list(botId: string, options: MessagePageOptions = {}): BotMessagePage {
 		const s = this.state(botId),
-			filter =
+			search =
 				options.search === undefined
 					? ''
 					: text(options.search, 256, 'search', true),
+			thread =
+				options.threadId === undefined ? undefined : id(options.threadId),
 			limit = this.limit(options.limit);
+		if (thread !== undefined) {
+			const root = this.latest(s).find((r) => r.id === thread);
+			if (!root || root.threadId)
+				throw new BotError('not_found', 'Thread not found');
+		}
+		// The top-level list keeps its plain filter; other scopes are prefixed so
+		// a cursor never crosses from one scope to another.
+		const filter =
+			thread !== undefined
+				? `thread:${thread}:${search}`
+				: search
+					? `all:${search}`
+					: '';
 		const c = options.cursor
 			? this.decode(botId, options.cursor, 'messages', filter)
 			: {
@@ -501,16 +598,24 @@ export class BotMessageStore extends EventEmitter {
 					through: s.sequence,
 					position: Number.MAX_SAFE_INTEGER,
 				};
-		const rows = this.latest(s, c.through).filter(
+		const snapshot = this.latest(s, c.through),
+			threads = this.threads(snapshot);
+		const rows = snapshot.filter(
 			(r) =>
-				!filter ||
-				r.text.toLocaleLowerCase().includes(filter.toLocaleLowerCase()),
+				(thread !== undefined
+					? r.threadId === thread
+					: search !== '' || !r.threadId) &&
+				(!search ||
+					r.text.toLocaleLowerCase().includes(search.toLocaleLowerCase())),
 		);
 		const candidates = rows.filter((r) => r.sequence < c.position);
 		const items: BotMessageSummary[] = [];
 		let bytes = 0;
 		for (const row of candidates) {
-			const { text: body, attachments, ...message } = this.public(row);
+			const { text: body, attachments, ...message } = this.public(
+				row,
+				row.threadId ? undefined : threads.get(row.id),
+			);
 			const item = {
 				...message,
 				excerpt: utf8(body, 256),
