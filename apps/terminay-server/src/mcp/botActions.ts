@@ -1,5 +1,5 @@
 import type { BotActionTarget } from '@terminay/protocol';
-import { describeBotAction } from '@terminay/server-core';
+import type { BotActionNames } from '@terminay/server-core';
 import type {
 	ControlDispatcher,
 	ControlDispatchResult,
@@ -54,7 +54,6 @@ export const BOT_ACTION_OPERATIONS: ReadonlySet<string> = new Set([
 	'delete_automation',
 	'set_automation_enabled',
 	'run_automation',
-	'stop_automation_run',
 	'remove_automation_run',
 	'prune_automation_runs',
 	'dismiss_missed_runs',
@@ -94,7 +93,6 @@ const AUTOMATION_TARGET = new Set([
 	'update_automation',
 	'set_automation_enabled',
 	'run_automation',
-	'stop_automation_run',
 ]);
 const SETTINGS_TARGET = new Set([
 	'update_settings',
@@ -126,7 +124,9 @@ export interface BotActionDeps {
 		botId: string,
 		executionId: string,
 		action: {
-			readonly text: string;
+			/** The call as made; the recorder redacts it before describing it. */
+			readonly params: Readonly<Record<string, unknown>>;
+			readonly names: BotActionNames;
 			readonly tool: string;
 			readonly outcome: 'done' | 'failed';
 			readonly reason?: string;
@@ -224,16 +224,17 @@ export function withBotActions(
 						: {};
 				const target =
 					outcome.outcome === 'done' ? doneTarget(result) : failedTarget();
-				const text = describeBotAction(op, params, outcome.outcome, {
+				const names: BotActionNames = {
 					...(terminal?.title ? { terminal: terminal.title } : {}),
 					...(project?.name ? { project: project.name } : {}),
-				});
+				};
 				void deps
 					.record(
 						bot!.botId,
 						bot!.executionId,
 						{
-							text,
+							params,
+							names,
 							tool: op,
 							outcome: outcome.outcome,
 							...(outcome.outcome === 'failed'

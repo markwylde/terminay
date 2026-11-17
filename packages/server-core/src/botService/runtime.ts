@@ -6,7 +6,6 @@ import {
 	botTriggerOrigin,
 } from '@terminay/protocol';
 import { executionAttachmentPath, readBotImage } from './images.js';
-import { describeBotAction } from './actionWording.js';
 import { utf8 } from './messages.js';
 import { BOT_TRIGGER_TOOLS, callTriggerTool } from './runtimeTriggers.js';
 import type { BotService } from './service.js';
@@ -541,7 +540,7 @@ export class BotExecutionRuntime {
 		) =>
 			this.service
 				.recordAction(botId, executionId, {
-					text: describeBotAction(name, a, outcome),
+					params: a,
 					tool: name,
 					outcome,
 					...(reason === undefined ? {} : { reason }),

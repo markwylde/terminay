@@ -107,8 +107,17 @@ async function postReply(needsHuman = false) {
  * terminal in it, the same keystrokes twice (one folded row) and a refused
  * close. Each later request may read the previous result.
  */
+/** What the Terminay MCP calls saw, for a test to explain a failure. */
+function traceActions(line) {
+	if (process.env.TERMINAY_FAKE_BOT_ROOT)
+		appendFileSync(
+			`${process.env.TERMINAY_FAKE_BOT_ROOT}/terminay-actions.log`,
+			`${line}\n`,
+		);
+}
 async function terminayActions() {
 	const env = process.env;
+	traceActions(`socket=${env.TERMINAY_MCP_SOCKET ?? 'unset'}`);
 	if (!env.TERMINAY_MCP_SOCKET) return;
 	const call = (name, args) => ({
 		method: 'tools/call',
@@ -157,6 +166,7 @@ async function terminayActions() {
 			while (at >= 0) {
 				const reply = JSON.parse(buffer.slice(0, at));
 				buffer = buffer.slice(at + 1);
+				traceActions(JSON.stringify(reply).slice(0, 600));
 				try {
 					const value = JSON.parse(reply.result?.content?.[0]?.text ?? '{}');
 					if (typeof value.project === 'string') state.project = value.project;
@@ -263,6 +273,10 @@ lines.on('line', async (line) => {
 			});
 		}
 		if (prompt.includes('hold')) return;
+		if (prompt.includes('terminay-actions'))
+			await terminayActions().catch((error) =>
+				traceActions(`error=${error?.message ?? error}`),
+			);
 		await postReply(prompt.includes('fixture-portal-refused'));
 		result();
 	}

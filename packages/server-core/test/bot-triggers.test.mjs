@@ -2530,7 +2530,7 @@ test('runtime trigger changes are recorded as actions in the chat (ADR-0134)', a
 	assert.equal(deleted.activity.target, undefined);
 	assert.equal(r.service.messages.unacknowledged(r.bot.id), undefined);
 	const opened = {
-		text: 'Opened a terminal',
+		params: {},
 		tool: 'open_terminal',
 		outcome: 'done',
 	};

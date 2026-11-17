@@ -3,7 +3,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { describeBotAction } from '../dist/botService/actionWording.js';
+import {
+	describeBotAction,
+	describeRedactedBotAction,
+} from '../dist/botService/actionWording.js';
 import {
 	BOT_MAX_ACTIONS,
 	BotMessageStore,
@@ -261,5 +264,37 @@ test('wording: past tense when done, "Couldn\'t" when failed, quoting only what 
 	assert.equal(
 		describeBotAction('mystery_tool', {}, 'done'),
 		'Used mystery_tool',
+	);
+});
+
+test('a secret crossing the quoting cut is redacted whole, before it is shortened', async () => {
+	const secret = `sk-${'q'.repeat(40)}`;
+	const redact = async (value) => value.replaceAll(secret, '[redacted]');
+	// The secret starts before the 80-character command cut and ends after it,
+	// and likewise across the 60-character terminal-name cut.
+	const command = `${'x'.repeat(60)} ${secret} tail`;
+	const { text, reason } = await describeRedactedBotAction(
+		{
+			tool: 'run_command',
+			params: { command },
+			names: { terminal: `${'t'.repeat(40)}${secret}` },
+			outcome: 'failed',
+			reason: `internal: ${secret}`,
+		},
+		redact,
+	);
+	assert.ok(!text.includes('sk-q'), text);
+	assert.ok(text.includes('[redacted]'), text);
+	assert.equal(reason, 'internal: [redacted]');
+	await assert.rejects(
+		describeRedactedBotAction(
+			{
+				tool: 'create_project',
+				params: { name: 'a', root: 'b' },
+				outcome: 'done',
+			},
+			async () => 'collapsed',
+		),
+		/shape/,
 	);
 });

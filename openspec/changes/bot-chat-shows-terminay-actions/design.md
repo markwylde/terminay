@@ -63,7 +63,7 @@ type BotActionTarget =
 | `create_project` (result), `update_project`, `move_project`, `focus_project` | project |
 | `open_terminal`, `split_terminal` (result); `write_terminal`, `run_command`, `focus_terminal`, `rename_terminal`, `update_terminal`, `move_terminal_to_project`, `run_macro` | terminal |
 | `create_workflow`, `update_workflow_step` | workflow |
-| `create_automation` (result); `update_automation`, `set_automation_enabled`, `run_automation`, `stop_automation_run` (`automation_id`) | automation |
+| `create_automation` (result); `update_automation`, `set_automation_enabled`, `run_automation` (`automation_id`); `stop_automation_run` names only a run, so it has none | automation |
 | `create_workflow_template` (result), `update_workflow_template` (`template_id`) | workflowTemplate |
 | `update_settings`, `save_shell_profile`, `reorder_shell_profiles`, `set_default_shell_profile` | settings |
 | `triggers_create`, `triggers_update`, `triggers_enable`, `triggers_run` | trigger |
@@ -95,3 +95,12 @@ Row design: 22px high, indented to the message text column (past the avatar), `f
 - **Recording must never fail the tool.** It runs after the result is returned, and its errors are caught and logged.
 - **Parallel #604 edits to `BotChat`/`BotTranscript`.** Logic lives in new files, and edits to the shared files are a few lines that rebase easily.
 - **Action text is visible to anyone who can read the bot's chat.** That is the same audience as the bot's own posts, and the bot already has workspace reach. Text is redacted, and the wording excludes output and values.
+
+## Where a link can say "gone"
+
+The window holds an inventory only of the projects and terminals of the server
+it shows, so only those links can tell beforehand that their target is gone.
+An automation or workflow template is opened on its own page, which already
+says when it no longer exists, rather than mirroring those lists into the
+window. A terminal on another server is revealed by revealing its project, as
+the dashboard does for a server whose panels the window does not hold.

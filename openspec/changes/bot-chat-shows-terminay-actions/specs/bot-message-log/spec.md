@@ -203,7 +203,7 @@ Consecutive action rows SHALL be shown as one tight group. A group of more than 
 ### Requirement: Action links
 A row with a link target SHALL offer one link named for the kind: Open project, Open terminal, Open workflow, Open automation, Open workflow template, Open triggers or Open settings. Activating it SHALL reveal the target on the bot's server through the workspace's existing navigation, the same way choosing it elsewhere in the workspace does. A project or terminal SHALL be revealed as Tabs reveals it, a terminal's workflow by revealing its terminal, an automation in Automations, a workflow template or Settings in Settings, and a trigger by opening the bot's Configure Triggers tab.
 
-When the workspace knows the target no longer exists, activating the link SHALL say so in the row and change nothing else. When the target lives in Settings and the window shows a different server than the bot's, the row SHALL say it is not available from this window.
+When the window holds the inventory the target belongs to (the projects and terminals of the server it shows) and that inventory no longer has the target, activating the link SHALL say so in the row and change nothing else. An automation or workflow template is opened on its own page, which says when it no longer exists. A terminal on a server whose panels the window does not hold SHALL be revealed by revealing its project, as the dashboard does for such a server's agents. When the target lives in Settings and the window shows a different server than the bot's, the row SHALL say it is not available from this window.
 
 #### Scenario: Open the created terminal
 - **WHEN** Chat shows a done action row for `open_terminal` and the user activates Open terminal

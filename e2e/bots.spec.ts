@@ -733,14 +733,25 @@ test.describe('Home: Bots', () => {
 		await send(tab, 'set up terminay-actions');
 		const transcript = tab.locator('[data-terminay-bot-transcript]');
 		await expect(transcript).toContainText('secret', { timeout: 60_000 });
+		const trace = path.join(fakeRoot(tempDir), 'terminay-actions.log');
+		// A failed poll prints the trace of what the agent's calls returned.
+		// The streamed text shows before the agent acts; its posted reply after.
+		await expect(transcript.locator('.bots-msg')).toHaveCount(2, {
+			timeout: 60_000,
+		});
+		await expect
+			.poll(async () =>
+				existsSync(trace) ? await readFile(trace, 'utf8') : '(no trace)',
+			)
+			.toContain('"id":6');
 		const actions = transcript.locator('[data-terminay-bot-action]');
 		const row = (tool: string) =>
 			transcript.locator(`[data-terminay-bot-action="${tool}"]`);
-		// Four rows: the repeated keystrokes fold into one counted row.
-		await expect(actions).toHaveCount(4);
-		await expect(row('create_project')).toContainText(
-			'Created the project “fixture-api”',
-		);
+		// One run of four actions (the repeated keystrokes fold into one counted
+		// row) shows its latest three until the earlier one is asked for.
+		await expect(actions).toHaveCount(3, { timeout: 15_000 });
+		const more = transcript.locator('.bots-actions__more');
+		await expect(more).toHaveText('Show 1 earlier action');
 		await expect(row('open_terminal')).toContainText('Opened a terminal');
 		await expect(
 			row('write_terminal').locator('[data-terminay-bot-action-count]'),
@@ -753,26 +764,36 @@ test.describe('Home: Bots', () => {
 		await expect(
 			row('close_terminal').locator('.bots-action__link'),
 		).toHaveCount(0);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-chat-terminay-actions.png'),
+		});
+		await more.click();
+		await expect(actions).toHaveCount(4);
+		await expect(more).toHaveCount(0);
+		await expect(row('create_project')).toContainText(
+			'Created the project “fixture-api”',
+		);
 		// Actions are not posts: only the request and the reply are messages,
 		// and no unread divider opens for them.
 		await expect(transcript.locator('.bots-msg')).toHaveCount(2);
 		await expect(tab.locator('[data-terminay-bot-unread]')).toHaveCount(0);
+		await expect(
+			row('create_project').locator('.bots-action__link'),
+		).toHaveText('Open project');
 		await mainWindow.screenshot({
-			path: testInfo.outputPath('bot-chat-terminay-actions.png'),
+			path: testInfo.outputPath('bot-chat-terminay-actions-expanded.png'),
 		});
-		await row('create_project').hover();
-		await row('create_project').screenshot({
-			path: testInfo.outputPath('bot-chat-terminay-action-row.png'),
+		await row('close_terminal').hover();
+		await row('close_terminal').screenshot({
+			path: testInfo.outputPath('bot-chat-terminay-action-failed-row.png'),
 		});
 
-		const open = row('create_project').locator('.bots-action__link');
-		await expect(open).toHaveText('Open project');
+		// Open terminal reveals the terminal the bot opened, in its project.
+		const open = row('open_terminal').locator('.bots-action__link');
+		await expect(open).toHaveText('Open terminal');
 		await open.click();
 		await expect(
-			row('create_project').locator('.bots-action__notice'),
-		).toHaveCount(0);
-		await expect(
-			mainWindow.getByText('fixture-api', { exact: true }).first(),
+			mainWindow.getByText('build', { exact: true }).first(),
 		).toBeVisible();
 		await mainWindow.screenshot({
 			path: testInfo.outputPath('bot-chat-terminay-action-opened.png'),

@@ -275,3 +275,73 @@ export function describeBotAction(
 	const { verb, past, rest } = phraseFor(tool, params, names);
 	return outcome === 'done' ? `${past} ${rest}` : `Couldn't ${verb} ${rest}`;
 }
+
+/** What a recorder knows about one call before it is put into words. */
+export interface BotActionCall {
+	readonly tool: string;
+	readonly params: Readonly<Record<string, unknown>>;
+	readonly names?: BotActionNames;
+	readonly outcome: 'done' | 'failed';
+	readonly reason?: string;
+}
+
+const SEPARATOR = '\n\u0000\n';
+const MAX_STRINGS = 256;
+
+/** Where a collected string goes back. */
+class Slot {
+	constructor(readonly index: number) {}
+}
+
+/**
+ * Redact every string a description could quote while it is still whole, then
+ * describe the call. Shortening first would leave a secret's prefix that no
+ * longer matches the secret, so redaction always sees full values. One redact
+ * call covers them all; a result that cannot be mapped back records nothing.
+ */
+export async function describeRedactedBotAction(
+	call: BotActionCall,
+	redact: (value: string) => Promise<string>,
+): Promise<{ text: string; reason?: string }> {
+	const strings: string[] = [];
+	const collect = (value: unknown, depth: number): unknown => {
+		if (typeof value === 'string') {
+			if (strings.length >= MAX_STRINGS) return '';
+			strings.push(value.replaceAll('\u0000', ''));
+			return new Slot(strings.length - 1);
+		}
+		if (depth >= 4 || value === null || typeof value !== 'object')
+			return typeof value === 'object' ? undefined : value;
+		if (Array.isArray(value)) return value.map((v) => collect(v, depth + 1));
+		return Object.fromEntries(
+			Object.entries(value).map(([k, v]) => [k, collect(v, depth + 1)]),
+		);
+	};
+	const shape = collect(
+		{ params: call.params, names: call.names ?? {}, reason: call.reason },
+		0,
+	);
+	const safeStrings =
+		strings.length === 0
+			? []
+			: (await redact(strings.join(SEPARATOR))).split(SEPARATOR);
+	if (safeStrings.length !== strings.length)
+		throw new Error('Redaction changed the shape of the action');
+	const restore = (value: unknown): unknown => {
+		if (value instanceof Slot) return safeStrings[value.index];
+		if (value === null || typeof value !== 'object') return value;
+		if (Array.isArray(value)) return value.map(restore);
+		return Object.fromEntries(
+			Object.entries(value).map(([k, v]) => [k, restore(v)]),
+		);
+	};
+	const safe = restore(shape) as {
+		params: Record<string, unknown>;
+		names: BotActionNames;
+		reason?: string;
+	};
+	return {
+		text: describeBotAction(call.tool, safe.params, call.outcome, safe.names),
+		...(typeof safe.reason === 'string' ? { reason: safe.reason } : {}),
+	};
+}

@@ -54,6 +54,10 @@ import {
 	writeExecutionAttachments,
 } from './images.js';
 import type { BotMemories } from './memories.js';
+import {
+	type BotActionCall,
+	describeRedactedBotAction,
+} from './actionWording.js';
 import { type BotActionRecord, BotMessageStore } from './messages.js';
 import type { BotNativeClient } from './native.js';
 import {
@@ -1036,22 +1040,23 @@ export class BotService extends EventEmitter {
 	async recordAction(
 		botId: string,
 		executionId: string,
-		action: BotActionRecord,
+		action: BotActionCall & { readonly target?: BotActionRecord['target'] },
 		/** The log's epoch when the call began; a clear since then drops it. */
 		epoch?: string,
 	): Promise<BotMessage | undefined> {
 		if (this.sessions.botOf(executionId) !== botId) return undefined;
-		const text = await this.redactMessage(botId, action.text);
-		const reason =
-			action.reason === undefined
-				? undefined
-				: await this.redactMessage(botId, action.reason);
+		// Redacted whole, before anything is shortened into the description.
+		const { text, reason } = await describeRedactedBotAction(action, (value) =>
+			this.redactMessage(botId, value),
+		);
 		if (epoch !== undefined && this.messages.epoch(botId) !== epoch)
 			return undefined;
 		return this.messages.recordActivity(botId, executionId, {
-			...action,
 			text,
+			tool: action.tool,
+			outcome: action.outcome,
 			...(reason === undefined ? {} : { reason }),
+			...(action.target === undefined ? {} : { target: action.target }),
 		});
 	}
 

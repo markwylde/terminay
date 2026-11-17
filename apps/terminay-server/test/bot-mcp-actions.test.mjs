@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
 	AUTOMATION_SPACE_PROJECT_ID,
 	DEFAULT_MCP_PERMISSIONS,
+	describeBotAction,
 	McpApprovalService,
 } from '@terminay/server-core';
 
@@ -44,6 +45,12 @@ const botContext = (overrides = {}) => ({
 	...overrides,
 });
 
+/** The recorder's view: the call put into words, as the service does. */
+const described = ({ params, names, ...action }) => ({
+	text: describeBotAction(action.tool, params, action.outcome, names),
+	...action,
+});
+
 /** Fake host seams: terminal "api" is session s-1 in project-a. */
 function harness(extra = {}) {
 	const recorded = [];
@@ -66,7 +73,7 @@ function harness(extra = {}) {
 				? { projectId: 'project-a', name: 'api' }
 				: undefined,
 		record: async (botId, executionId, action, epoch) => {
-			recorded.push({ botId, executionId, action, epoch });
+			recorded.push({ botId, executionId, action: described(action), epoch });
 		},
 		defer: (work) => deferred.push(work),
 		onError: () => {},
@@ -289,7 +296,7 @@ test("through the control endpoint: a bot's call records, a revoked token does n
 			...harness().deps,
 			defer: (work) => setImmediate(work),
 			record: async (botId, executionId, action) => {
-				recorded.push({ botId, executionId, action });
+				recorded.push({ botId, executionId, action: described(action) });
 				for (const resolve of done) resolve();
 			},
 		},
