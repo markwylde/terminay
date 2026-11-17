@@ -355,6 +355,49 @@ export const SESSION_STATE_LABELS: Readonly<Record<BotSessionState, string>> = {
 	'timed-out': 'Timed out',
 };
 
+/** The states in which a session is live: it can still be stopped. */
+const ACTIVE_SESSION_STATES: ReadonlySet<BotSessionState> = new Set([
+	'queued',
+	'running',
+	'needs-you',
+]);
+
+/** Whether a session is live: queued, running, or waiting on the user. */
+export function isActiveSession(session: BotSessionRecord): boolean {
+	return ACTIVE_SESSION_STATES.has(session.state);
+}
+
+const newestFirst = (a: BotSessionRecord, b: BotSessionRecord) =>
+	b.startedAt - a.startedAt;
+
+/**
+ * The context rail's recent sessions: active sessions pinned above inactive
+ * ones, each group newest first, then cut to `limit`.
+ */
+export function recentSessions(
+	sessions: readonly BotSessionRecord[],
+	limit: number,
+): BotSessionRecord[] {
+	const sorted = [...sessions].sort(newestFirst);
+	return [
+		...sorted.filter(isActiveSession),
+		...sorted.filter((s) => !isActiveSession(s)),
+	].slice(0, limit);
+}
+
+/**
+ * The sessions a device keeps for a bot: the `limit` newest, plus any older
+ * active session so it is never lost from view. Newest first.
+ */
+export function retainRecentSessions(
+	sessions: readonly BotSessionRecord[],
+	limit: number,
+): BotSessionRecord[] {
+	return [...sessions]
+		.sort(newestFirst)
+		.filter((s, index) => index < limit || isActiveSession(s));
+}
+
 /** Up to two initials for an avatar with no picture. */
 export function initials(name: string): string {
 	const words = name.trim().split(/\s+/).filter(Boolean);
