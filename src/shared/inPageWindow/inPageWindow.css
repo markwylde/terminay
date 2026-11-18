@@ -218,10 +218,11 @@
 	height: 40px;
 }
 
-/* A framed workspace already sits below the status bar. */
+/* A framed workspace pads only by the inset its manager measured: 0 while the
+   status bar sits opaque above the app. */
 html.is-framed .in-page-window[data-compact] .in-page-window__titlebar {
-	height: 44px;
-	padding-top: 0;
+	height: calc(44px + var(--terminay-host-safe-area-top, 0px));
+	padding-top: var(--terminay-host-safe-area-top, 0px);
 }
 
 /* Resize handles sit outside the content box, so they never cover content. */
