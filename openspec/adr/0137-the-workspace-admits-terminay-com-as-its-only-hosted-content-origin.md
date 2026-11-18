@@ -1,4 +1,4 @@
-# ADR-0136: The workspace admits terminay.com as its only hosted content origin, in a sandboxed frame with a closed message bridge
+# ADR-0137: The workspace admits terminay.com as its only hosted content origin, in a sandboxed frame with a closed message bridge
 
 Status: accepted
 Date: 2026-11-17

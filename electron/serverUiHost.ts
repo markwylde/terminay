@@ -440,7 +440,7 @@ export function bindServerUiWindow(
 		event.preventDefault();
 	};
 	// A subframe may also load the What's New embed from terminay.com, and
-	// nothing else off the server (ADR-0136). A main frame never leaves it.
+	// nothing else off the server (ADR-0137). A main frame never leaves it.
 	const restrictFrameNavigation = (
 		event: Event<WebContentsWillFrameNavigateEventParams>,
 	) => {

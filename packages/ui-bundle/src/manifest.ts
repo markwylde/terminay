@@ -37,14 +37,14 @@ const VERSION = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
  * serving cannot silently drift to different browser policies.
  *
  * `https://terminay.com` is the only hosted origin admitted: framed for the
- * What's New section and fetched for its announcement (ADR-0136). `frame-src`
+ * What's New section and fetched for its announcement (ADR-0137). `frame-src`
  * keeps `'self'` for the workspace's own frames.
  */
 export const DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY =
 	"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /**
- * The policy bundles carried before ADR-0136. It is strictly narrower, so a
+ * The policy bundles carried before ADR-0137. It is strictly narrower, so a
  * manifest that names it is accepted and served with the current policy.
  */
 const PREVIOUS_UI_BUNDLE_CONTENT_SECURITY_POLICY =

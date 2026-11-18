@@ -18,7 +18,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0136-the-workspace-admits-terminay-com-as-its-only-hosted-content-origin.md - `https://terminay.com` is the workspace's only hosted content origin, framed sandboxed, contacted data-blind, and talking back only through a closed `ready` / `open-external` bridge.
+- openspec/adr/0137-the-workspace-admits-terminay-com-as-its-only-hosted-content-origin.md - `https://terminay.com` is the workspace's only hosted content origin, framed sandboxed, contacted data-blind, and talking back only through a closed `ready` / `open-external` bridge.
 
 ## Notes
 

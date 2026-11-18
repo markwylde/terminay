@@ -220,7 +220,7 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		const mainStderr = { text: '' };
 		captureMainProcessFailures(electronApp.process(), failures, mainStderr);
 		electronApp.context().setDefaultTimeout(0);
-		// The workspace reads What's New from terminay.com at start (ADR-0136).
+		// The workspace reads What's New from terminay.com at start (ADR-0137).
 		// A startup smoke must not depend on that site being up or deployed, so
 		// it answers for it.
 		await stubTerminayDotCom(electronApp.context());

@@ -54,7 +54,7 @@ The panel renders:
 - Omitting `allow-top-navigation*`, `allow-popups`, `allow-forms` and `allow-modals` means the page cannot navigate the workspace or open windows directly.
 - The URL carries only the embed path and `theme=light|dark`, with no referrer. This keeps hosted services data-blind. The embed is its own path, not a query flag, because the public site loads analytics and web fonts. A static page cannot leave those out based on a query string, and the framed page must make no third-party requests.
 
-*Boundary crossed:* the workspace content security policy, and therefore the renderer trust boundary. This is the first hosted, non-workspace origin admitted into the workspace UI. See ADR-0136.
+*Boundary crossed:* the workspace content security policy, and therefore the renderer trust boundary. This is the first hosted, non-workspace origin admitted into the workspace UI. See ADR-0137.
 
 *Alternatives:* a native JSON-feed renderer gives better theming and offline reading, but the user chose the embed. An ADR-0038-style opaque proxy is meant for untrusted local HTML. It adds nothing for a fixed, first-party HTTPS origin and would still need `frame-src`.
 
@@ -113,7 +113,7 @@ These are delivered in the terminay.com repository. The app depends only on this
 ## Risks / Trade-offs
 
 - [The page is unavailable offline] → The notice offers Retry and Open in browser. Native caching is a non-goal by the user's choice.
-- [A compromised terminay.com could show misleading content inside the app] → It cannot reach the workspace (cross-origin sandbox, no top navigation, no popups). The only thing it can ask for is opening `https` URLs externally, and the user still sees the browser open. This is accepted and recorded in ADR-0136.
+- [A compromised terminay.com could show misleading content inside the app] → It cannot reach the workspace (cross-origin sandbox, no top navigation, no popups). The only thing it can ask for is opening `https` URLs externally, and the user still sees the browser open. This is accepted and recorded in ADR-0137.
 - [Electron's server-UI host might block cross-origin subframe navigation] → An E2E test loads the section in the Desktop container suite. If it is blocked, the host's subframe policy gets a narrow allowance for `https://terminay.com`, recorded in the same ADR.
 - [Adding `frame-src` stops the `default-src` fallback and could break existing same-origin frames] → Keep `'self'` in `frame-src`, and cover it with the existing app-view, MDX and HTML preview E2E suites.
 - [The app ships before the site serves `/whats-new/`] → The offline notice covers it. Deploy the site first (see the migration plan).

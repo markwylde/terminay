@@ -6,7 +6,7 @@
  * Home is selected, and no more often than once an hour. Nothing re-reads it
  * on a timer (ADR-0028). A failed or malformed read leaves the previous state
  * in place and reports nothing. The request carries no credentials or
- * referrer (ADR-0136).
+ * referrer (ADR-0137).
  */
 
 import { useSyncExternalStore } from 'react';

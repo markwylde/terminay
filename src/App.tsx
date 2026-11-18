@@ -9212,7 +9212,7 @@ function App({
 	const forgeAssignedCount = forgeHome?.counts.issues ?? 0;
 	// What's New is announced on terminay.com and read on demand: when the
 	// window starts and whenever Home is selected, never on a timer (ADR-0028,
-	// ADR-0136).
+	// ADR-0137).
 	const whatsNew = useWhatsNew();
 	useEffect(() => {
 		if (isHomeSelected) void whatsNewStore().check();

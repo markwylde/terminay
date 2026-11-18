@@ -1,6 +1,6 @@
 /**
  * The one hosted page a server-UI window may load in a subframe: the What's
- * New embed on terminay.com (ADR-0136). A main frame is never allowed to
+ * New embed on terminay.com (ADR-0137). A main frame is never allowed to
  * leave the server, and no other hosted origin or path is admitted.
  */
 

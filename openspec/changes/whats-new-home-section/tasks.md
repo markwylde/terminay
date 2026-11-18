@@ -33,4 +33,4 @@
 
 - [x] 6.1 Add `e2e/whats-new.spec.ts`, run through `npm run test:e2e`. It routes `https://terminay.com/whats-new/**` to a local fixture that sends `ready` and `open-external`, and `latest.json` to a fixture id. The test checks: the sidebar order, the dot then cleared, the frame loaded with the right query and no referrer, link messages reaching the external-open host action, foreign-origin messages ignored, and the offline notice with a working Retry when the route fails. Verify: the spec passes in the container.
 - [x] 6.2 Run `openspec validate --all` and `npm run lint`, plus the typecheck for the touched workspaces. Verify: all clean.
-- [ ] 6.3 Open the PR on Gitea (`tea`). Verify: every commit status on the head SHA reads back as `success` or `skipped`.
+- [x] 6.3 Open the PR on Gitea (`tea`). Verify: every commit status on the head SHA reads back as `success` or `skipped`.

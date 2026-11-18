@@ -1,6 +1,6 @@
 /**
  * What's New: the monthly post published on terminay.com, shown in a Home
- * section (ADR-0136).
+ * section (ADR-0137).
  *
  * terminay.com is the only hosted origin the workspace admits. The page is
  * framed cross-origin and sandboxed, is told nothing but its theme and that it

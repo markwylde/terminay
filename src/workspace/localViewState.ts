@@ -638,7 +638,7 @@ export function rememberBotChatRead(botId: string, sequence: number): void {
 }
 
 /**
- * The What's New post this device last opened (ADR-0136). Device presentation
+ * The What's New post this device last opened (ADR-0137). Device presentation
  * only: another device keeps its own, and nothing reaches a server.
  */
 const WHATS_NEW_VIEWED_STORAGE_KEY = 'terminay.view.whats-new-viewed.v1';

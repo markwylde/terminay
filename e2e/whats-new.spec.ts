@@ -8,7 +8,7 @@ import { expect, test } from './fixtures';
 
 /**
  * What's New: terminay.com's monthly post, framed in a Home section
- * (ADR-0136). terminay.com is never reached from the suite; every request to
+ * (ADR-0137). terminay.com is never reached from the suite; every request to
  * it is answered by a fixture here.
  */
 
