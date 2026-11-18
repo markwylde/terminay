@@ -86,7 +86,7 @@ export function buildSystemdImage({ image = DEFAULT_IMAGE, runCommand = run } = 
 		// A fresh context has just the Dockerfile. Docker reuses the installed apt
 		// layer across commits; the registry mirror remains an explicit input.
 		cpSync(new URL('../Dockerfile.systemd-test', import.meta.url), join(context, 'Dockerfile'));
-		runCommand('docker', ['build', '--build-arg', `SYSTEMD_BASE_IMAGE=${image}`, '--tag', runtimeImage, context], { timeout: 300000 });
+		runCommand('docker', ['build', '--build-arg', `SYSTEMD_BASE_IMAGE=${image}`, '--tag', runtimeImage, context], { timeout: 900000 });
 		return runtimeImage;
 	} finally {
 		rmSync(context, { recursive: true, force: true });

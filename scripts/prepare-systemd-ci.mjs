@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildSystemdImage } from './standalone-systemd-restart.mjs';
 
-export async function prepareSystemdCi({ commands, timeoutMs = 420000, graceMs = 1000 } = {}) {
+export async function prepareSystemdCi({ commands, timeoutMs = 1200000, graceMs = 1000 } = {}) {
 	const stage = mkdtempSync(join(tmpdir(), 'terminay-systemd-preparation-'));
 	const active = new Set();
 	const groups = new Set();
