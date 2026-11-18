@@ -254,7 +254,7 @@ test('4.1 the Home sidebar lists its sections and shows the workflows badge in i
 		),
 	);
 	const order = [...html.matchAll(/data-terminay-home-section-tab="([a-zA-Z]+)"/g)].map((match) => match[1]);
-	assert.deepEqual(order, ['home', 'tabs', 'bots', 'automations', 'workflows', 'recordings', 'pullRequests', 'issues']);
+	assert.deepEqual(order, ['home', 'whatsNew', 'tabs', 'bots', 'automations', 'workflows', 'recordings', 'pullRequests', 'issues']);
 	assert.match(html, /aria-label="Workflows, 2 workflows need you"/);
 	assert.match(html, /data-terminay-home-section-badge="workflows">2</);
 });

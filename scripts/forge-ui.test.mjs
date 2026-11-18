@@ -148,7 +148,7 @@ test('Home lists Pull Requests and Issues after Recordings, with neutral counts'
 		},
 	});
 	const order = [...markup.matchAll(/data-terminay-home-section-tab="([a-zA-Z]+)"/gu)].map((match) => match[1]);
-	assert.deepEqual(order, ['home', 'tabs', 'bots', 'automations', 'workflows', 'recordings', 'pullRequests', 'issues']);
+	assert.deepEqual(order, ['home', 'whatsNew', 'tabs', 'bots', 'automations', 'workflows', 'recordings', 'pullRequests', 'issues']);
 	assert.match(markup, /class="home-sidebar__badge home-sidebar__badge--neutral"[^>]*data-terminay-home-section-badge="pullRequests">2</u);
 	assert.match(markup, /data-terminay-home-section-badge="issues">4</u);
 	assert.match(markup, /class="home-sidebar__badge"[^>]*data-terminay-home-section-badge="workflows"/u);

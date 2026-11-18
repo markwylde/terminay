@@ -267,7 +267,7 @@ test.describe('compact chrome', () => {
 			'project',
 		);
 		const sections = drawer.locator('[data-compact-home-section]');
-		await expect(sections).toHaveCount(8);
+		await expect(sections).toHaveCount(9);
 		await drawer.locator('[data-compact-home-section="workflows"]').click();
 		await expect(drawer).toHaveCount(0);
 		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(

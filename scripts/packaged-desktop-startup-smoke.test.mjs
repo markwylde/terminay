@@ -220,6 +220,10 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		const mainStderr = { text: '' };
 		captureMainProcessFailures(electronApp.process(), failures, mainStderr);
 		electronApp.context().setDefaultTimeout(0);
+		// The workspace reads What's New from terminay.com at start (ADR-0136).
+		// A startup smoke must not depend on that site being up or deployed, so
+		// it answers for it.
+		await stubTerminayDotCom(electronApp.context());
 		const window = await electronApp.firstWindow({ timeout: 0 });
 		captureRendererFailures(window, failures);
 
@@ -429,6 +433,20 @@ async function requireTerminalInputOutput(window, mode) {
 	await window.keyboard.type(`printf '${marker}\\n'`);
 	await window.keyboard.press('Enter');
 	await rows.getByText(marker, { exact: true }).waitFor();
+}
+
+async function stubTerminayDotCom(context) {
+	await context.route('https://terminay.com/**', (route) => {
+		if (new URL(route.request().url()).pathname === '/whats-new/latest.json') {
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				headers: { 'access-control-allow-origin': '*' },
+				body: JSON.stringify({ id: '2026-11', title: 'November 2026', published: '2026-11-17' }),
+			});
+		}
+		return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>What’s New</title>' });
+	});
 }
 
 function captureRendererFailures(window, failures) {

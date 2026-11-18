@@ -10,7 +10,7 @@ import {
 import { createStartedProject } from './support/project-start';
 
 /**
- * Home's sidebar: Home, Tabs, Bots, Automations, and Recordings, each opening as a
+ * Home's sidebar: Home, What's New, Tabs, Bots, Automations, and Recordings, each opening as a
  * Home tab. Its
  * visibility, and the tabs it opened, belong to this device and to no project.
  */
