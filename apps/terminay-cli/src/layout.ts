@@ -139,7 +139,11 @@ export interface InstallRecord {
 	readonly port: number;
 	readonly healthPort: number;
 	readonly expose: string;
-	readonly hostedDomain: string;
+	/** Hosted connection-manager origin. Absent on records written before it
+	 * was configurable, which used production. */
+	readonly appServer?: string;
+	/** Hosted session origin template. Absent on older records, as above. */
+	readonly sessionServer?: string;
 	/** The one address or name devices reach this machine at, as given. */
 	readonly publicHost?: string;
 	readonly directOrigin?: string;
@@ -163,7 +167,6 @@ export function parseInstallRecord(value: unknown): InstallRecord {
 		'dataRoot',
 		'projectRoot',
 		'expose',
-		'hostedDomain',
 	]) {
 		if (
 			typeof record[field] !== 'string' ||

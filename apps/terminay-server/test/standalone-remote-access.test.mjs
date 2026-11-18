@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
+import { PRODUCTION_HOSTED_ENDPOINTS } from '@terminay/protocol';
 import { createServerRemoteExposure } from '../dist/index.js';
 import { StandaloneRemoteAccess } from '../dist/remote/standaloneRemoteAccess.js';
 import {
@@ -465,7 +466,7 @@ test('session origin: provisioned for hosted or no mode, kept for direct-only an
 	const base = {
 		command: 'start',
 		dataRoot: '/data',
-		hostedDomain: 'terminay.com',
+		hostedEndpoints: PRODUCTION_HOSTED_ENDPOINTS,
 		remoteOrigin: 'https://server-a.remote.terminay.local',
 		remoteOriginExplicit: false,
 	};

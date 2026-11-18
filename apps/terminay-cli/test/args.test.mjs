@@ -133,15 +133,21 @@ test('remaining install flags reach the options', () => {
 		'install',
 		'--direct-origin',
 		'https://box.example.com:8443',
-		'--hosted-domain',
-		'terminay.com',
+		'--app-server',
+		'https://app-pr123.dev.terminay.com',
+		'--session-server',
+		'https://<session>-pr123.dev.terminay.com',
 		'--expose',
 		'hosted,direct',
 		'--project-root',
 		'/srv/projects',
 	);
 	assert.equal(parsed.options.directOrigin, 'https://box.example.com:8443');
-	assert.equal(parsed.options.hostedDomain, 'terminay.com');
+	assert.equal(parsed.options.appServer, 'https://app-pr123.dev.terminay.com');
+	assert.equal(
+		parsed.options.sessionServer,
+		'https://<session>-pr123.dev.terminay.com',
+	);
 	assert.equal(parsed.options.expose, 'hosted,direct');
 	assert.equal(parsed.options.projectRoot, '/srv/projects');
 });

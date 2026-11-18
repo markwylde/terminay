@@ -39,7 +39,7 @@ test('an advertised address does not touch the session or remote origin', () => 
 	// them, it would be handed to a client as somewhere to go rather than
 	// somewhere to send connectivity checks.
 	assert.equal(with_.remoteOrigin, without.remoteOrigin);
-	assert.equal(with_.hostedDomain, without.hostedDomain);
+	assert.deepEqual(with_.hostedEndpoints, without.hostedEndpoints);
 	assert.equal(with_.directOrigin, without.directOrigin);
 	assert.deepEqual([...with_.exposeModes], [...without.exposeModes]);
 });

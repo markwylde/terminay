@@ -1,3 +1,10 @@
+import {
+	HostedEndpointsError,
+	type HostedEndpointsField,
+	hostedEndpointsFromLegacyDomain,
+	PRODUCTION_HOSTED_ENDPOINTS,
+	parseHostedEndpoints,
+} from '@terminay/protocol';
 import type { FontWeight, ITerminalOptions } from '@xterm/xterm';
 import {
 	appCommandMetadata,
@@ -256,6 +263,8 @@ export type SettingsFieldDefinition = {
 	placeholder?: string;
 	keywords?: string[];
 	visibleWhen?: { key: string; value: boolean | number | string };
+	/** A message explaining why the current value cannot be used, if any. */
+	validate?: (settings: TerminalSettings) => string | undefined;
 };
 
 export type SettingsSectionDefinition = {
@@ -514,7 +523,8 @@ export const defaultTerminalSettings: TerminalSettings = {
 	remoteAccess: {
 		exposeOnStartup: false,
 		connectionMetrics: false,
-		webRtcHostedDomain: 'terminay.com',
+		appServer: PRODUCTION_HOSTED_ENDPOINTS.appServer,
+		sessionServer: PRODUCTION_HOSTED_ENDPOINTS.sessionServer,
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},
 	shell: {
@@ -566,6 +576,61 @@ export const defaultTerminalSettings: TerminalSettings = {
 		brightWhite: '#f5f7fb',
 	},
 };
+
+/**
+ * The App Server and Session Server as stored. Each keeps exactly what the
+ * user typed (trimmed) so a half-edited pair is never discarded; validity is
+ * checked where the pair is used and reported beside the field. A settings
+ * file from before the two fields existed carries one hosted domain, which is
+ * read as the pair it always meant.
+ */
+export function normalizeHostedEndpointSettings(
+	input: Record<string, unknown>,
+): Pick<TerminalSettings['remoteAccess'], 'appServer' | 'sessionServer'> {
+	const text = (value: unknown) =>
+		typeof value === 'string' && value.trim().length > 0
+			? value.trim()
+			: undefined;
+	const appServer = text(input.appServer);
+	const sessionServer = text(input.sessionServer);
+	if (appServer === undefined && sessionServer === undefined) {
+		const legacy = text(input.webRtcHostedDomain);
+		if (legacy !== undefined) {
+			try {
+				const migrated = hostedEndpointsFromLegacyDomain(legacy);
+				return {
+					appServer: migrated.appServer,
+					sessionServer: migrated.sessionServer,
+				};
+			} catch {
+				// An unusable legacy value falls back to production below.
+			}
+		}
+	}
+	return {
+		appServer: appServer ?? PRODUCTION_HOSTED_ENDPOINTS.appServer,
+		sessionServer: sessionServer ?? PRODUCTION_HOSTED_ENDPOINTS.sessionServer,
+	};
+}
+
+/** The validation message for one hosted endpoint field, if the pair fails
+ * on that field. */
+export function hostedEndpointsProblem(
+	remoteAccess: Pick<
+		TerminalSettings['remoteAccess'],
+		'appServer' | 'sessionServer'
+	>,
+	field: HostedEndpointsField,
+): string | undefined {
+	try {
+		parseHostedEndpoints(remoteAccess);
+		return undefined;
+	} catch (error) {
+		return error instanceof HostedEndpointsError && error.field === field
+			? error.message
+			: undefined;
+	}
+}
 
 function makeField(
 	definition: Omit<SettingsFieldDefinition, 'keywords'> & {
@@ -1246,22 +1311,47 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				],
 			}),
 			makeField({
-				key: 'remoteAccess.webRtcHostedDomain',
-				label: 'WebRTC hosted domain',
+				key: 'remoteAccess.appServer',
+				label: 'App Server',
 				description:
-					'Base domain used for production per-session WebRTC subdomains.',
+					'Connection manager that hosted pairing links open. Change it only to test a preview manager.',
 				sectionId: 'remote-access-host',
 				categoryId: 'remote',
 				input: 'text',
-				placeholder: 'terminay.com',
+				placeholder: PRODUCTION_HOSTED_ENDPOINTS.appServer,
 				keywords: [
 					'webrtc',
 					'relay',
+					'manager',
+					'app server',
+					'preview',
 					'domain',
+					'terminay.com',
+				],
+				validate: (settings) =>
+					hostedEndpointsProblem(settings.remoteAccess, 'appServer'),
+			}),
+			makeField({
+				key: 'remoteAccess.sessionServer',
+				label: 'Session Server',
+				description:
+					'Origin each server session runs at. <session> is replaced by this server\'s session id and must sit in the leftmost label.',
+				sectionId: 'remote-access-host',
+				categoryId: 'remote',
+				input: 'text',
+				placeholder: PRODUCTION_HOSTED_ENDPOINTS.sessionServer,
+				keywords: [
+					'webrtc',
+					'relay',
+					'session',
+					'session server',
+					'preview',
 					'wildcard',
 					'subdomain',
 					'terminay.com',
 				],
+				validate: (settings) =>
+					hostedEndpointsProblem(settings.remoteAccess, 'sessionServer'),
 			}),
 			makeField({
 				key: 'remoteAccess.webRtcIceServers',
@@ -3241,15 +3331,7 @@ export function normalizeTerminalSettings(
 				typeof remoteAccessInput.connectionMetrics === 'boolean'
 					? remoteAccessInput.connectionMetrics
 					: defaultTerminalSettings.remoteAccess.connectionMetrics,
-			webRtcHostedDomain:
-				typeof remoteAccessInput.webRtcHostedDomain === 'string' &&
-				remoteAccessInput.webRtcHostedDomain.trim().length > 0
-					? remoteAccessInput.webRtcHostedDomain
-							.trim()
-							.toLowerCase()
-							.replace(/^https?:\/\//, '')
-							.replace(/\/.*$/, '')
-					: defaultTerminalSettings.remoteAccess.webRtcHostedDomain,
+			...normalizeHostedEndpointSettings(remoteAccessInput),
 			webRtcIceServers:
 				typeof remoteAccessInput.webRtcIceServers === 'string' &&
 				remoteAccessInput.webRtcIceServers.trim().length > 0

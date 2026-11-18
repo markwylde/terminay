@@ -8,7 +8,7 @@ Terminay Server exposes its complete workspace to authorized Desktop and browser
 
 ### Requirement: Remote access model and vocabulary
 
-Remote access SHALL be defined by five concepts. A **stable session origin** is the permanent HTTPS origin for one Terminay Server, such as `https://<server-id>.terminay.com`. A **pairing URL** is the advertised one-time enrollment link whose fragment carries the one-time secret and whose non-secret `s` query identifies the stable session origin. A **browser device identity** is one non-extractable private key held by the browser, with the server holding the corresponding public key, device id, name, and revocation state. A **manager profile** is a non-secret bookmark stored by `app.terminay.com` containing a label, stable session origin, and local timestamps. A **server host key** is a long-lived key pair owned by Terminay Server for its stable session origin, whose private half never leaves the server.
+Remote access SHALL be defined by five concepts. A **stable session origin** is the permanent HTTPS origin for one Terminay Server, produced from the configured Session Server template, such as `https://<server-id>.terminay.com`. A **pairing URL** is the advertised one-time enrollment link whose fragment carries the one-time secret and whose non-secret `s` query identifies the stable session origin. A **browser device identity** is one non-extractable private key held by the browser, with the server holding the corresponding public key, device id, name, and revocation state. A **manager profile** is a non-secret bookmark stored by the configured App Server, `app.terminay.com` by default, containing a label, stable session origin, and local timestamps. A **server host key** is a long-lived key pair owned by Terminay Server for its stable session origin, whose private half never leaves the server.
 
 Each server SHALL have exactly one stable session origin. Credentials created at one origin, or for one server, SHALL NOT authorize another.
 
@@ -140,7 +140,7 @@ The pinned host key SHALL be part of the device credential, not a profile label 
 
 ### Requirement: Exposure is explicit and administrator-controlled
 
-Servers SHALL NOT be remotely reachable until an administrator enables exposure, either through **Expose this server…** on a client host, through the embedded server's **Automatically expose server on startup** setting, or through the standalone server's explicit `--expose` configuration. The setting and `--expose` each count as the administrator's standing decision for that data root. The setting SHALL default to off. Exposure SHALL connect the server to an authenticated WebRTC signaling endpoint before advertising a pairing URL, apply the explicit approval policy, generate a short-lived pairing URL and QR code, display exposure expiry, signaling and relay health, paired devices, and live connections, and allow the administrator to generate another pairing URL, revoke a device, or stop exposure. Hosted pairing links SHALL take the form `https://app.terminay.com/?s=<session-id>&hostName=<optional>#<secret>`, where the session subdomain remains the WebRTC peer and `hostName` is a non-secret default label from the exposing machine. Direct pairing links SHALL take the form `https://<direct-origin>/v1/?hostName=<optional>#<secret>`, where the direct origin is the server's own signaling listener.
+Servers SHALL NOT be remotely reachable until an administrator enables exposure, either through **Expose this server…** on a client host, through the embedded server's **Automatically expose server on startup** setting, or through the standalone server's explicit `--expose` configuration. The setting and `--expose` each count as the administrator's standing decision for that data root. The setting SHALL default to off. Exposure SHALL connect the server to an authenticated WebRTC signaling endpoint before advertising a pairing URL, apply the explicit approval policy, generate a short-lived pairing URL and QR code, display exposure expiry, signaling and relay health, paired devices, and live connections, and allow the administrator to generate another pairing URL, revoke a device, or stop exposure. Hosted pairing links SHALL take the form `<app-server>/?s=<session-id>&hostName=<optional>#<secret>`. `<app-server>` is the configured App Server origin, `https://app.terminay.com` by default. The session origin produced from the configured Session Server template remains the WebRTC peer, and `hostName` is a non-secret default label from the exposing machine. Direct pairing links SHALL take the form `https://<direct-origin>/v1/?hostName=<optional>#<secret>`, where the direct origin is the server's own signaling listener.
 
 #### Scenario: Server is unreachable before exposure
 
@@ -181,6 +181,11 @@ Servers SHALL NOT be remotely reachable until an administrator enables exposure,
 - **THEN** pairing and reconnect are blocked
 - **AND** Local Desktop use and server-owned work continue running
 
+#### Scenario: Pairing link names the configured manager
+
+- **WHEN** a server whose App Server is `https://app-pr123.dev.terminay.com` creates a hosted pairing link
+- **THEN** the link is on `https://app-pr123.dev.terminay.com` and not on `https://app.terminay.com`
+
 ### Requirement: Host claim requires proof of the registered host key
 
 A later host claim for the same session SHALL prove possession of the same private server host key. A different key SHALL NOT replace a live registration, and exposure SHALL fail closed when a different key is already registered for that session.
@@ -218,7 +223,7 @@ A pairing room SHALL be one-time and short-lived. Exposure and the signed reconn
 
 ### Requirement: Uniform exposure for embedded and standalone servers
 
-The same exposure model SHALL apply to an embedded Local server and to standalone `terminay-server`. Both SHALL provision a stable hosted session origin under the configured hosted domain through one shared server-owned implementation, persist it in the data root, and reuse it across restarts. Desktop and the CLI SHALL both start the server-owned hosted pairing host, registering the fragment-derived pairing room and the signed reconnect host before a pairing URL is advertised, and SHALL accept authenticated application transports on the `application` data channel. Desktop SHALL always serve the built server UI archive; the standalone server SHALL serve the UI archive that its distribution bundles.
+The same exposure model SHALL apply to an embedded Local server and to standalone `terminay-server`. Both SHALL provision a stable hosted session origin from the configured Session Server template through one shared server-owned implementation, persist it in the data root, and reuse it across restarts while it still matches the configured template. A persisted origin that does not match the configured template SHALL be replaced by a newly minted one. Desktop and the CLI SHALL both start the server-owned hosted pairing host, registering the fragment-derived pairing room and the signed reconnect host before a pairing URL is advertised, and SHALL accept authenticated application transports on the `application` data channel. Desktop SHALL always serve the built server UI archive; the standalone server SHALL serve the UI archive that its distribution bundles.
 
 #### Scenario: Standalone server exposes identically
 
@@ -229,6 +234,11 @@ The same exposure model SHALL apply to an embedded Local server and to standalon
 
 - **WHEN** a standalone server restarts against the same data root
 - **THEN** it advertises the same session origin and saved devices reconnect without pairing again
+
+#### Scenario: Changing the Session Server mints a new origin
+
+- **WHEN** a server restarts with a Session Server template that its persisted session origin does not match
+- **THEN** it mints and persists a new session origin from the configured template and advertises only that origin
 
 #### Scenario: CLI serves the UI archive when configured
 
@@ -1172,3 +1182,52 @@ Desktop SHALL continue observing WebRTC peer, ICE, and required data-channel sta
 
 - **WHEN** the `api` or `asset` bootstrap lane closes after it has opened and completed its transfer
 - **THEN** Desktop keeps the connection alive because those lanes are not required for the established session
+
+### Requirement: Configured hosted endpoints
+
+Hosted access SHALL use an **App Server** (manager origin, default `https://app.terminay.com`) and a **Session Server** (origin template with `<session>` once in its leftmost label, default `https://<session>.terminay.com`). A session origin SHALL be the template filled with the session id, and an id SHALL be recovered only by matching the template. No component SHALL derive one endpoint from the other or assume `app.` or `terminay.com`.
+
+#### Scenario: Production defaults
+
+- **WHEN** a server uses the default endpoints
+- **THEN** its hosted pairing link is on `https://app.terminay.com` and its stable session origin is `https://<session-id>.terminay.com`
+
+#### Scenario: Preview endpoints
+
+- **WHEN** the App Server is `https://app-pr123.dev.terminay.com` and the Session Server is `https://<session>-pr123.dev.terminay.com`
+- **THEN** the hosted pairing link is on `https://app-pr123.dev.terminay.com`
+- **AND** the stable session origin is `https://<session-id>-pr123.dev.terminay.com`
+- **AND** a client parsing that link with the same endpoints recovers the same session id
+
+### Requirement: Hosted endpoints preserve session isolation
+
+Every session SHALL run at its own origin, because a Terminay Server is untrusted code. The App Server SHALL NOT match the Session Server template, and distinct session ids SHALL produce distinct origins. Both endpoints SHALL use HTTPS, except that loopback hosts MAY use HTTP, and neither SHALL carry credentials, a path, a query, or a fragment. A configuration that breaks these rules SHALL be rejected and SHALL NOT be used to advertise or accept a pairing link.
+
+#### Scenario: Manager cannot be a session origin
+
+- **WHEN** a session id would produce the App Server origin from the Session Server template
+- **THEN** that session id is never minted or accepted
+
+#### Scenario: Placeholder outside the leftmost label
+
+- **WHEN** a Session Server template places `<session>` in any label but the leftmost, or contains it more than once or not at all
+- **THEN** the configuration is rejected and no pairing link is advertised
+
+#### Scenario: Insecure non-loopback endpoint
+
+- **WHEN** either endpoint uses `http:` for a host that is not loopback
+- **THEN** the configuration is rejected
+
+### Requirement: Desktop presents the hosted endpoints
+
+Desktop **Settings › Remote Access** SHALL present **App Server** and **Session Server** as two fields that default to the production values and SHALL show the validation message when a value is rejected. The embedded server SHALL use the saved pair for every hosted pairing link and session origin it advertises.
+
+#### Scenario: Developer points Desktop at a preview
+
+- **WHEN** a developer sets App Server `https://app-pr123.dev.terminay.com` and Session Server `https://<session>-pr123.dev.terminay.com` and creates a pairing link
+- **THEN** the link opens the preview manager, which frames the session at `https://<session-id>-pr123.dev.terminay.com`
+
+#### Scenario: Invalid value in Settings
+
+- **WHEN** a developer enters a Session Server without `<session>` in its leftmost label
+- **THEN** the field shows the validation message and the previous valid pair stays in effect

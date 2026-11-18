@@ -4,6 +4,7 @@ import {
 	classifyPairingOrigin,
 	formatHostedPairingUrl,
 	managerOriginFromSessionOrigin,
+	parseHostedEndpoints,
 	parseHostedPairingUrl,
 } from '../dist/index.js';
 
@@ -52,10 +53,15 @@ test('legacy session-origin pairing URLs still parse to the same session origin'
 	assert.equal(new URL(parsed.managerHref).origin, 'https://app.terminay.com');
 });
 
-test('manager origin keeps the session port for local hosted stacks', () => {
+test('manager origin comes from the endpoints whose template matched', () => {
+	const local = parseHostedEndpoints({
+		appServer: 'https://app.terminay.com:8443',
+		sessionServer: 'https://<session>.terminay.com:8443',
+	});
 	assert.equal(
 		managerOriginFromSessionOrigin(
 			'https://abc12345def67890abc12345def67890.terminay.com:8443',
+			local,
 		),
 		'https://app.terminay.com:8443',
 	);
@@ -67,10 +73,17 @@ test('manager origin keeps the session port for local hosted stacks', () => {
 	);
 	const parsed = parseHostedPairingUrl(
 		'https://app.terminay.com:8443/?s=abc12345def67890abc12345def67890#secret-token-that-must-not-be-stored-12',
+		local,
 	);
 	assert.equal(
 		parsed.origin,
 		'https://abc12345def67890abc12345def67890.terminay.com:8443',
+	);
+	// Without those endpoints the port-8443 origins are nobody's manager.
+	assert.throws(() =>
+		managerOriginFromSessionOrigin(
+			'https://abc12345def67890abc12345def67890.terminay.com:8443',
+		),
 	);
 });
 
@@ -217,5 +230,73 @@ test('pairing secrets are rejected in the query', () => {
 				'https://app.terminay.com/v1/#secret-token-that-must-not-be-stored-12',
 			),
 		/pairing link/,
+	);
+});
+
+const PREVIEW = parseHostedEndpoints({
+	appServer: 'https://app-pr123.dev.terminay.com',
+	sessionServer: 'https://<session>-pr123.dev.terminay.com',
+});
+const ID = 'abc12345def67890abc12345def67890';
+
+test('a preview manager link frames the preview session origin', () => {
+	const href = formatHostedPairingUrl({
+		fragment: SECRET,
+		managerOrigin: PREVIEW.appServer,
+		sessionId: ID,
+	});
+	const parsed = parseHostedPairingUrl(href, PREVIEW);
+	assert.equal(parsed.class, 'hosted');
+	assert.equal(parsed.sessionId, ID);
+	assert.equal(parsed.origin, `https://${ID}-pr123.dev.terminay.com`);
+	assert.equal(new URL(parsed.managerHref).origin, PREVIEW.appServer);
+	assert.equal(
+		managerOriginFromSessionOrigin(parsed.origin, PREVIEW),
+		PREVIEW.appServer,
+	);
+	assert.equal(classifyPairingOrigin(parsed.origin, PREVIEW), 'hosted');
+	assert.equal(classifyPairingOrigin(PREVIEW.appServer, PREVIEW), 'hosted');
+});
+
+test('a session-origin link under preview endpoints recovers the id', () => {
+	const parsed = parseHostedPairingUrl(
+		`https://${ID}-pr123.dev.terminay.com/v1/#${SECRET}`,
+		PREVIEW,
+	);
+	assert.equal(parsed.class, 'hosted');
+	assert.equal(parsed.sessionId, ID);
+	assert.equal(new URL(parsed.managerHref).origin, PREVIEW.appServer);
+});
+
+test('a client configured for a preview still recognises production', () => {
+	const parsed = parseHostedPairingUrl(
+		`https://app.terminay.com/?s=${ID}#${SECRET}`,
+		PREVIEW,
+	);
+	assert.equal(parsed.origin, `https://${ID}.terminay.com`);
+	assert.equal(
+		classifyPairingOrigin(`https://${ID}.terminay.com`, PREVIEW),
+		'hosted',
+	);
+});
+
+test('a manager the client is not configured for is never trusted as a manager', () => {
+	// Without the preview endpoints the link is not a manager link, so no
+	// session origin is ever derived from it.
+	assert.throws(
+		() =>
+			parseHostedPairingUrl(
+				`https://app-pr123.dev.terminay.com/?s=${ID}#${SECRET}`,
+			),
+		/pairing link/u,
+	);
+	// Arbitrary app.* hosts are not managers either.
+	assert.throws(
+		() => parseHostedPairingUrl(`https://app.example.test/?s=${ID}#${SECRET}`),
+		/pairing link/u,
+	);
+	assert.equal(
+		classifyPairingOrigin(`https://${ID}-pr123.dev.terminay.com`),
+		'direct',
 	);
 });

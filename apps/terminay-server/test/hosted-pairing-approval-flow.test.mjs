@@ -1289,8 +1289,10 @@ test('a standalone server started with --expose hosted registers its rooms befor
 			'disabled',
 			'--expose',
 			'hosted',
-			'--hosted-domain',
-			`localhost:${relay.port}`,
+			'--app-server',
+			`http://localhost:${relay.port}`,
+			'--session-server',
+			`http://<session>.localhost:${relay.port}`,
 		],
 		{
 			env: {

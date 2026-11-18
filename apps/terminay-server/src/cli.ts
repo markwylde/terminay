@@ -24,7 +24,11 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonValue } from '@terminay/protocol';
-import { FEATURE_CAPABILITIES } from '@terminay/protocol';
+import {
+	FEATURE_CAPABILITIES,
+	type HostedEndpoints,
+	sessionIdFromOrigin,
+} from '@terminay/protocol';
 import {
 	AgentStatusService,
 	AiService,
@@ -321,18 +325,19 @@ else if (options.command === 'mcp') {
 	const pairingUrlFormat =
 		options.exposeModes.length > 0
 			? 'hosted-compact'
-			: pairingUrlFormatForOrigin(options.remoteOrigin, options.hostedDomain);
+			: pairingUrlFormatForOrigin(options.remoteOrigin, options.hostedEndpoints);
 	// Whether this server has a hosted session origin, so hosted exposure (at
 	// startup or from a client) and push delivery can use it.
 	const hostedCapable =
 		!directOnly(options) &&
-		pairingUrlFormatForOrigin(sessionOrigin, options.hostedDomain) ===
+		pairingUrlFormatForOrigin(sessionOrigin, options.hostedEndpoints) ===
 			'hosted-compact';
 	const remote = createRemoteExposure(
 		options.serverId,
 		sessionOrigin,
 		devicePersistence.load(),
 		pairingUrlFormat,
+		options.hostedEndpoints,
 	);
 	let protocolReady = false;
 	if (
@@ -591,6 +596,7 @@ else if (options.command === 'mcp') {
 						{ handoff: modeHandoff, rotateHandoff, hooks },
 					) =>
 						startHostedPairingHost({
+							hostedEndpoints: options.hostedEndpoints,
 							// The direct host reaches its own relay over the loopback
 							// interface and does not verify the certificate it just minted:
 							// the transport transcript, not TLS, authenticates this
@@ -795,11 +801,13 @@ function createRemoteExposure(
 	sessionOrigin: string,
 	initialDevices: readonly RemoteRegisteredDevice[],
 	pairingUrlFormat: 'standalone' | 'hosted-compact',
+	hostedEndpoints: HostedEndpoints,
 ): ServerRemoteExposure {
 	const exposure = createServerRemoteExposure({
 		serverId,
 		sessionOrigin,
 		pairingUrlFormat,
+		hostedEndpoints,
 	});
 	exposure.devices.restore(initialDevices);
 	return exposure;
@@ -2508,9 +2516,9 @@ async function createDirectExposure(
 		directOrigin,
 	);
 	// The manager origin is the public connection-manager host, which must never
-	// be able to accept a signaling upgrade. It is always the hosted domain's
-	// manager, never this listener.
-	const managerOrigin = `https://app.${options.hostedDomain}`;
+	// be able to accept a signaling upgrade. It is always the configured App
+	// Server, never this listener.
+	const managerOrigin = options.hostedEndpoints.appServer;
 	if (managerOrigin === directOrigin) {
 		throw new Error(
 			'--direct-origin must not be the hosted connection-manager origin',
@@ -2576,18 +2584,13 @@ function directPairingUrl(
 
 function pairingUrlFormatForOrigin(
 	sessionOrigin: string,
-	hostedDomain: string,
+	endpoints: HostedEndpoints,
 ): 'standalone' | 'hosted-compact' {
-	try {
-		const url = new URL(sessionOrigin);
-		const domain = hostedDomain.toLowerCase();
-		const host = (domain.includes(':') ? url.host : url.hostname).toLowerCase();
-		if (host.endsWith(`.${domain}`) && host !== `app.${domain}`)
-			return 'hosted-compact';
-	} catch {
-		// Fall through to the standalone local-HTTP pairing fragment.
-	}
-	return 'standalone';
+	// A session origin the configured Session Server template produces is
+	// hosted; anything else keeps the standalone local-HTTP pairing fragment.
+	return sessionIdFromOrigin(endpoints, sessionOrigin) !== undefined
+		? 'hosted-compact'
+		: 'standalone';
 }
 
 function resolveWebRtcRuntimeRoot(

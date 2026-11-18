@@ -29,9 +29,10 @@ test("non-loopback and HTTPS web origins remain exact", () => {
   ]);
 });
 
-test("a server is not exposed and uses the default hosted domain unless configured", () => {
+test("a server is not exposed and uses the production hosted endpoints unless configured", () => {
   const options = parse();
-  assert.equal(options.hostedDomain, "terminay.com");
+  assert.equal(options.hostedEndpoints.appServer, "https://app.terminay.com");
+  assert.equal(options.hostedEndpoints.sessionServer, "https://<session>.terminay.com");
   assert.deepEqual(options.exposeModes, []);
   assert.equal(options.directOrigin, undefined);
   for (const off of ["off", "disabled", ""]) {
@@ -56,11 +57,36 @@ test("exposure modes are parsed in a stable order and reject unknown names", () 
   assert.throws(() => parse(["--expose", "public"]), /--expose accepts off, hosted, direct/u);
 });
 
-test("hosted domain accepts a bare domain or an exact origin and keeps an explicit port", () => {
-  assert.equal(parse(["--hosted-domain", "example.test"]).hostedDomain, "example.test");
-  assert.equal(parse(["--hosted-domain", "https://example.test"]).hostedDomain, "example.test");
-  assert.equal(parse(["--hosted-domain", "localhost:8443"]).hostedDomain, "localhost:8443");
-  assert.throws(() => parse(["--hosted-domain", "https://example.test/relay"]), /exact origin/u);
+test("hosted endpoints are configured as an App Server and a Session Server", () => {
+  const preview = parse([
+    "--app-server",
+    "https://app-pr123.dev.terminay.com",
+    "--session-server",
+    "https://<session>-pr123.dev.terminay.com",
+  ]).hostedEndpoints;
+  assert.equal(preview.appServer, "https://app-pr123.dev.terminay.com");
+  assert.equal(preview.sessionServer, "https://<session>-pr123.dev.terminay.com");
+  const loopback = parse([
+    "--app-server",
+    "localhost:8443",
+    "--session-server",
+    "<session>.localhost:8443",
+  ]).hostedEndpoints;
+  assert.equal(loopback.appServer, "http://localhost:8443");
+  assert.equal(loopback.sessionServer, "http://<session>.localhost:8443");
+});
+
+test("invalid hosted endpoints fail before any listener opens and name the option", () => {
+  assert.throws(() => parse(["--app-server", "https://app.terminay.com/relay"]), /^Error: --app-server: .*no path/u);
+  assert.throws(() => parse(["--session-server", "https://dev.<session>.terminay.com"]), /^Error: --session-server: .*leftmost label/u);
+  assert.throws(() => parse(["--session-server", "http://<session>.terminay.com"]), /^Error: --session-server: .*HTTPS/u);
+});
+
+test("a leftover production hosted domain is ignored and any other fails loudly", () => {
+  assert.equal(parse(["--hosted-domain", "terminay.com"]).hostedEndpoints.appServer, "https://app.terminay.com");
+  assert.equal(parse([], { TERMINAY_HOSTED_DOMAIN: "terminay.com" }).hostedEndpoints.appServer, "https://app.terminay.com");
+  assert.throws(() => parse(["--hosted-domain", "example.test"]), /--app-server and --session-server/u);
+  assert.throws(() => parse([], { TERMINAY_HOSTED_DOMAIN: "localhost:8443" }), /TERMINAY_APP_SERVER/u);
 });
 
 test("a direct origin must be an exact HTTPS origin", () => {
@@ -86,18 +112,21 @@ test("direct exposure without an origin fails before any listener opens", () => 
 
 test("command-line exposure configuration takes precedence over the environment", () => {
   const environment = {
-    TERMINAY_HOSTED_DOMAIN: "env.example.test",
+    TERMINAY_APP_SERVER: "https://app.env.example.test",
+    TERMINAY_SESSION_SERVER: "https://<session>.env.example.test",
     TERMINAY_EXPOSE: "hosted",
     TERMINAY_DIRECT_ORIGIN: "https://env.example.test",
   };
   assert.deepEqual(parse([], environment).exposeModes, ["hosted"]);
-  assert.equal(parse([], environment).hostedDomain, "env.example.test");
+  assert.equal(parse([], environment).hostedEndpoints.appServer, "https://app.env.example.test");
   assert.equal(parse([], environment).directOrigin, "https://env.example.test");
 
   const overridden = parse(
     [
-      "--hosted-domain",
-      "flag.example.test",
+      "--app-server",
+      "https://app.flag.example.test",
+      "--session-server",
+      "https://<session>.flag.example.test",
       "--expose",
       "off",
       "--direct-origin",
@@ -105,7 +134,8 @@ test("command-line exposure configuration takes precedence over the environment"
     ],
     environment,
   );
-  assert.equal(overridden.hostedDomain, "flag.example.test");
+  assert.equal(overridden.hostedEndpoints.appServer, "https://app.flag.example.test");
+  assert.equal(overridden.hostedEndpoints.sessionServer, "https://<session>.flag.example.test");
   assert.deepEqual(overridden.exposeModes, []);
   assert.equal(overridden.directOrigin, "https://flag.example.test");
 });

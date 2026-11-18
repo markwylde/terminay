@@ -22,7 +22,8 @@ const configuration = {
 	port: 8443,
 	healthPort: 8444,
 	expose: 'hosted,direct',
-	hostedDomain: 'terminay.com',
+	appServer: 'https://app.terminay.com',
+	sessionServer: 'https://<session>.terminay.com',
 	directOrigin: 'https://198.51.100.7:8443',
 	uiBundle: '/opt/terminay/current/ui',
 };
@@ -162,7 +163,8 @@ TERMINAY_HTTP_PORT=8443
 TERMINAY_HEALTH_HOST=127.0.0.1
 TERMINAY_HEALTH_PORT=8444
 TERMINAY_EXPOSE=hosted,direct
-TERMINAY_HOSTED_DOMAIN=terminay.com
+TERMINAY_APP_SERVER=https://app.terminay.com
+TERMINAY_SESSION_SERVER=https://<session>.terminay.com
 TERMINAY_DIRECT_ORIGIN=https://198.51.100.7:8443
 TERMINAY_AGENT_INTEGRATION=enabled
 TERMINAY_AI_PROVIDERS=disabled

@@ -4,9 +4,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+	parseHostedEndpoints,
+	PRODUCTION_HOSTED_ENDPOINTS,
+} from '@terminay/protocol';
+import {
 	loadOrCreateSessionOrigin,
 	SESSION_ORIGIN_FILE,
 } from '../dist/remote/sessionOrigin.js';
+
+const PRODUCTION = PRODUCTION_HOSTED_ENDPOINTS;
+const PREVIEW = parseHostedEndpoints({
+	appServer: 'https://app-pr123.dev.terminay.com',
+	sessionServer: 'https://<session>-pr123.dev.terminay.com',
+});
+const LOOPBACK = parseHostedEndpoints({
+	appServer: 'http://localhost:8443',
+	sessionServer: 'http://<session>.localhost:8443',
+});
 
 async function withDataRoot(body) {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-session-origin-'));
@@ -17,9 +31,9 @@ async function withDataRoot(body) {
 	}
 }
 
-test('a fresh data root mints one session origin under the hosted domain', () =>
+test('a fresh data root mints one session origin from the Session Server template', () =>
 	withDataRoot(async (root) => {
-		const origin = loadOrCreateSessionOrigin(root, 'terminay.com');
+		const origin = loadOrCreateSessionOrigin(root, PRODUCTION);
 		const url = new URL(origin);
 		assert.equal(url.protocol, 'https:');
 		assert.match(url.hostname, /^[a-f0-9]{32}\.terminay\.com$/u);
@@ -35,26 +49,35 @@ test('a fresh data root mints one session origin under the hosted domain', () =>
 
 test('a persisted session origin is reused across restarts', () =>
 	withDataRoot(async (root) => {
-		const first = loadOrCreateSessionOrigin(root, 'terminay.com');
-		const second = loadOrCreateSessionOrigin(root, 'terminay.com');
+		const first = loadOrCreateSessionOrigin(root, PRODUCTION);
+		const second = loadOrCreateSessionOrigin(root, PRODUCTION);
 		assert.equal(second, first);
-		// The hosted domain may be written with or without a scheme.
-		assert.equal(loadOrCreateSessionOrigin(root, 'https://terminay.com'), first);
+		// Equal endpoints parsed separately still match the persisted origin.
+		assert.equal(
+			loadOrCreateSessionOrigin(
+				root,
+				parseHostedEndpoints({
+					appServer: 'app.terminay.com',
+					sessionServer: '<session>.terminay.com',
+				}),
+			),
+			first,
+		);
 	}));
 
-test('changing the hosted domain mints a new origin under the new domain', () =>
+test('changing the Session Server mints a new origin from the new template', () =>
 	withDataRoot(async (root) => {
-		const first = loadOrCreateSessionOrigin(root, 'terminay.com');
-		const second = loadOrCreateSessionOrigin(root, 'example.test');
+		const first = loadOrCreateSessionOrigin(root, PRODUCTION);
+		const second = loadOrCreateSessionOrigin(root, PREVIEW);
 		assert.notEqual(second, first);
-		assert.match(new URL(second).hostname, /\.example\.test$/u);
+		assert.match(new URL(second).hostname, /^[a-f0-9]{32}-pr123\.dev\.terminay\.com$/u);
 		// The new origin replaces the old one, so a later start is stable again.
-		assert.equal(loadOrCreateSessionOrigin(root, 'example.test'), second);
+		assert.equal(loadOrCreateSessionOrigin(root, PREVIEW), second);
 	}));
 
-test('a loopback hosted domain keeps http so a development relay needs no certificate', () =>
+test('a loopback Session Server keeps http so a development relay needs no certificate', () =>
 	withDataRoot(async (root) => {
-		const origin = loadOrCreateSessionOrigin(root, 'localhost:8443');
+		const origin = loadOrCreateSessionOrigin(root, LOOPBACK);
 		const url = new URL(origin);
 		assert.equal(url.protocol, 'http:');
 		assert.match(url.hostname, /\.localhost$/u);
@@ -68,12 +91,12 @@ test('an unreadable or foreign persisted origin is replaced rather than trusted'
 			file,
 			JSON.stringify({ origin: 'https://attacker.example', schemaVersion: 1 }),
 		);
-		const origin = loadOrCreateSessionOrigin(root, 'terminay.com');
+		const origin = loadOrCreateSessionOrigin(root, PRODUCTION);
 		assert.match(new URL(origin).hostname, /\.terminay\.com$/u);
 
 		await writeFile(file, JSON.stringify({ origin: 'https://a.terminay.com' }));
 		assert.match(
-			new URL(loadOrCreateSessionOrigin(root, 'terminay.com')).hostname,
+			new URL(loadOrCreateSessionOrigin(root, PRODUCTION)).hostname,
 			/\.terminay\.com$/u,
 		);
 	}));

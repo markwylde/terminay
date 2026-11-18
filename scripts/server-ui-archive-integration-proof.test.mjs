@@ -21,7 +21,7 @@ test('generic hosted-manager fixture installs the real server archive through on
     createWebRtcHostWindow: () => { throw new Error('fixture supplies its own authenticated host bridge') },
     getControllableSession: () => null,
     getRemoteAccessSettings: () => ({
-      webRtcHostedDomain: 'localhost', webRtcIceServers: '',
+      appServer: 'http://localhost', sessionServer: 'http://<session>.localhost', webRtcIceServers: '',
     }),
     notifyTerminalRemoteSizeOverride: () => {}, onStatusChanged: () => {}, publicDir: join(root, 'public'),
     rendererDistDir: renderer, saveGeneratedTlsPaths: () => {}, userDataPath: root,

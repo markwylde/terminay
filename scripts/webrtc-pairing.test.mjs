@@ -7,11 +7,21 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 
+import { parseHostedEndpoints } from '../packages/protocol/dist/index.js'
+
 const { WebRtcPairingManager } = await importWebRtcPairingManager()
+
+const REMOTE = parseHostedEndpoints({
+  appServer: 'https://app.remote.example.com',
+  sessionServer: 'https://<session>.remote.example.com',
+})
+const LOOPBACK = parseHostedEndpoints({
+  appServer: 'http://localhost:18080',
+  sessionServer: 'http://<session>.localhost:18080',
+})
 
 test('WebRtcPairingManager creates compact v1 manager-origin QR payloads with one-time rooms', () => {
   const payload = new WebRtcPairingManager().create({
-    hostedDomain: 'terminay.com',
     hostName: 'Studio-Mac.local',
   })
   const url = new URL(payload.pairingUrl)
@@ -38,7 +48,6 @@ test('WebRtcPairingManager creates compact v1 manager-origin QR payloads with on
 
 test('WebRtcPairingManager omits hostName from the QR when it sanitizes empty', () => {
   const payload = new WebRtcPairingManager().create({
-    hostedDomain: 'terminay.com',
     hostName: '   ',
   })
   const url = new URL(payload.pairingUrl)
@@ -49,7 +58,7 @@ test('WebRtcPairingManager omits hostName from the QR when it sanitizes empty', 
 
 test('WebRtcPairingManager v1 secrets match HKDF-SHA256 labels', () => {
   const payload = new WebRtcPairingManager().create({
-    hostedDomain: 'remote.example.com',
+    hostedEndpoints: REMOTE,
   })
   const qrSecretBytes = base64UrlToBytes(payload.qrSecret)
 
@@ -65,9 +74,9 @@ test('WebRtcPairingManager v1 secrets match HKDF-SHA256 labels', () => {
 
 test('WebRtcPairingManager reuses a supplied session id while rotating rooms', () => {
   const manager = new WebRtcPairingManager()
-  const first = manager.create({ hostedDomain: 'remote.example.com' })
+  const first = manager.create({ hostedEndpoints: REMOTE })
   const second = manager.create({
-    hostedDomain: 'remote.example.com',
+    hostedEndpoints: REMOTE,
     sessionId: first.sessionId,
   })
 
@@ -78,30 +87,31 @@ test('WebRtcPairingManager reuses a supplied session id while rotating rooms', (
   assert.equal(new URL(second.pairingUrl).searchParams.get('s'), first.sessionId)
 })
 
-test('WebRtcPairingManager supports explicit localhost session origins for E2E', () => {
+test('WebRtcPairingManager supports loopback endpoints for E2E', () => {
   const payload = new WebRtcPairingManager().create({
-    hostedDomain: 'http://localhost:18080',
+    hostedEndpoints: LOOPBACK,
   })
   const url = new URL(payload.pairingUrl)
 
-  assert.equal(url.protocol, 'http:')
-  assert.equal(url.hostname, 'localhost')
-  assert.equal(url.port, '18080')
+  assert.equal(url.origin, 'http://localhost:18080')
   assert.equal(url.pathname, '/')
   assert.equal(url.searchParams.get('s'), payload.sessionId)
   assert.equal(payload.appOrigin, `http://${payload.sessionId}.localhost:18080`)
   assert.equal(payload.signalingUrl, `ws://${payload.sessionId}.localhost:18080/signal`)
 })
 
-test('WebRtcPairingManager accepts normalized localhost origins from settings', () => {
-  const payload = new WebRtcPairingManager().create({
-    hostedDomain: 'localhost:18080',
+test('WebRtcPairingManager advertises a preview manager and session origin', () => {
+  const preview = parseHostedEndpoints({
+    appServer: 'https://app-pr123.dev.terminay.com',
+    sessionServer: 'https://<session>-pr123.dev.terminay.com',
   })
+  const payload = new WebRtcPairingManager().create({ hostedEndpoints: preview })
   const url = new URL(payload.pairingUrl)
 
-  assert.equal(url.origin, 'http://localhost:18080')
+  assert.equal(url.origin, 'https://app-pr123.dev.terminay.com')
   assert.equal(url.searchParams.get('s'), payload.sessionId)
-  assert.equal(payload.signalingUrl, `ws://${payload.sessionId}.localhost:18080/signal`)
+  assert.equal(payload.appOrigin, `https://${payload.sessionId}-pr123.dev.terminay.com`)
+  assert.equal(payload.signalingUrl, `wss://${payload.sessionId}-pr123.dev.terminay.com/signal`)
 })
 
 async function importWebRtcPairingManager() {
