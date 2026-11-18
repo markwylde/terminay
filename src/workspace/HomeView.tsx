@@ -2,7 +2,7 @@
  * Home's shell: its sidebar, beside whatever Home is showing.
  *
  * Home is not a project, so its sidebar holds no Explorer, Documentation,
- * Agents, or Changes panes. It lists Home's six sections and opens each as a
+ * Agents, or Changes panes. It lists Home's sections and opens each as a
  * tab. It reuses the project sidebar's geometry — the same split layout, width
  * separator, and narrow-layout drawer — so it inherits the drawer's focus and
  * dismissal rules rather than defining its own.
@@ -19,6 +19,7 @@ import {
 	House,
 	LayoutList,
 	ListChecks,
+	Sparkles,
 	Workflow,
 } from 'lucide-react';
 import { type KeyboardEvent, type ReactNode, useRef } from 'react';
@@ -28,9 +29,12 @@ import {
 } from '../shared/WorkspaceSplitLayout';
 import {
 	HOME_SECTION_LABELS,
-	HOME_SECTIONS,
 	type HomeSection,
+	visibleHomeSections,
 } from './homeSection.ts';
+
+export { visibleHomeSections };
+
 import './homeView.css';
 
 export const HOME_SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
@@ -41,6 +45,7 @@ export const HOME_SECTION_ICONS: Readonly<Record<HomeSection, ReactNode>> = {
 	pullRequests: <GitPullRequest size={15} aria-hidden="true" />,
 	recordings: <Film size={15} aria-hidden="true" />,
 	tabs: <LayoutList size={15} aria-hidden="true" />,
+	whatsNew: <Sparkles size={15} aria-hidden="true" />,
 	workflows: <ListChecks size={15} aria-hidden="true" />,
 };
 
@@ -74,21 +79,14 @@ export type HomeViewProps = Readonly<{
 	hiddenSections?: ReadonlySet<HomeSection>;
 }>;
 
-/** The sections a sidebar lists, in order. */
-export function visibleHomeSections(
-	hidden: ReadonlySet<HomeSection> | undefined,
-): readonly HomeSection[] {
-	return hidden === undefined || hidden.size === 0
-		? HOME_SECTIONS
-		: HOME_SECTIONS.filter((section) => !hidden.has(section));
-}
-
 export type HomeSectionBadge = Readonly<{
 	count: number;
 	/** Said after the section's name, e.g. "2 workflows need you". */
 	label: string;
 	/** A count to know about rather than act on: drawn without the alert colour. */
 	tone?: 'alert' | 'neutral';
+	/** Drawn as a dot rather than a number, for something new rather than counted. */
+	dot?: boolean;
 }>;
 
 export function HomeView({
@@ -215,11 +213,11 @@ export function HomeView({
 											</span>
 											{shownBadge === undefined ? null : (
 												<span
-													className={`home-sidebar__badge${shownBadge.tone === 'neutral' ? ' home-sidebar__badge--neutral' : ''}`}
+													className={`home-sidebar__badge${shownBadge.tone === 'neutral' ? ' home-sidebar__badge--neutral' : ''}${shownBadge.dot === true ? ' home-sidebar__badge--dot' : ''}`}
 													aria-hidden="true"
 													data-terminay-home-section-badge={candidate}
 												>
-													{shownBadge.count}
+													{shownBadge.dot === true ? null : shownBadge.count}
 												</span>
 											)}
 										</button>

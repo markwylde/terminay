@@ -81,6 +81,23 @@ test("UI bundle validation rejects traversal, duplicate, and namespace escape pa
   assert.throws(() => validateUiBundleManifest({ ...manifest, contentSecurityPolicy: "default-src *" }), /content security policy is not supported/);
 });
 
+test("UI bundle policy admits terminay.com and no other hosted origin (ADR-0137)", () => {
+  assert.equal(
+    DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  );
+  const { manifest } = makeManifest();
+  const previous = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  assert.equal(
+    validateUiBundleManifest({ ...manifest, contentSecurityPolicy: previous }).contentSecurityPolicy,
+    DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
+  );
+  assert.throws(
+    () => validateUiBundleManifest({ ...manifest, contentSecurityPolicy: DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY.replace("https://terminay.com;", "https://*.terminay.com;") }),
+    /content security policy is not supported/,
+  );
+});
+
 test("UI bundle validation rejects asset-hash substitution under another bundle identity", () => {
   const { manifest } = makeManifest();
   const substituted = {

@@ -10,7 +10,7 @@ import {
 import { createStartedProject } from './support/project-start';
 
 /**
- * Home's sidebar: Home, Tabs, Bots, Automations, and Recordings, each opening as a
+ * Home's sidebar: Home, What's New, Tabs, Bots, Automations, and Recordings, each opening as a
  * Home tab. Its
  * visibility, and the tabs it opened, belong to this device and to no project.
  */
@@ -21,7 +21,16 @@ const sidebarToggle = (page: Page) => page.getByLabel('Toggle file explorer');
 const homeView = activeHome;
 const homeSidebar = (page: Page) =>
 	page.locator('[data-terminay-home-sidebar]');
-type Section = 'home' | 'tabs' | 'bots' | 'automations' | 'workflows' | 'recordings' | 'pullRequests' | 'issues';
+type Section =
+	| 'home'
+	| 'whatsNew'
+	| 'tabs'
+	| 'bots'
+	| 'automations'
+	| 'workflows'
+	| 'recordings'
+	| 'pullRequests'
+	| 'issues';
 
 const sectionTab = (page: Page, section: Section) =>
 	page.locator(`[data-terminay-home-section-tab="${section}"]`);
@@ -77,9 +86,19 @@ test.describe('Home sidebar', () => {
 		await expect(homeSidebar(mainWindow)).toBeVisible();
 		await expectSection(mainWindow, 'home');
 
-		// Exactly six sections, in order, and the one in front is current.
+		// Every section, in order, and the one in front is current.
 		const items = homeSidebar(mainWindow).getByRole('tab');
-		await expect(items).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Workflows', 'Recordings', 'Pull Requests', 'Issues']);
+		await expect(items).toHaveText([
+			'Home',
+			"What's New",
+			'Tabs',
+			'Bots',
+			'Automations',
+			'Workflows',
+			'Recordings',
+			'Pull Requests',
+			'Issues',
+		]);
 		await expect(sectionTab(mainWindow, 'home')).toHaveAttribute(
 			'aria-selected',
 			'true',
@@ -115,6 +134,8 @@ test.describe('Home sidebar', () => {
 		// Arrow keys move through the list without opening anything; Enter
 		// opens the section as a tab.
 		await sectionTab(mainWindow, 'home').focus();
+		await mainWindow.keyboard.press('ArrowDown');
+		await expect(sectionTab(mainWindow, 'whatsNew')).toBeFocused();
 		await mainWindow.keyboard.press('ArrowDown');
 		await expect(sectionTab(mainWindow, 'tabs')).toBeFocused();
 		await expectSection(mainWindow, 'home');
@@ -250,8 +271,20 @@ test.describe('Home sidebar', () => {
 		const empty = mainWindow.locator('[data-terminay-home-empty]');
 		await expect(
 			empty.locator('[data-terminay-home-empty-section]'),
-		).toHaveText(['Home', 'Tabs', 'Bots', 'Automations', 'Workflows', 'Recordings', 'Pull Requests', 'Issues']);
-		await empty.locator('[data-terminay-home-empty-section="automations"]').click();
+		).toHaveText([
+			'Home',
+			"What's New",
+			'Tabs',
+			'Bots',
+			'Automations',
+			'Workflows',
+			'Recordings',
+			'Pull Requests',
+			'Issues',
+		]);
+		await empty
+			.locator('[data-terminay-home-empty-section="automations"]')
+			.click();
 		await expectSection(mainWindow, 'automations');
 		await expect(homeTabChips(mainWindow)).toHaveText(['Automations']);
 	});
@@ -309,9 +342,9 @@ test.describe('Home sidebar', () => {
 			width: 712,
 			height: 760,
 		});
-		await expect(mainWindow.locator('[data-compact-chrome="true"]')).toHaveCount(
-			0,
-		);
+		await expect(
+			mainWindow.locator('[data-compact-chrome="true"]'),
+		).toHaveCount(0);
 		const layout = homeView(mainWindow).locator('.workspace-split-layout');
 		await expect(layout).toHaveAttribute('data-navigation-drawer', 'true');
 		// The drawer takes focus, and the content behind it is inert.
@@ -332,23 +365,33 @@ test.describe('Home sidebar', () => {
 	}) => {
 		const projectId = await activeProjectId(mainWindow);
 		await homeControl(mainWindow).click();
-		await expect(homeControl(mainWindow)).toHaveClass(/project-tab-home--active/);
+		await expect(homeControl(mainWindow)).toHaveClass(
+			/project-tab-home--active/,
+		);
 		await expect(
-			mainWindow.locator('[data-terminay-home-tabs] .dv-tabs-and-actions-container'),
+			mainWindow.locator(
+				'[data-terminay-home-tabs] .dv-tabs-and-actions-container',
+			),
 		).toBeVisible();
 
 		// The Command Bar opens over Home, and lists no place until something is typed.
 		await openMacroLauncher(mainWindow);
 		const commandBar = mainWindow.getByRole('dialog', { name: 'Command bar' });
-		const input = mainWindow.getByRole('searchbox', { name: 'Search commands' });
-		const places = commandBar.locator('[data-terminay-command-bar-item^="place:"]');
+		const input = mainWindow.getByRole('searchbox', {
+			name: 'Search commands',
+		});
+		const places = commandBar.locator(
+			'[data-terminay-command-bar-item^="place:"]',
+		);
 		await expect(commandBar.locator('.macro-launcher-item')).not.toHaveCount(0);
 		await expect(places).toHaveCount(0);
 
 		// A section is a place to go: it opens as a tab.
 		await input.fill('autom');
 		await expect(
-			commandBar.locator('[data-terminay-command-bar-item="place:section:automations"]'),
+			commandBar.locator(
+				'[data-terminay-command-bar-item="place:section:automations"]',
+			),
 		).toBeVisible();
 		await commandBar
 			.locator('[data-terminay-command-bar-item="place:section:automations"]')

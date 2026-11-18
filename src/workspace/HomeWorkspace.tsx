@@ -64,13 +64,13 @@ import {
 /** The sections whose content the window composes. */
 export type HomeComposedSection = Exclude<
 	HomeSection,
-	'automations' | 'bots' | 'recordings'
+	'automations' | 'bots' | 'recordings' | 'whatsNew'
 >;
+
 import {
-	RecordingReplayPanel,
-	RecordingsListPanel,
-	type RecordingTabHost,
-} from './recordings/RecordingsPanels';
+	CompactDrawerEpochContext,
+	CompactHomeContext,
+} from './compact/CompactHomeContext';
 import { HOME_SECTION_LABELS, type HomeSection } from './homeSection.ts';
 import {
 	defaultHomeTabTitle,
@@ -88,9 +88,11 @@ import {
 	rememberHomeLayout,
 } from './localViewState.ts';
 import {
-	CompactDrawerEpochContext,
-	CompactHomeContext,
-} from './compact/CompactHomeContext';
+	RecordingReplayPanel,
+	RecordingsListPanel,
+	type RecordingTabHost,
+} from './recordings/RecordingsPanels';
+import { WhatsNewPanel } from './whatsNew/WhatsNewPanel';
 
 type HomeTabParams = Readonly<{
 	descriptor: HomeTabDescriptor;
@@ -119,7 +121,10 @@ type HomeTabsContextValue = Readonly<{
 		from?: string,
 	) => void;
 	openBot: (target: BotTabTarget, from?: string) => void;
-	renderSection: (section: HomeComposedSection, isVisible: boolean) => ReactNode;
+	renderSection: (
+		section: HomeComposedSection,
+		isVisible: boolean,
+	) => ReactNode;
 	hiddenSections?: ReadonlySet<HomeSection>;
 	renderBots: (host: BotTabHost) => ReactNode;
 	renderBot: (
@@ -234,6 +239,9 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 				case 'bots':
 					content = home.renderBots(botHost);
 					break;
+				case 'whatsNew':
+					content = <WhatsNewPanel isVisible={onScreen} />;
+					break;
 				case 'recordings':
 					content = (
 						<RecordingsListPanel
@@ -305,9 +313,10 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 			);
 			break;
 		case 'forge-item':
-			content = home.renderForgeItem?.(descriptor, {
-				setTitle: host.setTitle,
-			}) ?? null;
+			content =
+				home.renderForgeItem?.(descriptor, {
+					setTitle: host.setTitle,
+				}) ?? null;
 			break;
 		case 'automation-terminal':
 			content = (
@@ -338,7 +347,10 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 }
 
 /** One Home tab's chip in the strip: icon, title, unsaved mark, close. */
-function HomeTabChip({ api, params }: IDockviewPanelHeaderProps<HomeTabParams>) {
+function HomeTabChip({
+	api,
+	params,
+}: IDockviewPanelHeaderProps<HomeTabParams>) {
 	const home = useHomeTabs();
 	const [title, setTitle] = useState(api.title ?? '');
 	useEffect(() => {
@@ -483,7 +495,10 @@ export type HomeWorkspaceProps = Readonly<{
 	onSidebarWidthCommit: (width: number) => void;
 	/** The Home overview, the Tabs dashboard, Workflows, Pull Requests, and
 	 * Issues, which the window composes; told whether the tab is on screen. */
-	renderSection: (section: HomeComposedSection, isVisible: boolean) => ReactNode;
+	renderSection: (
+		section: HomeComposedSection,
+		isVisible: boolean,
+	) => ReactNode;
 	/** Sections this window does not offer, such as Pull Requests with no forge source. */
 	hiddenSections?: ReadonlySet<HomeSection>;
 	/** The Bots section and each bot's tab, which the window composes. */
@@ -546,9 +561,8 @@ export const HomeWorkspace = forwardRef<
 	const dirtyRef = useRef(dirtyIds);
 	dirtyRef.current = dirtyIds;
 	/** The tab a person asked to close while it held unsaved edits. */
-	const [confirming, setConfirming] = useState<
-		Readonly<{ id: string; title: string }>
-	>();
+	const [confirming, setConfirming] =
+		useState<Readonly<{ id: string; title: string }>>();
 	const [notice, setNotice] = useState<string>();
 	const draftCounterRef = useRef(0);
 	// Dockview disposing its panels on unmount or reload is not a person
@@ -755,7 +769,9 @@ export const HomeWorkspace = forwardRef<
 			},
 			activeSection: () => {
 				const descriptor = parseHomeTabId(apiRef.current?.activePanel?.id);
-				return descriptor === undefined ? undefined : homeTabSection(descriptor);
+				return descriptor === undefined
+					? undefined
+					: homeTabSection(descriptor);
 			},
 		}),
 		[openBot, openDescriptor, openTarget, requestClose],
@@ -819,7 +835,9 @@ export const HomeWorkspace = forwardRef<
 			descriptor === undefined ? undefined : homeTabSection(descriptor);
 		onActiveTabChangeRef.current?.({
 			...(section === undefined ? {} : { section }),
-			title: panel.title ?? (section === undefined ? 'Home' : HOME_SECTION_LABELS[section]),
+			title:
+				panel.title ??
+				(section === undefined ? 'Home' : HOME_SECTION_LABELS[section]),
 		});
 	}, [activeId]);
 
@@ -864,7 +882,9 @@ export const HomeWorkspace = forwardRef<
 
 	const activeDescriptor = parseHomeTabId(activeId);
 	const currentSection =
-		activeDescriptor === undefined ? undefined : homeTabSection(activeDescriptor);
+		activeDescriptor === undefined
+			? undefined
+			: homeTabSection(activeDescriptor);
 
 	const context = useMemo<HomeTabsContextValue>(
 		() => ({
@@ -940,78 +960,78 @@ export const HomeWorkspace = forwardRef<
 				: { onSectionChosenInDrawer })}
 		>
 			<HomeTabsContext.Provider value={context}>
-			<CompactHomeContext.Provider value={isCompact}>
-			<CompactDrawerEpochContext.Provider value={compactDrawerEpoch}>
-				{notice === undefined ? null : (
-					<div
-						className="home-notice"
-						role="status"
-						data-terminay-home-notice="true"
-					>
-						<span>{notice}</span>
-						<button
-							type="button"
-							className="home-notice__dismiss"
-							aria-label="Dismiss"
-							onClick={() => setNotice(undefined)}
-						>
-							<X size={12} aria-hidden="true" />
-						</button>
-					</div>
-				)}
-				<div
-					className={`home-tabs workspace dockview-theme-dark${isCompact ? ' workspace--compact-chrome' : ''}`}
-					data-terminay-home-tabs="true"
-				>
-					<DockviewReact
-						components={COMPONENTS}
-						tabComponents={TAB_COMPONENTS}
-						watermarkComponent={HomeEmptyState}
-						disableFloatingGroups
-						onReady={handleReady}
-					/>
-				</div>
-				{confirming === undefined ? null : (
-					<div
-						className="home-confirm-overlay"
-						onClick={() => setConfirming(undefined)}
-					>
-						<div
-							className="home-confirm"
-							role="alertdialog"
-							aria-modal="true"
-							aria-label="Discard unsaved edits"
-							data-terminay-home-discard-dialog={confirming.id}
-							onClick={(event) => event.stopPropagation()}
-						>
-							<p className="home-confirm__text">
-								“{confirming.title}” has unsaved edits. Closing it discards
-								them.
-							</p>
-							<div className="home-confirm__actions">
+				<CompactHomeContext.Provider value={isCompact}>
+					<CompactDrawerEpochContext.Provider value={compactDrawerEpoch}>
+						{notice === undefined ? null : (
+							<div
+								className="home-notice"
+								role="status"
+								data-terminay-home-notice="true"
+							>
+								<span>{notice}</span>
 								<button
 									type="button"
-									className="automations-button"
-									data-terminay-home-keep-editing="true"
-									autoFocus
-									onClick={() => setConfirming(undefined)}
+									className="home-notice__dismiss"
+									aria-label="Dismiss"
+									onClick={() => setNotice(undefined)}
 								>
-									Keep editing
-								</button>
-								<button
-									type="button"
-									className="automations-button automations-button--danger"
-									data-terminay-home-discard="true"
-									onClick={() => forceClose(confirming.id)}
-								>
-									Discard
+									<X size={12} aria-hidden="true" />
 								</button>
 							</div>
+						)}
+						<div
+							className={`home-tabs workspace dockview-theme-dark${isCompact ? ' workspace--compact-chrome' : ''}`}
+							data-terminay-home-tabs="true"
+						>
+							<DockviewReact
+								components={COMPONENTS}
+								tabComponents={TAB_COMPONENTS}
+								watermarkComponent={HomeEmptyState}
+								disableFloatingGroups
+								onReady={handleReady}
+							/>
 						</div>
-					</div>
-				)}
-			</CompactDrawerEpochContext.Provider>
-			</CompactHomeContext.Provider>
+						{confirming === undefined ? null : (
+							<div
+								className="home-confirm-overlay"
+								onClick={() => setConfirming(undefined)}
+							>
+								<div
+									className="home-confirm"
+									role="alertdialog"
+									aria-modal="true"
+									aria-label="Discard unsaved edits"
+									data-terminay-home-discard-dialog={confirming.id}
+									onClick={(event) => event.stopPropagation()}
+								>
+									<p className="home-confirm__text">
+										“{confirming.title}” has unsaved edits. Closing it discards
+										them.
+									</p>
+									<div className="home-confirm__actions">
+										<button
+											type="button"
+											className="automations-button"
+											data-terminay-home-keep-editing="true"
+											autoFocus
+											onClick={() => setConfirming(undefined)}
+										>
+											Keep editing
+										</button>
+										<button
+											type="button"
+											className="automations-button automations-button--danger"
+											data-terminay-home-discard="true"
+											onClick={() => forceClose(confirming.id)}
+										>
+											Discard
+										</button>
+									</div>
+								</div>
+							</div>
+						)}
+					</CompactDrawerEpochContext.Provider>
+				</CompactHomeContext.Provider>
 			</HomeTabsContext.Provider>
 		</HomeView>
 	);

@@ -821,3 +821,35 @@ test('throwing storage leaves column widths at their defaults', async () => {
     delete globalThis.localStorage
   }
 })
+
+test('the What\'s New post a device viewed round-trips and rejects malformed ids', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = fakeStorage()
+  try {
+    assert.equal(module.recallWhatsNewViewed(), undefined)
+    module.rememberWhatsNewViewed('2026-11')
+    assert.equal(module.recallWhatsNewViewed(), '2026-11')
+    module.rememberWhatsNewViewed('not-a-month')
+    module.rememberWhatsNewViewed('2026-13')
+    assert.equal(module.recallWhatsNewViewed(), '2026-11')
+    globalThis.localStorage.setItem('terminay.view.whats-new-viewed.v1', '<script>')
+    assert.equal(module.recallWhatsNewViewed(), undefined)
+  } finally {
+    delete globalThis.localStorage
+  }
+})
+
+test('unavailable storage leaves What\'s New unviewed without throwing', async () => {
+  const { module } = await loadModule()
+  globalThis.localStorage = {
+    getItem: () => { throw new Error('denied') },
+    setItem: () => { throw new Error('denied') },
+  }
+  try {
+    assert.doesNotThrow(() => module.rememberWhatsNewViewed('2026-11'))
+    assert.equal(module.recallWhatsNewViewed(), undefined)
+  } finally {
+    delete globalThis.localStorage
+  }
+  assert.equal(module.recallWhatsNewViewed(), undefined)
+})
