@@ -28,4 +28,4 @@
 
 - [x] 6.1 Run the affected suites with bounded `node --test --test-force-exit --test-timeout=120000`, after `npx turbo run build --filter=<package>...`, plus `npm run lint`. Verified by their output being green.
 - [x] 6.2 Run `openspec validate --all`, then archive the change so its deltas fold into `openspec/specs/`. Verified by validate passing and by the specs no longer mentioning a hosted domain.
-- [ ] 6.3 Open the pull request on `origin` (Gitea, `tea`) and read back every commit status on the head SHA until all are `success` or `skipped`. Verified by the status list.
+- [x] 6.3 Open the pull request on `origin` (Gitea, `tea`) and read back every commit status on the head SHA until all are `success` or `skipped`. Verified by the status list.
