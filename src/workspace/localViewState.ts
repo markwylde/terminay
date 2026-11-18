@@ -18,8 +18,8 @@
  */
 
 import {
-	DEFAULT_DASHBOARD_VIEW_MODE,
 	type DashboardViewMode,
+	DEFAULT_DASHBOARD_VIEW_MODE,
 	isDashboardViewMode,
 } from './dashboardViewMode.ts';
 import {
@@ -383,7 +383,8 @@ export function recallDashboardBoardUntrackedCollapsed(): boolean {
  * dashboard view mode, because Home spans every attached server. A device with
  * no answer — or one that cannot read it — shows the sidebar open.
  */
-const HOME_SIDEBAR_VISIBLE_STORAGE_KEY = 'terminay.view.home-sidebar-visible.v1';
+const HOME_SIDEBAR_VISIBLE_STORAGE_KEY =
+	'terminay.view.home-sidebar-visible.v1';
 
 export function rememberHomeSidebarVisible(visible: boolean): void {
 	try {
@@ -633,5 +634,32 @@ export function rememberBotChatRead(botId: string, sequence: number): void {
 		);
 	} catch {
 		/* A device that cannot remember shows no unread divider. */
+	}
+}
+
+/**
+ * The What's New post this device last opened (ADR-0136). Device presentation
+ * only: another device keeps its own, and nothing reaches a server.
+ */
+const WHATS_NEW_VIEWED_STORAGE_KEY = 'terminay.view.whats-new-viewed.v1';
+const WHATS_NEW_POST_ID = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+export function recallWhatsNewViewed(): string | undefined {
+	try {
+		const raw = globalThis.localStorage?.getItem(WHATS_NEW_VIEWED_STORAGE_KEY);
+		return typeof raw === 'string' && WHATS_NEW_POST_ID.test(raw)
+			? raw
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function rememberWhatsNewViewed(postId: string): void {
+	if (!WHATS_NEW_POST_ID.test(postId)) return;
+	try {
+		globalThis.localStorage?.setItem(WHATS_NEW_VIEWED_STORAGE_KEY, postId);
+	} catch {
+		/* A device that cannot remember shows the dot again next time. */
 	}
 }

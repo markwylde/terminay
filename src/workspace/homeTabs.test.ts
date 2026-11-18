@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { HOME_SECTION_LABELS, HOME_SECTIONS } from './homeSection.ts';
+import {
+	HOME_SECTION_LABELS,
+	HOME_SECTIONS,
+	visibleHomeSections,
+} from './homeSection.ts';
 import {
 	defaultHomeTabTitle,
 	homeTabId,
@@ -10,9 +14,10 @@ import {
 	sanitizeHomeLayout,
 } from './homeTabs.ts';
 
-test('Home lists its sections in order, Pull Requests and Issues after Recordings', () => {
+test("Home lists its sections in order, What's New second, Pull Requests and Issues after Recordings", () => {
 	assert.deepEqual(HOME_SECTIONS, [
 		'home',
+		'whatsNew',
 		'tabs',
 		'bots',
 		'automations',
@@ -25,6 +30,7 @@ test('Home lists its sections in order, Pull Requests and Issues after Recording
 		HOME_SECTIONS.map((section) => HOME_SECTION_LABELS[section]),
 		[
 			'Home',
+			"What's New",
 			'Tabs',
 			'Bots',
 			'Automations',
@@ -34,6 +40,18 @@ test('Home lists its sections in order, Pull Requests and Issues after Recording
 			'Issues',
 		],
 	);
+});
+
+test("without a forge source, What's New stays second and the forge sections drop out", () => {
+	assert.deepEqual(visibleHomeSections(new Set(['pullRequests', 'issues'])), [
+		'home',
+		'whatsNew',
+		'tabs',
+		'bots',
+		'automations',
+		'workflows',
+		'recordings',
+	]);
 });
 
 test('a bot tab belongs to Bots and round-trips through its id', () => {
@@ -65,7 +83,11 @@ test('every section owns its own section tab, and other tabs keep their owners',
 });
 
 test('a remembered bot tab is restored', () => {
-	const id = homeTabId({ kind: 'bot', serverId: 'local', botId: 'abcdef123456' });
+	const id = homeTabId({
+		kind: 'bot',
+		serverId: 'local',
+		botId: 'abcdef123456',
+	});
 	const restored = sanitizeHomeLayout({
 		grid: {
 			root: {
@@ -79,7 +101,8 @@ test('a remembered bot tab is restored', () => {
 		panels: { [id]: { title: 'Bird' } },
 	});
 	assert.equal(
-		(restored?.panels as Record<string, { title: string }> | undefined)?.[id]?.title,
+		(restored?.panels as Record<string, { title: string }> | undefined)?.[id]
+			?.title,
 		'Bird',
 	);
 });
@@ -121,7 +144,10 @@ test('a malformed pull request or issue tab id names nothing', () => {
 		name: 'app',
 		number: 7,
 	});
-	assert.equal(parseHomeTabId(id.replace(':pullRequest:', ':commit:')), undefined);
+	assert.equal(
+		parseHomeTabId(id.replace(':pullRequest:', ':commit:')),
+		undefined,
+	);
 	assert.equal(parseHomeTabId(id.replace(/:7$/, ':0')), undefined);
 	assert.equal(parseHomeTabId(id.replace(/:7$/, ':07')), undefined);
 	assert.equal(parseHomeTabId(id.replace(/:7$/, ':7.5')), undefined);

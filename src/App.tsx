@@ -320,6 +320,7 @@ import type {
 } from './workspace/compactSwitcherModel';
 import { buildCompactSwitcherGroups } from './workspace/compactSwitcherModel';
 import type { HomeFrontTab } from './workspace/HomeWorkspace';
+import { useWhatsNew, whatsNewStore } from './workspace/whatsNew/latestWhatsNew';
 import { ProjectTabList } from './workspace/ProjectTabList';
 import {
 	createProjectAcrossReconnects,
@@ -9209,8 +9210,23 @@ function App({
 	}, [forgeHome?.unbound, forgeSources]);
 	const forgeReviewCount = forgeHome?.counts.pullRequests ?? 0;
 	const forgeAssignedCount = forgeHome?.counts.issues ?? 0;
+	// What's New is announced on terminay.com and read on demand: when the
+	// window starts and whenever Home is selected, never on a timer (ADR-0028,
+	// ADR-0136).
+	const whatsNew = useWhatsNew();
+	useEffect(() => {
+		if (isHomeSelected) void whatsNewStore().check();
+	}, [isHomeSelected]);
+	useEffect(() => {
+		void whatsNewStore().check();
+	}, []);
 	const homeSectionBadges = useMemo(
 		() => ({
+			whatsNew: {
+				count: whatsNew.unread ? 1 : 0,
+				label: 'new post',
+				dot: true,
+			},
 			bots: { count: botUnreadTotal, label: botUnreadLabel(botUnreadTotal) },
 			workflows: {
 				count: workflowsNeedingYou,
@@ -9227,7 +9243,13 @@ function App({
 				tone: 'neutral' as const,
 			},
 		}),
-		[botUnreadTotal, forgeAssignedCount, forgeReviewCount, workflowsNeedingYou],
+		[
+			botUnreadTotal,
+			forgeAssignedCount,
+			forgeReviewCount,
+			whatsNew.unread,
+			workflowsNeedingYou,
+		],
 	);
 	// An MCP agent the user is talking to here reads and arranges this
 	// window's panes through the server (ADR-0070). The window is described
@@ -10175,6 +10197,9 @@ function App({
 		);
 		const summaries: Record<HomeSection, string> = {
 			home: 'Overview of every project',
+			whatsNew: whatsNew.unread
+				? 'New post: see what changed this month'
+				: 'What changed in Terminay each month',
 			tabs: `${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'} open`,
 			bots: 'Bots and their sessions',
 			automations: 'Scheduled and triggered runs',
@@ -10189,7 +10214,7 @@ function App({
 			section,
 			summary: summaries[section],
 		}));
-	}, [compactSwitcherGroups, hiddenHomeSections]);
+	}, [compactSwitcherGroups, hiddenHomeSections, whatsNew.unread]);
 	const activateDashboardAgent = useCallback(
 		(serverId: string, projectId: string, agent: DashboardAgent) => {
 			// External agents run outside Terminay: nothing to activate.

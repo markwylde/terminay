@@ -30,6 +30,7 @@ import {
 	type DesktopDocumentReleaseReason,
 } from '../apps/terminay-desktop/src/main/documentLifecycle';
 import { HostFileSaves } from './hostFileSaves';
+import { isAllowedWhatsNewSubframe } from './whatsNewFrame';
 import type { TerminalClipboardForUpload } from './terminalClipboardUpload';
 
 const SERVER_UI_GET_CONTEXT_CHANNEL = 'server-ui-host:get-context';
@@ -438,9 +439,12 @@ export function bindServerUiWindow(
 	const denyWebviewAttachment = (event: Event) => {
 		event.preventDefault();
 	};
+	// A subframe may also load the What's New embed from terminay.com, and
+	// nothing else off the server (ADR-0136). A main frame never leaves it.
 	const restrictFrameNavigation = (
 		event: Event<WebContentsWillFrameNavigateEventParams>,
 	) => {
+		if (isAllowedWhatsNewSubframe(event.url, event.isMainFrame)) return;
 		if (!isAllowedNavigation(event.url, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
@@ -457,6 +461,7 @@ export function bindServerUiWindow(
 		event: Event<WebContentsWillRedirectEventParams>,
 		target: string,
 	) => {
+		if (isAllowedWhatsNewSubframe(target, event.isMainFrame)) return;
 		if (!isAllowedNavigation(target, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
