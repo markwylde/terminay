@@ -549,3 +549,20 @@ test('a server not exposed at startup keeps its local fragment until a client ex
 	);
 	assert.equal(status.webRtcPairingUrl, started[0].pairingUrl);
 });
+
+test('a direct-only server with no hosted session origin still mints a compact room', () => {
+	// `--expose direct` keeps the configured non-hosted origin while minting
+	// compact rooms; the direct link replaces the hosted one, so the room must
+	// not fail on an origin no Session Server template produced.
+	const remote = createServerRemoteExposure({
+		serverId: 'server-direct',
+		sessionOrigin: 'https://smokealias:8443',
+		pairingUrlFormat: 'hosted-compact',
+		cleanupIntervalMs: 0,
+	});
+	const handoff = remote.start();
+	assert.equal(
+		new URL(handoff.pairingUrl).origin,
+		PRODUCTION_HOSTED_ENDPOINTS.appServer,
+	);
+});

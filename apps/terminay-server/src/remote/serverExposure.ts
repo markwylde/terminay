@@ -4,8 +4,9 @@ import {
 	formatHostedPairingUrl,
 	type HostedEndpoints,
 	isMatchCode,
-	managerOriginFromSessionOrigin,
+	matchHostedSessionOrigin,
 	PENDING_APPROVAL_LIFETIME_MS,
+	PRODUCTION_HOSTED_ENDPOINTS,
 } from '@terminay/protocol';
 import type {
 	RemoteAuditLog,
@@ -675,10 +676,15 @@ function toServerPairingHandoff(
 			pairingUrl: formatHostedPairingUrl({
 				fragment: handoff.compactQrSecret ?? handoff.secret,
 				hostName,
-				managerOrigin: managerOriginFromSessionOrigin(
-					handoff.sessionOrigin,
-					endpoints,
-				),
+				// A direct-only server keeps a session origin no Session Server
+				// template produced; its link is replaced by the direct one, so the
+				// configured App Server stands in rather than failing the room.
+				managerOrigin: (
+					matchHostedSessionOrigin(handoff.sessionOrigin, endpoints)
+						?.endpoints ??
+					endpoints ??
+					PRODUCTION_HOSTED_ENDPOINTS
+				).appServer,
 				pairingExpiresAt,
 				sessionId: hostedSessionId(handoff.sessionOrigin, endpoints),
 			}),
