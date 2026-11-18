@@ -297,6 +297,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		return store;
 	}, [phase, primary]);
 
+	let content: ReactNode;
 	if (terminalClientContext !== undefined) {
 		const connectionRoute: Omit<SharedConnectionsRouteBodyProps, 'state'> = {
 			...(desktopContext === undefined
@@ -331,102 +332,102 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					}),
 			profileStore: profiles,
 		};
-		return (
-			<WorkspaceErrorBoundary>
-				<ConnectionsProvider
-					composition={compositionStore}
-					host={connectionHost}
-					registry={registry}
+		content = (
+			<div
+				className={
+					phase === 'reconnecting'
+						? 'session-workspace session-workspace--reconnecting'
+						: 'session-workspace'
+				}
+			>
+				{phase === 'reconnecting' && (
+					<SessionReconnecting profileId={primary?.profileId} error={error} />
+				)}
+				<ConnectedWebRendererWorkspace
+					connectionRoute={connectionRoute}
+					hostContext={desktopContext}
+					onBack={() => {
+						if (leaveManagerSession()) return;
+						void registry.dispose();
+					}}
+					subscribeAppCommands={
+						desktopContext === undefined || window.terminayHost === undefined
+							? undefined
+							: (listener: (command: AppCommand) => Promise<void> | void) =>
+									(
+										window.terminayHost as unknown as DesktopHostBridge
+									).subscribeEvent((event) => {
+										if (event.event.type === 'menu.command') {
+											return listener(event.event.command);
+										}
+									})
+					}
+					terminalClientContext={terminalClientContext}
+				/>
+			</div>
+		);
+	} else {
+		const showConnectingMessage =
+			getSessionTransportHost() !== undefined ||
+			desktopContext?.profile?.isLocal === false;
+
+		content = (
+			<main className="browser-host-shell">
+				<section
+					className="browser-host-shell__panel browser-host-shell__connection-state"
+					aria-live="polite"
+					aria-busy={phase === 'connecting' || phase === 'reconnecting'}
 				>
-					<ServerUpgradeBoardHost>
-						<div
-							className={
-								phase === 'reconnecting'
-									? 'session-workspace session-workspace--reconnecting'
-									: 'session-workspace'
-							}
-						>
-							{phase === 'reconnecting' && (
-								<SessionReconnecting
-									profileId={primary?.profileId}
-									error={error}
-								/>
-							)}
-							<ServerUpgradeModal profileId={primary?.profileId} />
-							<ConnectedWebRendererWorkspace
-								connectionRoute={connectionRoute}
-								hostContext={desktopContext}
-								onBack={() => {
-									if (leaveManagerSession()) return;
-									void registry.dispose();
-								}}
-								subscribeAppCommands={
-									desktopContext === undefined ||
-									window.terminayHost === undefined
-										? undefined
-										: (
-												listener: (command: AppCommand) => Promise<void> | void,
-											) =>
-												(
-													window.terminayHost as unknown as DesktopHostBridge
-												).subscribeEvent((event) => {
-													if (event.event.type === 'menu.command') {
-														return listener(event.event.command);
-													}
-												})
-								}
-								terminalClientContext={terminalClientContext}
-							/>
+					{(phase === 'connecting' || phase === 'reconnecting') && (
+						<div className="browser-host-shell__connection-brand">
+							<TerminayMark className="browser-host-shell__connection-logo" />
+							<LoadingDots />
 						</div>
-					</ServerUpgradeBoardHost>
-				</ConnectionsProvider>
-			</WorkspaceErrorBoundary>
+					)}
+					{(phase !== 'connecting' || showConnectingMessage) && (
+						<h1>
+							{phase === 'connecting'
+								? 'Connecting to Terminay…'
+								: phase === 'reconnecting'
+									? 'Reconnecting…'
+									: primary?.phase === 'incompatible'
+										? 'This server needs updating'
+										: 'Connection unavailable'}
+						</h1>
+					)}
+					{error !== undefined && <p role="alert">{error}</p>}
+					{/* Recovery keeps trying on its own; this only asks for it now. */}
+					{(phase === 'ready' || error !== undefined) &&
+						primary?.phase !== 'incompatible' && (
+							<button type="button" onClick={recoverConnection}>
+								Retry connection
+							</button>
+						)}
+					{/* A server that cannot be shown must still be one the window can
+					 * leave. A first attempt that is merely slow offers nothing yet. */}
+					{(phase === 'ready' || error !== undefined) && (
+						<ConnectionStateServers host={connectionHost} />
+					)}
+				</section>
+			</main>
 		);
 	}
 
-	const showConnectingMessage =
-		getSessionTransportHost() !== undefined ||
-		desktopContext?.profile?.isLocal === false;
-
+	// Connection loss clears the workspace context. Keep the upgrade board
+	// and its modal alive above both presentations through every retry.
 	return (
-		<main className="browser-host-shell">
-			<section
-				className="browser-host-shell__panel browser-host-shell__connection-state"
-				aria-live="polite"
-				aria-busy={phase === 'connecting' || phase === 'reconnecting'}
+		<WorkspaceErrorBoundary>
+			<ConnectionsProvider
+				composition={compositionStore}
+				host={connectionHost}
+				registry={registry}
 			>
-				{(phase === 'connecting' || phase === 'reconnecting') && (
-					<div className="browser-host-shell__connection-brand">
-						<TerminayMark className="browser-host-shell__connection-logo" />
-						<LoadingDots />
-					</div>
-				)}
-				{(phase !== 'connecting' || showConnectingMessage) && (
-					<h1>
-						{phase === 'connecting'
-							? 'Connecting to Terminay…'
-							: phase === 'reconnecting'
-								? 'Reconnecting…'
-								: primary?.phase === 'incompatible'
-									? 'This server needs updating'
-									: 'Connection unavailable'}
-					</h1>
-				)}
-				{error !== undefined && <p role="alert">{error}</p>}
-				{/* Recovery keeps trying on its own; this only asks for it now. */}
-				{(phase === 'ready' || error !== undefined) &&
-					primary?.phase !== 'incompatible' && (
-						<button type="button" onClick={recoverConnection}>
-							Retry connection
-						</button>
-					)}
-				{/* A server that cannot be shown must still be one the window can
-				 * leave. A first attempt that is merely slow offers nothing yet. */}
-				{(phase === 'ready' || error !== undefined) && (
-					<ConnectionStateServers host={connectionHost} />
-				)}
-			</section>
-		</main>
+				<ServerUpgradeBoardHost>
+					{content}
+					<ServerUpgradeModal profileId={primary?.profileId} />
+				</ServerUpgradeBoardHost>
+			</ConnectionsProvider>
+		</WorkspaceErrorBoundary>
 	);
 }
 
