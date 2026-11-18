@@ -36,7 +36,10 @@ export interface DaemonOptions {
 	/** An address and UDP port to offer as an additional ICE candidate. Empty
 	 * string clears a previously configured one. */
 	readonly advertiseAddress?: string;
-	readonly hostedDomain?: string;
+	/** Hosted connection-manager origin (ADR-0136). */
+	readonly appServer?: string;
+	/** Hosted session origin template, with `<session>` in its leftmost label. */
+	readonly sessionServer?: string;
 	readonly expose?: string;
 	readonly projectRoot?: string;
 	readonly allowDowngrade: boolean;
@@ -85,7 +88,8 @@ const VALUE_FLAGS = Object.freeze([
 	'--public-host',
 	'--direct-origin',
 	'--advertise-address',
-	'--hosted-domain',
+	'--app-server',
+	'--session-server',
 	'--expose',
 	'--project-root',
 	'--mode',
@@ -120,7 +124,8 @@ const ACCEPTED: Readonly<Record<DaemonCommand, readonly string[]>> =
 			'--public-host',
 			'--direct-origin',
 			'--advertise-address',
-			'--hosted-domain',
+			'--app-server',
+			'--session-server',
 			'--expose',
 			'--project-root',
 		],
@@ -427,8 +432,11 @@ export function parseCommandLine(argv: readonly string[]): ParsedCommandLine {
 		...(values.has('--direct-origin')
 			? { directOrigin: values.get('--direct-origin') as string }
 			: {}),
-		...(values.has('--hosted-domain')
-			? { hostedDomain: values.get('--hosted-domain') as string }
+		...(values.has('--app-server')
+			? { appServer: values.get('--app-server') as string }
+			: {}),
+		...(values.has('--session-server')
+			? { sessionServer: values.get('--session-server') as string }
 			: {}),
 		...(values.has('--expose')
 			? { expose: values.get('--expose') as string }
@@ -515,7 +523,11 @@ Flags:
                        above it must be forwarded to this machine. Wins over
                        the address --public-host derives. Pass an empty value
                        to remove one set earlier.
-  --hosted-domain <d>  Hosted signalling domain.
+  --app-server <url>   Hosted connection manager pairing links open.
+                       Defaults to https://app.terminay.com.
+  --session-server <t> Hosted session origin template, with <session> in
+                       its leftmost label. Defaults to
+                       https://<session>.terminay.com.
   --expose <modes>     off, hosted, direct, or hosted,direct.
   --project-root <p>   Directory the server opens projects from.
   --allow-downgrade    Permit upgrade to an older version.

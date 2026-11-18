@@ -2,9 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { hostname as osHostname } from 'node:os';
 import {
 	formatHostedPairingUrl,
+	type HostedEndpoints,
 	isMatchCode,
-	managerOriginFromSessionOrigin,
+	matchHostedSessionOrigin,
 	PENDING_APPROVAL_LIFETIME_MS,
+	PRODUCTION_HOSTED_ENDPOINTS,
 } from '@terminay/protocol';
 import type {
 	RemoteAuditLog,
@@ -62,6 +64,9 @@ export interface ServerRemoteExposureOptions {
 	readonly pairingUrlFormat?: 'standalone' | 'direct-device' | 'hosted-compact';
 	/** Non-secret machine name shown as the default browser connection label. */
 	readonly hostName?: string;
+	/** App Server and Session Server hosted pairing links are built from
+	 * (ADR-0136). Production when absent. */
+	readonly hostedEndpoints?: HostedEndpoints;
 }
 
 export interface ServerRemoteCleanupReport extends RemoteCleanupReport {
@@ -149,6 +154,7 @@ export class ServerRemoteExposure {
 		| 'direct-device'
 		| 'hosted-compact';
 	private readonly hostName: string;
+	private readonly hostedEndpoints: HostedEndpoints | undefined;
 	private readonly now: () => number;
 	private readonly pairingLifetimeMs: number;
 	private readonly pendingApprovals = new Map<
@@ -169,6 +175,7 @@ export class ServerRemoteExposure {
 			HOSTED_PAIRING_LIFETIME_MS;
 		this.pairingUrlFormat = options.pairingUrlFormat ?? 'standalone';
 		this.hostName = sanitizePairingHostName(options.hostName ?? osHostname());
+		this.hostedEndpoints = options.hostedEndpoints;
 		this.manager = new RemoteConnectionManager({
 			...options.manager,
 			serverId: options.serverId,
@@ -623,6 +630,7 @@ export class ServerRemoteExposure {
 			handoff,
 			this.pairingUrlFormat,
 			this.hostName,
+			this.hostedEndpoints,
 		);
 		this.activePairingHandoff = projected;
 		return projected;
@@ -653,6 +661,7 @@ function toServerPairingHandoff(
 	handoff: RemotePairingHandoff & { readonly compactQrSecret?: string },
 	format: 'standalone' | 'direct-device' | 'hosted-compact',
 	hostName: string,
+	endpoints?: HostedEndpoints,
 ): ServerPairingHandoff {
 	const pairingExpiresAt = new Date(handoff.expiresAt).toISOString();
 	const pairingSessionId = handoff.roomId;
@@ -667,9 +676,17 @@ function toServerPairingHandoff(
 			pairingUrl: formatHostedPairingUrl({
 				fragment: handoff.compactQrSecret ?? handoff.secret,
 				hostName,
-				managerOrigin: managerOriginFromSessionOrigin(handoff.sessionOrigin),
+				// A direct-only server keeps a session origin no Session Server
+				// template produced; its link is replaced by the direct one, so the
+				// configured App Server stands in rather than failing the room.
+				managerOrigin: (
+					matchHostedSessionOrigin(handoff.sessionOrigin, endpoints)
+						?.endpoints ??
+					endpoints ??
+					PRODUCTION_HOSTED_ENDPOINTS
+				).appServer,
 				pairingExpiresAt,
-				sessionId: hostedSessionId(handoff.sessionOrigin),
+				sessionId: hostedSessionId(handoff.sessionOrigin, endpoints),
 			}),
 		});
 	}

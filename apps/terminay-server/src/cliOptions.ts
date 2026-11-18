@@ -1,5 +1,11 @@
 import { isIP } from 'node:net';
 import { resolve } from 'node:path';
+import {
+	type HostedEndpoints,
+	HostedEndpointsError,
+	PRODUCTION_HOSTED_ENDPOINTS,
+	parseHostedEndpoints,
+} from '@terminay/protocol';
 import type { AdvertisedIceAddress } from './remote/hostedPeerLifecycle.js';
 
 export type { AdvertisedIceAddress };
@@ -31,7 +37,6 @@ export type ServerExposureMode = 'hosted' | 'direct';
 export const SERVER_EXPOSURE_MODES: readonly ServerExposureMode[] =
 	Object.freeze(['hosted', 'direct']);
 
-export const DEFAULT_HOSTED_DOMAIN = 'terminay.com';
 
 export interface ServerCliOptions {
 	readonly command:
@@ -68,8 +73,9 @@ export interface ServerCliOptions {
 	readonly healthPort?: number;
 	readonly logSink?: string;
 	readonly uiBundle?: string;
-	/** Hosted signaling domain the session origin is provisioned under. */
-	readonly hostedDomain: string;
+	/** App Server and Session Server the hosted session origin and pairing
+	 * links are built from (ADR-0136). */
+	readonly hostedEndpoints: HostedEndpoints;
 	/** Exposure the administrator standingly enabled for this data root. Empty
 	 * means the server is not remotely reachable. */
 	readonly exposeModes: readonly ServerExposureMode[];
@@ -173,7 +179,9 @@ export function parseServerCliOptions(
 	const vaultConvertToKeyFile = argv.includes('--vault-convert-to-key-file');
 	if (vaultConvertToKeyFile && vaultUnlockFdValue === undefined)
 		throw new Error('--vault-convert-to-key-file requires --vault-unlock-fd');
-	const hostedDomain = parseHostedDomain(
+	const hostedEndpoints = parseHostedEndpointOptions(
+		value(argv, '--app-server') ?? env.TERMINAY_APP_SERVER,
+		value(argv, '--session-server') ?? env.TERMINAY_SESSION_SERVER,
 		value(argv, '--hosted-domain') ?? env.TERMINAY_HOSTED_DOMAIN,
 	);
 	const exposeModes = parseExposeModes(
@@ -283,7 +291,7 @@ export function parseServerCliOptions(
 			: { healthPort: parsePort(healthPortValue, '--health-port') }),
 		...(logSink === undefined ? {} : { logSink }),
 		...(uiBundle === undefined ? {} : { uiBundle }),
-		hostedDomain,
+		hostedEndpoints,
 		exposeModes,
 		...(directOrigin === undefined ? {} : { directOrigin }),
 		...(advertiseAddress === undefined ? {} : { advertiseAddress }),
@@ -315,7 +323,8 @@ export function formatServerHelp(): string {
 		'  --remote-origin URL remote WebRTC session origin (TERMINAY_REMOTE_ORIGIN)',
 		'  --log-sink PATH    structured log destination (TERMINAY_LOG_SINK)',
 		'  --ui-bundle PATH   matching workspace bundle (TERMINAY_UI_BUNDLE)',
-		"  --hosted-domain DOMAIN  hosted signaling domain for this server's session origin (TERMINAY_HOSTED_DOMAIN)",
+		'  --app-server URL   hosted connection-manager origin pairing links open (TERMINAY_APP_SERVER; default https://app.terminay.com)',
+		"  --session-server TEMPLATE  session origin template with <session> in its leftmost label (TERMINAY_SESSION_SERVER; default https://<session>.terminay.com)",
 		'  --expose MODES     exposure to enable at startup: off, hosted, direct, or hosted,direct (TERMINAY_EXPOSE)',
 		"  --direct-origin URL advertised HTTPS origin of this server's own signaling listener; required by --expose direct unless --public-host is set (TERMINAY_DIRECT_ORIGIN)",
 		'  --public-host HOST the one address or name devices reach this server at; derives the direct origin and, for a routable literal address, the advertised ICE address (TERMINAY_PUBLIC_HOST)',
@@ -352,29 +361,35 @@ function parseApprovalId(value: string | undefined): string {
 	return value;
 }
 
-function parseHostedDomain(value: string | undefined): string {
-	if (value === undefined) return DEFAULT_HOSTED_DOMAIN;
-	const trimmed = value.trim();
-	if (trimmed.length === 0)
-		throw new Error('--hosted-domain must name a hosted signaling domain');
-	let parsed: URL;
+/**
+ * The hosted endpoints from `--app-server` and `--session-server`, each
+ * defaulting to production. A leftover `--hosted-domain` of `terminay.com`
+ * names the production pair and is ignored; any other value fails, naming
+ * the options that replace it, rather than silently moving to production.
+ */
+function parseHostedEndpointOptions(
+	appServer: string | undefined,
+	sessionServer: string | undefined,
+	legacyHostedDomain: string | undefined,
+): HostedEndpoints {
+	const legacy = legacyHostedDomain?.trim().toLowerCase();
+	if (legacy && legacy !== 'terminay.com' && legacy !== 'https://terminay.com') {
+		throw new Error(
+			'--hosted-domain is no longer supported; configure --app-server and --session-server (TERMINAY_APP_SERVER and TERMINAY_SESSION_SERVER) instead',
+		);
+	}
 	try {
-		parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
-	} catch {
-		throw new Error('--hosted-domain must name a hosted signaling domain');
+		return parseHostedEndpoints({
+			appServer: appServer ?? PRODUCTION_HOSTED_ENDPOINTS.appServer,
+			sessionServer: sessionServer ?? PRODUCTION_HOSTED_ENDPOINTS.sessionServer,
+		});
+	} catch (error) {
+		if (error instanceof HostedEndpointsError) {
+			const option = error.field === 'appServer' ? '--app-server' : '--session-server';
+			throw new Error(`${option}: ${error.message}`);
+		}
+		throw error;
 	}
-	if (
-		parsed.username ||
-		parsed.password ||
-		parsed.pathname !== '/' ||
-		parsed.search ||
-		parsed.hash
-	) {
-		throw new Error('--hosted-domain must be a bare domain or an exact origin');
-	}
-	return parsed.port === ''
-		? parsed.hostname
-		: `${parsed.hostname}:${parsed.port}`;
 }
 
 function parseExposeModes(

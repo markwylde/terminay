@@ -80,7 +80,9 @@ import { runPairing } from './pairing.js';
 
 export const DEFAULT_PORT = 8443;
 export const DEFAULT_HEALTH_PORT = 8444;
-export const DEFAULT_HOSTED_DOMAIN = 'terminay.com';
+/** The production hosted endpoints (ADR-0136). The server validates them. */
+export const DEFAULT_APP_SERVER = 'https://app.terminay.com';
+export const DEFAULT_SESSION_SERVER = 'https://<session>.terminay.com';
 export const DEFAULT_EXPOSE = 'hosted,direct';
 
 export function assertDirectOrigin(value: string): void {
@@ -356,7 +358,8 @@ export async function runInstall(
 			port,
 			healthPort: DEFAULT_HEALTH_PORT,
 			expose,
-			hostedDomain: options.hostedDomain ?? DEFAULT_HOSTED_DOMAIN,
+			appServer: options.appServer ?? DEFAULT_APP_SERVER,
+			sessionServer: options.sessionServer ?? DEFAULT_SESSION_SERVER,
 			...(options.publicHost === undefined
 				? {}
 				: { publicHost: options.publicHost }),
@@ -457,7 +460,8 @@ export async function runInstall(
 		port,
 		healthPort: DEFAULT_HEALTH_PORT,
 		expose,
-		hostedDomain: options.hostedDomain ?? DEFAULT_HOSTED_DOMAIN,
+		appServer: options.appServer ?? DEFAULT_APP_SERVER,
+			sessionServer: options.sessionServer ?? DEFAULT_SESSION_SERVER,
 		...(options.publicHost === undefined
 			? {}
 			: { publicHost: options.publicHost }),

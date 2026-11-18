@@ -55,6 +55,20 @@ test('one stable origin has one bookmark and rename and forget affect only that 
 	assert.deepEqual(manager.snapshot().profiles, []);
 });
 
+test('a preview App Server bookmarks preview session origins and refuses its own origin', () => {
+	const appServer = 'https://app-pr123.dev.terminay.com';
+	const manager = new PwaConnectionManager({ storage: memoryStorage(), now: () => 100, appServer });
+	const sessionOrigin = 'https://0123456789abcdef0123456789abcdef-pr123.dev.terminay.com';
+	const { profile } = manager.addPairingUrl(`${sessionOrigin}/v1/#secret`);
+	assert.equal(profile.origin, sessionOrigin);
+	assert.throws(() => manager.addPairingUrl(`${appServer}/v1/#secret`), /Terminay Server/u);
+	assert.throws(() => manager.open(appServer));
+	// The production manager stays a valid server origin for a preview manager.
+	assert.throws(() => parsePwaPairingUrl('https://app.terminay.com/v1/#secret'));
+	assert.equal(parsePwaPairingUrl('https://app.terminay.com/v1/#secret', appServer).origin, 'https://app.terminay.com');
+	assert.throws(() => new PwaConnectionManager({ appServer: 'https://app-pr123.dev.terminay.com/' }), /exact origin/u);
+});
+
 test('manager rejects non-pairing URLs and restores only the exact current bookmark schema', () => {
 	for (const invalid of [
 		'https://server-one.terminay.com/v1/',

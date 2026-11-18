@@ -1,10 +1,17 @@
-import { managerOriginFromSessionOrigin } from '@terminay/protocol';
+import {
+	type HostedEndpoints,
+	isAppServerOrigin,
+	managerOriginFromSessionOrigin,
+	matchHostedSessionOrigin,
+	recognisedHostedEndpoints,
+} from '@terminay/protocol';
 
 const WILDCARD_HOSTS = new Set(['0.0.0.0', '::', '[::]']);
 
 export function pairingUrlForEndpoint(
 	handoff: Readonly<{ pairingUrl: string }>,
 	protocolEndpoint: string,
+	endpoints?: HostedEndpoints,
 ): string {
 	const advertised = new URL(handoff.pairingUrl);
 	const endpoint = new URL(protocolEndpoint);
@@ -15,7 +22,7 @@ export function pairingUrlForEndpoint(
 	advertised.protocol = endpoint.protocol;
 	if (advertised.searchParams.has('s')) {
 		advertised.host = new URL(
-			managerOriginFromSessionOrigin(endpoint.origin),
+			managerOriginFromSessionOrigin(endpoint.origin, endpoints),
 		).host;
 		return advertised.toString();
 	}
@@ -25,12 +32,17 @@ export function pairingUrlForEndpoint(
 
 export function advertisedPairingUrlClass(
 	pairingUrl: string,
+	endpoints?: HostedEndpoints,
 ): 'manager' | 'session' | 'direct' | 'other' {
 	try {
 		const url = new URL(pairingUrl);
-		const host = url.hostname.toLowerCase();
-		if (host === 'app.terminay.com') return 'manager';
-		if (host.endsWith('.terminay.com')) return 'session';
+		if (
+			recognisedHostedEndpoints(endpoints).some((candidate) =>
+				isAppServerOrigin(candidate, url.origin),
+			)
+		)
+			return 'manager';
+		if (matchHostedSessionOrigin(url.origin, endpoints)) return 'session';
 		if (url.protocol === 'https:' && /^\/v1\/?$/u.test(url.pathname))
 			return 'direct';
 		return 'other';

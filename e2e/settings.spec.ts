@@ -199,6 +199,25 @@ test('shows recording settings and saves recording defaults', async ({ appHarnes
 	await expect(reopened.getByLabel('Open timeline after saving')).toBeChecked()
 })
 
+test('Remote exposure shows App Server and Session Server with production defaults and explains an invalid value', async ({ appHarness, mainWindow }) => {
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
+  const section = settingsWindow.locator('#section-remote-access-host')
+  const appServer = section.getByLabel('App Server', { exact: true })
+  const sessionServer = section.getByLabel('Session Server', { exact: true })
+  await expect(appServer).toHaveValue('https://app.terminay.com')
+  await expect(sessionServer).toHaveValue('https://<session>.terminay.com')
+  await expect(section.getByRole('alert')).toHaveCount(0)
+
+  await sessionServer.fill('https://dev.<session>.terminay.com')
+  await expect(sessionServer).toHaveAttribute('aria-invalid', 'true')
+  await expect(section.getByRole('alert')).toContainText('leftmost label')
+
+  await sessionServer.fill('https://<session>-pr123.dev.terminay.com')
+  await appServer.fill('https://app-pr123.dev.terminay.com')
+  await expect(section.getByRole('alert')).toHaveCount(0)
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+})
+
 test('normalizes custom file viewer extension defaults', () => {
   expect(normalizeTerminalSettings({}).fileViewer).toEqual(defaultTerminalSettings.fileViewer)
 

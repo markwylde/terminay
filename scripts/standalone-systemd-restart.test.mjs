@@ -63,7 +63,7 @@ test('systemd package layer is cached independently of commit and copied archive
 		for (const dependency of ['systemd', 'systemd-sysv', 'nodejs', 'procps', 'util-linux', 'sudo']) assert.ok(source.includes(dependency));
 		assert.match(source, /CMD \["\/lib\/systemd\/systemd"\]/u);
 		assert.equal(command, 'docker');
-		assert.equal(options.timeout, 300000);
+		assert.equal(options.timeout, 900000);
 		calls.push(args);
 	};
 	const first = buildSystemdImage({ image: 'mirror/debian:bookworm-slim', runCommand });

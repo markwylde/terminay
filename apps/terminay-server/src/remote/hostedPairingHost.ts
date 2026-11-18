@@ -17,7 +17,9 @@ import {
 	deviceJoinProofPayload,
 	type EnrollmentPushMessage,
 	extractAuthenticatedWebRtcFingerprints,
+	type HostedEndpoints,
 	isDeviceJoinProof,
+	matchHostedSessionOrigin,
 	serializeAuthenticatedWebRtcTransportTranscript,
 	sha256Base64Url,
 } from '@terminay/protocol';
@@ -198,6 +200,9 @@ export interface HostedPairingHostOptions {
 	 * by a hosted session origin's first label; a self-hosted direct endpoint
 	 * supplies one derived from its own origin instead. */
 	readonly sessionId?: string;
+	/** App Server and Session Server this server advertises (ADR-0136).
+	 * Production when absent. */
+	readonly hostedEndpoints?: HostedEndpoints;
 	readonly signal?: Readonly<{
 		readonly connectHost?: string;
 		readonly insecureTls?: boolean;
@@ -347,10 +352,12 @@ export async function startHostedPairingHost(
 	options: HostedPairingHostOptions,
 ): Promise<HostedPairingHost> {
 	const sessionId =
-		options.sessionId ?? hostedSessionId(options.handoff.sessionOrigin);
+		options.sessionId ??
+		hostedSessionId(options.handoff.sessionOrigin, options.hostedEndpoints);
 	const signalingUrl = hostedSignalingUrl(options.handoff.sessionOrigin);
 	const signalingHostClass = classifySignalingHost(
 		options.handoff.sessionOrigin,
+		options.hostedEndpoints,
 	);
 	const runtime = await (
 		options.loadRuntime ?? loadSelectedSecureWeriftRuntime
@@ -763,7 +770,10 @@ export async function startHostedPairingHost(
 		diagnose({
 			type: 'registered',
 			scope: 'pairing',
-			advertisedUrlClass: advertisedPairingUrlClass(handoff.pairingUrl),
+			advertisedUrlClass: advertisedPairingUrlClass(
+				handoff.pairingUrl,
+				options.hostedEndpoints,
+			),
 			signalingHostClass,
 		});
 		schedulePairingRefresh(handoff);
@@ -849,6 +859,7 @@ export async function startHostedPairingHost(
 					cause,
 					advertisedUrlClass: advertisedPairingUrlClass(
 						currentHandoff.pairingUrl,
+						options.hostedEndpoints,
 					),
 					remainingMs: Date.parse(currentHandoff.pairingExpiresAt) - Date.now(),
 				});
@@ -927,7 +938,10 @@ export async function startHostedPairingHost(
 
 	diagnose({
 		type: 'advertised',
-		advertisedUrlClass: advertisedPairingUrlClass(currentHandoff.pairingUrl),
+		advertisedUrlClass: advertisedPairingUrlClass(
+			currentHandoff.pairingUrl,
+			options.hostedEndpoints,
+		),
 		signalingHostClass,
 		remainingMs: Date.parse(currentHandoff.pairingExpiresAt) - Date.now(),
 	});
@@ -1153,6 +1167,7 @@ function waitForOpen(socket: WebSocket): Promise<void> {
 
 function classifySignalingHost(
 	sessionOrigin: string,
+	endpoints?: HostedEndpoints,
 ): 'terminay-session' | 'loopback' | 'other' {
 	try {
 		const host = new URL(sessionOrigin).hostname.toLowerCase();
@@ -1163,7 +1178,7 @@ function classifySignalingHost(
 		) {
 			return 'loopback';
 		}
-		if (host.endsWith('.terminay.com') && host !== 'app.terminay.com')
+		if (matchHostedSessionOrigin(sessionOrigin, endpoints))
 			return 'terminay-session';
 		return 'other';
 	} catch {

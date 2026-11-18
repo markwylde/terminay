@@ -31,7 +31,8 @@ option uses the documented default:
 | Structured log destination | `--log-sink PATH` | `TERMINAY_LOG_SINK` | host-selected |
 | Matching server UI bundle | `--ui-bundle PATH` | `TERMINAY_UI_BUNDLE` | host-selected |
 | Reported server version | *(none)* | `TERMINAY_SERVER_VERSION` | `0.0.0` |
-| Hosted signaling domain | `--hosted-domain DOMAIN` | `TERMINAY_HOSTED_DOMAIN` | `terminay.com` |
+| Hosted connection manager | `--app-server ORIGIN` | `TERMINAY_APP_SERVER` | `https://app.terminay.com` |
+| Hosted session origin template | `--session-server TEMPLATE` | `TERMINAY_SESSION_SERVER` | `https://<session>.terminay.com` |
 | Exposure enabled at startup | `--expose MODES` | `TERMINAY_EXPOSE` | `off` |
 | Address or name devices reach the server at | `--public-host HOST` | `TERMINAY_PUBLIC_HOST` | *(unset)* |
 | Advertised direct signaling origin | `--direct-origin URL` | `TERMINAY_DIRECT_ORIGIN` | derived from the public host |
@@ -266,7 +267,7 @@ and wrong for one behind NAT — so the derived value is printed at install.
 and derives both the direct origin and, for a routable literal address, the
 advertised ICE address; `--direct-origin https://<host>:<port>` and
 `--advertise-address <host>:<port>` override either one. `--expose`, `--port`,
-`--hosted-domain`, and `--project-root` set the rest.
+`--app-server`, `--session-server`, and `--project-root` set the rest.
 
 #### Running in a container
 
@@ -660,14 +661,30 @@ A standalone server is not remotely reachable until it is configured to be.
 | Value | Effect |
 | --- | --- |
 | `off` (default) | Not remotely reachable. |
-| `hosted` | Registers with the hosted relay under `--hosted-domain`. |
+| `hosted` | Registers with the hosted relay at its `--session-server` origin. |
 | `direct` | Serves its own signaling endpoint at `--direct-origin`. |
 | `hosted,direct` | Both, sharing one room, one host key, and one device registry. |
 
-**Hosted exposure** provisions a stable session origin under
-`--hosted-domain` (default `terminay.com`) and persists it in the data root as
-`remote-session-origin.v1.json`, so paired devices reconnect across restarts
-without pairing again. Changing the hosted domain mints a new origin.
+**Hosted exposure** provisions a stable session origin from
+`--session-server` (default `https://<session>.terminay.com`) and persists it
+in the data root as `remote-session-origin.v1.json`, so paired devices
+reconnect across restarts without pairing again. `<session>` is replaced by a
+32-character id and must sit in the leftmost DNS label, so every server keeps
+its own browser origin. Pairing links open the manager at `--app-server`
+(default `https://app.terminay.com`). Changing the Session Server mints a new
+origin.
+
+To test against a preview environment of the hosted manager, set both:
+
+```sh
+terminay-server \
+  --expose hosted \
+  --app-server https://app-pr123.dev.terminay.com \
+  --session-server 'https://<session>-pr123.dev.terminay.com'
+```
+
+The dashes keep every preview host one label under `dev.terminay.com`, so one
+wildcard DNS record and certificate cover them all.
 
 **Direct exposure** serves the signaling endpoint from this process at
 `/signal` on the origin `--direct-origin` names, so no hosted relay is
@@ -697,7 +714,7 @@ a real certificate in front, as before.
 
 Both modes advertise the same one-time pairing room and differ only in the
 origin a client reaches it through. A hosted link takes the form
-`https://app.<hosted-domain>/?s=<session-id>&hostName=…#<secret>`; a direct
+`<app-server>/?s=<session-id>&hostName=…#<secret>`; a direct
 link takes the form `https://<direct-origin>/v1/?hostName=…#<secret>`. The
 secret is always in the fragment, so it never reaches a request line, a proxy
 log, or the signaling endpoint. A device paired one way reconnects the other

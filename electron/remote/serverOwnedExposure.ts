@@ -1,4 +1,4 @@
-import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION, type ByteTransport } from '@terminay/protocol';
+import { AUTHENTICATED_WEBRTC_TRANSPORT_VERSION, type ByteTransport, type HostedEndpoints } from '@terminay/protocol';
 import type {
 	AuthenticatedClient,
 	ServerConnectionLike,
@@ -35,6 +35,9 @@ export interface DesktopServerOwnedExposureOptions {
 		devices: ReturnType<ServerRemoteExposure['devices']['list']>,
 	) => void;
 	readonly resolveSessionOrigin: () => string;
+	/** The App Server and Session Server in effect (ADR-0136). Production
+	 * when absent. */
+	readonly resolveHostedEndpoints?: () => HostedEndpoints;
 	/** A device is waiting for approval; Desktop raises a notification. */
 	readonly onApprovalRequested?: (approval: Readonly<{ approvalId: string; deviceName: string; matchCode: string; expiresAt: number }>) => void;
 	readonly serverId: string;
@@ -70,6 +73,7 @@ export class DesktopServerOwnedExposure {
 		| DesktopServerOwnedExposureOptions['persistDevices']
 		| undefined;
 	private readonly resolveSessionOrigin: () => string;
+	private readonly resolveHostedEndpoints: (() => HostedEndpoints) | undefined;
 	private readonly serverId: string;
 	private readonly signal: DesktopServerOwnedExposureOptions['signal'];
 	private readonly onApprovalRequested:
@@ -108,6 +112,7 @@ export class DesktopServerOwnedExposure {
 		this.hostKeyStore = options.hostKeyStore;
 		this.persistDevices = options.persistDevices;
 		this.signal = options.signal;
+		this.resolveHostedEndpoints = options.resolveHostedEndpoints;
 		this.onApprovalRequested = options.onApprovalRequested;
 		this.webrtcRuntimeRoot = options.webrtcRuntimeRoot;
 		this.iceServers = options.iceServers;
@@ -122,10 +127,12 @@ export class DesktopServerOwnedExposure {
 		this.factory =
 			options.createExposure ??
 			((sessionOrigin) => {
+				const hostedEndpoints = options.resolveHostedEndpoints?.();
 				const exposure = createServerRemoteExposure({
 					pairingUrlFormat: 'hosted-compact',
 					serverId: this.serverId,
 					sessionOrigin,
+					...(hostedEndpoints === undefined ? {} : { hostedEndpoints }),
 				});
 				if (options.initialDevices !== undefined)
 					exposure.devices.restore(options.initialDevices);
@@ -342,7 +349,9 @@ export class DesktopServerOwnedExposure {
 			stopRequested();
 			stopResolved();
 		};
+		const hostedEndpoints = this.resolveHostedEndpoints?.();
 		return startHostedPairingHost({
+			...(hostedEndpoints === undefined ? {} : { hostedEndpoints }),
 			handoff,
 			hostKey,
 			persistDevices: (devices) => {

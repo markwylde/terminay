@@ -14,6 +14,7 @@ export * from './errors.js';
 export * from './frame.js';
 export * from './host.js';
 export * from './hostStats.js';
+export * from './hostedEndpoints.js';
 export * from './hostedPairingUrl.js';
 export * from './json.js';
 export * from './language.js';

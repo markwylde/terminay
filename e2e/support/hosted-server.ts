@@ -8,7 +8,8 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 
 type HostedServer = {
-  hostedDomain: string
+  appServer: string
+  sessionServer: string
   logs: () => string
   origin: string
   port: number
@@ -184,6 +185,10 @@ export async function startHostedServer(): Promise<HostedServer> {
           `postgres://terminay:terminay@127.0.0.1:${pgPort}/terminay_app`,
         PORT: String(port),
         STATIC_DIR: staticDir,
+        // App Server and Session Server (ADR-0136). The legacy pair stays for a
+        // terminay.com checkout that predates them.
+        TERMINAY_APP_SERVER: `http://localhost:${port}`,
+        TERMINAY_SESSION_SERVER: `http://<session>.localhost:${port}`,
         TERMINAY_HOSTED_DOMAIN: 'localhost',
         TERMINAY_MANAGER_HOST: 'app.localhost',
         TERMINAY_OPERATIONAL_LOGS: '1',
@@ -194,7 +199,8 @@ export async function startHostedServer(): Promise<HostedServer> {
     await waitForHealthz(port, serverProcess, logs)
 
     return {
-      hostedDomain: `http://localhost:${port}`,
+      appServer: `http://localhost:${port}`,
+      sessionServer: `http://<session>.localhost:${port}`,
       logs: () => logs.join(''),
       origin: `http://localhost:${port}`,
       port,

@@ -31,6 +31,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
 	type ByteTransport,
 	createTerminayHostBytePacket,
+	type HostedEndpoints,
+	PRODUCTION_HOSTED_ENDPOINTS,
+	parseHostedEndpoints,
 	parseTerminayHostBytePacket,
 	TERMINAY_BUNDLE_SAVE_MAX_BYTES,
 	type TerminayHostActionRequest,
@@ -1992,6 +1995,16 @@ const embeddedServerSettings = new ServerSettingsRepository({
  * device-settings projection. The pairing-PIN verifier remains local and is
  * deliberately not included in the server settings snapshot.
  */
+/** The configured App Server and Session Server, or production when the
+ * stored pair does not validate (Settings shows why beside the field). */
+function configuredHostedEndpoints(): HostedEndpoints {
+	try {
+		return parseHostedEndpoints(readEmbeddedRemoteAccessSettings());
+	} catch {
+		return PRODUCTION_HOSTED_ENDPOINTS;
+	}
+}
+
 function readEmbeddedRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
 	const serverSettings =
 		embeddedServerSettings.settings as Partial<TerminalSettings>;
@@ -2655,10 +2668,12 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 			});
 			return { bundleId: archive.bundleId, bytes: archive.bytes };
 		},
+		resolveHostedEndpoints: () =>
+			configuredHostedEndpoints(),
 		resolveSessionOrigin: () =>
 			loadOrCreateSessionOrigin(
 				dataRoot,
-				readEmbeddedRemoteAccessSettings().webRtcHostedDomain,
+				configuredHostedEndpoints(),
 			),
 		...(desktopWebRtcRuntimeRoot === undefined &&
 		!(
@@ -4939,6 +4954,7 @@ async function enrollPairedDesktopRemoteProfile(
 				resourcesPath: process.resourcesPath,
 				environment: process.env,
 			}),
+			hostedEndpoints: configuredHostedEndpoints(),
 			iceServers: parseHostedIceServers(
 				readEmbeddedRemoteAccessSettings().webRtcIceServers,
 			),
@@ -5040,6 +5056,7 @@ async function openDesktopRemoteLanesNow(
 			origin: profile.origin,
 			store: createDesktopDeviceCredentialStore(),
 			webrtcRuntimeRoot,
+			hostedEndpoints: configuredHostedEndpoints(),
 			windowId,
 			iceServers: parseHostedIceServers(
 				readEmbeddedRemoteAccessSettings().webRtcIceServers,

@@ -2,6 +2,7 @@ import { constants, verify as verifySignature } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns';
 import path from 'node:path';
 import QRCode from 'qrcode';
+import { parseHostedEndpoints } from '@terminay/protocol';
 import WebSocket from 'ws';
 import type { RemoteAccessStatus } from '../../src/types/terminay';
 import type { RemoteAccessSettings } from '../../src/types/settings';
@@ -654,7 +655,7 @@ export class RemoteAccessService {
 			this.webRtcStatusMessage =
 				'WebRTC relay room is registering. Keep Terminay open while the browser connects.';
 			const payload = this.webRtcPairingManager.create({
-				hostedDomain: settings.webRtcHostedDomain,
+				hostedEndpoints: parseHostedEndpoints(settings),
 				sessionId: this.webRtcSessionId ?? undefined,
 			});
 			this.webRtcSessionId = payload.sessionId;

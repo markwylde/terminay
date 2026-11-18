@@ -92,7 +92,8 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 		// Off: no connection timing sample is kept (connection.metrics.v1).
 		connectionMetrics: false,
 		exposeOnStartup: false,
-		webRtcHostedDomain: 'terminay.com',
+		appServer: 'https://app.terminay.com',
+		sessionServer: 'https://<session>.terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},
 	recording: {
