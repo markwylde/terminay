@@ -62,6 +62,7 @@ jobs:
       notarize: ${{ steps.names.outputs.notarize }}
       legacy_beta: ${{ steps.names.outputs.legacy_beta }}
       version: ${{ steps.version.outputs.version }}
+      base_tag: ${{ steps.version.outputs.base_tag }}
 
     steps:
       - name: Check out code
@@ -144,10 +145,11 @@ jobs:
           # `<next stable version>-main.<commit count>.<track>`: builds order by
           # commit across both tracks, and below the release they lead to. The
           # script refuses a count below the track's published build.
-          VERSION="$(node scripts/prerelease-version.mjs --track "$TRACK" --notes-out "$RUNNER_TEMP/plan-release-notes.md" --published-build "$RUNNER_TEMP/published/build.json")"
+          VERSION="$(node scripts/prerelease-version.mjs --track "$TRACK" --notes-out "$RUNNER_TEMP/plan-release-notes.md" --published-build "$RUNNER_TEMP/published/build.json" --base-tag-out "$RUNNER_TEMP/prerelease-base-tag")"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-main\.[1-9][0-9]*\.(nightly|canary)$ ]]
           test "${VERSION##*.}" = "$TRACK"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "base_tag=$(cat "$RUNNER_TEMP/prerelease-base-tag")" >> "$GITHUB_OUTPUT"
 
   build-archives:
     name: Build ${{ inputs.track }} Server Archive (${{ matrix.target }})
@@ -380,10 +382,11 @@ jobs:
         env:
           TRACK: ${{ inputs.track }}
           PLANNED_VERSION: ${{ needs.plan.outputs.version }}
+          PLANNED_BASE_TAG: ${{ needs.plan.outputs.base_tag }}
         run: |
           # Every platform derives the same version from this commit, and it
           # is the one the plan checked against the published build.
-          VERSION="$(node scripts/prerelease-version.mjs --track "$TRACK" --notes-out "$RUNNER_TEMP/prerelease-notes.md")"
+          VERSION="$(node scripts/prerelease-version.mjs --track "$TRACK" --notes-out "$RUNNER_TEMP/prerelease-notes.md" --base-tag "$PLANNED_BASE_TAG")"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-main\.[1-9][0-9]*\.(nightly|canary)$ ]]
           test "$VERSION" = "$PLANNED_VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

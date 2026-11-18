@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
@@ -274,6 +274,44 @@ test('the version script fails when the published build of its track is ahead', 
   await assert.rejects(execFileAsync(process.execPath, [script, '--track', 'beta', '--notes-out', join(dir, 'beta.md')], { cwd: dir }), /Invalid track/u)
 })
 
+test('desktop retries retain the planned release base when stable tags change', async (t) => {
+  const script = resolve('scripts/prerelease-version.mjs')
+  for (const initialTag of ['v6.9.0', null]) {
+    const dir = await mkdtemp(join(tmpdir(), 'terminay-prerelease-retry-'))
+    t.after(() => rm(dir, { recursive: true, force: true }))
+    const repo = (...args) => execFileAsync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd: dir })
+    await repo('init', '-q')
+    await repo('commit', '-q', '--allow-empty', '-m', 'feat: first')
+    if (initialTag !== null) await repo('tag', initialTag)
+    await repo('commit', '-q', '--allow-empty', '-m', 'feat: second')
+    const baseFile = join(dir, 'base-tag')
+    const run = (notes, ...args) => execFileAsync(process.execPath, [script, '--track', 'canary', '--notes-out', join(dir, notes), ...args], { cwd: dir })
+    const plan = await run('planned.md', '--base-tag-out', baseFile)
+    const baseTag = (await readFile(baseFile, 'utf8')).trim()
+    assert.equal(baseTag, initialTag ?? 'none')
+    await repo('tag', `v${plan.stdout.trim().split('-main.')[0]}`)
+    // Reproduces the failure: discovering tags again produces another version.
+    assert.notEqual((await run('unplanned.md')).stdout, plan.stdout)
+    const retry = await run('retry.md', '--base-tag', baseTag)
+    assert.equal(retry.stdout, plan.stdout)
+    assert.equal(await readFile(join(dir, 'retry.md'), 'utf8'), await readFile(join(dir, 'planned.md'), 'utf8'))
+    for (const invalid of ['', 'main', 'v6.9.0\nother']) {
+      await assert.rejects(run('invalid.md', '--base-tag', invalid), /Invalid release base tag/u)
+    }
+    await assert.rejects(run('missing.md', '--base-tag', 'v999.0.0'), /unknown revision|ambiguous argument/u)
+  }
+})
+
+test('desktop jobs receive the original release base and keep the planned version check', async () => {
+  const workflow = await readFile(resolve('.github/workflows/main-prerelease.yml'), 'utf8')
+  assert.match(workflow, /base_tag: \$\{\{ steps\.version\.outputs\.base_tag \}\}/u)
+  assert.match(workflow, /--base-tag-out "\$RUNNER_TEMP\/prerelease-base-tag"/u)
+  assert.match(workflow, /echo "base_tag=\$\(cat "\$RUNNER_TEMP\/prerelease-base-tag"\)" >> "\$GITHUB_OUTPUT"/u)
+  assert.match(workflow, /PLANNED_BASE_TAG: \$\{\{ needs\.plan\.outputs\.base_tag \}\}/u)
+  assert.match(workflow, /--base-tag "\$PLANNED_BASE_TAG"/u)
+  assert.match(workflow, /test "\$VERSION" = "\$PLANNED_VERSION"/u)
+})
+
 test('prerelease release notes list commit subjects and stay bounded', () => {
   assert.equal(
     formatPrereleaseNotes({ latestTag: 'v4.2.0', subjects: ['feat: one', 'fix:  two\tspaced'] }),
@@ -298,6 +336,42 @@ test("the Windows update probe's next version is one commit later on a prereleas
     assert.ok(compareVersions(nextUpdateProbeVersion(version), version) > 0, version)
   for (const version of ['6.3.0-beta.4', 'v6.3.0', '6.3.0-main.0.canary', 'x'])
     assert.throws(() => nextUpdateProbeVersion(version), /Not a stable, nightly or canary version/u)
+})
+
+test('Windows update-test packaging reports failures and prints only the version on success', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'terminay-update-probe-build-'))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await mkdir(join(dir, 'scripts'))
+  await mkdir(join(dir, 'node_modules/.bin'), { recursive: true })
+  await writeFile(join(dir, 'scripts/update-probe-version.mjs'), await readFile(resolve('scripts/update-probe-version.mjs')))
+  const builder = join(dir, 'node_modules/.bin/electron-builder')
+  await writeFile(builder, `#!/bin/sh
+echo 'builder diagnostics'
+if [ "\${PROBE_BUILDER_STATUS:-0}" -ne 0 ]; then exit "$PROBE_BUILDER_STATUS"; fi
+for arg do
+  case "$arg" in -c.directories.output=*) output=\${arg#*=};; esac
+done
+mkdir -p "$output"
+touch "$output/terminay-update-probe-Setup.exe"
+if [ "\${PROBE_SKIP_METADATA:-0}" = 0 ]; then touch "$output/nightly.yml"; fi
+`)
+  await chmod(builder, 0o755)
+  const script = resolve('scripts/build-windows-update-probe.sh')
+  const run = (output, env = {}, version = '6.10.0-main.3636.canary') => execFileAsync('sh', [script, version, join(dir, output)], {
+    cwd: dir, env: { ...process.env, ...env }, timeout: 10000,
+  })
+  const success = await run('success')
+  assert.equal(success.stdout, '6.10.0-main.3637.canary\n')
+  assert.match(success.stderr, /builder diagnostics/u)
+  await assert.rejects(run('failed', { PROBE_BUILDER_STATUS: '127' }), (error) => {
+    assert.equal(error.code, 127)
+    assert.equal(error.stdout, '')
+    assert.match(error.stderr, /builder diagnostics/u)
+    assert.match(error.stderr, /failed to package the next-version installer \(exit 127\)/u)
+    return true
+  })
+  await assert.rejects(run('incomplete', { PROBE_SKIP_METADATA: '1' }), /failed to verify the next-version installer and metadata \(exit 1\)/u)
+  await assert.rejects(run('invalid', {}, 'invalid'), /failed to derive the next version \(exit 65\)/u)
 })
 
 test('a nightly builds only when main moved past the published nightly', () => {
