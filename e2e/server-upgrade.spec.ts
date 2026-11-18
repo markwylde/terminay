@@ -699,6 +699,33 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 			0,
 		);
 		await expect(mainWindow.getByText('Connection lost')).toHaveCount(0);
+		// Keep the same DOM node through a failed connection attempt, not only
+		// the first transport drop. The full-screen recovery surface may be
+		// present, but the upgrade backdrop must stay above its controls.
+		await card.evaluate((node) => {
+			node.setAttribute('data-survives-reconnect', 'true');
+		});
+		await expect(
+			mainWindow.getByText(/Session connect timed out after/),
+		).toBeAttached({ timeout: 60_000 });
+		await expect(card).toHaveAttribute('data-survives-reconnect', 'true');
+		expectSamePlace(await modalCardCentre(mainWindow), installing);
+		const retry = mainWindow.getByRole('button', { name: 'Retry connection' });
+		await expect(retry).toBeAttached();
+		const retryBox = await retry.boundingBox();
+		expect(retryBox).not.toBeNull();
+		expect(
+			await mainWindow.evaluate(
+				({ x, y }) =>
+					document
+						.elementFromPoint(x, y)
+						?.closest('[data-server-upgrade-modal]') !== null,
+				{
+					x: retryBox!.x + retryBox!.width / 2,
+					y: retryBox!.y + retryBox!.height / 2,
+				},
+			),
+		).toBe(true);
 		await captureBothAppearances(mainWindow, '02-upgrade-restarting');
 
 		// The previous release comes back.
