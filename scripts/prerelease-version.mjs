@@ -127,6 +127,8 @@ function parseArguments(argv) {
     if (flag === '--track') options.track = value
     else if (flag === '--notes-out') options.notesOut = value
     else if (flag === '--published-build') options.publishedBuild = value
+    else if (flag === '--base-tag') options.baseTag = value
+    else if (flag === '--base-tag-out') options.baseTagOut = value
     else return null
   }
   return options.track && options.notesOut ? options : null
@@ -135,11 +137,19 @@ function parseArguments(argv) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const options = parseArguments(process.argv.slice(2))
   if (options === null) {
-    console.error('usage: prerelease-version.mjs --track <nightly|canary> --notes-out <file> [--published-build <build.json>]')
+    console.error('usage: prerelease-version.mjs --track <nightly|canary> --notes-out <file> [--published-build <build.json>] [--base-tag <vX.Y.Z|none>] [--base-tag-out <file>]')
     process.exit(1)
   }
   try {
-    const latestTag = await getLatestTag()
+    // A retried desktop job must use the planner's release base, even when
+    // another workflow has added a stable tag since the plan was produced.
+    // "none" explicitly preserves a plan made before the first stable tag.
+    if (options.baseTag !== undefined && options.baseTag !== 'none' && !CANONICAL_TAG.test(options.baseTag)) {
+      throw new Error(`Invalid release base tag: ${options.baseTag}`)
+    }
+    const latestTag = options.baseTag === undefined
+      ? await getLatestTag()
+      : options.baseTag === 'none' ? null : options.baseTag
     const commitCount = (await git(['rev-list', '--count', 'HEAD'])).trim()
     assertCountNotBehind({ commitCount, buildJson: await readBuildJson(options.publishedBuild) })
     const version = getPrereleaseVersion({
@@ -150,6 +160,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     })
     const notes = formatPrereleaseNotes({ latestTag, subjects: await getCommits(latestTag, '%s') })
     await writeFile(options.notesOut, notes, { flag: 'wx' })
+    if (options.baseTagOut !== undefined) {
+      await writeFile(options.baseTagOut, `${latestTag ?? 'none'}\n`, { flag: 'wx' })
+    }
     process.stdout.write(`${version}\n`)
   } catch (error) {
     console.error(error instanceof Error ? error.message : error)
