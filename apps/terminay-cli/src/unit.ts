@@ -32,7 +32,8 @@ export interface ServiceConfiguration {
 	readonly port: number;
 	readonly healthPort: number;
 	readonly expose: string;
-	readonly hostedDomain: string;
+	readonly appServer: string;
+	readonly sessionServer: string;
 	readonly publicHost?: string;
 	readonly directOrigin?: string;
 	readonly advertiseAddress?: string;
@@ -55,7 +56,8 @@ export function renderEnvironmentFile(
 		'TERMINAY_HEALTH_HOST=127.0.0.1',
 		`TERMINAY_HEALTH_PORT=${configuration.healthPort}`,
 		`TERMINAY_EXPOSE=${configuration.expose}`,
-		`TERMINAY_HOSTED_DOMAIN=${configuration.hostedDomain}`,
+		`TERMINAY_APP_SERVER=${configuration.appServer}`,
+		`TERMINAY_SESSION_SERVER=${configuration.sessionServer}`,
 		...(configuration.publicHost === undefined
 			? []
 			: [`TERMINAY_PUBLIC_HOST=${configuration.publicHost}`]),

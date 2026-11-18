@@ -2310,7 +2310,7 @@ test('a rollback records the attempted version, the restored one, and the reason
 
 		// No secret, account, path, or device belongs in it.
 		const raw = await readFile(layout.resultPath, 'utf8');
-		assert.doesNotMatch(raw, /ada|dataRoot|\/var\/lib|serverId|test-box/u);
+		assert.doesNotMatch(raw, /\bada\b|dataRoot|\/var\/lib|serverId|test-box/u);
 	});
 });
 

@@ -7,7 +7,7 @@ import type { WebStorageLike } from './index.js';
 
 /**
  * The closed `postMessage` schema the framed primary session origin uses to ask
- * `app.terminay.com` for connections to other saved servers.
+ * the App Server (the manager) for connections to other saved servers.
  *
  * The manager opens every attached transport itself with the vaulted device
  * credential for that server's origin, and hands the frame one `MessagePort`

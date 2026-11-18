@@ -1,4 +1,5 @@
 import { createHash, hkdfSync } from 'node:crypto';
+import { type HostedEndpoints, matchHostedSessionOrigin } from '@terminay/protocol';
 
 const HKDF_LABELS = {
 	pairingRoomId: 'terminay remote v1 pairing room',
@@ -36,12 +37,19 @@ export function hostedSignalingUrl(sessionOrigin: string): string {
 	return url.toString();
 }
 
-/** Stable session id advertised to the hosted relay for saved-device reconnect. */
-export function hostedSessionId(sessionOrigin: string): string {
+/**
+ * Stable session id advertised to the hosted relay for saved-device
+ * reconnect. It is the id the configured Session Server template (or
+ * production, or a loopback development stack) places in the origin; an
+ * origin no template matches falls back to its first label.
+ */
+export function hostedSessionId(
+	sessionOrigin: string,
+	endpoints?: HostedEndpoints,
+): string {
+	const matched = matchHostedSessionOrigin(sessionOrigin, endpoints);
 	const host = new URL(sessionOrigin).hostname.toLowerCase();
-	const sessionId = host.endsWith('.terminay.com')
-		? host.slice(0, -'.terminay.com'.length)
-		: (host.split('.')[0] ?? '');
+	const sessionId = matched?.sessionId ?? host.split('.')[0] ?? '';
 	if (
 		!/^[a-z0-9](?:[a-z0-9-]{6,61}[a-z0-9])$/u.test(sessionId) ||
 		sessionId.includes('.')

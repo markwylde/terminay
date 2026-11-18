@@ -4,6 +4,7 @@ import {
 	classifyPairingOrigin,
 	deviceJoinProofPayload,
 	type EnrollmentPushMessage,
+	type HostedEndpoints,
 	isEnrollmentPushMessage,
 	parseEnrollmentPushMessage,
 	parseHostedPairingUrl,
@@ -185,6 +186,9 @@ export async function connectDesktopHostedPeer(
 		sessionOrigin: string;
 		scope: DesktopHostedScope;
 		webrtcRuntimeRoot: string;
+		/** The App Server and Session Server this Desktop is configured with
+		 * (ADR-0136). Production and loopback are always recognised too. */
+		hostedEndpoints?: HostedEndpoints;
 		iceServers?: readonly HostedIceServer[];
 		signal?: DesktopHostedSignalOptions;
 		abort?: AbortSignal;
@@ -201,7 +205,7 @@ export async function connectDesktopHostedPeer(
 	}>,
 ): Promise<DesktopHostedPeer> {
 	const sessionOrigin = normalizeHostedOrigin(options.sessionOrigin);
-	const sessionId = relaySessionId(sessionOrigin);
+	const sessionId = relaySessionId(sessionOrigin, options.hostedEndpoints);
 	const runtime = await loadSelectedSecureWeriftRuntime(
 		options.webrtcRuntimeRoot,
 	);
@@ -316,7 +320,7 @@ export async function connectDesktopHostedPeer(
 	// server's signed description has verified, and a hint that cannot be added
 	// never fails the connection.
 	const directAddresses =
-		classifyPairingOrigin(sessionOrigin) === 'direct'
+		classifyPairingOrigin(sessionOrigin, options.hostedEndpoints) === 'direct'
 			? (options.resolveDirectOriginAddresses ?? directOriginAddresses)(
 					sessionOrigin,
 				)
@@ -612,6 +616,9 @@ export async function pairDesktopHostedDevice(
 		deviceName: string;
 		store: DesktopDeviceCredentialStore;
 		webrtcRuntimeRoot: string;
+		/** The App Server and Session Server this Desktop is configured with
+		 * (ADR-0136). Production and loopback are always recognised too. */
+		hostedEndpoints?: HostedEndpoints;
 		iceServers?: readonly HostedIceServer[];
 		signal?: DesktopHostedSignalOptions;
 		abort?: AbortSignal;
@@ -637,7 +644,10 @@ export async function pairDesktopHostedDevice(
 		serverId: string;
 	}>
 > {
-	const hosted = parseHostedPairingUrl(options.pairingUrl);
+	const hosted = parseHostedPairingUrl(
+		options.pairingUrl,
+		options.hostedEndpoints,
+	);
 	const origin = hosted.origin;
 	const secrets = deriveHostedPairingSecrets(hosted.fragment);
 	const pairingExpiresAt =
@@ -656,6 +666,9 @@ export async function pairDesktopHostedDevice(
 		sessionOrigin: origin,
 		scope: { kind: 'pairing', fragment: hosted.fragment },
 		webrtcRuntimeRoot: options.webrtcRuntimeRoot,
+		...(options.hostedEndpoints === undefined
+			? {}
+			: { hostedEndpoints: options.hostedEndpoints }),
 		...(options.iceServers === undefined
 			? {}
 			: { iceServers: options.iceServers }),
@@ -733,6 +746,9 @@ export async function connectDesktopHostedRemote(
 		store: DesktopDeviceCredentialStore;
 		webrtcRuntimeRoot: string;
 		expectedServerId?: string;
+		/** The App Server and Session Server this Desktop is configured with
+		 * (ADR-0136). Production and loopback are always recognised too. */
+		hostedEndpoints?: HostedEndpoints;
 		/** The native window this connection is for. A reconnect presenting the
 		 * same id replaces that window's previous connection and no other. */
 		windowId?: string;
@@ -765,7 +781,7 @@ export async function connectDesktopHostedRemote(
 	// the transport transcript does. Verification is disabled only for this
 	// socket, exactly as it is when pairing with the same endpoint.
 	const signal =
-		classifyPairingOrigin(origin) === 'direct'
+		classifyPairingOrigin(origin, options.hostedEndpoints) === 'direct'
 			? Object.freeze({ ...options.signal, insecureTls: true })
 			: options.signal;
 	const peer = await connectDesktopHostedPeer({
@@ -780,6 +796,9 @@ export async function connectDesktopHostedRemote(
 				: { expectedServerId: options.expectedServerId }),
 		},
 		webrtcRuntimeRoot: options.webrtcRuntimeRoot,
+		...(options.hostedEndpoints === undefined
+			? {}
+			: { hostedEndpoints: options.hostedEndpoints }),
 		...(options.iceServers === undefined
 			? {}
 			: { iceServers: options.iceServers }),

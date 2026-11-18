@@ -2443,16 +2443,30 @@ export function SettingsWindow({
 						/>
 					</div>
 				);
-			case 'text':
-				return (
+			case 'text': {
+				const problem = field.validate?.(draft);
+				const input = (
 					<input
 						className="settings-input-text"
 						type="text"
+						aria-label={field.label}
 						value={String(value)}
 						placeholder={field.placeholder}
+						aria-invalid={problem === undefined ? undefined : true}
 						onChange={(e) => void updateField(field, e.target.value)}
 					/>
 				);
+				return problem === undefined ? (
+					input
+				) : (
+					<div className="settings-input-text-validated">
+						{input}
+						<p className="settings-field-error" role="alert">
+							{problem}
+						</p>
+					</div>
+				);
+			}
 			case 'textarea':
 				return (
 					<textarea

@@ -40,7 +40,10 @@ export type ShellSettings = {
 export type RemoteAccessSettings = {
 	exposeOnStartup: boolean;
 	connectionMetrics: boolean;
-	webRtcHostedDomain: string;
+	/** Hosted connection-manager origin (ADR-0136). */
+	appServer: string;
+	/** Hosted session origin template, with `<session>` in its leftmost label. */
+	sessionServer: string;
 	webRtcIceServers: string;
 };
 

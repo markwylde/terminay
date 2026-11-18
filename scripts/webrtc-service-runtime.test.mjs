@@ -169,7 +169,8 @@ function createTestService({ hostWindows = [], tempDir, serverId = 'remote-servi
     },
     getControllableSession: () => null,
     getRemoteAccessSettings: () => ({
-      webRtcHostedDomain: 'remote.example.com',
+      appServer: 'https://app.remote.example.com',
+      sessionServer: 'https://<session>.remote.example.com',
       webRtcIceServers: '',
     }),
     notifyTerminalRemoteSizeOverride: () => {},

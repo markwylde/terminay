@@ -1,4 +1,4 @@
-import { parseHostedPairingUrl } from '@terminay/protocol';
+import { type HostedEndpoints, parseHostedPairingUrl } from '@terminay/protocol';
 import { establishDevicePairing } from '../../src/remote/services/devicePairingFlow';
 import { parsePairingBootstrap } from '../../src/remote/services/pairing';
 import type {
@@ -52,9 +52,10 @@ export type DesktopPairingTarget =
  */
 export function resolveDesktopPairingTarget(
 	pairingUrl: string,
+	hostedEndpoints?: HostedEndpoints,
 ): DesktopPairingTarget {
 	try {
-		const hosted = parseHostedPairingUrl(pairingUrl);
+		const hosted = parseHostedPairingUrl(pairingUrl, hostedEndpoints);
 		const loopback = new URL(hosted.origin);
 		const isLoopbackHttp =
 			loopback.protocol === 'http:' &&
@@ -149,6 +150,9 @@ export async function establishDesktopDevicePairing(
 		hostPin?: PinnedDesktopHostKey;
 		hosted?: Readonly<{
 			webrtcRuntimeRoot: string | undefined;
+			/** The App Server and Session Server this Desktop is configured with
+			 * (ADR-0136). Production and loopback are always recognised too. */
+			hostedEndpoints?: HostedEndpoints;
 			iceServers?: readonly HostedIceServer[];
 			signal?: DesktopHostedSignalOptions;
 			abort?: AbortSignal;
@@ -169,7 +173,10 @@ export async function establishDesktopDevicePairing(
 		serverId?: string;
 	}>
 > {
-	const target = resolveDesktopPairingTarget(options.pairingUrl);
+	const target = resolveDesktopPairingTarget(
+		options.pairingUrl,
+		options.hosted?.hostedEndpoints,
+	);
 	if (target.kind === 'hosted' || target.kind === 'direct') {
 		const runtimeRoot = options.hosted?.webrtcRuntimeRoot;
 		if (runtimeRoot === undefined) {
@@ -182,6 +189,9 @@ export async function establishDesktopDevicePairing(
 			deviceName: options.deviceName,
 			store: options.store,
 			webrtcRuntimeRoot: runtimeRoot,
+			...(options.hosted?.hostedEndpoints === undefined
+				? {}
+				: { hostedEndpoints: options.hosted.hostedEndpoints }),
 			...(options.hosted?.iceServers === undefined
 				? {}
 				: { iceServers: options.hosted.iceServers }),

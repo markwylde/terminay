@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
+import { PRODUCTION_HOSTED_ENDPOINTS } from '@terminay/protocol';
 import { createServerRemoteExposure } from '../dist/index.js';
 import { StandaloneRemoteAccess } from '../dist/remote/standaloneRemoteAccess.js';
 import {
@@ -465,7 +466,7 @@ test('session origin: provisioned for hosted or no mode, kept for direct-only an
 	const base = {
 		command: 'start',
 		dataRoot: '/data',
-		hostedDomain: 'terminay.com',
+		hostedEndpoints: PRODUCTION_HOSTED_ENDPOINTS,
 		remoteOrigin: 'https://server-a.remote.terminay.local',
 		remoteOriginExplicit: false,
 	};
@@ -547,4 +548,21 @@ test('a server not exposed at startup keeps its local fragment until a client ex
 		'the exposed room is a compact hosted room',
 	);
 	assert.equal(status.webRtcPairingUrl, started[0].pairingUrl);
+});
+
+test('a direct-only server with no hosted session origin still mints a compact room', () => {
+	// `--expose direct` keeps the configured non-hosted origin while minting
+	// compact rooms; the direct link replaces the hosted one, so the room must
+	// not fail on an origin no Session Server template produced.
+	const remote = createServerRemoteExposure({
+		serverId: 'server-direct',
+		sessionOrigin: 'https://smokealias:8443',
+		pairingUrlFormat: 'hosted-compact',
+		cleanupIntervalMs: 0,
+	});
+	const handoff = remote.start();
+	assert.equal(
+		new URL(handoff.pairingUrl).origin,
+		PRODUCTION_HOSTED_ENDPOINTS.appServer,
+	);
 });

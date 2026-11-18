@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { type HostedEndpoints, matchHostedSessionOrigin } from '@terminay/protocol';
 import { hostedSessionId } from './hostedPairingSecrets.js';
 
 /**
@@ -26,11 +27,14 @@ export function directSessionId(directOrigin: string): string {
  * direct origin has none, so it is derived from the origin itself. Server and
  * client must agree, so both call this rather than classifying separately.
  */
-export function relaySessionId(origin: string): string {
+export function relaySessionId(
+	origin: string,
+	endpoints?: HostedEndpoints,
+): string {
 	const host = new URL(origin).hostname.toLowerCase();
 	const hosted =
-		host.endsWith('.terminay.com') ||
+		matchHostedSessionOrigin(origin, endpoints) !== undefined ||
 		host.endsWith('.localhost') ||
 		/\.127\.0\.0\.1$/u.test(host);
-	return hosted ? hostedSessionId(origin) : directSessionId(origin);
+	return hosted ? hostedSessionId(origin, endpoints) : directSessionId(origin);
 }

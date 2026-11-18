@@ -69,7 +69,8 @@ export {
 	type TerminayArchiveMetadata,
 } from './archiveBundle.js';
 
-/** Stable public PWA origin. It stores only connection bookmarks. */
+/** Production PWA origin: the default App Server (ADR-0136). It stores only
+ * connection bookmarks. A preview manager passes its own `appServer`. */
 export const WEB_MANAGER_ORIGIN = TERMINAY_MANAGER_ORIGIN;
 export const WEB_PROFILE_STORAGE_KEY = 'terminay.web.connection-profiles.v1';
 
@@ -107,6 +108,9 @@ export interface PwaConnectionManagerOptions {
 	readonly now?: () => number;
 	readonly maxProfiles?: number;
 	readonly navigate?: (url: string, target: '_self' | '_blank') => void;
+	/** The App Server this manager runs at. Production when absent. A server
+	 * origin may never equal it. */
+	readonly appServer?: string;
 }
 
 export interface PwaOpenResult {
@@ -116,7 +120,7 @@ export interface PwaOpenResult {
 }
 
 /**
- * Browser-local bookmark manager for app.terminay.com. Session authentication,
+ * Browser-local bookmark manager for the App Server. Session authentication,
  * WebRTC, bundle loading, and every workspace state live at the selected
  * stable session origin.
  */
@@ -125,6 +129,7 @@ export class PwaConnectionManager {
 	private readonly now: () => number;
 	private readonly maxProfiles: number;
 	private readonly navigate: ((url: string, target: '_self' | '_blank') => void) | undefined;
+	private readonly appServer: string;
 	private profiles: PwaConnectionProfile[];
 
 	constructor(options: PwaConnectionManagerOptions = {}) {
@@ -134,6 +139,7 @@ export class PwaConnectionManager {
 		if (!Number.isSafeInteger(this.maxProfiles) || this.maxProfiles < 1 || this.maxProfiles > MAX_PROFILES)
 			throw new RangeError(`maxProfiles must be between 1 and ${MAX_PROFILES}`);
 		this.navigate = options.navigate;
+		this.appServer = managerOrigin(options.appServer);
 		this.profiles = this.restore();
 	}
 
@@ -143,7 +149,7 @@ export class PwaConnectionManager {
 
 	/** Save the origin bookmark before same-tab pairing navigation. */
 	addPairingUrl(pairingUrl: string, label?: string): PwaPairingNavigation {
-		const parsed = parsePwaPairingUrl(pairingUrl);
+		const parsed = parsePwaPairingUrl(pairingUrl, this.appServer);
 		const now = validTimestamp(this.now());
 		const existingIndex = this.profiles.findIndex((profile) => profile.origin === parsed.origin);
 		const profile = Object.freeze({
@@ -162,7 +168,7 @@ export class PwaConnectionManager {
 
 	/** Navigate only to the stored stable origin, never a pairing URL. */
 	open(origin: string, newTab = false): PwaOpenResult {
-		const canonicalOrigin = requireStableOrigin(origin);
+		const canonicalOrigin = requireStableOrigin(origin, this.appServer);
 		const index = this.profiles.findIndex((profile) => profile.origin === canonicalOrigin);
 		if (index === -1) throw new Error('unknown connection bookmark');
 		const profile = Object.freeze({ ...this.profiles[index]!, lastOpenedAt: validTimestamp(this.now()) });
@@ -173,7 +179,7 @@ export class PwaConnectionManager {
 	}
 
 	rename(origin: string, label: string): PwaConnectionProfile {
-		const canonicalOrigin = requireStableOrigin(origin);
+		const canonicalOrigin = requireStableOrigin(origin, this.appServer);
 		const index = this.profiles.findIndex((profile) => profile.origin === canonicalOrigin);
 		if (index === -1) throw new Error('unknown connection bookmark');
 		const profile = Object.freeze({ ...this.profiles[index]!, label: normalizeLabel(label) });
@@ -182,7 +188,7 @@ export class PwaConnectionManager {
 	}
 
 	forget(origin: string): boolean {
-		const canonicalOrigin = requireStableOrigin(origin);
+		const canonicalOrigin = requireStableOrigin(origin, this.appServer);
 		const next = this.profiles.filter((profile) => profile.origin !== canonicalOrigin);
 		if (next.length === this.profiles.length) return false;
 		this.commit(next);
@@ -213,7 +219,7 @@ export class PwaConnectionManager {
 			const origins = new Set<string>();
 			for (const candidate of value.profiles) {
 				try {
-					const profile = parseStoredProfile(candidate);
+					const profile = parseStoredProfile(candidate, this.appServer);
 					if (origins.has(profile.origin) || profiles.length >= this.maxProfiles) continue;
 					origins.add(profile.origin);
 					profiles.push(profile);
@@ -225,13 +231,13 @@ export class PwaConnectionManager {
 }
 
 /** Validate a pairing URL without returning its secret fragment. */
-export function parsePwaPairingUrl(pairingUrl: string): Readonly<{ origin: string; hostname: string }> {
+export function parsePwaPairingUrl(pairingUrl: string, appServer: string = WEB_MANAGER_ORIGIN): Readonly<{ origin: string; hostname: string }> {
 	if (typeof pairingUrl !== 'string' || pairingUrl.length === 0) throw new TypeError('pairing URL is invalid');
 	let parsed: URL;
 	try { parsed = new URL(pairingUrl); } catch { throw new TypeError('pairing URL is invalid'); }
 	if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash.length < 2 || (parsed.pathname !== '/v1/' && parsed.pathname !== '/v1'))
 		throw new TypeError('pairing URL must be a secure v1 URL with a one-time fragment');
-	if (parsed.origin === WEB_MANAGER_ORIGIN) throw new TypeError('pairing URL must target a Terminay Server');
+	if (parsed.origin === managerOrigin(appServer)) throw new TypeError('pairing URL must target a Terminay Server');
 	return Object.freeze({ origin: parsed.origin, hostname: parsed.hostname });
 }
 
@@ -245,21 +251,29 @@ export function createWebWorkspaceRouteRenderModel(route: SharedWorkspaceRoute):
 	return createSharedWorkspaceRouteRenderModel(route);
 }
 
-function parseStoredProfile(value: unknown): PwaConnectionProfile {
+function parseStoredProfile(value: unknown, appServer: string): PwaConnectionProfile {
 	if (!isExactRecord(value, ['label', 'origin', 'createdAt', 'lastOpenedAt'])) throw new TypeError('bookmark is invalid');
 	return Object.freeze({
 		label: normalizeLabel(value.label),
-		origin: requireStableOrigin(value.origin),
+		origin: requireStableOrigin(value.origin, appServer),
 		createdAt: validTimestamp(value.createdAt),
 		lastOpenedAt: validTimestamp(value.lastOpenedAt),
 	});
 }
 
-function requireStableOrigin(value: unknown): string {
+function managerOrigin(value: string | undefined): string {
+	if (value === undefined) return WEB_MANAGER_ORIGIN;
+	let parsed: URL;
+	try { parsed = new URL(value); } catch { throw new TypeError('App Server is invalid'); }
+	if (parsed.origin !== value) throw new TypeError('App Server must be an exact origin');
+	return parsed.origin;
+}
+
+function requireStableOrigin(value: unknown, appServer: string): string {
 	if (typeof value !== 'string') throw new TypeError('connection origin is invalid');
 	let parsed: URL;
 	try { parsed = new URL(value); } catch { throw new TypeError('connection origin is invalid'); }
-	if (parsed.protocol !== 'https:' || parsed.origin !== value || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.origin === WEB_MANAGER_ORIGIN)
+	if (parsed.protocol !== 'https:' || parsed.origin !== value || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.origin === appServer)
 		throw new TypeError('connection origin must be an exact HTTPS server origin');
 	return parsed.origin;
 }
