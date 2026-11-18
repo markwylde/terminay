@@ -139,6 +139,17 @@ html.is-framed .connected-web-menubar {
 	padding-top: 0;
 }
 
+/* iOS can lay a Home Screen app out under its status bar instead of below it.
+   The manager measures that inset in its own document and hands it to the
+   session as --terminay-host-safe-area-top, 0 while the status bar sits opaque
+   above the app. The framed workspace starts below it, whichever header (the
+   menu bar or the compact chrome row) is on top. */
+html.is-framed .connected-web-renderer-workspace {
+	box-sizing: border-box;
+	padding-top: var(--terminay-host-safe-area-top, 0px);
+	background: #090b0e;
+}
+
 html.is-framed .connected-web-renderer-workspace,
 html.is-framed .workspace-shell,
 html.is-framed .responsive-workspace-shell {
