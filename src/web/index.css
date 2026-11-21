@@ -154,19 +154,6 @@ code { border-radius: 6px; background: #0b1119; color: #d5e1ee; padding: 2px 5px
   color: #c3d2e4;
 }
 
-.browser-host-shell__connection-servers,
-.browser-host-shell__connection-servers ul {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-}
-
-.browser-host-shell__connection-servers ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 .browser-host-workspace {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -436,6 +423,25 @@ button:disabled { cursor: not-allowed; filter: grayscale(.4) opacity(.62); }
   .connection-form { grid-template-columns: 1fr; }
   .server-card__actions { justify-content: flex-start; }
 }
+}
+
+.browser-host-shell__connection-servers,
+.browser-host-shell__connection-servers ul {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.browser-host-shell__connection-servers ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-workspace__reconnecting .browser-host-shell__connection-servers .secondary {
+  border-color: #3c6277;
+  background: #172938;
+  color: #b8d8ea;
 }
 
 .session-retry-button {

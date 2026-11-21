@@ -414,7 +414,14 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 						profileId={primary?.profileId}
 						error={error}
 						retryStatus={retryStatus}
-						action={remoteRecoveryUi ? retryButton : undefined}
+						action={
+							remoteRecoveryUi ? (
+								<>
+									{retryButton}
+									<ConnectionStateServers host={connectionHost} />
+								</>
+							) : undefined
+						}
 					/>
 				)}
 				<div

@@ -25,3 +25,4 @@
 - Both Docker Electron tests passed, including an open-but-silent connection that recovers in the same document, retains the running shell, and leaves the second remote window connected. Pointer and keyboard Retry passed the contrast checks.
 - All 14 hosted transport and Desktop integration tests passed. The actual Desktop connector received the signed refusal from a standalone server over direct signaling, and protocol checks rejected a wrong nonce, wrong device, wrong key, and forged signature. The legacy join received no refusal.
 - The isolated packaged macOS app paired successfully and verified terminal input before arming the wake test. The nine-minute observation ended without a native suspend/resume event, so physical wake verification remains open.
+- The recovery overlay keeps Switch to Local accessible when the server shuts down. The standalone-to-Local and silent-lane recovery regressions both passed in Docker.
