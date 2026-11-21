@@ -12,6 +12,10 @@ import {
 	useState,
 } from 'react';
 import { createRoot } from 'react-dom/client';
+import {
+	DESKTOP_ENDPOINT_HANDOFF_TIMEOUT_MS,
+	DESKTOP_PAIRING_REQUIRED,
+} from '../../electron/desktopRemoteRecoveryContract';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import {
 	cancelDesktopPairing,
@@ -40,7 +44,10 @@ import {
 	IDLE_PAIRING_ATTEMPT,
 	pairingAttemptReducer,
 } from '../shared/pairingAttemptState';
-import type { SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
+import {
+	SharedConnectionsRouteBody,
+	type SharedConnectionsRouteBodyProps,
+} from '../shared/SharedConnectionsRouteBody';
 import type { AppCommand } from '../types/terminay';
 import {
 	ServerUpgradeBoardHost,
@@ -145,6 +152,7 @@ class WorkspaceErrorBoundary extends Component<
  * public PWA and never enter this workspace shell.
  */
 export default function SessionWorkspaceApp(): React.JSX.Element {
+	const [showRecoveryPairing, setShowRecoveryPairing] = useState(false);
 	const [desktopContext, setDesktopContext] = useState<TerminayHostContext>();
 	// The host that hands out attached connections, known only once the primary
 	// bootstrap says which host this is.
@@ -166,10 +174,21 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 					document.visibilityState === 'hidden',
 				metricsHost:
 					getSessionTransportHost() === undefined ? 'desktop' : 'browser',
+				...(typeof window !== 'undefined' &&
+				(window.terminayBytes as DesktopByteBridge | undefined)
+					?.openRemoteEndpoint !== undefined
+					? {
+							onRemoteRetryJoin: () =>
+								(
+									window.terminayBytes as DesktopByteBridge | undefined
+								)?.expediteRemoteRecovery?.(),
+						}
+					: {}),
 				open: async ({
 					profileId,
 					role,
 					replaceEndpoint,
+					manual,
 					onTransportClosed,
 				}) => {
 					if (role === 'attached') {
@@ -180,7 +199,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 						}) satisfies ConnectionOpenResult;
 					}
 					return openPrimaryConnection(
-						{ replaceEndpoint, onTransportClosed },
+						{ replaceEndpoint, manual, onTransportClosed },
 						(context, host) => {
 							setDesktopContext(context);
 							connectionHostRef.current = host;
@@ -213,8 +232,25 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	);
 
 	useEffect(() => {
-		registry.startPrimary(PRIMARY_PROFILE_ID);
+		let mounted = true;
+		let started = false;
+		let deadline: ReturnType<typeof setTimeout> | undefined;
+		const start = (context?: TerminayHostContext) => {
+			if (!mounted || started) return;
+			started = true;
+			clearTimeout(deadline);
+			setDesktopContext(context);
+			registry.startPrimary(PRIMARY_PROFILE_ID, context);
+		};
+		const host = window.terminayHost as DesktopHostBridge | undefined;
+		const bytes = window.terminayBytes as DesktopByteBridge | undefined;
+		if (host !== undefined && bytes?.openRemoteEndpoint !== undefined) {
+			deadline = setTimeout(start, DESKTOP_ENDPOINT_HANDOFF_TIMEOUT_MS);
+			void host.getContext().then(start, () => start());
+		} else start();
 		return () => {
+			mounted = false;
+			clearTimeout(deadline);
 			void registry.dispose();
 		};
 	}, [registry]);
@@ -238,6 +274,11 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 	// Restoring the attached set is the ConnectionsProvider's job: it owns the
 	// same composition record it writes back, so the restore cannot race the
 	// write that would flatten it.
+
+	useEffect(() => {
+		const bytes = window.terminayBytes as DesktopByteBridge | undefined;
+		return bytes?.subscribeRemoteResume?.(() => registry.resumeRemotePrimary());
+	}, [registry]);
 
 	const recoverConnection = useCallback(() => {
 		primary?.retry();
@@ -269,6 +310,27 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 
 	const phase = presentationPhase(primary);
 	const error = primary?.error;
+	const recoveryProgress = primary?.recoveryProgress;
+	const pairingRequired = error === DESKTOP_PAIRING_REQUIRED;
+	const remoteRecoveryUi =
+		desktopContext?.profile?.isLocal === false &&
+		(window.terminayBytes as DesktopByteBridge | undefined)
+			?.openRemoteEndpoint !== undefined;
+	const retryStatus =
+		recoveryProgress === 'retrying'
+			? 'Retrying connection…'
+			: recoveryProgress === 'checking'
+				? 'Trying to reach the server…'
+				: undefined;
+	const retryButton = (
+		<button
+			className="session-retry-button"
+			type="button"
+			onClick={recoverConnection}
+		>
+			Retry connection
+		</button>
+	);
 	const label = primary?.label ?? 'Local';
 	const terminalClientContext = useMemo<
 		Omit<TerminalPanelClientContextValue, 'projectId'> | undefined
@@ -297,41 +359,48 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 		return store;
 	}, [phase, primary]);
 
+	const pairingRoute =
+		desktopContext === undefined
+			? {}
+			: {
+					canPair: true,
+					...(typeof __TERMINAY_VERSION__ === 'string'
+						? { appVersion: __TERMINAY_VERSION__ }
+						: {}),
+					pairingApproval: desktopPairing.approval,
+					pairingProgress: desktopPairing.progress,
+					onPairingHandoff: async ({
+						pairingUrl,
+						attemptId,
+					}: {
+						pairingUrl: string;
+						attemptId: string;
+					}) => {
+						dispatchDesktopPairing({ type: 'started', attemptId });
+						try {
+							if (!(await pairDesktopConnection(pairingUrl, attemptId)))
+								throw new Error(
+									'Desktop pairing is unavailable in this session.',
+								);
+						} finally {
+							dispatchDesktopPairing({ type: 'settled', attemptId });
+						}
+					},
+					onPairingCancel: (attemptId: string) => {
+						dispatchDesktopPairing({ type: 'dismissed' });
+						void cancelDesktopPairing(attemptId).catch(() => undefined);
+					},
+					onPairingProgressDismiss: () =>
+						dispatchDesktopPairing({ type: 'dismissed' }),
+				};
+
 	let content: ReactNode;
 	if (terminalClientContext !== undefined) {
 		const connectionRoute: Omit<SharedConnectionsRouteBodyProps, 'state'> = {
-			...(desktopContext === undefined
-				? {}
-				: {
-						canPair: true,
-						// Desktop runs the bundle packaged with it, so the bundle's
-						// version is the application's. A browser session's bundle
-						// is its server's, and names no version here.
-						...(typeof __TERMINAY_VERSION__ === 'string'
-							? { appVersion: __TERMINAY_VERSION__ }
-							: {}),
-						pairingApproval: desktopPairing.approval,
-						pairingProgress: desktopPairing.progress,
-						onPairingHandoff: async ({ pairingUrl, attemptId }) => {
-							dispatchDesktopPairing({ type: 'started', attemptId });
-							try {
-								if (!(await pairDesktopConnection(pairingUrl, attemptId)))
-									throw new Error(
-										'Desktop pairing is unavailable in this session.',
-									);
-							} finally {
-								dispatchDesktopPairing({ type: 'settled', attemptId });
-							}
-						},
-						onPairingCancel: (attemptId) => {
-							dispatchDesktopPairing({ type: 'dismissed' });
-							void cancelDesktopPairing(attemptId).catch(() => undefined);
-						},
-						onPairingProgressDismiss: () =>
-							dispatchDesktopPairing({ type: 'dismissed' }),
-					}),
+			...pairingRoute,
 			profileStore: profiles,
 		};
+
 		content = (
 			<div
 				className={
@@ -341,29 +410,47 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				}
 			>
 				{phase === 'reconnecting' && (
-					<SessionReconnecting profileId={primary?.profileId} error={error} />
+					<SessionReconnecting
+						profileId={primary?.profileId}
+						error={error}
+						retryStatus={retryStatus}
+						action={
+							remoteRecoveryUi ? (
+								<>
+									{retryButton}
+									<ConnectionStateServers host={connectionHost} />
+								</>
+							) : undefined
+						}
+					/>
 				)}
-				<ConnectedWebRendererWorkspace
-					connectionRoute={connectionRoute}
-					hostContext={desktopContext}
-					onBack={() => {
-						if (leaveManagerSession()) return;
-						void registry.dispose();
-					}}
-					subscribeAppCommands={
-						desktopContext === undefined || window.terminayHost === undefined
-							? undefined
-							: (listener: (command: AppCommand) => Promise<void> | void) =>
-									(
-										window.terminayHost as unknown as DesktopHostBridge
-									).subscribeEvent((event) => {
-										if (event.event.type === 'menu.command') {
-											return listener(event.event.command);
-										}
-									})
-					}
-					terminalClientContext={terminalClientContext}
-				/>
+				<div
+					className="session-workspace__content"
+					inert={remoteRecoveryUi && phase === 'reconnecting'}
+				>
+					<ConnectedWebRendererWorkspace
+						key={primary?.workspaceGeneration}
+						connectionRoute={connectionRoute}
+						hostContext={desktopContext}
+						onBack={() => {
+							if (leaveManagerSession()) return;
+							void registry.dispose();
+						}}
+						subscribeAppCommands={
+							desktopContext === undefined || window.terminayHost === undefined
+								? undefined
+								: (listener: (command: AppCommand) => Promise<void> | void) =>
+										(
+											window.terminayHost as unknown as DesktopHostBridge
+										).subscribeEvent((event) => {
+											if (event.event.type === 'menu.command') {
+												return listener(event.event.command);
+											}
+										})
+						}
+						terminalClientContext={terminalClientContext}
+					/>
+				</div>
 			</div>
 		);
 	} else {
@@ -376,7 +463,7 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 				<section
 					className="browser-host-shell__panel browser-host-shell__connection-state"
 					aria-live="polite"
-					aria-busy={phase === 'connecting' || phase === 'reconnecting'}
+					aria-busy={phase === 'connecting'}
 				>
 					{(phase === 'connecting' || phase === 'reconnecting') && (
 						<div className="browser-host-shell__connection-brand">
@@ -396,16 +483,35 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 						</h1>
 					)}
 					{error !== undefined && <p role="alert">{error}</p>}
-					{/* Recovery keeps trying on its own; this only asks for it now. */}
-					{(phase === 'ready' || error !== undefined) &&
-						primary?.phase !== 'incompatible' && (
-							<button type="button" onClick={recoverConnection}>
-								Retry connection
-							</button>
-						)}
+					{retryStatus !== undefined && (
+						<p className="browser-host-shell__recovery-progress" role="status">
+							{retryStatus}
+						</p>
+					)}
+					{pairingRequired && !showRecoveryPairing && (
+						<button type="button" onClick={() => setShowRecoveryPairing(true)}>
+							Pair again
+						</button>
+					)}
+					{pairingRequired && showRecoveryPairing && (
+						<SharedConnectionsRouteBody
+							{...pairingRoute}
+							state="ready"
+							presentation="pairing"
+							onPairingPanelClose={() => setShowRecoveryPairing(false)}
+						/>
+					)}
+					{!pairingRequired &&
+						(phase === 'ready' ||
+							error !== undefined ||
+							recoveryProgress !== undefined) &&
+						primary?.phase !== 'incompatible' &&
+						retryButton}
 					{/* A server that cannot be shown must still be one the window can
 					 * leave. A first attempt that is merely slow offers nothing yet. */}
-					{(phase === 'ready' || error !== undefined) && (
+					{(phase === 'ready' ||
+						error !== undefined ||
+						recoveryProgress !== undefined) && (
 						<ConnectionStateServers host={connectionHost} />
 					)}
 				</section>
@@ -433,24 +539,33 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 
 /**
  * The dim over a workspace whose connection is coming back. While the window's
- * server is being upgraded, the upgrade's modal card is already up and the drop
- * is one of its steps: nothing more is drawn, so the card never moves.
+ * server is being upgraded, its modal stays above the workspace and any
+ * recovery controls shown after a failed attempt.
  */
 function SessionReconnecting({
 	error,
 	profileId,
-}: Readonly<{ error: string | undefined; profileId: string | undefined }>) {
+	action,
+	retryStatus,
+}: Readonly<{
+	error: string | undefined;
+	profileId: string | undefined;
+	action?: ReactNode;
+	retryStatus?: string;
+}>) {
 	const upgrade = useServerUpgradeProgress(profileId);
-	if (showsUpgradeModal(upgrade)) return null;
+	if (showsUpgradeModal(upgrade) && (action === undefined || error === undefined))
+		return null;
 	return (
 		<div
 			className="session-workspace__reconnecting"
-			role="status"
-			aria-live="polite"
-			aria-busy="true"
+			aria-busy={action === undefined ? true : undefined}
 		>
 			<LoadingDots />
-			<p>{error ?? 'Terminal stream stalled. Reconnecting…'}</p>
+			<p role="status">
+				{error ?? retryStatus ?? 'Terminal stream stalled. Reconnecting…'}
+			</p>
+			{action}
 		</div>
 	);
 }
@@ -485,6 +600,7 @@ function presentationPhase(
 async function openPrimaryConnection(
 	options: Readonly<{
 		replaceEndpoint: boolean;
+		manual?: boolean;
 		onTransportClosed: () => void;
 	}>,
 	adopt: (
@@ -514,7 +630,7 @@ async function openPrimaryConnection(
 	const desktop = await acquireDesktopServerBootstrap(
 		window.terminayHost as DesktopHostBridge | undefined,
 		window.terminayBytes as DesktopByteBridge | undefined,
-		{ replaceEndpoint: options.replaceEndpoint },
+		{ replaceEndpoint: options.replaceEndpoint, manual: options.manual },
 	);
 	if (desktop === undefined)
 		throw new Error(

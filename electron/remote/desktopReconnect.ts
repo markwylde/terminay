@@ -1,4 +1,5 @@
 import WebSocket from 'ws'
+import { DesktopRemotePairingRequiredError } from '../desktopRemoteRecoveryContract'
 import type { ByteTransport } from '@terminay/protocol'
 import { createRemoteStreamTransport } from '../../src/shared/remoteStreamTransport'
 import type { DesktopDeviceCredentialStore, PinnedDesktopHostKey } from './deviceCredentialStore'
@@ -37,7 +38,9 @@ export async function createDesktopReconnectTransport(options: Readonly<{
   readonly store: DesktopDeviceCredentialStore
   readonly fetch?: DesktopReconnectFetch
   readonly requestTimeoutMs?: number
+  readonly abort?: AbortSignal
 }>): Promise<DesktopReconnectTransport> {
+  options.abort?.throwIfAborted()
   const origin = normalizeOrigin(options.origin)
   const fetchImplementation = options.fetch ?? (globalThis.fetch as unknown as DesktopReconnectFetch)
   if (typeof fetchImplementation !== 'function') throw new Error('Desktop reconnect requires a network fetch implementation.')
@@ -46,21 +49,22 @@ export async function createDesktopReconnectTransport(options: Readonly<{
     throw new RangeError('Desktop reconnect request timeout must be between 1 and 30 seconds.')
   }
   const device = await options.store.loadDevice(origin)
-  if (device === null) throw new Error('No paired device exists for this server origin.')
+  if (device === null) throw new DesktopRemotePairingRequiredError('No paired device exists for this server origin.')
   const pinnedHostKey = await options.store.loadPinnedHostKey(origin)
   const challenge = await postJson(fetchImplementation, origin, '/api/devices/challenge', {
     deviceId: device.deviceId,
-  }, timeoutMs)
+  }, timeoutMs, options.abort)
   const normalizedChallenge = parseChallenge(challenge, origin, device.deviceId)
   const deviceSignature = await options.store.signChallenge(origin, normalizedChallenge.signingInput)
   const completion = await postJson(fetchImplementation, origin, '/api/devices/verify', {
     challengeId: normalizedChallenge.challengeId,
     deviceId: device.deviceId,
     deviceSignature,
-  }, timeoutMs)
+  }, timeoutMs, options.abort)
+  options.abort?.throwIfAborted()
   const ticket = parseTicket(completion, origin)
   if (ticket.signalingBootstrap !== undefined && pinnedHostKey === null) {
-    throw new Error('Server host identity is not pinned; explicit re-pairing is required.')
+    throw new DesktopRemotePairingRequiredError('Server host identity is not pinned; explicit re-pairing is required.')
   }
   // createRemoteStreamTransport deliberately parses the fragment in memory and
   // sends the short-lived ticket in the WebSocket subprotocol header. It is not
@@ -78,14 +82,15 @@ export async function createDesktopReconnectTransport(options: Readonly<{
   })
 }
 
-async function postJson(fetchImplementation: DesktopReconnectFetch, origin: string, pathname: string, body: Record<string, string>, timeoutMs: number): Promise<unknown> {
+async function postJson(fetchImplementation: DesktopReconnectFetch, origin: string, pathname: string, body: Record<string, string>, timeoutMs: number, abort?: AbortSignal): Promise<unknown> {
+  abort?.throwIfAborted()
   const controller = new AbortController()
   let timeout: ReturnType<typeof setTimeout> | undefined
   const request = Promise.resolve(fetchImplementation(new URL(pathname, origin).toString(), Object.freeze({
     body: JSON.stringify(body),
     headers: Object.freeze({ 'content-type': 'application/json' }),
     method: 'POST',
-    signal: controller.signal,
+    signal: abort === undefined ? controller.signal : AbortSignal.any([controller.signal, abort]),
   }))).then(async (response) => {
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error('Desktop reconnect was denied by the server.')

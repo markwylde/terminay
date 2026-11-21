@@ -101,6 +101,36 @@ export function deviceJoinProofPayload(input: Readonly<{ sessionId: string; clie
 	return new TextEncoder().encode(`${DEVICE_JOIN_PROOF_LABEL}\n${input.sessionId}\n${input.clientNonce}`);
 }
 
+/** A refusal is valid only for the device that proved this particular join. */
+export function revokedDeviceRefusalPayload(input: Readonly<{
+	sessionId: string;
+	deviceId: string;
+	clientNonce: string;
+}>): Uint8Array<ArrayBuffer> {
+	if (!ID.test(input.sessionId) || !ID.test(input.deviceId))
+		throw new TypeError('Revoked device refusal identity is invalid.');
+	canonicalBase64Url(input.clientNonce, 32, 32, 'Client nonce');
+	return new TextEncoder().encode(
+		`terminay remote v1 revoked device refusal\n${input.sessionId}\n${input.deviceId}\n${input.clientNonce}`,
+	);
+}
+
+export async function verifyRevokedDeviceRefusal(
+	input: Parameters<typeof revokedDeviceRefusalPayload>[0],
+	pinnedHostKey: string,
+	signature: unknown,
+): Promise<boolean> {
+	try {
+		if (typeof signature !== 'string') return false;
+		const rawKey = canonicalBase64Url(pinnedHostKey, 32, 32, 'Pinned host key');
+		const rawSignature = canonicalBase64Url(signature, 64, 64, 'Refusal signature');
+		const key = await crypto.subtle.importKey('raw', rawKey.buffer, 'Ed25519', false, ['verify']);
+		return await crypto.subtle.verify('Ed25519', key, rawSignature.buffer, revokedDeviceRefusalPayload(input));
+	} catch {
+		return false;
+	}
+}
+
 export function isDeviceJoinProof(value: unknown): value is string {
 	return typeof value === 'string' && value.length >= 32 && value.length <= 2048 && /^[A-Za-z0-9_-]+$/u.test(value);
 }

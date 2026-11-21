@@ -74,7 +74,9 @@ export async function createDesktopBootstrappedWebRtcConnection(options: {
 	readonly webrtcRuntimeRoot?: string;
 	readonly createConnection?: typeof createDesktopWebRtcConnection;
 	readonly transportAuth?: DesktopBootstrappedWebRtcAuth;
+	readonly abort?: AbortSignal;
 }): Promise<DesktopWebRtcConnection> {
+	options.abort?.throwIfAborted();
 	const now = options.now ?? Date.now;
 	const bootstrap = parseDesktopSignalingBootstrap(
 		options.bootstrap,
@@ -87,6 +89,7 @@ export async function createDesktopBootstrappedWebRtcConnection(options: {
 		socketOpenTimeoutMs:
 			options.socketOpenTimeoutMs ?? DEFAULT_SOCKET_OPEN_TIMEOUT_MS,
 		transportAuth: options.transportAuth,
+		abort: options.abort,
 	});
 	try {
 		const connection = await (
@@ -111,6 +114,10 @@ export async function createDesktopBootstrappedWebRtcConnection(options: {
 				? {}
 				: { webrtcRuntimeRoot: options.webrtcRuntimeRoot }),
 		});
+		if (options.abort?.aborted) {
+			await connection.transport.close({ code: 'normal' }).catch(() => undefined);
+			options.abort.throwIfAborted();
+		}
 		connection.transport.onStateChange((state) => {
 			if (state === 'closed' || state === 'failed') signaling.close();
 		});
@@ -128,6 +135,7 @@ async function openAuthenticatedSignaling(
 		readonly openSocket?: (url: string, origin: string) => Socket;
 		readonly socketOpenTimeoutMs: number;
 		readonly transportAuth?: DesktopBootstrappedWebRtcAuth;
+	readonly abort?: AbortSignal;
 	},
 ): Promise<NodeDataChannelSignaling & { close(): void }> {
 	if (
@@ -184,15 +192,23 @@ async function openAuthenticatedSignaling(
 			clearTimeout(timeout);
 			resolve();
 		});
+		const cancel = () => {
+			fail(new Error('Desktop WebRTC signaling was cancelled.'));
+			if (socket.readyState === SOCKET_CONNECTING || socket.readyState === SOCKET_OPEN)
+				socket.close(1000, 'Desktop WebRTC signaling cancelled');
+		};
 		socket.on('error', () =>
 			fail(new Error('Desktop WebRTC signaling connection failed.')),
 		);
 		socket.on('close', () => {
 			closed = true;
+			options.abort?.removeEventListener('abort', cancel);
 			const error = new Error('Desktop WebRTC signaling connection closed.');
 			fail(error);
 			for (const listener of listeners) listener({});
 		});
+		if (options.abort?.aborted) cancel();
+		else options.abort?.addEventListener('abort', cancel, { once: true });
 		socket.on('message', (raw) => {
 			try {
 				const message = JSON.parse(String(raw));

@@ -52,12 +52,23 @@ export type ServerUiByteChannel = Readonly<{
  * its own `MessagePort`, created by main while it handles `connections.attach`
  * and named only by the opaque connection id that action returned. The bridge
  * exposes no credential, no signaling state, and no raw transport handle. */
-export type ServerUiByteBridge = Readonly<{
-	version: 2;
-	openConnection(connectionId: string): Promise<ServerUiByteChannel>;
-	replaceEndpoint(): Promise<void>;
-	send(frame: Uint8Array): Promise<void>;
-	subscribe(listener: (frame: Uint8Array | null) => void): () => void;
-}>;
+export interface DesktopRemoteByteBridge {
+	openRemoteEndpoint(
+		replace: boolean,
+		manual: boolean,
+	): Promise<Omit<ServerUiByteChannel, 'close'>>;
+	expediteRemoteRecovery(): void;
+	subscribeRemoteResume(listener: () => void): () => void;
+}
+
+export type ServerUiByteBridge = Readonly<
+	DesktopRemoteByteBridge & {
+		version: 2;
+		openConnection(connectionId: string): Promise<ServerUiByteChannel>;
+		replaceEndpoint(): Promise<void>;
+		send(frame: Uint8Array): Promise<void>;
+		subscribe(listener: (frame: Uint8Array | null) => void): () => void;
+	}
+>;
 
 export type { TerminayHostActionRequest, TerminayHostContext };

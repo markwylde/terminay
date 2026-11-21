@@ -56,6 +56,7 @@ export class SessionConnectGate {
 		attempt: SessionConnectAttempt,
 		operation: Promise<Value>,
 		clock: SessionConnectClock = defaultClock,
+		onTimeout?: () => void,
 	): Promise<Value> {
 		const timeoutMs = positiveDelay(
 			clock.attemptTimeoutMs,
@@ -64,6 +65,7 @@ export class SessionConnectGate {
 		return new Promise<Value>((resolve, reject) => {
 			const timer = clock.setTimeout(() => {
 				reject(new Error(`Session connect timed out after ${timeoutMs}ms.`));
+				onTimeout?.();
 			}, timeoutMs);
 			operation.then(
 				(value) => {
@@ -233,6 +235,7 @@ export function isUnrecoverableConnectFailure(cause: unknown): boolean {
 		message.includes('has not been paired') ||
 		message.includes('host identity changed') ||
 		message.includes('re-pairing is required') ||
+		message.includes('must be paired again') ||
 		message.includes('revoked') ||
 		message.includes('unknown device') ||
 		// The device already holds every window the server allows. Retrying
@@ -246,6 +249,7 @@ export type RecoveryLoopPhase = 'connecting' | 'reconnecting' | 'ready';
 
 export type RecoveryLoopRunOptions = Readonly<{
 	replaceDesktopEndpoint?: boolean;
+	manual?: boolean;
 }>;
 
 /**
@@ -261,7 +265,9 @@ export function createRecoveryLoop(
 		run(
 			attempt: SessionConnectAttempt,
 			runOptions: RecoveryLoopRunOptions,
+			controller: AbortController,
 		): Promise<void>;
+		ownsDeadline?(runOptions: RecoveryLoopRunOptions): boolean;
 		/** True once this session has been connected at least once. */
 		recovering(): boolean;
 		onAttemptStart(context: Readonly<{ recovering: boolean }>): void;
@@ -285,33 +291,44 @@ export function createRecoveryLoop(
 	// record, and deciding from that alone presented every later attempt as a
 	// cold connect: the surface flipped between two panels on each retry.
 	let succeededOnce = false;
+	let running: AbortController | undefined;
+	let disposed = false;
 
 	const start = (runOptions: RecoveryLoopRunOptions = {}): void => {
+		if (disposed) return;
 		const attempt = gate.begin();
 		if (attempt === undefined) return;
 		// Retry means attempt now: a pending delay never outranks a fresh start.
 		schedule.cancel();
+		const controller = new AbortController();
+		running = controller;
 		options.onAttemptStart({
 			recovering: succeededOnce || options.recovering(),
 		});
 		void (async () => {
 			let failure: unknown;
 			try {
-				await gate.withDeadline(
-					attempt,
-					options.run(attempt, runOptions),
-					options.attemptClock,
-				);
+				const ownsDeadline = options.ownsDeadline?.(runOptions) === true;
+				const operation = options.run(attempt, runOptions, controller);
+				if (ownsDeadline) await operation;
+				else
+					await gate.withDeadline(
+						attempt,
+						operation,
+						options.attemptClock,
+						() => controller.abort(),
+					);
 			} catch (cause) {
 				failure = cause ?? new Error('Unable to reconnect.');
 			}
 			gate.finish(attempt);
+			if (running === controller) running = undefined;
+			if (disposed || !gate.isCurrent(attempt)) return;
 			if (failure === undefined) {
 				succeededOnce = true;
 				schedule.reset();
 				return;
 			}
-			if (!gate.isCurrent(attempt)) return;
 			const message =
 				failure instanceof Error ? failure.message : 'Unable to reconnect.';
 			if (isUnrecoverableConnectFailure(failure)) {
@@ -321,7 +338,7 @@ export function createRecoveryLoop(
 			}
 			options.onAttemptFailed({ message, retrying: true });
 			schedule.arm(
-				() => start(runOptions),
+				() => start({ ...runOptions, manual: false }),
 				() => gate.isCurrent(attempt),
 			);
 		})();
@@ -335,6 +352,8 @@ export function createRecoveryLoop(
 			schedule.resume();
 		},
 		dispose: () => {
+			disposed = true;
+			running?.abort();
 			schedule.cancel();
 		},
 	});
@@ -470,13 +489,12 @@ export function createSessionHeartbeat(
 			missed = 0;
 			lastRoundTripMs = now() - startedAt;
 		} else if (!suspended) {
-			missed = probe.decisive === true ? Math.max(missed + 1, missLimit) : missed + 1;
+			missed =
+				probe.decisive === true ? Math.max(missed + 1, missLimit) : missed + 1;
 		}
 		options.onSample?.(snapshot());
 		probe.onSettled?.(
-			answered
-				? { answered, roundTripMs: lastRoundTripMs ?? 0 }
-				: { answered },
+			answered ? { answered, roundTripMs: lastRoundTripMs ?? 0 } : { answered },
 		);
 		if (missed >= missLimit) {
 			lost = true;

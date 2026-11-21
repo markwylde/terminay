@@ -855,6 +855,6 @@ test('Desktop pairs, reconnects, and is revoked against a standalone server it r
 			iceServers: [],
 			signal: { connectHost: '127.0.0.1' },
 		}),
-		/timed out|revoked|denied|proof|failed|unknown/u,
+		{ code: 'pairing-required', message: 'The server revoked this paired device.' },
 	);
 });

@@ -47,6 +47,8 @@ import {
 	RecoveryRetrySchedule,
 	SESSION_RESUME_PROBE_DEADLINE_MS,
 	type SessionProbeOptions,
+	type RecoveryLoopRunOptions,
+	type SessionConnectAttempt,
 } from '../../web/sessionConnectAttempt.ts';
 import { ConnectionTimingTracker } from './connectionTimings.ts';
 
@@ -94,6 +96,8 @@ export type WorkspaceConnection = Readonly<{
 	origin?: string;
 	phase: ConnectionPhase;
 	error?: string;
+	recoveryProgress?: 'checking' | 'retrying';
+	workspaceGeneration?: number;
 	hello?: ServerHello;
 	compatibility?: ConnectionCompatibility;
 	hostContext?: TerminayHostContext;
@@ -120,6 +124,7 @@ export type ConnectionOpenRequest = Readonly<{
 	role: ConnectionRole;
 	/** Desktop recovery has to ask the preload for a fresh byte endpoint. */
 	replaceEndpoint: boolean;
+	manual?: boolean;
 	/** The opener calls this when its transport dies underneath us. */
 	onTransportClosed: () => void;
 }>;
@@ -155,6 +160,7 @@ export type ConnectionRegistryOptions = Readonly<{
 	createSchedule?: () => RecoveryRetrySchedule;
 	isDocumentHidden?: () => boolean;
 	heartbeatIntervalMs?: number;
+	onRemoteRetryJoin?: () => void;
 	/** Which kind of host this window is, for connection timing samples. */
 	metricsHost?: ConnectionMetricHost;
 	/** Overridable so a unit test can drive the timing marks. */
@@ -170,6 +176,10 @@ class ConnectionEntry {
 	serverId: string | undefined;
 	origin: string | undefined;
 	error: string | undefined;
+	private recoveryProgress: WorkspaceConnection['recoveryProgress'];
+	private resumeProbeStartedAt: number | undefined;
+	private remoteEndpointOpened = false;
+	private workspaceGeneration: number | undefined;
 	hello: ServerHello | undefined;
 	compatibility: ConnectionCompatibility | undefined;
 	hostContext: TerminayHostContext | undefined;
@@ -204,11 +214,19 @@ class ConnectionEntry {
 			options.now,
 		);
 		this.loop = createRecoveryLoop({
-			run: (attempt, runOptions) =>
-				this.runAttempt(attempt.generation, runOptions.replaceDesktopEndpoint === true),
+			run: (attempt, runOptions, controller) =>
+				this.runAttempt(attempt, runOptions, controller),
+			ownsDeadline: () => this.usesRemoteRecovery(),
 			recovering: () => this.context !== undefined,
 			onAttemptStart: ({ recovering }) => {
 				this.timings.attemptStarted();
+				if (
+					this.usesRemoteRecovery() &&
+					(recovering || this.recoveryProgress !== undefined)
+				) {
+					this.recoveryProgress ??= 'checking';
+					this.error = undefined;
+				}
 				if (recovering) {
 					this.phase = 'reconnecting';
 				} else {
@@ -219,8 +237,9 @@ class ConnectionEntry {
 			},
 			onAttemptFailed: ({ message, retrying }) => {
 				this.timings.attemptFailed(new Error(message));
-				this.clearContext();
+				if (!retrying || !this.usesRemoteRecovery()) this.clearContext();
 				this.error = message;
+				this.recoveryProgress = undefined;
 				this.phase = retrying ? 'reconnecting' : 'unreachable';
 				this.changed();
 			},
@@ -232,9 +251,31 @@ class ConnectionEntry {
 		});
 	}
 
-	start(replaceEndpoint = false): void {
+	start(replaceEndpoint = false, manual = false): void {
 		if (this.disposed) return;
-		this.loop.start({ replaceDesktopEndpoint: replaceEndpoint });
+		this.loop.start({ replaceDesktopEndpoint: replaceEndpoint, manual });
+	}
+
+	private usesRemoteRecovery(): boolean {
+		return (
+			this.role === 'primary' &&
+			this.options.onRemoteRetryJoin !== undefined &&
+			this.hostContext?.profile?.isLocal === false
+		);
+	}
+
+	private retry(): void {
+		if (this.usesRemoteRecovery()) {
+			this.recoveryProgress = 'retrying';
+			this.error = undefined;
+			this.changed();
+			if (this.loop.gate.inFlight) {
+				this.options.onRemoteRetryJoin?.();
+				return;
+			}
+		}
+		this.timings.lost('manual');
+		this.start(true, true);
 	}
 
 	/** The document was hidden: the next resume reports how long for. */
@@ -252,12 +293,23 @@ class ConnectionEntry {
 		if (this.disposed) return;
 		this.timings.shown();
 		this.loop.resume();
+		const heartbeat = this.heartbeat;
+		if (heartbeat === undefined) return;
+		const now = this.options.now?.() ?? Date.now();
+		if (
+			this.usesRemoteRecovery() &&
+			this.resumeProbeStartedAt !== undefined &&
+			now - this.resumeProbeStartedAt < SESSION_RESUME_PROBE_DEADLINE_MS
+		)
+			return;
 		const client = this.client;
 		const hello = this.hello;
-		this.heartbeat?.probeNow({
+		this.resumeProbeStartedAt = now;
+		heartbeat.probeNow({
 			deadlineMs: SESSION_RESUME_PROBE_DEADLINE_MS,
 			decisive: true,
 			onSettled: ({ answered, roundTripMs }) => {
+				this.resumeProbeStartedAt = undefined;
 				if (!answered) {
 					this.timings.lost('resume-probe');
 					return;
@@ -278,10 +330,13 @@ class ConnectionEntry {
 			label: this.label,
 			phase: this.phase,
 			agentStatusStore: this.agentStatusStore,
-			retry: () => {
-				this.timings.lost('manual');
-				this.start(true);
-			},
+			retry: () => this.retry(),
+			...(this.workspaceGeneration === undefined
+				? {}
+				: { workspaceGeneration: this.workspaceGeneration }),
+			...(this.recoveryProgress === undefined
+				? {}
+				: { recoveryProgress: this.recoveryProgress }),
 			...(this.serverId === undefined ? {} : { serverId: this.serverId }),
 			...(this.origin === undefined ? {} : { origin: this.origin }),
 			...(this.error === undefined ? {} : { error: this.error }),
@@ -319,18 +374,25 @@ class ConnectionEntry {
 	}
 
 	private async runAttempt(
-		generation: number,
-		replaceEndpoint: boolean,
+		attempt: SessionConnectAttempt,
+		runOptions: RecoveryLoopRunOptions,
+		controller: AbortController,
 	): Promise<void> {
-		const stale = () => this.disposed || !this.isCurrent(generation);
+		const { generation } = attempt;
+		const remoteRecovery = this.usesRemoteRecovery();
+		const stale = () =>
+			this.disposed || controller.signal.aborted || !this.isCurrent(generation);
 		await this.client?.close().catch(() => undefined);
 		this.heartbeat?.stop();
 		this.heartbeat = undefined;
+		this.resumeProbeStartedAt = undefined;
 
 		const opened = await this.options.open({
 			profileId: this.profileId,
 			role: this.role,
-			replaceEndpoint,
+			replaceEndpoint:
+				runOptions.replaceDesktopEndpoint === true || this.remoteEndpointOpened,
+			manual: runOptions.manual === true,
 			onTransportClosed: () => this.recoverFromClose(generation),
 		});
 		if (stale()) {
@@ -341,6 +403,7 @@ class ConnectionEntry {
 		this.label = opened.label;
 		this.origin = opened.origin;
 		this.hostContext = opened.hostContext;
+		this.remoteEndpointOpened = this.usesRemoteRecovery();
 		if (
 			opened.transport.state === 'closed' ||
 			opened.transport.state === 'failed'
@@ -364,7 +427,7 @@ class ConnectionEntry {
 			clientOptions,
 		);
 		this.client = client;
-		try {
+		const hydrate = async () => {
 			const { hello, compatibility } = await connectWithCompatibility(
 				client,
 				this.options.requirements ?? CLIENT_SERVER_COMPATIBILITY,
@@ -378,16 +441,16 @@ class ConnectionEntry {
 			this.compatibility = compatibility;
 			this.serverId = hello?.serverId;
 			this.hello = hello;
-			this.publishProfileStatus(
-				compatibilityToConnectionStatus(compatibility),
-			);
+			this.publishProfileStatus(compatibilityToConnectionStatus(compatibility));
 			// A server this bundle cannot speak to stays attached and inert. It
 			// gets no feature clients, so nothing can send it an operation.
 			if (compatibility.state === 'incompatible' || hello === undefined) {
 				this.phase = 'incompatible';
-				this.error = compatibility.state === 'incompatible'
-					? compatibility.message
-					: 'This server refused the connection.';
+				this.recoveryProgress = undefined;
+				this.error =
+					compatibility.state === 'incompatible'
+						? compatibility.message
+						: 'This server refused the connection.';
 				this.context = undefined;
 				this.loop.gate.finish({ generation });
 				this.changed();
@@ -395,10 +458,13 @@ class ConnectionEntry {
 			}
 			let context: WorkspaceConnectionContext;
 			try {
-				context = await (this.options.createContext ??
-					defaultCreateContext)(client, hello, {
-					onTransportClosed: () => this.recoverFromClose(generation),
-				});
+				context = await (this.options.createContext ?? defaultCreateContext)(
+					client,
+					hello,
+					{
+						onTransportClosed: () => this.recoverFromClose(generation),
+					},
+				);
 			} catch (cause) {
 				// A workspace from another release passes the hello and fails here.
 				// It is the same answer on every attempt, so it is recorded as an
@@ -407,6 +473,7 @@ class ConnectionEntry {
 				await client.close().catch(() => undefined);
 				if (this.client === client) this.client = undefined;
 				this.phase = 'incompatible';
+				this.recoveryProgress = undefined;
 				this.error = cause.message;
 				this.clearContext();
 				// The hello's verdict was about the protocol, and no longer the
@@ -442,13 +509,24 @@ class ConnectionEntry {
 			this.heartbeat = heartbeat;
 			heartbeat.start();
 			this.context = context;
+			if (this.usesRemoteRecovery()) this.workspaceGeneration = generation;
 			this.phase = 'ready';
+			this.recoveryProgress = undefined;
 			this.error = undefined;
 			this.changed();
 			this.report(client, hello, this.timings.ready());
+		};
+		try {
+			if (remoteRecovery)
+				await this.loop.gate.withDeadline(attempt, hydrate(), undefined, () =>
+					controller.abort(),
+				);
+			else await hydrate();
 		} catch (cause) {
 			await client.close().catch(() => undefined);
 			if (this.client === client) this.client = undefined;
+			if (remoteRecovery && controller.signal.aborted && !this.disposed)
+				throw new Error('Workspace setup timed out. Retry connection.');
 			throw cause;
 		}
 	}
@@ -569,7 +647,10 @@ export class ConnectionRegistry {
 	 * life of the registry: `dispose()` ends one life, and the next
 	 * `startPrimary` — a StrictMode remount, or returning from the manager —
 	 * starts another rather than crashing the shell. */
-	startPrimary(profileId: string): WorkspaceConnection {
+	startPrimary(
+		profileId: string,
+		hostContext?: TerminayHostContext,
+	): WorkspaceConnection {
 		if (this.primaryProfileId !== undefined)
 			throw new Error('This window already has a primary connection.');
 		this.disposed = false;
@@ -579,6 +660,7 @@ export class ConnectionRegistry {
 		if (this.options.profileStore?.get(profileId) !== undefined)
 			this.options.profileStore.select(profileId);
 		const entry = this.createEntry(profileId, 'primary');
+		entry.hostContext = hostContext;
 		entry.start();
 		this.publish();
 		return entry.snapshot();
@@ -630,6 +712,11 @@ export class ConnectionRegistry {
 	 * rather than waiting out each one's interval. */
 	resume(): void {
 		for (const entry of this.entries.values()) entry.resume();
+	}
+
+	resumeRemotePrimary(): void {
+		if (this.primaryProfileId !== undefined)
+			this.entries.get(this.primaryProfileId)?.resume();
 	}
 
 	/** The document was hidden. */

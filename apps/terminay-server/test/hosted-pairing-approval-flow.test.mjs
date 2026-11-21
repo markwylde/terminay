@@ -13,12 +13,14 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
 	assertAuthenticatedWebRtcTransportTranscript,
+	AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 	deriveMatchCode,
 	deviceJoinProofPayload,
 	parseEnrollmentPushMessage,
 	parsePendingEnrollmentResponse,
 	verifyAuthenticatedWebRtcHostSignature,
 	verifyAuthenticatedWebRtcPairingAuthenticator,
+	verifyRevokedDeviceRefusal,
 } from '@terminay/protocol';
 import {
 	approvalSocketPath,
@@ -807,6 +809,45 @@ test('a device pairs only after the host approves its match code, and the ticket
 		() => connections[1].closed && connections[3].closed,
 		'revocation to close every window of the device',
 	);
+
+	const revokedSocket = new WebSocket(`ws://127.0.0.1:${relay.port}/signal`);
+	t.after(() => revokedSocket.close());
+	await once(revokedSocket, 'open');
+	const refusals = [];
+	revokedSocket.on('message', (raw) => {
+		const message = JSON.parse(String(raw));
+		if (message.type === 'device-offer') {
+			refusals.push(message);
+			changed();
+		}
+	});
+	const joinRevoked = (nonce, acceptsSignedDeviceRefusal, deviceProof) =>
+		revokedSocket.send(JSON.stringify({
+			type: 'device-join',
+			authenticatedTransportVersion: AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
+			sessionId: SESSION_ID,
+			deviceId,
+			clientNonce: nonce,
+			acceptsSignedDeviceRefusal,
+			deviceProof,
+		}));
+	const legacyNonce = randomBytes(32).toString('base64url');
+	joinRevoked(legacyNonce, undefined, proof(legacyNonce));
+	const invalidNonce = randomBytes(32).toString('base64url');
+	joinRevoked(invalidNonce, true, randomBytes(256).toString('base64url'));
+	const clientNonce = randomBytes(32).toString('base64url');
+	joinRevoked(clientNonce, true, proof(clientNonce));
+	await waitFor(() => refusals.length > 0, 'signed revocation refusal');
+	assert.equal(refusals.length, 1);
+	assert.equal(refusals[0].sdp, undefined);
+	const binding = { sessionId: SESSION_ID, deviceId, clientNonce };
+	const refusalSignature = refusals[0].revokedDeviceRefusal;
+	assert.equal(await verifyRevokedDeviceRefusal(binding, hostKey.publicKey, refusalSignature), true);
+	assert.equal(await verifyRevokedDeviceRefusal({ ...binding, clientNonce: legacyNonce }, hostKey.publicKey, refusalSignature), false);
+	assert.equal(await verifyRevokedDeviceRefusal({ ...binding, deviceId: 'other-device' }, hostKey.publicKey, refusalSignature), false);
+	assert.equal(await verifyRevokedDeviceRefusal(binding, createHostedHostKey().publicKey, refusalSignature), false);
+	assert.equal(await verifyRevokedDeviceRefusal(binding, hostKey.publicKey, randomBytes(64).toString('base64url')), false);
+	assert.equal(connections.length, 4, 'no new connections admitted');
 });
 
 test('the data-root socket mints a fresh pairing room while a live peer keeps working', {
