@@ -61,4 +61,6 @@ After these fixes, with retries off: the three tests passed 25 of 25 each, and t
 
 The first pull request run then failed `bot-composition` with `write EPIPE`: the Bots socket fixture wrote to a fake engine command that had already exited, with no error handler on that pipe. The fixture now handles it, as its other spawn path already did.
 
+The next run was 30 of 30 green, but `bots.spec.ts` "Stop ends a held turn" passed only on retry. The same fixture wrote to an upgraded socket before attaching its error handler, so a client hanging up during Stop ended the test worker. The handler is now attached first.
+
 The change is not ready for archive while task 5.4 remains incomplete. Full-suite cleanliness is not established: the four ownership assertions and eight unrelated OpenSpec failures remain as described above. The separate desktop remote recovery change also retains its physical packaged macOS wake verification task.

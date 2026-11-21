@@ -373,6 +373,9 @@ export async function startBotSocketServer(root, options = {}) {
 		s.once('close', () => sockets.delete(s));
 	});
 	server.on('upgrade', async (req, socket, head) => {
+		// The client can hang up at any point here, as Stop does mid-turn, and an
+		// unhandled write error would end the test's worker.
+		socket.on('error', () => {});
 		try {
 			const { parts: p } = route(req);
 			let bytes = head;
@@ -468,7 +471,6 @@ export async function startBotSocketServer(root, options = {}) {
 				closed.emit('changed');
 				socket.end();
 			});
-			socket.on('error', () => {});
 			socket.once('close', () => child.kill('SIGKILL'));
 		} catch {
 			socket.destroy();
