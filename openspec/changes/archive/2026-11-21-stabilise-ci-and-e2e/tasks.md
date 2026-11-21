@@ -38,4 +38,4 @@
 - [x] 5.1 Run typecheck, lint and affected unit tests. Verify they exit 0.
 - [x] 5.2 Run all listed E2E tests together with `--retries=0`. Verify no failures.
 - [x] 5.3 Run `openspec validate --all`. Verify this change reports no errors.
-- [ ] 5.4 Read back every Gitea commit status on the pull request head. Verify each is `success` or `skipped`.
+- [x] 5.4 Read back every Gitea commit status on the pull request head. Verify each is `success` or `skipped`.
