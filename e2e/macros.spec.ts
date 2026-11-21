@@ -29,6 +29,44 @@ async function newMacro(page: Page, title: string): Promise<void> {
   await page.getByLabel('Macro name').fill(title)
 }
 
+/**
+ * Drag with the mouse and let go only once `armed` shows the drop it will take.
+ * A native drop is lost if the button is released before the target has
+ * accepted a dragover, which a busy runner can take a while to deliver.
+ */
+async function dragAndDrop(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  armed: Locator,
+  armedClass: RegExp,
+  targetPosition?: { x: number; y: number },
+): Promise<void> {
+  const from = await source.boundingBox()
+  const to = await target.boundingBox()
+  if (from === null || to === null) throw new Error('A drag end is not on screen.')
+  const startX = from.x + from.width / 2
+  const startY = from.y + from.height / 2
+  const endX = to.x + (targetPosition?.x ?? to.width / 2)
+  const endY = to.y + (targetPosition?.y ?? to.height / 2)
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX + 6, startY + 6, { steps: 3 })
+  // Each pass moves the pointer, so the target gets a fresh dragover.
+  let nudge = 0
+  await expect(async () => {
+    nudge = nudge === 0 ? 1 : 0
+    await page.mouse.move(endX + nudge, endY, { steps: 3 })
+    await expect(armed).toHaveClass(armedClass, { timeout: 250 })
+  }).toPass({ timeout: 5_000 })
+  await page.mouse.up()
+}
+
+const MACRO_DROP = /macro-library-category--drop/
+const ITEM_DROP = /macro-nav-item--drop/
+const GROUP_DROP_BEFORE = /macro-library-group--drop-before/
+const GROUP_DROP_AFTER = /macro-library-group--drop-after/
+
 async function save(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(saveState(page)).toHaveText('Saved')
@@ -390,11 +428,23 @@ test('drags a macro into a category and before another macro', async ({ appHarne
   await macros.getByLabel('Category name').fill('Agents')
   await macros.getByLabel('Category name').press('Enter')
 
-  await libraryItem(macros, 'Create a pull request').dragTo(categoryHeader(macros, 'Agents'))
+  await dragAndDrop(
+    macros,
+    libraryItem(macros, 'Create a pull request'),
+    categoryHeader(macros, 'Agents'),
+    categoryHeader(macros, 'Agents'),
+    MACRO_DROP,
+  )
   await expect(macros.locator('[data-macro-category="Agents"] .macro-nav-item')).toHaveText(['Create a pull request'])
 
   // Dropped on a macro, it lands just before that macro and joins its category.
-  await libraryItem(macros, 'Say hello to person').dragTo(libraryItem(macros, 'Create a pull request'))
+  await dragAndDrop(
+    macros,
+    libraryItem(macros, 'Say hello to person'),
+    libraryItem(macros, 'Create a pull request'),
+    libraryItem(macros, 'Create a pull request'),
+    ITEM_DROP,
+  )
   await expect(macros.locator('[data-macro-category="Agents"] .macro-nav-item')).toHaveText([
     'Say hello to person',
     'Create a pull request',
@@ -510,19 +560,30 @@ categorised('reorders categories by dragging, and the Command Bar follows that o
   expect(await categoryOrder(macros)).toEqual(['pr', 'action', 'spec', ''])
 
   // Dropped on the top half of a category, it lands above it.
-  await categoryHeader(macros, 'spec').dragTo(categoryHeader(macros, 'pr'), { targetPosition: { x: 60, y: 4 } })
-  expect(await categoryOrder(macros)).toEqual(['spec', 'pr', 'action', ''])
+  await dragAndDrop(
+    macros,
+    categoryHeader(macros, 'spec'),
+    categoryHeader(macros, 'pr'),
+    macros.locator('[data-macro-category="pr"]'),
+    GROUP_DROP_BEFORE,
+    { x: 60, y: 4 },
+  )
+  await expect.poll(() => categoryOrder(macros)).toEqual(['spec', 'pr', 'action', ''])
   await expect(saveState(macros)).toHaveText('Unsaved category changes')
 
   // Dropped on the bottom half of a category's group, it lands below it.
   const actionGroup = macros.locator('[data-macro-category="action"]')
   const actionHeight = (await actionGroup.boundingBox())?.height ?? 0
-  await categoryHeader(macros, 'spec').dragTo(actionGroup, { targetPosition: { x: 60, y: actionHeight - 4 } })
-  expect(await categoryOrder(macros)).toEqual(['pr', 'action', 'spec', ''])
+  await dragAndDrop(macros, categoryHeader(macros, 'spec'), actionGroup, actionGroup, GROUP_DROP_AFTER, {
+    x: 60,
+    y: actionHeight - 4,
+  })
+  await expect.poll(() => categoryOrder(macros)).toEqual(['pr', 'action', 'spec', ''])
 
   // Dropped on the macros without a category, it becomes the last category; they stay last.
-  await categoryHeader(macros, 'pr').dragTo(macros.locator('[data-macro-category=""]'))
-  expect(await categoryOrder(macros)).toEqual(['action', 'spec', 'pr', ''])
+  const uncategorised = macros.locator('[data-macro-category=""]')
+  await dragAndDrop(macros, categoryHeader(macros, 'pr'), uncategorised, uncategorised, GROUP_DROP_BEFORE)
+  await expect.poll(() => categoryOrder(macros)).toEqual(['action', 'spec', 'pr', ''])
 
   // The handle reorders from the keyboard.
   await macros.getByRole('button', { name: 'Reorder category pr' }).focus()
@@ -531,7 +592,13 @@ categorised('reorders categories by dragging, and the Command Bar follows that o
   await expect(macros.getByRole('button', { name: 'Reorder category pr' })).toBeFocused()
 
   // A macro still moves between categories; dragging a category did not take that over.
-  await libraryItem(macros, 'Say thing').dragTo(categoryHeader(macros, 'spec'))
+  await dragAndDrop(
+    macros,
+    libraryItem(macros, 'Say thing'),
+    categoryHeader(macros, 'spec'),
+    categoryHeader(macros, 'spec'),
+    MACRO_DROP,
+  )
   await expect(macros.locator('[data-macro-category="spec"] .macro-nav-item')).toHaveText(['spec:create', 'spec:apply', 'Say thing'])
 
   await save(macros)

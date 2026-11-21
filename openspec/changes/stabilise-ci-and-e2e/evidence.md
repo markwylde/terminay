@@ -63,4 +63,10 @@ The first pull request run then failed `bot-composition` with `write EPIPE`: the
 
 The next run was 30 of 30 green, but `bots.spec.ts` "Stop ends a held turn" passed only on retry. The same fixture wrote to an upgraded socket before attaching its error handler, so a client hanging up during Stop ended the test worker. The handler is now attached first.
 
+The run after that exposed two more:
+
+- `linked-folders` card slide failed all three attempts on a slow shard, because it sampled a 180 ms ease-out animation exactly two frames in. It now records the furthest the card was drawn from its place, and passed 30 of 30.
+- `macros` "an empty category survives reopening" hung on reload. Settings showed "Saved" before its passive effect removed the unsaved-changes `beforeunload` guard, so a reload in that gap opened a native dialog. The guard is now a layout effect, removed in the same commit as the "Saved" text. That test then passed 40 of 40.
+- `macros` "drags a macro into a category" lost a drop when the button was released before the target had accepted a dragover. The macro and category drags now release only once the target shows its drop state.
+
 The change is not ready for archive while task 5.4 remains incomplete. Full-suite cleanliness is not established: the four ownership assertions and eight unrelated OpenSpec failures remain as described above. The separate desktop remote recovery change also retains its physical packaged macOS wake verification task.

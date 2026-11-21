@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 import {
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -985,7 +986,9 @@ export function SettingsWindow({
 		request.resolve(choice === 'discard');
 	};
 	// A native window cannot draw the prompt above; it asks the host instead.
-	useEffect(() => {
+	// A layout effect, so the guard is gone by the time the window shows "Saved"
+	// and a reload at that moment does not ask about changes already saved.
+	useLayoutEffect(() => {
 		if (!anyEditorDirty) return undefined;
 		const onBeforeUnload = (event: BeforeUnloadEvent) => {
 			event.preventDefault();
