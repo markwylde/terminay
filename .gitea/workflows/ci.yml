@@ -228,10 +228,12 @@ jobs:
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: |
           mkdir -p "$HOME/.local"
-          npm install --global --prefix "$HOME/.local" npm@12.2.1
+          node scripts/run-ci-command.mjs 120000 npm install --global --prefix "$HOME/.local" npm@12.2.1 \
+            --fetch-timeout=30000 --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=10000
           export PATH="$HOME/.local/bin:$PATH"
           hash -r
-          npm ci
+          node scripts/run-ci-command.mjs 300000 npm ci \
+            --fetch-timeout=30000 --fetch-retries=3 --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=10000
 
       - name: Build unsigned packaged application
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
@@ -676,12 +678,12 @@ jobs:
       image: git.i.wylde.net/docker/dind:latest
       volumes:
         - terminay-ci-npm-cache:/var/cache/terminay-npm
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
     env:
-      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 20
+      TERMINAY_CI_JOB_TIMEOUT_MINUTES: 30
       TERMINAY_BOT_MCP_IMAGE_CACHE: git.i.wylde.net/markwylde/terminay-bot-ci-cache
     steps:
       - name: Arm the timeout watchdog

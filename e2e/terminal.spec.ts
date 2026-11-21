@@ -129,17 +129,21 @@ async function blurTerminalInput(page: Page): Promise<void> {
 	// away, so a focus that lands late is not mistaken for one the test's own
 	// gesture caused.
 	await expectTerminalInputFocused(page);
-	await page.evaluate(() => {
-		const active = document.activeElement;
-		if (active instanceof HTMLElement) active.blur();
-	});
-	expect(
-		await page.evaluate(
-			() =>
+	// Attaching can request focus more than once, a frame apart. The blur only
+	// counts once it has held across the frames such a request runs in.
+	await expect(async () => {
+		const focused = await page.evaluate(async () => {
+			const active = document.activeElement;
+			if (active instanceof HTMLElement) active.blur();
+			for (let frame = 0; frame < 2; frame += 1)
+				await new Promise((resolve) => window.requestAnimationFrame(resolve));
+			return (
 				document.activeElement?.classList.contains('xterm-helper-textarea') ??
-				false,
-		),
-	).toBe(false);
+				false
+			);
+		});
+		expect(focused).toBe(false);
+	}).toPass({ timeout: 5_000 });
 }
 
 /**
@@ -1435,6 +1439,13 @@ test.describe('terminal behavior', () => {
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
+		// The new shell's prompt is raw output. On a held clock, a prompt that
+		// lands after the last advance would stay "working" for good.
+		await expect(
+			mainWindow.locator(
+				'.project-workspace--active .terminal-panel:visible .xterm-rows',
+			),
+		).toContainText('$');
 		// The work finishes once the typing is long past, with another project
 		// in front, and its notification stays for the whole settle period.
 		const clock = serverClock(electronApp);

@@ -8340,11 +8340,17 @@ function App({
 		(projectId: string) => commandWorkspace(projectId)?.focusActiveTerminal(),
 		[commandWorkspace],
 	);
+	const reportProjectSaveError = useCallback(
+		(projectId: string, message: string) =>
+			commandWorkspace(projectId)?.reportError(message),
+		[commandWorkspace],
+	);
 	const openEditProjectWindow = useProjectEditor({
 		applicationClient: terminalClientContext?.applicationClient,
 		auxiliaryRoutes: auxiliaryRouteController,
 		focusProject: focusProjectTerminal,
 		homePath,
+		onSaveError: reportProjectSaveError,
 		projects,
 		updateProject,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,

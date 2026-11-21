@@ -95,6 +95,9 @@ export async function startBotSocketServer(root, options = {}) {
 				closed.emit('changed');
 				resolve({ code, text: Buffer.concat(chunks).toString(), stderr });
 			});
+			// A command that exits without reading its input closes this pipe. Its
+			// exit code is the result, reported by `close` above.
+			child.stdin.on('error', () => {});
 			child.stdin.end(input);
 		});
 	const frame = (bytes, stderr = false) => {
@@ -370,6 +373,9 @@ export async function startBotSocketServer(root, options = {}) {
 		s.once('close', () => sockets.delete(s));
 	});
 	server.on('upgrade', async (req, socket, head) => {
+		// The client can hang up at any point here, as Stop does mid-turn, and an
+		// unhandled write error would end the test's worker.
+		socket.on('error', () => {});
 		try {
 			const { parts: p } = route(req);
 			let bytes = head;
@@ -465,7 +471,6 @@ export async function startBotSocketServer(root, options = {}) {
 				closed.emit('changed');
 				socket.end();
 			});
-			socket.on('error', () => {});
 			socket.once('close', () => child.kill('SIGKILL'));
 		} catch {
 			socket.destroy();

@@ -1,6 +1,19 @@
 import type { ServerWorkspaceProject } from '../shared/serverWorkspaceReconciliation';
 import type { ProjectEditWindowResult } from '../types/terminay';
 
+/** A save may finish after another auxiliary route has replaced its editor. */
+export async function settleEditTabSubmission(
+	waitForCommit: () => Promise<unknown>,
+	isCurrent: () => boolean,
+	close: () => void,
+): Promise<void> {
+	try {
+		await waitForCommit();
+	} finally {
+		if (isCurrent()) close();
+	}
+}
+
 /**
  * The edit route resolves before its caller performs the authoritative server
  * commands. Keep the route in its saving state until the canonical projection

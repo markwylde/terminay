@@ -425,8 +425,8 @@ test('the project editor hook owns canonical root conflict reconciliation', () =
 	assert.doesNotMatch(app, /error instanceof ClientError/);
 	assert.match(projectEditor, /updateProjectRoot\(/);
 	assert.match(projectEditor, /error instanceof ClientError/);
-	assert.match(projectEditor, /error\.code !== 'conflict'/);
-	assert.match(projectEditor, /workspaceSnapshotStore\?\.refresh\(\)/);
+	assert.match(projectEditor, /error\.code === 'conflict'/);
+	assert.match(projectEditor, /store\?\.refresh\(\)/);
 });
 
 test('the transfer hook owns cross-window project tab lifecycle', () => {

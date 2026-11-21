@@ -5,9 +5,10 @@ set -eu
 export npm_config_cache=${npm_config_cache:-/var/cache/terminay-npm}
 mkdir -p "$npm_config_cache"
 if [ "$(npm --version)" != '12.2.1' ]; then
-  timeout --signal=TERM --kill-after=10s 60s npm install --global npm@12.2.1 \
+  timeout --signal=TERM --kill-after=10s 120s npm install --global npm@12.2.1 \
     --prefer-offline --no-audit --no-fund --loglevel=http \
-    --fetch-timeout=30000 --fetch-retries=1
+    --fetch-timeout=30000 --fetch-retries=3 \
+    --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=10000
 fi
 # npm ci's opportunistic advisory lookup does not affect its exit status.
 # Avoid that extra request; required security and boundary tests stay unchanged.
@@ -15,9 +16,11 @@ fi
 # progress rather than consume the whole CI timeout without output.
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 header_prefix=$(node "$script_dir/node-build-header-prefix.mjs")
-set -- timeout --signal=TERM --kill-after=10s 180s npm ci \
+set -- timeout --signal=TERM --kill-after=10s 300s npm ci \
   --prefer-offline --foreground-scripts --timing --loglevel=http \
-  --fetch-timeout=30000 --fetch-retries=1 --no-audit --no-fund
+  --fetch-timeout=30000 --fetch-retries=3 \
+  --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=10000 \
+  --no-audit --no-fund
 if [ -n "$header_prefix" ]; then
   echo "Using verified Node headers for $(node --version)"
   env npm_config_nodedir="$header_prefix" "$@"

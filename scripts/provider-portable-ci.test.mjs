@@ -317,11 +317,11 @@ test('Linux installer pins npm only when needed, bounds each command, preserves 
       const { verifiedNodeHeaderPrefix } = await import('./node-build-header-prefix.mjs');
       const expectedHeaders = verifiedNodeHeaderPrefix();
       if (expectedHeaders) assert.equal(install.headers, expectedHeaders);
-      for (const flag of ['--prefer-offline', '--foreground-scripts', '--timing', '--fetch-timeout=30000', '--fetch-retries=1', '--no-audit']) assert.ok(install.args.includes(flag));
+      for (const flag of ['--prefer-offline', '--foreground-scripts', '--timing', '--fetch-timeout=30000', '--fetch-retries=3', '--fetch-retry-mintimeout=2000', '--fetch-retry-maxtimeout=10000', '--no-audit']) assert.ok(install.args.includes(flag));
       assert.ok(!install.args.includes('--ignore-scripts'));
       const limits = (await readText(bounds, 'utf8')).trim().split('\n').map(JSON.parse);
-      assert.deepEqual(limits.at(-1), ['--signal=TERM', '--kill-after=10s', '180s']);
-      if (version !== '12.2.1') assert.deepEqual(limits[0], ['--signal=TERM', '--kill-after=10s', '60s']);
+      assert.deepEqual(limits.at(-1), ['--signal=TERM', '--kill-after=10s', '300s']);
+      if (version !== '12.2.1') assert.deepEqual(limits[0], ['--signal=TERM', '--kill-after=10s', '120s']);
     }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -345,6 +345,31 @@ test('node-gyp header reuse requires exact runtime major, minor and patch versio
     assert.match(floor, /npm_config_nodedir="\$header_prefix" timeout/u);
     assert.doesNotMatch(floor, /^ENV .*npm_config_nodedir/gmu, 'Electron packaging must choose its own headers');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('macOS installs have bounded commands and the same registry retry policy', async () => {
+  const body = job(giteaCi, 'packaged-macos-smoke');
+  assert.match(body, /node scripts\/run-ci-command\.mjs 120000 npm install/u);
+  assert.match(body, /node scripts\/run-ci-command\.mjs 300000 npm ci/u);
+  for (const flag of ['--fetch-timeout=30000', '--fetch-retries=3', '--fetch-retry-mintimeout=2000', '--fetch-retry-maxtimeout=10000']) {
+    assert.equal(body.split(flag).length - 1, 2, flag);
+  }
+  const bot = job(giteaCi, 'bot-mcp-runtime');
+  assert.match(bot, /^ {4}timeout-minutes: 30$/mu);
+  assert.match(bot, /TERMINAY_CI_JOB_TIMEOUT_MINUTES: 30/u);
+  assert.match(await read('scripts/run-bot-mcp-real-tests.mjs'), /\? 1200000 :/u);
+});
+
+test('portable CI deadline propagates failure and terminates a stalled command', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const runner = new URL('./run-ci-command.mjs', import.meta.url).pathname;
+  for (const [limit, script, expected] of [
+    ['5000', 'process.exit(42)', 42],
+    ['100', 'setInterval(() => {}, 1000)', 124],
+  ]) {
+    const result = spawnSync(process.execPath, [runner, limit, process.execPath, '-e', script], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(result.status, expected, result.stderr);
+  }
 });
 
 test('Linux floor and systemd gates consume one producer directly and verify revision-matched transfers', () => {

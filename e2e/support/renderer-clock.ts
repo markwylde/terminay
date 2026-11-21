@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 
 /** How far ahead of the furthest window the held clock is set. */
 const HOLD_MARGIN_MS = 100;
+const HOLD_ATTEMPTS = 5;
 
 /**
  * A clock the test holds for the renderer.
@@ -23,14 +24,28 @@ export async function holdRendererClock(page: Page): Promise<void> {
 	// own copy, and they drift apart by a few milliseconds as each is run.
 	// It is held a little ahead of the one furthest on, so that none is
 	// behind it by the time it is held; a timer due in that margin runs.
-	let now = 0;
-	for (const each of page.context().pages())
-		for (const frame of each.frames())
-			now = Math.max(
-				now,
-				await frame.evaluate(() => Date.now()).catch(() => 0),
-			);
-	await page.clock.pauseAt(now + HOLD_MARGIN_MS);
+	// A loaded runner can spend longer than the margin between reading the
+	// clocks and holding them. That reading is then in the past, so it is taken
+	// again, with a wider margin.
+	for (let attempt = 0; ; attempt += 1) {
+		let now = 0;
+		for (const each of page.context().pages())
+			for (const frame of each.frames())
+				now = Math.max(
+					now,
+					await frame.evaluate(() => Date.now()).catch(() => 0),
+				);
+		try {
+			await page.clock.pauseAt(now + HOLD_MARGIN_MS * 2 ** attempt);
+			return;
+		} catch (error) {
+			if (
+				attempt + 1 >= HOLD_ATTEMPTS ||
+				!String(error).includes('Cannot fast-forward to the past')
+			)
+				throw error;
+		}
+	}
 }
 
 const installed = new WeakSet<Page>();
