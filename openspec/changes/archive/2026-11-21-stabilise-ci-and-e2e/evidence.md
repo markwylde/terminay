@@ -71,4 +71,6 @@ The run after that exposed two more:
 
 Pull request #640 merged at `09d4f329`, whose 30 commit statuses all read back as `success` after two E2E shards were re-run. The slide, reload and drag fixes above landed in the follow-up pull request.
 
+The follow-up's first run failed `server-upgrade` "restarts and rolls back" on all three attempts, and 4 of 10 locally. A focus trace showed the workspace remounting behind the upgrade card after the reconnect, and its terminal taking keyboard focus from Close, so a key meant for the card would reach the shell. A terminal's automatic focus, including the search-closed effect that also runs on mount, now leaves focus on the card. The test then passed 30 of 30, and the server-upgrade, terminal, project-tab and project-start files passed with retries off.
+
 The review's archive condition, task 5.4, is met. Full-suite cleanliness is not established: the four ownership assertions and eight unrelated OpenSpec failures remain as described above. The separate desktop remote recovery change also retains its physical packaged macOS wake verification task.
