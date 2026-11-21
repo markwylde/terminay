@@ -114,6 +114,10 @@ test.describe("What's New", () => {
 			page: 'ok',
 			latest: '2026-11',
 		});
+		// The startup check may already have used this document's hourly read.
+		// Start a fresh document after installing the announcement fixture.
+		await mainWindow.reload({ waitUntil: 'domcontentloaded' });
+		await expect.poll(() => seen.announcements).toBeGreaterThanOrEqual(1);
 		await homeControl(mainWindow).click();
 
 		const items = homeSidebar(mainWindow).getByRole('tab');
@@ -130,7 +134,6 @@ test.describe("What's New", () => {
 			'aria-label',
 			"What's New, new post",
 		);
-		expect(seen.announcements).toBeGreaterThanOrEqual(1);
 
 		await whatsNewItem(mainWindow).click();
 		await expect(panel(mainWindow)).toHaveAttribute(
