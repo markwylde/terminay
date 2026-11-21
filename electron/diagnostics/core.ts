@@ -98,6 +98,7 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'remote.hosted-peer.candidate-pair',
 	'remote.hosted-peer.connection-failed',
 	'remote.document-lane.replaced',
+	'remote.document-recovery',
 	'local-server.extension.spawned',
 	'local-server.extension.ready',
 	'local-server.extension.child-exited',

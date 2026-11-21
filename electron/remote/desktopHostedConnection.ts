@@ -9,6 +9,7 @@ import {
 	parseEnrollmentPushMessage,
 	parseHostedPairingUrl,
 	validateAuthenticatedWebRtcTransportTranscript,
+	verifyRevokedDeviceRefusal,
 } from '@terminay/protocol';
 import {
 	HeadlessChannelTransport,
@@ -31,6 +32,7 @@ import {
 } from '../../apps/terminay-server/src/remote/hostedPeerLifecycle';
 import { loadSelectedSecureWeriftRuntime } from '../../apps/terminay-server/src/remote/secureWeriftRuntime';
 import { readSctpMaxMessageBytes } from '../../apps/terminay-server/src/remote/uiArchiveTransfer';
+import { DesktopRemotePairingRequiredError } from '../desktopRemoteRecoveryContract';
 import { authenticateDevice } from '../../src/remote/services/auth';
 import type { PinnedServerHostKey } from '../../src/remote/services/authenticatedWebRtcTransport';
 import { establishDevicePairing } from '../../src/remote/services/devicePairingFlow';
@@ -479,6 +481,15 @@ export async function connectDesktopHostedPeer(
 					);
 					return;
 				}
+				if (message.type === 'device-offer' && 'revokedDeviceRefusal' in message) {
+					if (remoteSet || options.scope.kind !== 'device') return;
+					if (await verifyRevokedDeviceRefusal(
+						{ sessionId, deviceId: options.scope.deviceId, clientNonce },
+						options.scope.pinnedHostKey.publicKey,
+						message.revokedDeviceRefusal,
+					)) finish(new DesktopRemotePairingRequiredError('The server revoked this paired device.'));
+					return;
+				}
 				if (message.type === 'offer' || message.type === 'device-offer') {
 					if (remoteSet) return;
 					const description = message.sdp as
@@ -505,10 +516,11 @@ export async function connectDesktopHostedPeer(
 							? {}
 							: { onPinned: options.onPinned }),
 					});
-					const pin = await gate.verifyRemoteDescription(
-						description.sdp,
-						proof,
-					);
+					const pin = await gate.verifyRemoteDescription(description.sdp, proof).catch((error: unknown) => {
+						if (error instanceof Error && error.message === 'Server host identity changed; explicit re-pairing is required.')
+							throw new DesktopRemotePairingRequiredError(error.message);
+						throw error;
+					});
 					hostPublicKey =
 						pin ??
 						(options.scope.kind === 'device'
@@ -578,6 +590,7 @@ export async function connectDesktopHostedPeer(
 				send({
 					authenticatedTransportVersion: AUTHENTICATED_WEBRTC_TRANSPORT_VERSION,
 					type: 'device-join',
+					acceptsSignedDeviceRefusal: true,
 					clientNonce,
 					deviceProof: await options.scope.signDeviceJoin(payload),
 				});
@@ -769,10 +782,10 @@ export async function connectDesktopHostedRemote(
 	const origin = normalizeHostedOrigin(options.origin);
 	const device = await options.store.loadDevice(origin);
 	if (device === null)
-		throw new Error('No paired device exists for this server origin.');
+		throw new DesktopRemotePairingRequiredError('No paired device exists for this server origin.');
 	const pinnedHostKey = await options.store.loadPinnedHostKey(origin);
 	if (pinnedHostKey === null)
-		throw new Error(
+		throw new DesktopRemotePairingRequiredError(
 			'Server host identity is not pinned; explicit re-pairing is required.',
 		);
 	// A saved direct profile reaches the server's own signaling listener, which
@@ -849,6 +862,9 @@ export async function connectDesktopHostedRemote(
 		});
 	} catch (error) {
 		peer.close();
+		if (error instanceof Error &&
+			/^(?:remote device is revoked|remote device is not registered|the device is not trusted)\.?$/i.test(error.message))
+			throw new DesktopRemotePairingRequiredError(error.message);
 		throw error;
 	}
 }

@@ -15,6 +15,9 @@ await writeFile(
 	`import { EventEmitter } from 'node:events';
 import { MessageChannel } from 'node:worker_threads';
 export const ipcMain = new EventEmitter();
+const handlers = new Map();
+ipcMain.handle = (channel, handler) => handlers.set(channel, handler);
+ipcMain.invoke = (channel, ...args) => handlers.get(channel)(...args);
 function port(native) {
 	return {
 		on: (name, listener) =>
@@ -198,13 +201,15 @@ test('a window whose first reconnect attempt fails is reconnected by a later one
 
 /** A remote window's sender whose main frame is or is not loading, recording
  * every document endpoint it is handed. */
-function documentSender(id, endpoints) {
+function documentSender(id, endpoints, metadata = []) {
 	const sender = Object.assign(new EventEmitter(), {
 		id,
+		mainFrame: {},
 		mainFrameLoading: false,
 		isLoadingMainFrame: () => sender.mainFrameLoading,
-		postMessage: (channel, _payload, ports) => {
+		postMessage: (channel, payload, ports) => {
 			if (channel !== 'server-ui-host:byte-endpoint') return;
+			metadata.push(payload);
 			ports[0].start();
 			endpoints.push(ports[0]);
 		},
@@ -284,6 +289,226 @@ test('a remote window reloading its document gets a fresh lane', async () => {
 		ipcMain.emit('server-ui-host:document-ready', { sender });
 		await replacement.reading;
 		assert.equal(endpoints.entries.length, 2);
+	} finally {
+		unbind();
+		for (const endpoint of endpoints.entries) endpoint.close();
+	}
+});
+
+function requestRecovery(
+	sender,
+	generation,
+	manual,
+	senderFrame = sender.mainFrame,
+) {
+	return ipcMain.invoke(
+		'server-ui-host:recover-remote-endpoint',
+		{ sender, senderFrame },
+		generation,
+		manual,
+	);
+}
+
+test('a silent open lane is replaced, Retry skips backoff, and concurrent requests join', async (t) => {
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	const endpoints = observed();
+	const metadata = [];
+	const sender = documentSender(10, endpoints, metadata);
+	const started = observed();
+	const current = lane();
+	const replacement = lane();
+	const diagnostics = observed();
+	let complete;
+	const inFlight = new Promise((resolve) => {
+		complete = resolve;
+	});
+	const unbind = bindRemoteServerUiDocumentEndpoint({
+		sender,
+		launch: {
+			context: { serverId: 'remote' },
+			byteEndpointHandle: 'endpoint-4',
+		},
+		transport: current,
+		reconnect: () => {
+			started.push('start');
+			if (started.entries.length === 1) throw new Error('unavailable');
+			return inFlight;
+		},
+		onRecovery: (event) => diagnostics.push(event),
+	});
+	try {
+		ipcMain.emit('server-ui-host:document-ready', { sender });
+		await endpoints.reach(1);
+		const { generation } = metadata[0];
+
+		assert.deepEqual(await requestRecovery(sender, generation, true, {}), {
+			outcome: 'retired',
+		});
+		assert.deepEqual(started.entries, []);
+		// Current still reports open and never emits a close. Only the
+		// workspace's application-liveness request can retire it.
+		assert.deepEqual(await requestRecovery(sender, generation, false), {
+			outcome: 'unavailable',
+		});
+		assert.deepEqual(await requestRecovery(sender, generation, false), {
+			outcome: 'unavailable',
+		});
+		assert.equal(started.entries.length, 1);
+
+		const retry = requestRecovery(sender, generation, true);
+		const joined = requestRecovery(sender, generation, false);
+		await started.reach(2);
+		complete(replacement);
+		const next = { outcome: 'ready', generation: generation + 1 };
+		assert.deepEqual(await retry, next);
+		assert.deepEqual(await joined, next);
+		assert.deepEqual(await requestRecovery(sender, generation, true), next);
+		assert.equal(started.entries.length, 2);
+		assert.equal(endpoints.entries.length, 2);
+		assert.ok(
+			diagnostics.entries.some(
+				(event) => event.stage === 'join' && event.attempt === 2,
+			),
+		);
+	} finally {
+		unbind();
+		for (const endpoint of endpoints.entries) endpoint.close();
+	}
+});
+
+test('a timed-out replacement cannot take over the next lane', async (t) => {
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	const endpoints = observed();
+	const metadata = [];
+	const current = documentSender(11, endpoints, metadata);
+	const otherEndpoints = observed();
+	const other = documentSender(12, otherEndpoints);
+	const diagnostics = observed();
+	const late = lane();
+	const replacement = lane();
+	const unstarted = observed();
+	let completeLate;
+	let setupSignal;
+	let calls = 0;
+	let lateClosed = false;
+	late.close = async () => {
+		lateClosed = true;
+	};
+	const unbind = bindRemoteServerUiDocumentEndpoint({
+		sender: current,
+		launch: {
+			context: { serverId: 'same-server' },
+			byteEndpointHandle: 'endpoint-5',
+		},
+		transport: lane(),
+		reconnect: async (signal) => {
+			if (++calls !== 1) return replacement;
+			setupSignal = signal;
+			return new Promise((resolve) => {
+				completeLate = resolve;
+				unstarted.push('hung');
+			});
+		},
+		onRecovery: diagnostics.push,
+	});
+	const unbindOther = bindRemoteServerUiDocumentEndpoint({
+		sender: other,
+		launch: {
+			context: { serverId: 'same-server' },
+			byteEndpointHandle: 'endpoint-6',
+		},
+		transport: lane(),
+		reconnect: async () => assert.fail('the other window reconnected'),
+	});
+	try {
+		ipcMain.emit('server-ui-host:document-ready', { sender: current });
+		ipcMain.emit('server-ui-host:document-ready', { sender: other });
+		await Promise.all([endpoints.reach(1), otherEndpoints.reach(1)]);
+		const { generation } = metadata[0];
+		const timed = requestRecovery(current, generation, false);
+		await unstarted.reach(1);
+		t.mock.timers.tick(90_000);
+		assert.deepEqual(await timed, { outcome: 'timeout' });
+		assert.equal(setupSignal.aborted, true);
+		const result = await requestRecovery(current, generation, true);
+		assert.deepEqual(result, { outcome: 'ready', generation: generation + 1 });
+		ipcMain.emit(
+			'server-ui-host:remote-endpoint-received',
+			{ sender: current, senderFrame: current.mainFrame },
+			result.generation,
+		);
+		completeLate(late);
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(lateClosed, true);
+		assert.equal(endpoints.entries.length, 2);
+		assert.equal(otherEndpoints.entries.length, 1);
+		assert.deepEqual(
+			diagnostics.entries.map(({ stage, attempt, outcome }) => [
+				stage,
+				attempt,
+				outcome,
+			]),
+			[
+				['request', 1, undefined],
+				['start', 1, undefined],
+				['outcome', 1, 'timeout'],
+				['request', 2, undefined],
+				['start', 2, undefined],
+				['outcome', 2, 'ready'],
+				['handoff', 2, 'ready'],
+			],
+		);
+		for (const event of diagnostics.entries) {
+			assert.ok(
+				Object.keys(event).every((key) =>
+					['attempt', 'stage', 'reason', 'outcome', 'durationMs'].includes(key),
+				),
+			);
+			if (event.durationMs !== undefined)
+				assert.ok(Number.isSafeInteger(event.durationMs));
+		}
+	} finally {
+		unbind();
+		unbindOther();
+		for (const endpoint of [...endpoints.entries, ...otherEndpoints.entries])
+			endpoint.close();
+	}
+});
+
+test('an explicit pairing refusal stops the host backoff', async (t) => {
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	const endpoints = observed();
+	const metadata = [];
+	const sender = documentSender(13, endpoints, metadata);
+	let calls = 0;
+	const unbind = bindRemoteServerUiDocumentEndpoint({
+		sender,
+		launch: {
+			context: { serverId: 'remote' },
+			byteEndpointHandle: 'endpoint-7',
+		},
+		transport: lane(),
+		reconnect: async () => {
+			calls += 1;
+			throw Object.assign(
+				new Error('the authenticated server refused the device'),
+				{ code: 'pairing-required' },
+			);
+		},
+	});
+	try {
+		ipcMain.emit('server-ui-host:document-ready', { sender });
+		await endpoints.reach(1);
+		assert.deepEqual(
+			await requestRecovery(sender, metadata[0].generation, false),
+			{ outcome: 'pairing-required' },
+		);
+		t.mock.timers.tick(100_000);
+		assert.deepEqual(
+			await requestRecovery(sender, metadata[0].generation, true),
+			{ outcome: 'pairing-required' },
+		);
+		assert.equal(calls, 1);
 	} finally {
 		unbind();
 		for (const endpoint of endpoints.entries) endpoint.close();

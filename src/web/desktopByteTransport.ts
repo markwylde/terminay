@@ -18,7 +18,11 @@ export interface DesktopByteChannel {
 	close?(): void;
 }
 
-export interface DesktopByteBridge extends DesktopByteChannel {
+import type { DesktopRemoteByteBridge } from '../../electron/serverUiHostContract';
+
+export interface DesktopByteBridge
+	extends DesktopByteChannel,
+		Partial<DesktopRemoteByteBridge> {
 	/** Version 2 adds `openConnection`; version 1 preloads carry the primary
 	 * endpoint only and cannot reach an attached server. */
 	readonly version: 1 | 2;
@@ -35,7 +39,9 @@ export interface DesktopByteBridge extends DesktopByteChannel {
 
 export interface DesktopHostBridge {
 	getContext(): Promise<TerminayHostContext>;
-	subscribeEvent(listener: (event: TerminayHostEvent) => Promise<void> | void): () => void;
+	subscribeEvent(
+		listener: (event: TerminayHostEvent) => Promise<void> | void,
+	): () => void;
 }
 
 export type DesktopServerBootstrap = Readonly<{
@@ -205,7 +211,7 @@ export class DesktopByteTransport implements ByteTransport {
 export async function acquireDesktopServerBootstrap(
 	host: DesktopHostBridge | undefined,
 	bytes: DesktopByteBridge | undefined,
-	options: Readonly<{ replaceEndpoint?: boolean }> = {},
+	options: Readonly<{ replaceEndpoint?: boolean; manual?: boolean }> = {},
 ): Promise<DesktopServerBootstrap | undefined> {
 	if (host === undefined && bytes === undefined) return undefined;
 	if (
@@ -214,6 +220,22 @@ export async function acquireDesktopServerBootstrap(
 		(bytes.version !== 1 && bytes.version !== 2)
 	)
 		throw new Error('Desktop server bootstrap is incomplete.');
+	const context = await host.getContext();
+	if (context.hostKind !== 'desktop')
+		throw new Error('Desktop server bootstrap has the wrong host kind.');
+	if (
+		context.profile?.isLocal === false &&
+		bytes.openRemoteEndpoint !== undefined
+	) {
+		const channel = await bytes.openRemoteEndpoint(
+			options.replaceEndpoint === true,
+			options.manual === true,
+		);
+		return Object.freeze({
+			context,
+			transport: new DesktopByteTransport(channel),
+		});
+	}
 	if (options.replaceEndpoint === true) {
 		if (typeof bytes.replaceEndpoint !== 'function')
 			throw new Error(
@@ -221,9 +243,6 @@ export async function acquireDesktopServerBootstrap(
 			);
 		await bytes.replaceEndpoint();
 	}
-	const context = await host.getContext();
-	if (context.hostKind !== 'desktop')
-		throw new Error('Desktop server bootstrap has the wrong host kind.');
 	return Object.freeze({ context, transport: new DesktopByteTransport(bytes) });
 }
 

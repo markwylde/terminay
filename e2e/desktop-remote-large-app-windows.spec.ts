@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ElectronApplication, Locator, Page } from '@playwright/test';
+import type { TerminayHostContext } from '@terminay/protocol';
 import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
 import { createStartedProject } from './support/project-start';
@@ -389,6 +390,152 @@ test('a remote server holding four large agent windows can be reconnected to', a
 		await writeFile(testInfo.outputPath('desktop-log.txt'), LOG.join('\n'));
 		for (const launched of launches)
 			await launched.close().catch(() => undefined);
+		await server.stop();
+	}
+});
+
+test('wake and Retry replace a silent remote lane in the same document', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(180_000);
+	const server = await startStandaloneServer(tempDir);
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		if ((await mainWindow.locator('.project-tab[role="tab"]').count()) === 0)
+			await createStartedProject(mainWindow);
+		const terminal = activeTerminal(mainWindow);
+		await expect(terminal).toBeVisible();
+		const sessionId = await terminal.getAttribute(
+			'data-terminay-terminal-session-id',
+		);
+		await submitTerminalCommand(
+			mainWindow,
+			'recovery_proof=held-in-the-same-shell',
+			terminal,
+		);
+
+		const other = await appHarness.openChildWindow(async () => {
+			await mainWindow.evaluate(async () => {
+				const host = window.terminayHost!;
+				const context =
+					(await host.getContext()) as unknown as TerminayHostContext;
+				await host.requestAction({
+					bridgeVersion: context.hostBridgeVersion,
+					schemaVersion: context.schemaVersion,
+					profileId: context.profileId,
+					serverId: context.serverId,
+					sourceId: context.sourceId,
+					windowId: context.windowId,
+					userGesture: true,
+					action: {
+						type: 'connections.open-window',
+						profileId: context.profileId,
+					},
+				});
+			});
+		});
+		await expectShowing(other, serverHost);
+		const otherDisconnects: string[] = [];
+		other.on('load', () => otherDisconnects.push('reloaded'));
+		const setStall = (active: boolean) =>
+			mainWindow.evaluate((value) => {
+				const fixture = window as Window & {
+					terminayRemoteRecoveryFaultTest: {
+						setStall(active: boolean): Promise<void>;
+					};
+					remoteRecoveryDocument?: boolean;
+				};
+				if (value) fixture.remoteRecoveryDocument = true;
+				return fixture.terminayRemoteRecoveryFaultTest.setStall(value);
+			}, active);
+
+		await mainWindow.bringToFront();
+		await setStall(true);
+		await electronApp.evaluate(({ powerMonitor }) => {
+			powerMonitor.emit('resume');
+		});
+		const retry = mainWindow.getByRole('button', { name: 'Retry connection' });
+		await expect(retry).toBeVisible({ timeout: 8_000 });
+		const contrast = () =>
+			retry.evaluate((button) => {
+				const css = getComputedStyle(button);
+				const luminance = (value: string) => {
+					const rgb = value
+						.match(/\d+(?:\.\d+)?/g)!
+						.slice(0, 3)
+						.map((part) => {
+							const channel = Number(part) / 255;
+							return channel <= 0.04045
+								? channel / 12.92
+								: ((channel + 0.055) / 1.055) ** 2.4;
+						});
+					return 0.2126 * rgb[0]! + 0.7152 * rgb[1]! + 0.0722 * rgb[2]!;
+				};
+				const colors = [luminance(css.color), luminance(css.backgroundColor)];
+				return (Math.max(...colors) + 0.05) / (Math.min(...colors) + 0.05);
+			});
+		expect(await contrast()).toBeGreaterThanOrEqual(4.5);
+		await retry.hover();
+		expect(await contrast()).toBeGreaterThanOrEqual(4.5);
+		await retry.evaluate((button) => {
+			button.dataset.activations = '0';
+			button.addEventListener('click', () => {
+				button.dataset.activations = String(
+					Number(button.dataset.activations) + 1,
+				);
+			});
+		});
+		await retry.click();
+		await expect(
+			mainWindow
+				.getByRole('status', { name: '' })
+				.filter({ hasText: 'Retrying connection…' }),
+		).toBeVisible();
+
+		await mainWindow.mouse.move(1, 1);
+		await mainWindow.keyboard.press('Tab');
+		await mainWindow.keyboard.press('Shift+Tab');
+		await expect(retry).toBeFocused();
+		expect(
+			await retry.evaluate((button) => getComputedStyle(button).outlineStyle),
+		).toBe('solid');
+		expect(await contrast()).toBeGreaterThanOrEqual(4.5);
+		await mainWindow.keyboard.press('Enter');
+		await expect(retry).toHaveAttribute('data-activations', '2');
+		await expect(mainWindow.getByText('Retrying connection…')).toBeVisible();
+
+		await expect(other.locator('.project-tabbar')).toBeVisible();
+		await setStall(false);
+		await expect(terminal).toHaveAttribute(
+			'data-terminay-terminal-session-id',
+			sessionId!,
+		);
+		await expect(retry).toHaveCount(0);
+		expect(
+			await mainWindow.evaluate(
+				() =>
+					(
+						window as Window & {
+							remoteRecoveryDocument?: boolean;
+						}
+					).remoteRecoveryDocument,
+			),
+		).toBe(true);
+		await submitTerminalCommand(
+			mainWindow,
+			'echo recovered-$recovery_proof',
+			terminal,
+		);
+		await expect(terminal.locator('.xterm-rows')).toContainText(
+			'recovered-held-in-the-same-shell',
+		);
+		await expect(other.locator('.project-tabbar')).toBeVisible();
+		await expect(other.getByText('Reconnecting…')).toHaveCount(0);
+		expect(otherDisconnects).toEqual([]);
+	} finally {
 		await server.stop();
 	}
 });

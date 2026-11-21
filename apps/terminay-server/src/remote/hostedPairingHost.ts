@@ -20,6 +20,7 @@ import {
 	type HostedEndpoints,
 	isDeviceJoinProof,
 	matchHostedSessionOrigin,
+	revokedDeviceRefusalPayload,
 	serializeAuthenticatedWebRtcTransportTranscript,
 	sha256Base64Url,
 } from '@terminay/protocol';
@@ -592,11 +593,11 @@ export async function startHostedPairingHost(
 		deviceId: string,
 		clientNonce: string,
 		proof: unknown,
-	): void {
+	): 'revoked' | 'active' {
 		if (!isDeviceJoinProof(proof))
 			throw new Error('Hosted signaling device join proof is invalid.');
 		const device = options.remote.devices.get(deviceId);
-		if (device === undefined || device.revokedAt !== null) {
+		if (device === undefined) {
 			throw new Error(
 				'Hosted signaling device join names an unknown or revoked device.',
 			);
@@ -621,6 +622,7 @@ export async function startHostedPairingHost(
 			throw new Error('Hosted signaling device join proof does not verify.');
 		if (seenDeviceJoinNonces.size >= 1_024) seenDeviceJoinNonces.clear();
 		seenDeviceJoinNonces.set(clientNonce, now + DEVICE_JOIN_NONCE_LIFETIME_MS);
+		return device.revokedAt === null ? 'active' : 'revoked';
 	}
 
 	async function handlePairingSignal(
@@ -692,7 +694,21 @@ export async function startHostedPairingHost(
 			const deviceId = parseDeviceId(message.deviceId);
 			// The relay stays data-blind, so the server is the party that checks a
 			// device-join actually comes from the device key it names.
-			verifyDeviceJoinProof(deviceId, clientNonce, message.deviceProof);
+			if (verifyDeviceJoinProof(deviceId, clientNonce, message.deviceProof) === 'revoked') {
+				if (message.acceptsSignedDeviceRefusal === true) {
+					const proof = sign(
+						null,
+						revokedDeviceRefusalPayload({ sessionId, deviceId, clientNonce }),
+						createPrivateKey(options.hostKey.privateKeyPem),
+					).toString('base64url');
+					socket.send(JSON.stringify(signalMessage(
+						{ kind: 'device', sessionId, deviceId, clientNonce },
+						'offer',
+						{ revokedDeviceRefusal: proof },
+					)));
+				}
+				return;
+			}
 			await joinQueue.enqueue(() =>
 				addHandshakePeer(socket, {
 					kind: 'device',

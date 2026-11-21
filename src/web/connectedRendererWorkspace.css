@@ -6,6 +6,10 @@
 	width: 100%;
 }
 
+.session-workspace__content {
+	display: contents;
+}
+
 .session-workspace--reconnecting .connected-web-renderer-workspace {
 	pointer-events: none;
 }

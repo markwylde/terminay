@@ -150,6 +150,10 @@ code { border-radius: 6px; background: #0b1119; color: #d5e1ee; padding: 2px 5px
   color: #ff9f9f;
 }
 
+.browser-host-shell__connection-state .browser-host-shell__recovery-progress {
+  color: #c3d2e4;
+}
+
 .browser-host-shell__connection-servers,
 .browser-host-shell__connection-servers ul {
   display: grid;
@@ -432,4 +436,26 @@ button:disabled { cursor: not-allowed; filter: grayscale(.4) opacity(.62); }
   .connection-form { grid-template-columns: 1fr; }
   .server-card__actions { justify-content: flex-start; }
 }
+}
+
+.session-retry-button {
+  border: 1px solid #59d8b4;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 800;
+  padding: 12px 16px;
+  background: #4dc9a7;
+  color: #07130f;
+}
+
+.session-retry-button:hover {
+  background: #74e0c0;
+  color: #07130f;
+}
+
+.session-retry-button:focus-visible {
+  background: #74e0c0;
+  color: #07130f;
+  outline: 2px solid #b7ddff;
+  outline-offset: 3px;
 }

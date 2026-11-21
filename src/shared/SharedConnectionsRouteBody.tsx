@@ -119,7 +119,8 @@ export interface SharedConnectionsRouteBodyProps {
 	 * which image the install commands name. */
 	readonly appVersion?: string;
 	readonly embedded?: boolean;
-	readonly presentation?: 'page' | 'settings';
+	readonly presentation?: 'page' | 'settings' | 'pairing';
+	readonly onPairingPanelClose?: () => void;
 	readonly exposurePanel?: ReactNode;
 	/** The Remote Access category of Settings: list column and detail. */
 	readonly settings?: ConnectionsSettingsPresentation;
@@ -183,6 +184,7 @@ export function SharedConnectionsRouteBody({
 	appVersion,
 	embedded = false,
 	presentation = 'page',
+	onPairingPanelClose,
 	exposurePanel,
 	settings,
 }: SharedConnectionsRouteBodyProps) {
@@ -196,7 +198,7 @@ export function SharedConnectionsRouteBody({
 	}>();
 	const [rename, setRename] = useState<ServerRow>();
 	const [renameLabel, setRenameLabel] = useState('');
-	const [showPair, setShowPair] = useState(false);
+	const [showPair, setShowPair] = useState(presentation === 'pairing');
 	const [pairingUrl, setPairingUrl] = useState('');
 	const activePairingAttempt = useRef<string | null>(null);
 	const cancelledPairingAttempts = useRef(new Set<string>());
@@ -630,20 +632,35 @@ export function SharedConnectionsRouteBody({
 								onPairingCancel(attemptId);
 							}
 							setShowPair(false);
+							onPairingPanelClose?.();
 						}}
 					>
 						Cancel
 					</button>
 				</div>
 			</form>
-			<ServerInstallGuide version={appVersion} />
+			{presentation !== 'pairing' && (
+				<ServerInstallGuide version={appVersion} />
+			)}
 		</>
 	);
+
+	if (presentation === 'pairing') {
+		return (
+			<div className="shared-connections" data-shared-route-body="connections">
+				{statusBlocks}
+				{pairPanel}
+			</div>
+		);
+	}
 
 	if (presentation === 'settings' && settings?.part === 'exposure') {
 		return settings.render({
 			detail: (
-				<div className="shared-connections" data-shared-route-body="connections">
+				<div
+					className="shared-connections"
+					data-shared-route-body="connections"
+				>
 					<div className="remote-control-notices">{statusBlocks}</div>
 					{exposurePanel}
 					{settings.exposureDetail}

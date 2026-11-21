@@ -192,11 +192,11 @@ test('Electron destruction callbacks use captured ids and sessions', async () =>
 		/contents\.once\('destroyed',[\s\S]{0,180}contents\.id/u,
 	);
 	assert.match(endpoint, /current\.release\('reload'\)/u);
-	assert.match(endpoint, /activeRemoteEndpoints\.get\(senderId\)\?\.\(\)/u);
-	assert.match(endpoint, /closeDesktopDocumentTransport\(transport/u);
+	assert.match(endpoint, /activeRemoteEndpoints\.get\(senderId\)\?\.close\(\)/u);
+	assert.match(endpoint, /closeDesktopDocumentTransport\(retired/u);
 	assert.match(
 		endpoint,
-		/Promise\.resolve\(\)\s*\.then\(\(\) => activeTransport\.open\(\)\)/u,
+		/Promise\.resolve\(\)\s*\.then\(\(\) => initial\.open\(\)\)/u,
 	);
 	assert.match(endpoint, /documentPort\?\.postMessage/u);
 	assert.match(endpoint, /let senderDestroyed = false/u);

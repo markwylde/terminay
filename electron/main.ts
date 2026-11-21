@@ -293,6 +293,8 @@ import {
 import {
 	bindLocalServerUiDocumentEndpoint,
 	bindRemoteServerUiDocumentEndpoint,
+	resumeRemoteServerUiDocumentEndpoints,
+	setRemoteEndpointTestStall,
 } from './serverUiDocumentEndpoint';
 import {
 	assertBoundServerUiEvent,
@@ -4670,6 +4672,7 @@ function createWindow(options?: {
 		if (transport !== undefined) {
 			const unbindEndpoint = bindRemoteServerUiDocumentEndpoint({
 				diagnostic: endpointDiagnostic,
+				validateSender: assertBoundServerUiEvent,
 				launch,
 				onLaneReplaced: (reason) => {
 					void desktopDiagnostics
@@ -4685,10 +4688,25 @@ function createWindow(options?: {
 						)
 						.catch(() => undefined);
 				},
-				reconnect: () =>
+				onRecovery: (event) => {
+					void desktopDiagnostics
+						.record(
+							{
+								component: 'main',
+								event: 'remote.document-recovery',
+								fields: { ...event, webContentsId: windowWebContentsId },
+								severity: 'info',
+								source: 'server-ui-document-endpoint',
+							},
+							{ channel: 'lifecycle' },
+						)
+						.catch(() => undefined);
+				},
+				reconnect: (abort) =>
 					reconnectCanonicalDesktopRemoteTransport(
 						launch.context.profileId,
 						desktopWindowIds.for(windowWebContentsId),
+						abort,
 					),
 				sender: targetWebContents,
 				transport,
@@ -5021,6 +5039,7 @@ async function openDesktopRemoteLanes(
 	windowId: string,
 	onConnectionFailure?: () => void,
 	onConnectionStatus?: (status: 'degraded' | 'recovered') => void,
+	abort?: AbortSignal,
 ): Promise<DesktopRemoteLanes> {
 	// One attempt at a time per server: two windows connecting together would
 	// otherwise retire each other's handshake.
@@ -5030,6 +5049,7 @@ async function openDesktopRemoteLanes(
 			windowId,
 			onConnectionFailure,
 			onConnectionStatus,
+			abort,
 		),
 	);
 }
@@ -5039,7 +5059,9 @@ async function openDesktopRemoteLanesNow(
 	windowId: string,
 	onConnectionFailure?: () => void,
 	onConnectionStatus?: (status: 'degraded' | 'recovered') => void,
+	abort?: AbortSignal,
 ): Promise<DesktopRemoteLanes> {
+	abort?.throwIfAborted();
 	if (isHostedDesktopOrigin(profile.origin)) {
 		const webrtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
 			isPackaged: app.isPackaged,
@@ -5065,6 +5087,7 @@ async function openDesktopRemoteLanesNow(
 				? {}
 				: { expectedServerId: profile.serverId }),
 			...(signal === undefined ? {} : { signal }),
+			...(abort === undefined ? {} : { abort }),
 			onConnectionFailure: (reason) => {
 				recordDesktopHostedPeerDiagnostic('connection-failed', { reason });
 				onConnectionFailure?.();
@@ -5090,6 +5113,7 @@ async function openDesktopRemoteLanesNow(
 	const connected = await createDesktopReconnectTransport({
 		origin: profile.origin,
 		store: createDesktopDeviceCredentialStore(),
+		...(abort === undefined ? {} : { abort }),
 	});
 	if (connected.signalingBootstrap === undefined) {
 		return Object.freeze({
@@ -5108,6 +5132,7 @@ async function openDesktopRemoteLanesNow(
 			bootstrap: connected.signalingBootstrap,
 			expectedOrigin: profile.origin,
 			transportAuth: desktopWebRtcReconnectAuth(connected),
+			...(abort === undefined ? {} : { abort }),
 			...(remoteWebRtcRuntimeRoot === undefined
 				? {}
 				: { webrtcRuntimeRoot: remoteWebRtcRuntimeRoot }),
@@ -5171,12 +5196,15 @@ async function prepareCanonicalDesktopRemoteConnection(
 async function reconnectCanonicalDesktopRemoteTransport(
 	profileId: string,
 	windowId: string,
+	abort: AbortSignal,
 ): Promise<ByteTransport> {
 	loadRememberedRemoteConnections();
 	const profile = rememberedRemoteConnections.get(profileId);
 	if (profile === undefined)
 		throw new Error('The selected remote profile is no longer available.');
-	return (await openDesktopRemoteLanes(profile, windowId)).transport;
+	return (
+		await openDesktopRemoteLanes(profile, windowId, undefined, undefined, abort)
+	).transport;
 }
 
 function setDockIcon(): void {
@@ -5189,6 +5217,12 @@ function setDockIcon(): void {
 }
 
 if (process.env.TERMINAY_TEST === '1') {
+	ipcMain.handle('test:set-remote-recovery-stall', (event, active: unknown, onResume = false) => {
+		assertBoundServerUiEvent(event);
+		if (typeof active !== 'boolean' || typeof onResume !== 'boolean')
+			throw new TypeError('stall state must be a boolean');
+		setRemoteEndpointTestStall(event.sender.id, active, onResume);
+	});
 	ipcMain.on(
 		'test:renderer-bootstrap-diagnostic',
 		(event, payload: unknown) => {
@@ -6172,6 +6206,7 @@ async function completeDesktopStartup(): Promise<void> {
 	}
 	endStartupPhase('vault-unlock');
 	powerMonitor.on('resume', () => {
+		resumeRemoteServerUiDocumentEndpoints();
 		void desktopDiagnostics.cleanup();
 		// The scheduler arms one timer and never polls, so a machine that slept
 		// through a due time is told here rather than waiting for that timer.

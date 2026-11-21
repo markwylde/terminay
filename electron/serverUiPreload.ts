@@ -13,6 +13,17 @@ import type {
 	ServerUiHostBridge,
 } from './serverUiHostContract';
 
+import {
+	DESKTOP_ENDPOINT_HANDOFF_TIMEOUT_MS,
+	DESKTOP_PAIRING_REQUIRED,
+	DESKTOP_REMOTE_SETUP_TIMEOUT_MS,
+	RECOVER_REMOTE_ENDPOINT,
+	REMOTE_ENDPOINT_RECEIVED,
+	REMOTE_RESUME,
+	type DesktopRemoteRecoveryFailure,
+	type DesktopRemoteRecoveryResult,
+} from './desktopRemoteRecoveryContract';
+
 const GET_CONTEXT = 'server-ui-host:get-context';
 const REQUEST_ACTION = 'server-ui-host:request-action';
 const READ_TERMINAL_CLIPBOARD = 'server-ui-host:read-terminal-clipboard';
@@ -179,6 +190,79 @@ if (
 
 let bytePort: MessagePort | undefined;
 let bytePortGeneration = 0;
+let remoteGeneration: number | undefined;
+let closedRemotePort: MessagePort | undefined;
+let remoteClaim: number | undefined;
+let remoteRecovery: number | undefined;
+const remotePortWaiters = new Set<() => void>();
+
+function waitForRemotePort(
+	generation: number,
+	timeoutMs: number,
+): Promise<MessagePort> {
+	return new Promise((resolve, reject) => {
+		const done = () => {
+			clearTimeout(timer);
+			remotePortWaiters.delete(check);
+		};
+		const check = () => {
+			if (
+				bytePort === undefined ||
+				remoteGeneration === undefined ||
+				remoteGeneration < generation
+			)
+				return;
+			done();
+			resolve(bytePort);
+		};
+		const timer = setTimeout(() => {
+			done();
+			reject(remoteRecoveryError('endpoint-unavailable'));
+		}, timeoutMs);
+		remotePortWaiters.add(check);
+		check();
+	});
+}
+
+function remoteRecoveryError(outcome: DesktopRemoteRecoveryFailure): Error {
+	const messages: Record<DesktopRemoteRecoveryFailure, string> = {
+		timeout: 'The remote server did not answer in time. Retry connection.',
+		unavailable:
+			'The remote server could not be reached. Check the connection and retry.',
+		'endpoint-unavailable':
+			'Desktop did not receive the replacement connection. Retry connection.',
+		'pairing-required': DESKTOP_PAIRING_REQUIRED,
+		'window-limit':
+			'Too many windows connected to this server. Close another window and retry.',
+		retired: 'This remote connection was replaced.',
+	};
+	return new Error(messages[outcome]);
+}
+
+async function askForRemoteRecovery(
+	generation: number,
+	manual: boolean,
+): Promise<DesktopRemoteRecoveryResult> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			ipcRenderer.invoke(RECOVER_REMOTE_ENDPOINT, generation, manual),
+			new Promise<DesktopRemoteRecoveryResult>((resolve) => {
+				timer = setTimeout(
+					() => resolve({ outcome: 'timeout' }),
+					DESKTOP_REMOTE_SETUP_TIMEOUT_MS + DESKTOP_ENDPOINT_HANDOFF_TIMEOUT_MS,
+				);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+const remoteResumeListeners = new Set<() => void>();
+ipcRenderer.on(REMOTE_RESUME, () => {
+	for (const listener of [...remoteResumeListeners]) listener();
+});
 const bytePortWaiters = new Set<{
 	afterGeneration: number;
 	resolve: (port: MessagePort) => void;
@@ -191,41 +275,52 @@ const waitForBytePort = (afterGeneration = -1): Promise<MessagePort> => {
 	);
 };
 const byteListeners = new Set<(frame: Uint8Array | null) => void>();
-ipcRenderer.on('server-ui-host:byte-endpoint', (event) => {
-	const port = event.ports[0];
-	if (!port) return;
-	bytePort?.close();
-	bytePort = port;
-	bytePortGeneration += 1;
-	for (const waiter of [...bytePortWaiters]) {
-		if (bytePortGeneration <= waiter.afterGeneration) continue;
-		bytePortWaiters.delete(waiter);
-		waiter.resolve(port);
-	}
-	port.onmessage = (message) =>
-		void context().then((bound) => {
-			try {
-				const packet = parseTerminayHostBytePacket(
-					message.data,
-					bound.serverId,
-				);
-				for (const listener of byteListeners) listener(packet.frame);
-			} catch {
-				for (const listener of byteListeners) listener(null);
-			}
+ipcRenderer.on(
+	'server-ui-host:byte-endpoint',
+	(event, payload: { generation?: number }) => {
+		const port = event.ports[0];
+		if (!port) return;
+		bytePort?.close();
+		bytePort = port;
+		closedRemotePort = undefined;
+		remoteGeneration = payload?.generation;
+		for (const wake of [...remotePortWaiters]) wake();
+		bytePortGeneration += 1;
+		for (const waiter of [...bytePortWaiters]) {
+			if (bytePortGeneration <= waiter.afterGeneration) continue;
+			bytePortWaiters.delete(waiter);
+			waiter.resolve(port);
+		}
+		port.onmessage = (message) =>
+			void context().then((bound) => {
+				if (bytePort !== port) return;
+				try {
+					const packet = parseTerminayHostBytePacket(
+						message.data,
+						bound.serverId,
+					);
+					for (const listener of byteListeners) listener(packet.frame);
+				} catch {
+					for (const listener of byteListeners) listener(null);
+				}
+			});
+		port.onmessageerror = () => {
+			if (bytePort !== port) return;
+			for (const listener of byteListeners) listener(null);
+		};
+		// Main closing its end is the server ending this connection. The page
+		// must hear that now: it has no other way to learn the endpoint is dead
+		// short of a heartbeat going unanswered.
+		port.addEventListener('close', () => {
+			if (bytePort !== port) return;
+			if (remoteGeneration !== undefined) closedRemotePort = port;
+			for (const listener of [...byteListeners]) listener(null);
 		});
-	port.onmessageerror = () => {
-		for (const listener of byteListeners) listener(null);
-	};
-	// Main closing its end is the server ending this connection. The page
-	// must hear that now: it has no other way to learn the endpoint is dead
-	// short of a heartbeat going unanswered.
-	port.addEventListener('close', () => {
-		if (bytePort !== port) return;
-		for (const listener of [...byteListeners]) listener(null);
-	});
-	port.start();
-});
+		port.start();
+		if (remoteGeneration !== undefined)
+			ipcRenderer.send(REMOTE_ENDPOINT_RECEIVED, remoteGeneration);
+	},
+);
 
 const MAX_FRAME_BYTES = 16_777_216;
 
@@ -319,6 +414,69 @@ const waitForConnectionEndpoint = (
 
 const bytes: ServerUiByteBridge = Object.freeze({
 	version: 2,
+	openRemoteEndpoint: async (replace: boolean, manual: boolean) => {
+		const claimed = remoteClaim;
+		if (replace && claimed !== undefined) {
+			remoteRecovery = claimed;
+			try {
+				const result = await askForRemoteRecovery(claimed, manual);
+				if (result.outcome !== 'ready')
+					throw remoteRecoveryError(result.outcome);
+				await waitForRemotePort(
+					result.generation,
+					DESKTOP_ENDPOINT_HANDOFF_TIMEOUT_MS,
+				);
+			} finally {
+				remoteRecovery = undefined;
+			}
+		} else {
+			await waitForRemotePort(1, DESKTOP_REMOTE_SETUP_TIMEOUT_MS);
+		}
+		const port = bytePort!;
+		remoteClaim = remoteGeneration;
+		if (closedRemotePort === port)
+			throw remoteRecoveryError('endpoint-unavailable');
+		return Object.freeze({
+			send: async (frame: Uint8Array) => {
+				const bound = await context();
+				if (port !== bytePort || closedRemotePort === port)
+					throw remoteRecoveryError('retired');
+				if (
+					!(frame instanceof Uint8Array) ||
+					frame.byteLength === 0 ||
+					frame.byteLength > MAX_FRAME_BYTES
+				)
+					throw new TypeError('server frame must be bounded bytes');
+				port.postMessage(createTerminayHostBytePacket(bound.serverId, frame));
+			},
+			subscribe: (listener: (frame: Uint8Array | null) => void) => {
+				const receive = (frame: Uint8Array | null) => {
+					if (port === bytePort) listener(frame);
+				};
+				byteListeners.add(receive);
+				if (closedRemotePort === port)
+					queueMicrotask(() => {
+						if (byteListeners.has(receive)) receive(null);
+					});
+				return () => {
+					byteListeners.delete(receive);
+				};
+			},
+		});
+	},
+	expediteRemoteRecovery: () => {
+		const pending = remoteRecovery;
+		if (pending !== undefined)
+			void askForRemoteRecovery(pending, true).catch(() => undefined);
+	},
+	subscribeRemoteResume: (listener: () => void) => {
+		if (typeof listener !== 'function')
+			throw new TypeError('resume listener must be a function');
+		remoteResumeListeners.add(listener);
+		return () => {
+			remoteResumeListeners.delete(listener);
+		};
+	},
 	/** Bytes for one attached connection, on its own channel. */
 	openConnection: async (connectionId: string) => {
 		if (typeof connectionId !== 'string' || !CONNECTION_ID.test(connectionId))
@@ -411,6 +569,14 @@ if (
 				>,
 		}),
 	);
+	contextBridge.exposeInMainWorld(
+		'terminayRemoteRecoveryFaultTest',
+		Object.freeze({
+			setStall: (active: boolean, onResume = false) =>
+				ipcRenderer.invoke('test:set-remote-recovery-stall', active, onResume),
+		}),
+	);
+
 	contextBridge.exposeInMainWorld(
 		'terminayLocalConnectionFaultTest',
 		Object.freeze({
