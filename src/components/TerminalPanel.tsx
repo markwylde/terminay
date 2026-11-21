@@ -61,6 +61,7 @@ import {
 	useServerConnection,
 } from '../shared/connections/ConnectionsContext';
 import { isConnectionReconnecting } from '../shared/connections/connectionRegistry';
+import { isEditTabAwaitingInput } from '../shared/editTabInputHold';
 import { recordRendererDiagnostic } from '../shared/rendererDiagnostics';
 import { isTouchTextSelectionEnabled } from '../shared/touchTextSelectionPreference';
 import type { TerminalTitleStore } from '../shared/TerminalTitleStore';
@@ -2865,6 +2866,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			) {
 				return;
 			}
+			if (isEditTabAwaitingInput()) return;
 
 			terminal.focus();
 			announceTerminalFocus();

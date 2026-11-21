@@ -40,6 +40,16 @@ fetch('https://terminay-external.invalid/data').then(() => say('fetch', 'reached
 const preview = (mainWindow: Page): FrameLocator =>
   mainWindow.frameLocator('.file-preview-html__frame:not([hidden])').frameLocator('iframe')
 
+/**
+ * Wait for the preview to show a heading. The proxy replaces its inner frame
+ * while the page loads, and a locator caught in that swap ends with "Target
+ * closed" instead of retrying, so the wait starts again from the outer frame.
+ */
+const expectPreviewHeading = (mainWindow: Page, heading: string) =>
+  expect(async () => {
+    await expect(preview(mainWindow).locator('#heading')).toHaveText(heading, { timeout: 1_000 })
+  }).toPass({ timeout: 5_000 })
+
 test('an HTML file opens as a sandboxed page that loads only project files', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'file-viewer-html-preview',
@@ -83,7 +93,7 @@ test('an HTML file opens as a sandboxed page that loads only project files', asy
 
   // The page is rendered, with the project's stylesheet, image, and script.
   const frame = preview(mainWindow)
-  await expect(frame.locator('#heading')).toHaveText('Hello page')
+  await expectPreviewHeading(mainWindow, 'Hello page')
   await expect(frame.locator('#heading')).toHaveCSS('color', 'rgb(1, 2, 3)')
   await expect.poll(() => frame.locator('#logo').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1)
   await expect(frame.locator('#script')).toHaveText('script ran')
@@ -106,7 +116,7 @@ test('an HTML file opens as a sandboxed page that loads only project files', asy
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await setMonacoValue(mainWindow, page('Edited page'))
   await selectFileView(mainWindow, 'Preview')
-  await expect(preview(mainWindow).locator('#heading')).toHaveText('Edited page')
+  await expectPreviewHeading(mainWindow, 'Edited page')
   await expect(preview(mainWindow).locator('#heading')).toHaveCSS('color', 'rgb(1, 2, 3)')
   expect(await workspace.readText('site/index.html')).toContain('Hello page')
 

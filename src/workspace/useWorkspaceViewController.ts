@@ -81,6 +81,8 @@ type Located<Workspace> = {
 
 /** How long a request waits for this window to render what it asked for. */
 const RENDER_WAIT_MS = 5_000;
+// The relay gives up on a request at 10 seconds; answer before it does.
+const OPERATION_WAIT_MS = 9_000;
 
 export type WorkspaceViewConnection = Readonly<{
 	serverId: string;
@@ -142,6 +144,7 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 ): Promise<JsonValue> {
 	const params = request.params;
 	const projectParam = typeof params.projectId === 'string' ? params.projectId : undefined;
+	const wait = boundedWait(Date.now() + OPERATION_WAIT_MS);
 	switch (request.op) {
 		case 'layout': {
 			const projectId = projectParam ?? window.targetProjectId();
@@ -151,31 +154,31 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 			return { layout: layoutOf(window, projectId) };
 		}
 		case 'focus': {
-			const located = await locate(window, projectParam, tabTarget(params.tab));
-			await show(window, located);
+			const located = await locate(wait, window, projectParam, tabTarget(params.tab));
+			await show(wait, window, located);
 			return { layout: layoutOf(window, located.projectId) };
 		}
 		case 'place': {
-			const moving = await locate(window, projectParam, tabTarget(params.tab));
-			const beside = await locate(window, moving.projectId, tabTarget(params.beside));
+			const moving = await locate(wait, window, projectParam, tabTarget(params.tab));
+			const beside = await locate(wait, window, moving.projectId, tabTarget(params.beside));
 			// Placed beside a tab of another folder, the tab has just been moved
 			// there on the server; wait until this window shows it there.
 			const together =
 				beside.folderId === moving.folderId
 					? moving
-					: await waitFor(() => {
+					: await wait(() => {
 							const panel = findViewPanel(beside.api, tabTarget(params.tab));
 							return panel === undefined ? undefined : { ...beside, panel };
 						}, 'The tab did not arrive in its new folder.');
 			const before = beside.api.activePanel;
 			placeViewPanel(together.panel, beside.panel, position(params.position));
-			if (params.focus === true) await show(window, { ...beside, panel: together.panel });
+			if (params.focus === true) await show(wait, window, { ...beside, panel: together.panel });
 			else if (before !== undefined && beside.api.getPanel(before.id) !== undefined)
 				before.api.setActive();
 			return { layout: layoutOf(window, beside.projectId, beside.folderId) };
 		}
 		case 'resize': {
-			const located = await locate(window, projectParam, tabTarget(params.tab));
+			const located = await locate(wait, window, projectParam, tabTarget(params.tab));
 			resizeViewPanel(located.api, located.panel, {
 				...(typeof params.width === 'number' ? { width: params.width } : {}),
 				...(typeof params.height === 'number' ? { height: params.height } : {}),
@@ -190,7 +193,7 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 			let api: DockviewApi;
 			if (targets !== undefined && targets.length > 0) {
 				const located: Located<Workspace>[] = [];
-				for (const target of targets) located.push(await locate(window, projectId, target));
+				for (const target of targets) located.push(await locate(wait, window, projectId, target));
 				const first = located[0]!;
 				if (located.some((entry) => entry.folderId !== first.folderId))
 					throw new ViewRefusal('bad_request', 'Every tab arranged together must be in the same folder.');
@@ -220,12 +223,12 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 			const projectId = requireProject(projectParam);
 			// A project the server has just created or moved here may not have
 			// reached this window yet.
-			await waitFor(
+			await wait(
 				() => (window.projectIds().includes(projectId) ? true : undefined),
 				'That project is not open in this window. It may be the automation space, or open in another window.',
 			);
 			window.showProject(projectId);
-			await waitFor(
+			await wait(
 				() => (window.shownProjectId() === projectId ? true : undefined),
 				'The project did not come to the front.',
 			);
@@ -238,7 +241,7 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 			requireHeld(window, projectId);
 			window.showProject(projectId);
 			window.selectFolder(projectId, folderId);
-			await waitFor(
+			await wait(
 				() => (window.workspace(projectId, folderId)?.isReady() === true ? true : undefined),
 				'The folder did not open.',
 			);
@@ -268,14 +271,14 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
 		case 'showHome': {
 			const section = HOME_VIEW_SECTIONS.find((candidate) => candidate === params.section) ?? 'home';
 			window.showHome(section);
-			await waitFor(
+			await wait(
 				() => (window.shownHomeSection() === section ? true : undefined),
 				'Home did not come to the front.',
 			);
 			return { section };
 		}
 		case 'closeTab': {
-			const located = await locate(window, projectParam, tabTarget(params.tab));
+			const located = await locate(wait, window, projectParam, tabTarget(params.tab));
 			await located.workspace.requestClosePanel(located.panel.id);
 			return {
 				closed: located.api.getPanel(located.panel.id) === undefined,
@@ -291,12 +294,16 @@ async function apply<Workspace extends WorkspaceViewWorkspace>(
  * reached this window yet, so a tab is waited for.
  */
 async function locate<Workspace extends WorkspaceViewWorkspace>(
+	wait: ViewWait,
 	window: WorkspaceViewWindow<Workspace>,
 	projectId: string | undefined,
 	target: ViewTabTarget,
 ): Promise<Located<Workspace>> {
-	if (projectId !== undefined) requireHeld(window, projectId);
 	const find = (): Located<Workspace> | undefined => {
+		// A project the server has just created may not have reached this
+		// window yet, so it is waited for like a tab that has not arrived.
+		if (projectId !== undefined && !window.projectIds().includes(projectId))
+			return undefined;
 		for (const candidate of projectId === undefined ? window.projectIds() : [projectId])
 			for (const folderId of window.folderIds(candidate)) {
 				const workspace = window.workspace(candidate, folderId);
@@ -307,11 +314,19 @@ async function locate<Workspace extends WorkspaceViewWorkspace>(
 			}
 		return undefined;
 	};
-	return find() ?? (await waitFor(find, 'No such tab is open in this window.', 'not_found'));
+	const found = find();
+	if (found !== undefined) return found;
+	try {
+		return await wait(find, 'No such tab is open in this window.', 'not_found');
+	} catch (error) {
+		if (projectId !== undefined) requireHeld(window, projectId);
+		throw error;
+	}
 }
 
 /** Bring a located tab to the front: its project, its folder, its pane. */
 async function show<Workspace extends WorkspaceViewWorkspace>(
+	wait: ViewWait,
 	window: WorkspaceViewWindow<Workspace>,
 	located: Located<Workspace>,
 ): Promise<void> {
@@ -320,7 +335,7 @@ async function show<Workspace extends WorkspaceViewWorkspace>(
 	const sessionId = (located.panel.params as { sessionId?: unknown } | undefined)?.sessionId;
 	if (typeof sessionId === 'string') located.workspace.activateTerminal(located.panel.id, sessionId);
 	else located.workspace.activatePanel(located.panel.id);
-	await waitFor(
+	await wait(
 		() =>
 			window.shownProjectId() === located.projectId &&
 			window.selectedFolderId(located.projectId) === located.folderId &&
@@ -399,13 +414,20 @@ function position(value: JsonValue | undefined): ViewPosition {
 }
 
 /** Wait, briefly and boundedly, for this window to render what a request asked of it. */
-function waitFor<T>(
+type ViewWait = <T>(
+	check: () => T | undefined,
+	message: string,
+	code?: 'not_found' | 'unavailable',
+) => Promise<T>;
+
+/** Waits of one operation: each is capped, and all share its deadline. */
+const boundedWait = (operationDeadline: number): ViewWait => <T,>(
 	check: () => T | undefined,
 	message: string,
 	code: 'not_found' | 'unavailable' = 'unavailable',
-): Promise<T> {
+): Promise<T> => {
 	return new Promise((resolve, reject) => {
-		const deadline = Date.now() + RENDER_WAIT_MS;
+		const deadline = Math.min(Date.now() + RENDER_WAIT_MS, operationDeadline);
 		const attempt = () => {
 			let value: T | undefined;
 			try {
@@ -428,4 +450,4 @@ function waitFor<T>(
 		};
 		attempt();
 	});
-}
+};

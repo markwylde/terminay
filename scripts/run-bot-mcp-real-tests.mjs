@@ -18,7 +18,7 @@ const suffix = randomBytes(6).toString('hex');
 const image = `terminay-bot-mcp-test:${suffix}`;
 const harness = `terminay-bot-mcp-harness:${suffix}`;
 const runDocker = (args, { capture = false } = {}) =>
-	execFileSync('docker', args, { stdio: capture ? 'pipe' : 'inherit', encoding: capture ? 'utf8' : undefined, cwd: root, timeout: ['build'].includes(args[0]) ? 600000 : ['pull', 'push', 'run'].includes(args[0]) ? 240000 : 30000 });
+	execFileSync('docker', args, { stdio: capture ? 'pipe' : 'inherit', encoding: capture ? 'utf8' : undefined, cwd: root, timeout: ['build'].includes(args[0]) ? 1200000 : ['pull', 'push', 'run'].includes(args[0]) ? 240000 : 30000 });
 const docker = (...args) => runDocker(args);
 let cache;
 try {
