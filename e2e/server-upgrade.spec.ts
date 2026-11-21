@@ -706,7 +706,9 @@ test('a server that restarts and rolls back says why and keeps its warning', asy
 			node.setAttribute('data-survives-reconnect', 'true');
 		});
 		await expect(
-			mainWindow.getByText(/Session connect timed out after/),
+			mainWindow.getByText(
+				/The remote server (?:could not be reached|did not answer in time)/,
+			),
 		).toBeAttached({ timeout: 60_000 });
 		await expect(card).toHaveAttribute('data-survives-reconnect', 'true');
 		expectSamePlace(await modalCardCentre(mainWindow), installing);

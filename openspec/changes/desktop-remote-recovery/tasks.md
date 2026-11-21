@@ -26,3 +26,4 @@
 - All 14 hosted transport and Desktop integration tests passed. The actual Desktop connector received the signed refusal from a standalone server over direct signaling, and protocol checks rejected a wrong nonce, wrong device, wrong key, and forged signature. The legacy join received no refusal.
 - The isolated packaged macOS app paired successfully and verified terminal input before arming the wake test. The nine-minute observation ended without a native suspend/resume event, so physical wake verification remains open.
 - The recovery overlay keeps Switch to Local accessible when the server shuts down. The standalone-to-Local and silent-lane recovery regressions both passed in Docker.
+- The server-upgrade dialog stays mounted above Retry after a failed reconnect. Its rollback, the switch to Local, and silent-lane recovery all passed the focused Docker run.

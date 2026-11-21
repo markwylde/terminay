@@ -539,8 +539,8 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 
 /**
  * The dim over a workspace whose connection is coming back. While the window's
- * server is being upgraded, the upgrade's modal card is already up and the drop
- * is one of its steps: nothing more is drawn, so the card never moves.
+ * server is being upgraded, its modal stays above the workspace and any
+ * recovery controls shown after a failed attempt.
  */
 function SessionReconnecting({
 	error,
@@ -554,7 +554,8 @@ function SessionReconnecting({
 	retryStatus?: string;
 }>) {
 	const upgrade = useServerUpgradeProgress(profileId);
-	if (showsUpgradeModal(upgrade)) return null;
+	if (showsUpgradeModal(upgrade) && (action === undefined || error === undefined))
+		return null;
 	return (
 		<div
 			className="session-workspace__reconnecting"
