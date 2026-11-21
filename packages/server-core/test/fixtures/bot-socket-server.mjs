@@ -95,6 +95,9 @@ export async function startBotSocketServer(root, options = {}) {
 				closed.emit('changed');
 				resolve({ code, text: Buffer.concat(chunks).toString(), stderr });
 			});
+			// A command that exits without reading its input closes this pipe. Its
+			// exit code is the result, reported by `close` above.
+			child.stdin.on('error', () => {});
 			child.stdin.end(input);
 		});
 	const frame = (bytes, stderr = false) => {

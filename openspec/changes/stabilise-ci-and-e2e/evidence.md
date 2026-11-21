@@ -59,4 +59,6 @@ The reviewed code passed both worst tests 25 of 25 each, and the remaining list 
 
 After these fixes, with retries off: the three tests passed 25 of 25 each, and the whole remaining list passed 140 of 140.
 
+The first pull request run then failed `bot-composition` with `write EPIPE`: the Bots socket fixture wrote to a fake engine command that had already exited, with no error handler on that pipe. The fixture now handles it, as its other spawn path already did.
+
 The change is not ready for archive while task 5.4 remains incomplete. Full-suite cleanliness is not established: the four ownership assertions and eight unrelated OpenSpec failures remain as described above. The separate desktop remote recovery change also retains its physical packaged macOS wake verification task.
