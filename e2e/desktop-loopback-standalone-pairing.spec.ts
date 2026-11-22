@@ -621,11 +621,21 @@ async function recordWorkspaceLoads(electronApp: ElectronApplication) {
 		}
 		app.on('web-contents-created', (_event, contents) => watch(contents));
 	});
+	// The recorder attaches after launch, so a load that lands around that moment
+	// may reach neither its reading of the history nor its listener. The history
+	// as it stands now holds that load; the listener holds a repeat of one URL.
 	return () =>
-		electronApp.evaluate(
-			() =>
-				(globalThis as { __workspaceLoads?: string[] }).__workspaceLoads ?? [],
-		);
+		electronApp.evaluate(({ BrowserWindow }) => {
+			const recorded =
+				(globalThis as { __workspaceLoads?: string[] }).__workspaceLoads ?? [];
+			const history = BrowserWindow.getAllWindows().flatMap((window) =>
+				window.webContents.navigationHistory
+					.getAllEntries()
+					.map((entry) => entry.url)
+					.filter((url) => !url.startsWith('data:')),
+			);
+			return history.length > recorded.length ? history : recorded;
+		});
 }
 
 test('Desktop reopens straight onto the server its window last showed', async ({
