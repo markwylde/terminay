@@ -2392,13 +2392,32 @@ test('cards slide to their new places, and take them at once where the device as
 	const grip = (folder: string) => folderRow(mainWindow, folder);
 	/**
 	 * Move a folder one place from the keyboard and read where the card it
-	 * passes is drawn: two frames after the key, and once its slide is over.
-	 * The slide runs on the browser's own frames, so it is read by frames and
-	 * by the card's own state, never by time.
+	 * passes is drawn: two frames after the key, once its slide is over, and
+	 * the furthest it was drawn from its place. A busy runner can spend most of
+	 * the slide before any given frame, so the furthest point comes from each
+	 * style the slide writes, never from a frame or a time.
 	 */
 	const moveAndWatch = async (folder: string, key: string, passed: string) => {
 		const card = folderGroup(mainWindow, passed);
 		await grip(folder).focus();
+		await card.evaluate((element) => {
+			let peak = 0;
+			const observer = new MutationObserver(() => {
+				const { m42 } = new DOMMatrixReadOnly(
+					getComputedStyle(element).transform,
+				);
+				peak = Math.max(peak, Math.abs(m42));
+			});
+			observer.observe(element, {
+				attributes: true,
+				attributeFilter: ['style'],
+			});
+			(element as HTMLElement & { stopSlideWatch?: () => number }).stopSlideWatch =
+				() => {
+					observer.disconnect();
+					return peak;
+				};
+		});
 		await mainWindow.keyboard.press(key);
 		const early = await card.evaluate(
 			(element) =>
@@ -2418,13 +2437,17 @@ test('cards slide to their new places, and take them at once where the device as
 		const settled = await card.evaluate(
 			(element) => element.getBoundingClientRect().top,
 		);
-		return { early, settled };
+		const peak = await card.evaluate(
+			(element) =>
+				(element as HTMLElement & { stopSlideWatch: () => number }).stopSlideWatch(),
+		);
+		return { early, settled, peak };
 	};
 
-	// With motion, the passed card is still on its way two frames in.
+	// With motion, the passed card is drawn away from its place on its way there.
 	const sliding = await moveAndWatch('beta', 'Alt+ArrowUp', 'alpha');
 	await expect(folderNames(mainWindow)).toHaveText(['General', 'beta', 'alpha']);
-	expect(Math.abs(sliding.early - sliding.settled)).toBeGreaterThan(2);
+	expect(sliding.peak).toBeGreaterThan(2);
 
 	// The preference is read when the tree is first shown.
 	await mainWindow.emulateMedia({ reducedMotion: 'reduce' });

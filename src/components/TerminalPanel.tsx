@@ -338,6 +338,15 @@ export const TERMINAL_PANEL_OUTPUT_EVENT = 'terminay-terminal-panel-output';
 export const TERMINAL_PANEL_EXIT_EVENT = 'terminay-terminal-panel-exit';
 const TERMINAL_CONTEXT_MAX_LINES = 200;
 /** A drop upload's progress as a whole percentage; an all-empty drop is done. */
+/**
+ * Whether keyboard focus is on the server-upgrade card. The workspace remounts
+ * behind that card when the server returns, and a terminal taking focus then
+ * would send the key meant for the card to the shell.
+ */
+function upgradeCardHasFocus(): boolean {
+	return document.activeElement?.closest('[data-server-upgrade-modal]') != null;
+}
+
 function dropPercent(progress: {
 	readonly sentBytes: number;
 	readonly totalBytes: number;
@@ -2404,6 +2413,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 							const activeElement = document.activeElement;
 							if (
 								props.api.isActive &&
+								!upgradeCardHasFocus() &&
 								(shouldClaimCreatedTerminalFocus(activeElement) ||
 									(activeElement instanceof Node &&
 										root.contains(activeElement)))
@@ -2629,6 +2639,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
 			activeFocusFrame = window.requestAnimationFrame(() => {
 				activeFocusFrame = null;
+				if (upgradeCardHasFocus()) return;
 				terminal.focus();
 				announceTerminalFocus();
 			});
@@ -2866,7 +2877,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			) {
 				return;
 			}
-			if (isEditTabAwaitingInput()) return;
+			if (isEditTabAwaitingInput() || upgradeCardHasFocus()) return;
 
 			terminal.focus();
 			announceTerminalFocus();
@@ -3135,8 +3146,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			handleExplorerPathDrop,
 		);
 		window.addEventListener(TERMINAL_PANEL_INPUT_EVENT, handlePanelInput);
-		terminal.focus();
-		announceTerminalFocus();
+		if (!upgradeCardHasFocus()) {
+			terminal.focus();
+			announceTerminalFocus();
+		}
 
 		return () => {
 			deferFitRef.current = () => {};
@@ -3415,7 +3428,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 				searchAddon.clearActiveDecoration();
 			});
 			setSearchSummary({ index: 0, count: 0 });
-			terminalRef.current?.focus();
+			// This also runs when the panel mounts.
+			if (!upgradeCardHasFocus()) terminalRef.current?.focus();
 			return;
 		}
 

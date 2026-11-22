@@ -63,4 +63,16 @@ The first pull request run then failed `bot-composition` with `write EPIPE`: the
 
 The next run was 30 of 30 green, but `bots.spec.ts` "Stop ends a held turn" passed only on retry. The same fixture wrote to an upgraded socket before attaching its error handler, so a client hanging up during Stop ended the test worker. The handler is now attached first.
 
-The change is not ready for archive while task 5.4 remains incomplete. Full-suite cleanliness is not established: the four ownership assertions and eight unrelated OpenSpec failures remain as described above. The separate desktop remote recovery change also retains its physical packaged macOS wake verification task.
+The run after that exposed two more:
+
+- `linked-folders` card slide failed all three attempts on a slow shard, because it sampled a 180 ms ease-out animation exactly two frames in. It now records the furthest the card was drawn from its place, and passed 30 of 30.
+- `macros` "an empty category survives reopening" hung on reload. Settings showed "Saved" before its passive effect removed the unsaved-changes `beforeunload` guard, so a reload in that gap opened a native dialog. The guard is now a layout effect, removed in the same commit as the "Saved" text. That test then passed 40 of 40.
+- `macros` "drags a macro into a category" lost a drop when the button was released before the target had accepted a dragover. The macro and category drags now release only once the target shows its drop state.
+
+Pull request #640 merged at `09d4f329`, whose 30 commit statuses all read back as `success` after two E2E shards were re-run. The slide, reload and drag fixes above landed in the follow-up pull request.
+
+The follow-up's first run failed `server-upgrade` "restarts and rolls back" on all three attempts, and 4 of 10 locally. A focus trace showed the workspace remounting behind the upgrade card after the reconnect, and its terminal taking keyboard focus from Close, so a key meant for the card would reach the shell. A terminal's automatic focus, including the search-closed effect that also runs on mount, now leaves focus on the card. The test then passed 30 of 30, and the server-upgrade, terminal, project-tab and project-start files passed with retries off.
+
+The next run's `desktop-loopback` "reopens straight onto" passed only on retry, having counted no page loads on an unreachable-server start. Its recorder attaches after launch, so it now also reads the window's navigation history. The same run's macOS smoke failed on `CERT_NOT_YET_VALID` while fetching native build headers, outside the repository.
+
+The review's archive condition, task 5.4, is met. Full-suite cleanliness is not established: the four ownership assertions and eight unrelated OpenSpec failures remain as described above. The separate desktop remote recovery change also retains its physical packaged macOS wake verification task.
