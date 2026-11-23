@@ -54,7 +54,9 @@ function profile(value: unknown): BotProfile {
 		(r.investigateFailures !== undefined &&
 			typeof r.investigateFailures !== 'boolean') ||
 		(r.terminayMcpAccess !== undefined &&
-			typeof r.terminayMcpAccess !== 'boolean')
+			typeof r.terminayMcpAccess !== 'boolean') ||
+		(r.inspectOtherBots !== undefined &&
+			typeof r.inspectOtherBots !== 'boolean')
 	)
 		throw new TypeError('invalid bot profile');
 	return structuredClone(r) as unknown as BotProfile;

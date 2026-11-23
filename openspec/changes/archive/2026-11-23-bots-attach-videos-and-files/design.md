@@ -42,7 +42,7 @@ Loading starts when the player nears the viewport, so history does not download 
 
 ### 5. The policy adds only `media-src 'self' blob:`
 
-**Boundary: workspace content security policy (ADR-0005, ADR-0011, ADR-0137).** No remote media origin is admitted. Earlier manifest policies are accepted and emitted as the current one, following the existing pattern. Desktop verifies only its own packaged bundle, so a newer server cannot break an older Desktop's manifest check. Recorded in ADR-0138.
+**Boundary: workspace content security policy (ADR-0005, ADR-0011, ADR-0137).** No remote media origin is admitted. Earlier manifest policies are accepted and emitted as the current one, following the existing pattern. Desktop verifies only its own packaged bundle, so a newer server cannot break an older Desktop's manifest check. Recorded in ADR-0139.
 
 ## Risks / Trade-offs
 

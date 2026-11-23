@@ -37,7 +37,8 @@ A bot SHALL have:
 - a sign-in (see bot-environment);
 - an approval mode;
 - an **Investigate failures** setting, on unless the user turns it off (see bot-failure-follow-up);
-- a **Terminay MCP access** setting, off unless the user turns it on.
+- a **Terminay MCP access** setting, off unless the user turns it on;
+- an **Inspect other bots** setting, off unless the user turns it on (see bot-inspection).
 
 The agent SHALL be chosen only from the bot agents that installed extensions contribute. The model SHALL be chosen only from the models that agent lists, or **Default**, which leaves the choice to the agent. Terminay SHALL NOT keep a provider or model list of its own.
 
@@ -45,7 +46,9 @@ The agent picker SHALL group agents by the extension that contributes them. It S
 
 The Profile SHALL say beside the Terminay MCP access switch that the bot can then see and control every project, terminal and app setting that Terminay MCP reaches, without asking. While Terminay MCP is disabled on the server, the switch SHALL stay editable and SHALL say that the access applies only once Terminay MCP is enabled.
 
-Saving a profile SHALL apply to sessions that start after the save, except that turning Terminay MCP access off SHALL also apply at once to sessions already running (see Bot authority).
+The Profile SHALL say beside the Inspect other bots switch that the bot can then read the config, sessions, output, chats and triggers of every other bot on this server, including anything written in that content, and cannot change them.
+
+Saving a profile SHALL apply to sessions that start after the save, except that turning Terminay MCP access off, or turning Inspect other bots on or off, SHALL also apply at once to sessions already running (see Bot authority and bot-inspection).
 
 #### Scenario: Agents come from extensions
 
@@ -86,6 +89,11 @@ Saving a profile SHALL apply to sessions that start after the save, except that 
 
 - **WHEN** a user opens a bot's Profile while Enable Terminay MCP is off
 - **THEN** the Terminay MCP access switch can still be changed, and says the access applies only once Terminay MCP is enabled
+
+#### Scenario: Inspect other bots defaults off
+
+- **WHEN** a user creates a bot without touching Inspect other bots, or opens a bot whose saved profile has no value for it
+- **THEN** the profile shows Inspect other bots off, and the bot's inspection tools return forbidden
 
 ### Requirement: Creating bots
 
@@ -511,7 +519,8 @@ Further rules:
 - **Capability-bound callers refused.** A caller bound by capability, such as an MCP token or a caller bound to a project or a session, SHALL be refused for every bot operation.
 - **Revocation is immediate.** When a client loses authority, the server SHALL immediately close every bot subscription, shell, and desktop stream that client holds.
 - **No inference.** The server SHALL revalidate authority on every request, and SHALL NEVER infer it from UI focus or renderer state.
-- **Workspace MCP callers.** No terminal, agent-chat or bot-execution MCP capability SHALL create, read, change, or prompt a bot. A bot execution’s own authenticated runtime tools SHALL be restricted to that bot under the bot-message-log contract.
+- **Workspace MCP callers.** No terminal, agent-chat or bot-execution MCP capability SHALL create, read, change, or prompt a bot. A bot execution’s own authenticated runtime tools SHALL be restricted to that bot under the bot-message-log contract, except for the read-only inspection tools that a bot with Inspect other bots on can use under the bot-inspection contract.
+- **Inspect other bots.** Only a user with bot authority SHALL be able to change this setting, through a bot save. No MCP capability SHALL change it.
 - **Terminay MCP access.** Only a bot whose Terminay MCP access is on SHALL receive a Terminay MCP capability, and only for its live executions, under the mcp-server bot execution capability contracts. Turning the setting off SHALL revoke the capability of every live execution of that bot before the save completes, and those executions SHALL keep running with their runtime tools only. Deleting the bot SHALL revoke them before anything else the delete does.
 
 #### Scenario: Client without terminal authority
@@ -533,6 +542,11 @@ Further rules:
 
 - **WHEN** a bot with Terminay MCP access is running an execution that is listing terminals, and a user turns the setting off
 - **THEN** the execution's next Terminay MCP call fails as revoked, and it can still post to the bot's message log
+
+#### Scenario: Bot cannot grant itself inspection
+
+- **WHEN** a bot execution uses any runtime or Terminay MCP tool to try to turn on Inspect other bots
+- **THEN** the setting is unchanged
 
 ### Requirement: Resizable Bots rail
 

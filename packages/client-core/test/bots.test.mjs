@@ -146,6 +146,10 @@ test('Terminay MCP access is optional, saved, and must be a boolean', async () =
 	assert.equal(saved.terminayMcpAccess, true);
 	stored = { ...stored, terminayMcpAccess: 'yes' };
 	await assert.rejects(client.get(profile.id), /invalid bot profile/);
+	stored = { ...profile, inspectOtherBots: true };
+	assert.equal((await client.get(profile.id)).inspectOtherBots, true);
+	stored = { ...profile, inspectOtherBots: 'yes' };
+	await assert.rejects(client.get(profile.id), /invalid bot profile/);
 });
 
 test('message uploads stage images and posts carry their tokens',async()=>{

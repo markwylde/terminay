@@ -84,6 +84,11 @@ export interface BotProfile {
 	 * prompts (ADR-0100). Missing reads as false.
 	 */
 	readonly terminayMcpAccess?: boolean;
+	/**
+	 * Let this bot's executions read other bots on this server through the
+	 * read-only inspection tools (ADR-0138). Missing reads as false.
+	 */
+	readonly inspectOtherBots?: boolean;
 	readonly pinnedMemories: readonly string[];
 	readonly createdAt: number;
 	readonly updatedAt: number;

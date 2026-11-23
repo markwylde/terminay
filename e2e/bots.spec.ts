@@ -878,6 +878,36 @@ test.describe('Home: Bots', () => {
 		});
 	});
 
+	test('Inspect other bots is off by default and saves on', async ({
+		mainWindow,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Bot inspector');
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		const toggle = tab.locator('[data-terminay-bot-inspect-other]');
+		await expect(toggle).toHaveAttribute('aria-checked', 'false');
+		await expect(tab.locator('#bots-inspect-other-help')).toContainText(
+			'every other bot on this server',
+		);
+		await toggle.scrollIntoViewIfNeeded();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('inspect-other-bots-off.png'),
+		});
+
+		await toggle.click();
+		await tab.locator('[data-terminay-bot-profile-save]').click();
+		await expect(tab.locator('.bots-done')).toContainText('Saved');
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="profile"]').click();
+		await expect(toggle).toHaveAttribute('aria-checked', 'true');
+		await toggle.scrollIntoViewIfNeeded();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('inspect-other-bots-on.png'),
+		});
+	});
+
 	test("a bot's Terminay actions show as compact rows in Chat, fold repeats, explain failures, and link to what they touched", async ({
 		mainWindow,
 		tempDir,

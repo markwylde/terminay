@@ -16,7 +16,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0138-the-workspace-plays-media-only-from-its-own-origin-and-blob-urls.md - the workspace policy admits media only from itself and blob URLs.
+- openspec/adr/0139-the-workspace-plays-media-only-from-its-own-origin-and-blob-urls.md - the workspace policy admits media only from itself and blob URLs.
 
 ## Notes
 

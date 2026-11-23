@@ -1,4 +1,4 @@
-# ADR-0138: The workspace plays media only from its own origin and blob URLs
+# ADR-0139: The workspace plays media only from its own origin and blob URLs
 
 Status: accepted
 Date: 2026-11-23

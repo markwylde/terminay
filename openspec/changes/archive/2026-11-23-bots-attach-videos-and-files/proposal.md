@@ -31,4 +31,4 @@ None.
 - `packages/ui-bundle/src/manifest.ts`, `scripts/build-ui-bundle-manifest.mjs`, `scripts/server-ui-archive-benchmark.mjs`: workspace policy.
 - `src/workspace/bots/`: transcript rendering and attachment view.
 - Tests in `packages/server-core/test/` and `e2e/bots.spec.ts`.
-- New ADR-0138 for the policy change.
+- New ADR-0139 for the policy change.

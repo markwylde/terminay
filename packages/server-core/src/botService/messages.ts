@@ -693,8 +693,40 @@ export class BotMessageStore extends EventEmitter {
 		this.emit('removed', botId);
 	}
 	list(botId: string, options: MessagePageOptions = {}): BotMessagePage {
-		const s = this.state(botId),
-			search =
+		return this.listPage(botId, options, this.state(botId), 'messages');
+	}
+	/** Inspection searches and sizes redacted originals, in its own cursor scope. */
+	async listRedacted(
+		botId: string,
+		options: MessagePageOptions,
+		redact: (value: string) => Promise<string>,
+	): Promise<BotMessagePage> {
+		const s = this.state(botId);
+		const rows = await Promise.all(
+			s.rows.map(async (row) => ({
+				...row,
+				text: await redact(row.text),
+				...(row.activity
+					? {
+							activity: {
+								...row.activity,
+								...(row.activity.reason === undefined
+									? {}
+									: { reason: await redact(row.activity.reason) }),
+							},
+						}
+					: {}),
+			})),
+		);
+		return this.listPage(botId, options, { ...s, rows }, 'inspect-messages');
+	}
+	private listPage(
+		botId: string,
+		options: MessagePageOptions,
+		s: State,
+		kind: string,
+	): BotMessagePage {
+		const search =
 				options.search === undefined
 					? ''
 					: text(options.search, 256, 'search', true),
@@ -718,11 +750,11 @@ export class BotMessageStore extends EventEmitter {
 		// Bound to whether actions are included, too.
 		const filter = posts ? `posts\0${scope}` : scope;
 		const c = options.cursor
-			? this.decode(botId, options.cursor, 'messages', filter)
+			? this.decode(botId, options.cursor, kind, filter)
 			: {
 					botId,
 					epoch: s.epoch,
-					kind: 'messages',
+					kind,
 					filter,
 					through: s.sequence,
 					position: Number.MAX_SAFE_INTEGER,

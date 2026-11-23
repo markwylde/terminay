@@ -110,6 +110,76 @@ test('5.8 every operation rechecks authority, including reads, capability-bound 
 		}),
 	);
 });
+test('openRedactor redacts under one lease, releases it and refuses an unreadable sign-in', async (t) => {
+	const r = await setup(t);
+	const acquire = r.hooks.credentials.acquire;
+	t.after(() => {
+		r.hooks.credentials.acquire = acquire;
+	});
+	let acquired = 0;
+	let released = 0;
+	r.hooks.credentials.acquire = async (...args) => {
+		acquired++;
+		const lease = await acquire(...args);
+		return {
+			...lease,
+			release() {
+				released++;
+				lease.release();
+			},
+		};
+	};
+	const opened = await r.service.openRedactor(r.bot.id);
+	assert.equal(opened.redact('a secret b').includes('secret'), false);
+	assert.equal(opened.redact('c secret').includes('secret'), false);
+	assert.equal(acquired, 1);
+	assert.equal(released, 0);
+	opened.release();
+	assert.equal(released, 1);
+	r.hooks.credentials.acquire = async () => {
+		throw new Error('vault locked');
+	};
+	await assert.rejects(
+		r.service.openRedactor(r.bot.id),
+		(e) => e.code === 'unavailable',
+	);
+	r.hooks.credentials.acquire = acquire;
+});
+test('only an authorized client can turn on Inspect other bots through a bot save', async (t) => {
+	const r = await setup(t);
+	const save = createBotOperations(r.service).commands[op.save];
+	const request = (auth) => ({
+		envelope: {
+			operation: op.save,
+			payload: {
+				bot: {
+					id: r.bot.id,
+					name: 'Bird',
+					agentId: 'fake.agent',
+					inspectOtherBots: true,
+				},
+			},
+		},
+		body: new Uint8Array(),
+		context: { ...context, ...auth },
+	});
+	for (const auth of [
+		{ authScope: 'read' },
+		{ clientId: 'system:mcp' },
+		{ claims: { capability: 'mcp' } },
+		{ claims: { projectId: 'p' } },
+		{ claims: { sessionId: 's' } },
+		{ claims: { botExecutionId: '0123456789abcdef01234567' } },
+	]) {
+		await assert.rejects(
+			async () => save(request(auth)),
+			(e) => e.code === 'forbidden',
+		);
+		assert.equal(r.bots.get(r.bot.id).inspectOtherBots, false);
+	}
+	await save(request({}));
+	assert.equal(r.bots.get(r.bot.id).inspectOtherBots, true);
+});
 test('5.8 wire conformance refuses unauthorized list, get and subscribe, including capability-bound write clients', async (t) => {
 	const r = await setup(t);
 	const composition = compose(r.service);
@@ -150,7 +220,11 @@ test('5.8 invalidations carry only bot id/revision; revocation ends subscription
 	});
 	assert.ok(hello.capabilities.includes(FEATURE_CAPABILITIES.bots));
 	for (const operation of Object.values(op))
-		assert.ok([FEATURE_CAPABILITIES.bots, FEATURE_CAPABILITIES.botSources].includes(capabilityOf(operation)));
+		assert.ok(
+			[FEATURE_CAPABILITIES.bots, FEATURE_CAPABILITIES.botSources].includes(
+				capabilityOf(operation),
+			),
+		);
 	const sub = await client.subscribe('bots.changed');
 	const events = [];
 	sub.onEvent((event) => events.push(event));
@@ -292,10 +366,19 @@ test('6.1 trigger wire operations use binary bodies, expose firings/next times, 
 	assert.equal((await facade.triggers(r.bot.id)).triggers[0].enabled, false);
 	await facade.dismissMissedTriggers(r.bot.id, trigger.id);
 	// Resume clears a trigger that waits for the user, through the facade.
-	r.service.triggers.block(r.bot.id, trigger.id, 'Login refused', 'Add the password', 'f'.repeat(24));
+	r.service.triggers.block(
+		r.bot.id,
+		trigger.id,
+		'Login refused',
+		'Add the password',
+		'f'.repeat(24),
+	);
 	assert.ok((await facade.triggers(r.bot.id)).triggers[0].blocker);
 	await facade.resumeTrigger(r.bot.id, trigger.id);
-	assert.equal((await facade.triggers(r.bot.id)).triggers[0].blocker ?? null, null);
+	assert.equal(
+		(await facade.triggers(r.bot.id)).triggers[0].blocker ?? null,
+		null,
+	);
 	await facade.deleteTrigger(r.bot.id, trigger.id);
 	assert.deepEqual((await facade.triggers(r.bot.id)).triggers, []);
 	await new Promise((resolve) => setImmediate(resolve));

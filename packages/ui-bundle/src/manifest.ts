@@ -44,7 +44,7 @@ export const DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY =
 	"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /**
- * The policies bundles carried before ADR-0137 and ADR-0138. Each is strictly
+ * The policies bundles carried before ADR-0137 and ADR-0139. Each is strictly
  * narrower, so a manifest naming one is accepted and served with the current
  * policy.
  */

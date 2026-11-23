@@ -99,7 +99,7 @@ test("UI bundle policy admits terminay.com and no other hosted origin (ADR-0137)
     () => validateUiBundleManifest({ ...manifest, contentSecurityPolicy: DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY.replace("https://terminay.com;", "https://*.terminay.com;") }),
     /content security policy is not supported/,
   );
-  // ADR-0138: media comes only from the workspace and blob URLs.
+  // ADR-0139: media comes only from the workspace and blob URLs.
   for (const media of ["media-src *", "media-src 'self' blob: data:", "media-src 'self' blob: https://terminay.com"])
     assert.throws(
       () => validateUiBundleManifest({ ...manifest, contentSecurityPolicy: DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY.replace("media-src 'self' blob:", media) }),
