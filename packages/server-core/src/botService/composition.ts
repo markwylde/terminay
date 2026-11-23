@@ -410,6 +410,13 @@ export function createBotServerService(options: BotServerOptions): BotService {
 						authority: (context) => service.connections.authority(context),
 						agent: (id) => agent(bots.get(id).agentId),
 						tokens,
+						peers: (id) => {
+							const { agentId } = bots.get(id);
+							return bots
+								.list()
+								.filter((b) => b.id !== id && b.agentId === agentId)
+								.map((b) => b.id);
+						},
 						deviceSignedIn: (id) => bots.get(id).signIn.kind === 'device',
 						deviceSignOut: async (id) => {
 							const device = agent(bots.get(id).agentId).deviceSignIn;

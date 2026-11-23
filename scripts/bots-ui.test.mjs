@@ -579,6 +579,53 @@ test('Claude Code offers only tokens, and a saved secret is never shown', async 
 	}
 });
 
+test('Copy from another bot lists only bots with that token saved', async () => {
+	const token = (variable, copySources) => ({
+		variable,
+		kind: 'sign-in-token',
+		label: variable,
+		help: '',
+		configured: false,
+		copySources,
+	});
+	const page = await profile({
+		bots: [
+			bot(BIRD, 'Bird', { agentId: 'claude-code', approvalMode: 'ask' }),
+			bot(OWL, 'Owl', { agentId: 'claude-code', approvalMode: 'ask' }),
+			bot(FINCH, 'Finch', { agentId: 'claude-code', approvalMode: 'ask' }),
+		],
+		signIn: {
+			device: null,
+			tokens: [
+				token('CLAUDE_CODE_OAUTH_TOKEN', [OWL]),
+				token('ANTHROPIC_API_KEY', []),
+			],
+		},
+	});
+	try {
+		const withSource = page.locator(
+			'[data-terminay-bot-token="CLAUDE_CODE_OAUTH_TOKEN"]',
+		);
+		await withSource.waitFor();
+		const names = await withSource
+			.locator('select[aria-label="Copy from bot"] option')
+			.allInnerTexts();
+		assert.equal(names.length, 2);
+		assert.match(names[0], /Copy from another bot/);
+		assert.equal(names[1], 'Owl');
+		assert.equal(
+			await page
+				.locator(
+					'[data-terminay-bot-token="ANTHROPIC_API_KEY"] select[aria-label="Copy from bot"]',
+				)
+				.count(),
+			0,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
 test('Chat shows the not-signed-in refusal with a link to Sign-in', async () => {
 	const page = await open(
 		TAB({

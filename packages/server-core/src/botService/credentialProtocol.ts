@@ -20,6 +20,8 @@ export interface BotCredentialProtocolHooks {
 	readonly authority: (context: RequestContext) => BotStreamAuthority;
 	readonly agent: (botId: string) => BotAgentContribution;
 	readonly tokens: BotTokenService;
+	/** The other bots that run the same agent as this one. */
+	readonly peers: (botId: string) => readonly string[];
 	readonly changed?: (botId: string) => void;
 	/** Whether the bot's own home holds a device sign-in. */
 	readonly deviceSignedIn: (botId: string) => boolean;
@@ -79,6 +81,11 @@ export function createBotCredentialOperations(
 							p.botId as string,
 							s.environmentVariable,
 						),
+						copySources: hooks
+							.peers(p.botId as string)
+							.filter((peer) =>
+								hooks.tokens.configured(peer, s.environmentVariable),
+							),
 					})),
 				};
 			},
@@ -110,6 +117,11 @@ export function createBotCredentialOperations(
 					)
 				)
 					throw new Error('source credential does not match');
+				if (!hooks.tokens.configured(source, s.environmentVariable))
+					throw new BotError(
+						'validation',
+						`That bot has no saved ${s.label} to copy. A bot that uses a device sign-in keeps its login to itself.`,
+					);
 				await hooks.tokens.copy(
 					source,
 					botEnvironmentId(p.botId),

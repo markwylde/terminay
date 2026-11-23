@@ -55,6 +55,8 @@ test('4.5/4.6 credential facade stores binary values without returning them and 
 	const registry = createBotCredentialOperations({
 		authority: (c) => ({ ...c, assertCurrent: () => {} }),
 		agent: () => agent,
+		peers: (bot) =>
+			[id, 'def123abc456', 'fed654cba321'].filter((b) => b !== bot),
 		deviceSignedIn: () => true,
 		deviceSignOut: async () => {
 			signedOut++;
@@ -91,6 +93,13 @@ test('4.5/4.6 credential facade stores binary values without returning them and 
 	assert.ok(!JSON.stringify(options).includes('fake-key'));
 	assert.equal(resolutions, 0);
 	await client.copy(id, 'def123abc456', 'API_KEY');
+	assert.equal(entries.size, 2);
+	const destination = await client.options('fed654cba321');
+	assert.deepEqual(destination.tokens[0].copySources, [id, 'def123abc456']);
+	await assert.rejects(
+		client.copy('fed654cba321', id, 'API_KEY'),
+		/no saved key to copy/,
+	);
 	assert.equal(entries.size, 2);
 	await client.deviceSignOut(id);
 	assert.equal(signedOut, 1);

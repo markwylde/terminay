@@ -24,6 +24,8 @@ export type SignInToken = Readonly<{
 	label: string;
 	help: string;
 	configured: boolean;
+	/** Other bots with this token saved, so it can be copied from them. */
+	copySources: readonly string[];
 }>;
 
 export type SignInDevice = Readonly<{
@@ -62,12 +64,20 @@ export function parseSignInOptions(value: unknown): SignInOptions | undefined {
 							label: typeof o.label === 'string' ? o.label : o.variable,
 							help: typeof o.help === 'string' ? o.help : '',
 							configured: o.configured === true,
+							copySources: Array.isArray(o.copySources)
+								? o.copySources.filter(
+										(id): id is string => typeof id === 'string',
+									)
+								: [],
 						},
 					];
 				})
 			: [],
 	};
 }
+
+/** Tells every open Sign-in section that a bot's saved tokens changed. */
+const credentialChanges = new EventTarget();
 
 export const TOKEN_READABLE_NOTE =
 	'The agent and the tools it runs can read this token.';
@@ -118,11 +128,25 @@ export function BotSignInSection({
 
 	useEffect(load, [load, bot.agentId, bot.updatedAt]);
 
+	useEffect(() => {
+		const refresh = () => {
+			credentials
+				.options(bot.id)
+				.then((value) => setOptions(parseSignInOptions(value)))
+				.catch(() => undefined);
+		};
+		credentialChanges.addEventListener('change', refresh);
+		return () => credentialChanges.removeEventListener('change', refresh);
+	}, [credentials, bot.id]);
+
 	const act = (work: () => Promise<unknown>) => {
 		setBusy(true);
 		setError(undefined);
 		work()
-			.then(load)
+			.then(() => {
+				load();
+				credentialChanges.dispatchEvent(new Event('change'));
+			})
 			.catch((cause: unknown) => setError(refusalText(cause)))
 			.finally(() => setBusy(false));
 	};
@@ -245,7 +269,9 @@ export function BotSignInSection({
 								bot.signIn.environmentVariable === token.variable
 							}
 							busy={busy}
-							otherBots={otherBots}
+							copySources={otherBots.filter((other) =>
+								token.copySources.includes(other.id),
+							)}
 							onChoose={() =>
 								act(() =>
 									onSignInChange({
@@ -294,7 +320,7 @@ function TokenOption({
 	token,
 	chosen,
 	busy,
-	otherBots,
+	copySources,
 	onChoose,
 	onSave,
 	onCopy,
@@ -304,7 +330,7 @@ function TokenOption({
 	token: SignInToken;
 	chosen: boolean;
 	busy: boolean;
-	otherBots: readonly BotProfile[];
+	copySources: readonly BotProfile[];
 	onChoose: () => void;
 	onSave: (value: string) => void;
 	onCopy: (sourceBotId: string) => void;
@@ -314,6 +340,8 @@ function TokenOption({
 	const [replacing, setReplacing] = useState(false);
 	const [source, setSource] = useState('');
 	const editing = !token.configured || replacing;
+	// A bot that lost its token since it was picked is no longer a choice.
+	const selected = copySources.some((b) => b.id === source) ? source : '';
 	return (
 		<div
 			className="bots-card bots-signin__opt"
@@ -400,16 +428,16 @@ function TokenOption({
 					</button>
 				</div>
 			)}
-			{otherBots.length > 0 ? (
+			{copySources.length > 0 ? (
 				<div className="bots-token-row">
 					<select
 						className="bots-in"
 						aria-label="Copy from bot"
-						value={source}
+						value={selected}
 						onChange={(event) => setSource(event.target.value)}
 					>
 						<option value="">Copy from another bot…</option>
-						{otherBots.map((other) => (
+						{copySources.map((other) => (
 							<option key={other.id} value={other.id}>
 								{other.name}
 							</option>
@@ -418,9 +446,9 @@ function TokenOption({
 					<button
 						type="button"
 						className="bots-btn bots-btn--sm"
-						disabled={busy || source === ''}
+						disabled={busy || selected === ''}
 						onClick={() => {
-							onCopy(source);
+							onCopy(selected);
 							setSource('');
 						}}
 					>
