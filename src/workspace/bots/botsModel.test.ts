@@ -38,7 +38,6 @@ const bot = (id: string, name: string): BotProfile => ({
 	modelId: null,
 	signIn: { kind: 'device' },
 	approvalMode: 'ask',
-	maxTurnMs: 600_000,
 	pinnedMemories: [],
 	createdAt: 0,
 	updatedAt: 0,
@@ -59,7 +58,6 @@ const session = (
 		approvalMode: 'ask',
 		instructions: '',
 		context: '',
-		maxTurnMs: 1,
 	},
 	state,
 	startedAt: 100,
@@ -194,9 +192,24 @@ test('failure investigations have their own filter, chip, label and title', () =
 		'trigger',
 		'run-now',
 		'failure',
+		'check-in',
 	]);
 	assert.equal(SESSION_ORIGIN_FILTER_LABELS.failure, 'Failure');
 	assert.equal(SESSION_ORIGIN_CHIPS.failure, 'Investigate');
+	const checkIn = session('c', 'running', {
+		origin: {
+			kind: 'check-in',
+			watchedSessionId: 'w'.repeat(24),
+			runningMinutes: 30,
+		},
+	});
+	assert.equal(SESSION_ORIGIN_FILTER_LABELS['check-in'], 'Check-in');
+	assert.equal(SESSION_ORIGIN_CHIPS['check-in'], 'Check-in');
+	assert.equal(sessionTitle(checkIn), 'Check-in at 30 minutes');
+	assert.equal(
+		sessionOriginLabel(checkIn.origin),
+		'Check-in · after 30 minutes',
+	);
 	const ref = {
 		kind: 'execution' as const,
 		sessionId: 's'.repeat(24),

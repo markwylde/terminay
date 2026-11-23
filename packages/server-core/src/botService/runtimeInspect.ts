@@ -211,7 +211,6 @@ async function botConfig(bot: BotProfile, redact: Redact) {
 		colour: bot.colour,
 		description: await redact(bot.description),
 		approvalMode: bot.approvalMode,
-		maxTurnMs: bot.maxTurnMs,
 		investigateFailures: bot.investigateFailures !== false,
 		createdAt: bot.createdAt,
 		updatedAt: bot.updatedAt,
@@ -249,6 +248,12 @@ async function sessionSummary(
 				: {}),
 			...(r.origin.kind === 'failure'
 				? { failureCount: r.origin.failures.length + r.origin.overflow }
+				: {}),
+			...(r.origin.kind === 'check-in'
+				? {
+						watchedSessionId: r.origin.watchedSessionId,
+						runningMinutes: r.origin.runningMinutes,
+					}
 				: {}),
 		},
 		reason: await cut(redact, r.reason, 256),

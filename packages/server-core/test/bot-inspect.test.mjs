@@ -22,7 +22,6 @@ const snapshot = {
 	approvalMode: 'autonomous',
 	instructions: '',
 	context: '',
-	maxTurnMs: 10000,
 };
 const trigger = (botId, id, extra = {}) => ({
 	id,
@@ -251,7 +250,6 @@ test('config, list and exact keys withhold every secret field', async (t) => {
 		'enabled',
 		'id',
 		'investigateFailures',
-		'maxTurnMs',
 		'modelId',
 		'name',
 		'updatedAt',

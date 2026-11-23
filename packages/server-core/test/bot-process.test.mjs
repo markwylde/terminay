@@ -153,7 +153,6 @@ test('5.3 credential lease is released exactly once and only after supervisor co
 			approvalMode: 'autonomous',
 			instructions: '',
 			context: '',
-			maxTurnMs: 30000,
 		},
 		agent,
 		credential: credential('secret', () => released++),
@@ -188,6 +187,47 @@ test('5.3 credential lease is released exactly once and only after supervisor co
 	assert.equal(released, 1);
 	await owner.close('end');
 	assert.equal(released, 1);
+});
+
+test('the background ceiling setting reaches the launched agent', async (t) => {
+	const { BotAgentProcess } = await import('../dist/botService/index.js');
+	const { agent, credential } = await import('./fixtures/bot-test-runtime.mjs');
+	let child;
+	let launched;
+	const owner = new BotAgentProcess({
+		botId: 'abc123def456',
+		sessionId: '123456789012345678901234',
+		snapshot: {
+			agentId: agent.id,
+			modelId: null,
+			signIn: { kind: 'none' },
+			approvalMode: 'autonomous',
+			instructions: '',
+			context: '',
+		},
+		agent: {
+			...agent,
+			launchEnvironment: { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' },
+		},
+		credential: credential('secret', () => {}),
+		loadId: null,
+		launch: async () => ({ args: [], env: {} }),
+		onClient() {},
+		driver: { exec: async () => {} },
+		spawn(_command, environment) {
+			launched = environment;
+			child = spawn(
+				process.execPath,
+				[new URL('./fixtures/bot-native.mjs', import.meta.url).pathname],
+				{ stdio: ['pipe', 'pipe', 'pipe'] },
+			);
+			return child;
+		},
+	});
+	t.after(() => child?.kill('SIGKILL'));
+	await owner.open();
+	assert.equal(launched.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS, '0');
+	await owner.close('end');
 });
 
 test('native interrupt targets owned children and preserves the supervisor record', () => {

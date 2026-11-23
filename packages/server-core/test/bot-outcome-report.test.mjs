@@ -20,7 +20,6 @@ const snapshot = {
 	approvalMode: 'autonomous',
 	instructions: '',
 	context: '',
-	maxTurnMs: 10000,
 };
 
 /** The runtime with real message and session stores and a small trigger model. */

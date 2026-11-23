@@ -18,7 +18,9 @@ import { BotError, object } from './store.js';
 export type BotNativeDriver = 'codex-cli' | 'claude-code-cli';
 /** Variables a server receives from the agent process rather than its config. */
 function isForwarded(name: string): boolean {
-	return name.startsWith('TERMINAY_RUNTIME_') || name.startsWith('TERMINAY_MCP_');
+	return (
+		name.startsWith('TERMINAY_RUNTIME_') || name.startsWith('TERMINAY_MCP_')
+	);
 }
 
 export function nativeArguments(
@@ -147,6 +149,22 @@ interface Approval {
 	input: JsonValue;
 	permission: BotPermission;
 }
+/**
+ * The whole line Claude Code writes to its own stderr when it ends background
+ * work at its print-mode ceiling. Tool output and replies travel on stdout.
+ */
+const BACKGROUND_STOPPED_LINE =
+	/^Background tasks still running .+ after the last turn \(.*\); stopping them\. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely\.$/;
+const STDERR_LINE_LIMIT = 8192;
+/** The agent ended its own background work, so its task did not finish. */
+export const BOT_BACKGROUND_STOPPED_REASON =
+	'The agent stopped its background work at a time limit before it finished, so this task may be incomplete.';
+export class BotBackgroundStoppedError extends BotError {
+	constructor() {
+		super('unavailable', BOT_BACKGROUND_STOPPED_REASON);
+		this.name = 'BotBackgroundStoppedError';
+	}
+}
 /** One execution per process. The public shape deliberately matches the host's
  * existing session lifecycle; no ACP messages or adapter are involved. */
 export class BotNativeClient extends EventEmitter {
@@ -175,8 +193,9 @@ export class BotNativeClient extends EventEmitter {
 	private turn?: {
 		resolve: () => void;
 		reject: (e: Error) => void;
-		timer: ReturnType<typeof setTimeout>;
 	};
+	private stderrLine = '';
+	private backgroundStopped = false;
 	private readonly approvals = new Map<string, Approval>();
 	private readonly answered = new Set<string>();
 	constructor(
@@ -194,7 +213,9 @@ export class BotNativeClient extends EventEmitter {
 			this.receive(this.stdout.write(chunk)),
 		);
 		process.stderr.on('data', (chunk: Buffer) => {
-			const value = this.runner.push(this.stderr.write(chunk));
+			const raw = this.stderr.write(chunk);
+			this.scanStderr(raw);
+			const value = this.runner.push(raw);
 			if (value) this.emit('runner', value);
 		});
 		process.stdin.on('error', () => this.fail());
@@ -203,12 +224,20 @@ export class BotNativeClient extends EventEmitter {
 			if (this.closed) return;
 			this.receive(this.stdout.end());
 			if (this.buffer.trim()) this.fail();
-			const tail = this.runner.push(this.stderr.end()) + this.runner.finish();
+			const rest = this.stderr.end();
+			this.scanStderr(`${rest}\n`);
+			const tail = this.runner.push(rest) + this.runner.finish();
 			if (tail) this.emit('runner', tail);
 			this.flushText();
 			this.rejectPermissions();
 			this.closed = true;
-			if (this.terminal && !this.resultFailed && code === 0) this.finish();
+			if (
+				this.terminal &&
+				!this.resultFailed &&
+				!this.backgroundStopped &&
+				code === 0
+			)
+				this.finish();
 			else this.fail();
 			this.emit('closed');
 		});
@@ -248,7 +277,6 @@ export class BotNativeClient extends EventEmitter {
 	/** `images` reach Claude Code as content blocks; Codex receives them as `--image` launch arguments. */
 	prompt(
 		prompt: string,
-		maxTurnMs: number,
 		images: readonly { mime: string; bytes: Uint8Array }[] = [],
 	): Promise<void> {
 		if (!this.initialized || this.active || this.closed)
@@ -257,14 +285,7 @@ export class BotNativeClient extends EventEmitter {
 			);
 		this.active = true;
 		const result = new Promise<void>((resolve, reject) => {
-			this.turn = {
-				resolve,
-				reject,
-				timer: setTimeout(() => {
-					this.timeout();
-					this.fail();
-				}, maxTurnMs + 30000),
-			};
+			this.turn = { resolve, reject };
 		});
 		this.promptResult = result;
 		if (this.driver === 'codex-cli') this.process.stdin.end(`${prompt}\n`);
@@ -306,9 +327,13 @@ export class BotNativeClient extends EventEmitter {
 		// The supervisor owns termination for both CLIs; never signal an engine exec client.
 		await this.promptResult;
 	}
-	timeout(): void {
-		this.expired = true;
-		this.rejectPermissions();
+	/** Whole lines only, so a fragment of other stderr can never match. */
+	private scanStderr(value: string): void {
+		if (this.driver !== 'claude-code-cli') return;
+		const lines = `${this.stderrLine}${value}`.split('\n');
+		this.stderrLine = (lines.pop() ?? '').slice(-STDERR_LINE_LIMIT);
+		if (lines.some((line) => BACKGROUND_STOPPED_LINE.test(line.trimEnd())))
+			this.backgroundStopped = true;
 	}
 	answer(id: string, optionId: string): void {
 		const a = this.approvals.get(id);
@@ -604,16 +629,15 @@ export class BotNativeClient extends EventEmitter {
 		this.active = false;
 		const turn = this.turn;
 		this.turn = undefined;
-		if (turn) {
-			clearTimeout(turn.timer);
-			turn.resolve();
-		}
+		turn?.resolve();
 	}
 	private fail(): void {
-		const error = new BotError(
-			'unavailable',
-			'The native agent could not complete the request. See Runner output for details.',
-		);
+		const error = this.backgroundStopped
+			? new BotBackgroundStoppedError()
+			: new BotError(
+					'unavailable',
+					'The native agent could not complete the request. See Runner output for details.',
+				);
 		const init = this.initialization;
 		this.initialization = undefined;
 		if (init) {
@@ -622,10 +646,7 @@ export class BotNativeClient extends EventEmitter {
 		}
 		const turn = this.turn;
 		this.turn = undefined;
-		if (turn) {
-			clearTimeout(turn.timer);
-			turn.reject(error);
-		}
+		turn?.reject(error);
 		this.active = false;
 		this.emit('failure');
 	}

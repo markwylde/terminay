@@ -43,6 +43,7 @@ import type {
 	BotEnvironmentService,
 } from './environment.js';
 import { botFailure, botFailureCause } from './failure.js';
+import { BotCheckIns } from './checkIns.js';
 import { BotFailureFollowUps } from './failureFollowUps.js';
 
 /** Shown while a blocked bot's earlier process cleanup is still unconfirmed. */
@@ -59,7 +60,11 @@ import {
 } from './images.js';
 import type { BotMemories } from './memories.js';
 import { type BotActionRecord, BotMessageStore } from './messages.js';
-import type { BotNativeClient } from './native.js';
+import {
+	BOT_BACKGROUND_STOPPED_REASON,
+	BotBackgroundStoppedError,
+	type BotNativeClient,
+} from './native.js';
 import {
 	botProcessCount,
 	classifyProcessFailure,
@@ -165,6 +170,9 @@ export interface BotServiceHooks {
 	readonly activity: (botId: string, running: number, queued: number) => void;
 	readonly process?: (options: BotAgentProcessOptions) => BotAgentProcess;
 	readonly now?: () => number;
+	/** Timers for the check-in schedule; tests inject a fake clock. */
+	readonly setTimeout?: (fn: () => void, ms: number) => unknown;
+	readonly clearTimeout?: (handle: unknown) => void;
 	readonly removeTriggers?: (botId: string) => Promise<void>;
 	readonly validateSignIn?: (
 		draft: BotDraft,
@@ -204,7 +212,6 @@ interface Live {
 	client?: BotNativeClient;
 	stop?: Promise<void>;
 	closing: boolean;
-	timer?: ReturnType<typeof setTimeout>;
 	turn: boolean;
 	/** Whether this execution was given the `terminay` server. */
 	terminay: boolean;
@@ -235,6 +242,9 @@ export class BotService extends EventEmitter {
 	readonly queue: BotTurnQueue;
 	readonly triggers: BotTriggers;
 	readonly failureFollowUps: BotFailureFollowUps;
+	readonly checkIns: BotCheckIns;
+	/** When each live execution last produced output or activity. */
+	private readonly activityTimes = new Map<string, number>();
 	readonly connections = new BotConnectionResources((id) =>
 		this.hooks.closeConnection?.(id),
 	);
@@ -349,24 +359,11 @@ export class BotService extends EventEmitter {
 				redact: (botId, value) => this.redactMessage(botId, value),
 				dispatch: (botId, prompt, origin, id) =>
 					this.send(botId, prompt, undefined, origin, () => true, id),
-				abandon: (id) => {
-					try {
-						const r = this.sessions.get(id);
-						if (
-							r.state === 'queued' &&
-							![
-								...this.queue.list(r.botId),
-								...this.queue.active(r.botId),
-							].some((i) => i.sessionId === id)
-						)
-							this.sessions.patch(id, {
-								state: 'stopped',
-								open: false,
-								endedAt: this.now(),
-								reason: 'The failure investigation could not be queued.',
-							});
-					} catch {}
-				},
+				abandon: (id) =>
+					this.abandonReserved(
+						id,
+						'The failure investigation could not be queued.',
+					),
 				firingFor: (botId, sessionId) => {
 					try {
 						return (
@@ -383,12 +380,58 @@ export class BotService extends EventEmitter {
 					clearTimeout(handle as ReturnType<typeof setTimeout>),
 			},
 		);
+		this.checkIns = new BotCheckIns({
+			now: this.now,
+			session: (id) => {
+				try {
+					return this.sessions.get(id);
+				} catch {
+					return undefined;
+				}
+			},
+			sessions: (botId) => this.sessions.list(botId),
+			dispatch: async (botId, prompt, origin) => {
+				const reserved = randomBytes(12).toString('hex');
+				try {
+					return await this.send(
+						botId,
+						prompt,
+						undefined,
+						origin,
+						() =>
+							this.watchedRunning(origin.watchedSessionId) ||
+							'The watched session is no longer running.',
+						reserved,
+					);
+				} catch (error) {
+					this.abandonReserved(reserved, 'The check-in could not be queued.');
+					throw error;
+				}
+			},
+			cancelQueued: (botId, watchedSessionId) => {
+				for (const item of this.queue.list(botId))
+					if (
+						item.origin.kind === 'check-in' &&
+						item.origin.watchedSessionId === watchedSessionId
+					)
+						this.queue.cancel(botId, item.id, 'The watched session ended.');
+			},
+			setTimeout: (fn, ms) =>
+				hooks.setTimeout ? hooks.setTimeout(fn, ms) : setTimeout(fn, ms),
+			clearTimeout: (handle) =>
+				hooks.clearTimeout
+					? hooks.clearTimeout(handle)
+					: clearTimeout(handle as ReturnType<typeof setTimeout>),
+		});
 		const sessionState = ({
 			record,
 		}: {
 			record: BotSessionRecord;
 			previous: string;
 		}) => {
+			this.checkIns.sync(record);
+			if (!['running', 'needs-you'].includes(record.state))
+				this.activityTimes.delete(record.id);
 			if (record.state === 'failed' || record.state === 'timed-out')
 				void this.failureFollowUps.execution(record);
 			else {
@@ -444,6 +487,53 @@ export class BotService extends EventEmitter {
 		for (const bot of bots.list()) {
 			this.register(bot);
 			this.importMessages(bot.id);
+		}
+	}
+	/** When this live execution last produced output or activity. */
+	lastActivity(id: string): number | undefined {
+		return this.activityTimes.get(id);
+	}
+	/** False too when the watched record has been pruned. */
+	private watchedRunning(id: string): boolean {
+		try {
+			return this.sessions.get(id).state === 'running';
+		} catch {
+			return false;
+		}
+	}
+	/** Stop a reserved record that was created but never queued. */
+	private abandonReserved(id: string, reason: string): void {
+		try {
+			const r = this.sessions.get(id);
+			if (
+				r.state === 'queued' &&
+				![...this.queue.list(r.botId), ...this.queue.active(r.botId)].some(
+					(i) => i.sessionId === id,
+				)
+			)
+				this.sessions.patch(id, {
+					state: 'stopped',
+					open: false,
+					endedAt: this.now(),
+					reason,
+				});
+		} catch {}
+	}
+	/** Tell the user directly: follow-up may be off, suppressed or discarded. */
+	private postBackgroundStoppedNotice(record: BotSessionRecord): void {
+		try {
+			this.messages.post(
+				record.botId,
+				'bot',
+				`Session ${record.id} ended because its background work was stopped at a time limit, so its task may be unfinished. Open it in Sessions to see what it completed.`,
+				record.id,
+				`background-stopped:${record.id}`,
+			);
+		} catch (error) {
+			console.error(
+				`[terminay] bot notice failed: bot=${record.botId} session=${record.id}:`,
+				error,
+			);
 		}
 	}
 	private importMessages(botId: string): void {
@@ -1104,7 +1194,7 @@ export class BotService extends EventEmitter {
 				if (['queued', 'running', 'needs-you'].includes(r.state))
 					this.runtime.revoke(r.id);
 			await this.stopBot(botId);
-			this.messages.clear(botId);
+			this.messages.clear(botId, this.now());
 		});
 	}
 	async send(
@@ -1217,7 +1307,6 @@ export class BotService extends EventEmitter {
 					approvalMode: agent.autonomousOnly ? 'autonomous' : bot.approvalMode,
 					instructions: bot.instructions,
 					context: await this.memories.context(bot),
-					maxTurnMs: bot.maxTurnMs,
 				};
 				const lease = await this.hooks.credentials.acquire(botId, snapshot);
 				try {
@@ -1550,6 +1639,23 @@ export class BotService extends EventEmitter {
 	}
 	private async runNow(item: BotQueuedTurn): Promise<BotRunResult> {
 		const record = this.sessions.get(item.sessionId);
+		// The watched execution may have ended or begun waiting on the user
+		// while this check-in was queued.
+		if (
+			record.origin.kind === 'check-in' &&
+			!this.watchedRunning(record.origin.watchedSessionId)
+		) {
+			this.runtime.revoke(record.id);
+			this.sessions.patch(record.id, {
+				state: 'stopped',
+				open: false,
+				endedAt: this.now(),
+				queuedMessage: null,
+				firing: 'skipped',
+				reason: 'The watched session is no longer running.',
+			});
+			return { cleanup: 'ok' };
+		}
 		let live = this.live.get(record.id);
 		let bridge: BotRuntimeBridge | undefined;
 		let pendingCredential: BotCredentialLease | undefined;
@@ -1803,11 +1909,6 @@ export class BotService extends EventEmitter {
 				return { cleanup: 'ok' };
 			}
 			live.turn = true;
-			live.timer = setTimeout(() => {
-				void this.closeLive(record.id, 'timeout').catch(() =>
-					this.emit('cleanup-failed', { botId: record.botId }),
-				);
-			}, record.snapshot.maxTurnMs);
 			this.sessions.append(record.id, { kind: 'user', text: item.prompt });
 			const first = record.acpSessionId === null;
 			// The hand-over marker is durable before the agent sees its task: from
@@ -1818,11 +1919,11 @@ export class BotService extends EventEmitter {
 				retryAt: null,
 			});
 			this.sessions.commit(record.id);
+			this.checkIns.sync(this.sessions.get(record.id));
 			startupPermit?.();
 			startupPermit = undefined;
 			await live.runner.client.prompt(
 				`${first ? `${record.snapshot.context}\n\n` : ''}${this.runtime.briefing(record.id, live.terminay)}\n\n${record.origin.kind === 'chat' ? '' : item.prompt}`,
-				record.snapshot.maxTurnMs,
 				first ? images : [],
 			);
 			if (!live.closing) bridge?.assertConnected();
@@ -1889,6 +1990,8 @@ export class BotService extends EventEmitter {
 					permission: null,
 					permissions: [],
 				});
+				if (error instanceof BotBackgroundStoppedError)
+					this.postBackgroundStoppedNotice(record);
 				if (live) await this.closeLive(record.id, 'failure');
 			}
 		} finally {
@@ -1902,7 +2005,6 @@ export class BotService extends EventEmitter {
 					pendingCredential?.release();
 				}
 			}
-			if (live?.timer) clearTimeout(live.timer);
 			if (live) live.turn = false;
 			try {
 				if (live?.closing) await live.stop;
@@ -1953,10 +2055,14 @@ export class BotService extends EventEmitter {
 		this.sessions.commit(item.sessionId);
 	}
 	private bindClient(id: string, client: BotNativeClient): void {
-		client.on('update', (update: JsonValue) =>
-			this.sessions.append(id, update),
-		);
-		client.on('runner', (chunk: string) => this.sessions.runner(id, chunk));
+		client.on('update', (update: JsonValue) => {
+			this.activityTimes.set(id, this.now());
+			this.sessions.append(id, update);
+		});
+		client.on('runner', (chunk: string) => {
+			this.activityTimes.set(id, this.now());
+			this.sessions.runner(id, chunk);
+		});
 		client.on('permission-request', (permission) => {
 			this.sessions.append(id, {
 				kind: 'permission-request',
@@ -1993,7 +2099,7 @@ export class BotService extends EventEmitter {
 	}
 	private closeLive(
 		id: string,
-		reason: 'stop' | 'end' | 'suspend' | 'timeout' | 'bot-stop' | 'failure',
+		reason: 'stop' | 'end' | 'suspend' | 'bot-stop' | 'failure',
 	): Promise<void> {
 		try {
 			this.runtime.revoke(id);
@@ -2027,7 +2133,7 @@ export class BotService extends EventEmitter {
 						new BotStartupError('prepare', 'other', false, 'stopped'),
 					);
 				this.sessions.patch(id, {
-					state: reason === 'timeout' ? 'timed-out' : 'stopped',
+					state: 'stopped',
 					open: false,
 					permission: null,
 					permissions: [],
@@ -2038,7 +2144,6 @@ export class BotService extends EventEmitter {
 		}
 		if (live.stop) return live.stop;
 		live.closing = true;
-		if (live.timer) clearTimeout(live.timer);
 		live.stop = (async () => {
 			let cleanup: unknown;
 			try {
@@ -2053,13 +2158,11 @@ export class BotService extends EventEmitter {
 			const state =
 				reason === 'suspend'
 					? 'suspended'
-					: reason === 'timeout'
-						? 'timed-out'
-						: reason === 'failure'
-							? 'failed'
-							: reason === 'end'
-								? 'completed'
-								: 'stopped';
+					: reason === 'failure'
+						? 'failed'
+						: reason === 'end'
+							? 'completed'
+							: 'stopped';
 			const open = false;
 			this.sessions.patch(id, {
 				state,
@@ -2191,11 +2294,25 @@ export class BotService extends EventEmitter {
 				);
 			}
 		this.initialized = cleaned;
+		// The failure and its notice are separate writes; the keyed post replays
+		// a notice lost to a failed write or a crash between them.
+		for (const bot of this.bots.list())
+			for (const session of this.sessions.list(bot.id))
+				if (
+					session.state === 'failed' &&
+					session.reason === BOT_BACKGROUND_STOPPED_REASON &&
+					(session.endedAt ?? 0) > this.messages.clearedAt(bot.id)
+				)
+					this.postBackgroundStoppedNotice(session);
+		this.checkIns.reconcile(
+			this.bots.list().flatMap((bot) => this.sessions.list(bot.id)),
+		);
 		if (cleaned)
 			void this.failureFollowUps.reconcile(this.bots.list().map((b) => b.id));
 	}
 
 	async shutdown(): Promise<void> {
+		this.checkIns.stop();
 		this.failureFollowUps.stop();
 		this.triggers.stop();
 		await this.triggers.idle();

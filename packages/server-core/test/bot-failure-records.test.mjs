@@ -13,7 +13,6 @@ const snapshot = {
 	approvalMode: 'autonomous',
 	instructions: '',
 	context: '',
-	maxTurnMs: 1800000,
 };
 function setup(t) {
 	const root = mkdtempSync(join(tmpdir(), 'bots-failure-records-'));

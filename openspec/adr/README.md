@@ -153,3 +153,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0137](./0137-the-workspace-admits-terminay-com-as-its-only-hosted-content-origin.md) | The workspace admits terminay.com as its only hosted content origin, in a sandboxed frame with a closed message bridge | accepted | 2026-11-17 |
 | [0138](./0138-a-permitted-bot-reads-other-bots-through-allowlisted-runtime-tools.md) | A permitted bot reads other bots through allowlisted runtime tools | accepted, supersedes 0100 and 0093 in part | 2026-11-23 |
 | [0139](./0139-the-workspace-plays-media-only-from-its-own-origin-and-blob-urls.md) | The workspace plays media only from its own origin and blob URLs | accepted | 2026-11-23 |
+| [0140](./0140-bot-sessions-have-no-time-limit-and-are-watched-by-check-ins.md) | Bot sessions have no time limit and are watched by check-in sessions | accepted | 2026-11-23 |

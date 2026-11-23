@@ -1629,7 +1629,7 @@ test('a turn that fails cleanup is revoked and the next turn can use the shell',
 	r.service.runtime.assert(second.id);
 });
 
-test('a stopped or timed-out turn keeps its outcome when cleanup fails', async (t) => {
+test('stopped turns keep their outcome when cleanup fails', async (t) => {
 	captureErrors(t);
 	const r = await setup(t);
 	r.triggers.create(r.bot.id, draft());
@@ -1642,9 +1642,9 @@ test('a stopped or timed-out turn keeps its outcome when cleanup fails', async (
 	assert.match(r.sessions.get(first.id).runnerOutput, /Cleanup failed:/);
 	await r.time.advance(start + 10 * MINUTE, r.engine);
 	const second = triggerRuns(r)[1];
-	await assert.rejects(r.service.closeLive(second.id, 'timeout'));
+	await assert.rejects(r.service.stop(r.bot.id, second.id), /cleanup failed/);
 	await flush();
-	assert.equal(r.sessions.get(second.id).state, 'timed-out');
+	assert.equal(r.sessions.get(second.id).state, 'stopped');
 	// Two failures: the bot still admits work.
 	await r.time.advance(start + 15 * MINUTE, r.engine);
 	assert.equal(triggerRuns(r).length, 3);
@@ -2448,7 +2448,6 @@ test('a restart ends an execution waiting for a startup retry as interrupted and
 			approvalMode: 'autonomous',
 			instructions: '',
 			context: '',
-			maxTurnMs: 10000,
 		},
 	);
 	first.sessions.patch(s.id, {

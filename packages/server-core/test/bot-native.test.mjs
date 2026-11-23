@@ -42,7 +42,7 @@ async function start(f) {
 		});
 	await init;
 	await f.client.open(null, null);
-	const turn = f.client.prompt('check', 1000);
+	const turn = f.client.prompt('check');
 	turn.catch(() => {});
 	return { turn };
 }
@@ -74,18 +74,71 @@ for (const answer of ['allow', 'deny'])
 		f.process.emit('close', 0);
 		await turn;
 	});
-test('expired approval denies and cancellation rejects pending permissions', async () => {
+test('cancellation denies and rejects pending permissions', async () => {
 	const f = fixture();
 	const { turn } = await start(f);
 	f.receive(request);
-	f.client.timeout();
-	assert.equal(f.sent.at(-1).response.response.behavior, 'deny');
-	assert.equal(f.client.permissions.length, 0);
 	const cancelled = f.client.cancel();
 	cancelled.catch(() => {});
+	assert.equal(
+		f.sent.find((m) => m.type === 'control_response').response.response
+			.behavior,
+		'deny',
+	);
+	assert.equal(f.client.permissions.length, 0);
 	f.process.emit('close', 0);
 	await assert.rejects(cancelled);
 	await assert.rejects(turn);
+});
+const STOPPED_LINE =
+	'Background tasks still running 10m after the last turn (monitor "CI"); stopping them. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.\n';
+const success = { type: 'result', subtype: 'success', is_error: false };
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+test('a clean exit after Claude stops background work is not a success', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive(success);
+	f.process.stderr.write(STOPPED_LINE);
+	await tick();
+	f.process.emit('close', 0);
+	await assert.rejects(turn, { name: 'BotBackgroundStoppedError' });
+});
+test('the background-stop line is recognised across stderr chunks', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive(success);
+	f.process.stderr.write(STOPPED_LINE.slice(0, 30));
+	await tick();
+	f.process.stderr.write(STOPPED_LINE.slice(30));
+	await tick();
+	f.process.emit('close', 0);
+	await assert.rejects(turn, { name: 'BotBackgroundStoppedError' });
+});
+test('the same words in a reply or inside another stderr line do not fail a turn', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive({ ...success, result: STOPPED_LINE });
+	f.process.stderr.write(`tool said: ${STOPPED_LINE}`);
+	await tick();
+	f.process.emit('close', 0);
+	await turn;
+});
+test('a turn survives a long quiet wait after its first result', async (t) => {
+	t.mock.timers.enable({ apis: ['setTimeout'] });
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	let settled = false;
+	turn.then(
+		() => (settled = true),
+		() => (settled = true),
+	);
+	f.receive(success);
+	t.mock.timers.tick(6 * 60 * 60_000);
+	await Promise.resolve();
+	assert.equal(settled, false);
+	f.receive({ ...success, result: 'monitor finished' });
+	f.process.emit('close', 0);
+	await turn;
 });
 test('native success waits for zero exit and valid terminal event', async () => {
 	for (const [terminal, code] of [
@@ -192,7 +245,7 @@ test('Codex cancellation asks the owned supervisor to interrupt before awaiting 
 		},
 	);
 	await client.initialize();
-	const turn = client.prompt('check', 1000);
+	const turn = client.prompt('check');
 	turn.catch(() => {});
 	const cancelled = client.cancel();
 	cancelled.catch(() => {});
@@ -212,7 +265,7 @@ test('Claude receives message images as base64 content blocks after the text', a
 	await init;
 	await f.client.open(null, null);
 	const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-	const turn = f.client.prompt('look', 1000, [
+	const turn = f.client.prompt('look', [
 		{ mime: 'image/png', bytes: png },
 		{ mime: 'image/webp', bytes: new Uint8Array([1]) },
 	]);

@@ -217,6 +217,13 @@ function parseRecord(value: unknown): BotSessionRecord {
 		)
 			throw new Error('invalid failure origin');
 		for (const ref of origin.failures) failureRef(ref);
+	} else if (origin.kind === 'check-in') {
+		sessionId(origin.watchedSessionId);
+		if (
+			!Number.isSafeInteger(origin.runningMinutes) ||
+			(origin.runningMinutes as number) < 0
+		)
+			throw new Error('invalid check-in origin');
 	} else if (origin.kind !== 'chat') {
 		text(origin.triggerId, 256, 'trigger id');
 		text(origin.triggerName, 1024, 'trigger name');
@@ -227,14 +234,16 @@ function parseRecord(value: unknown): BotSessionRecord {
 			throw new Error('invalid fire time');
 	}
 	if (
-		!['chat', 'trigger', 'run-now', 'failure'].includes(String(origin.kind)) ||
+		!['chat', 'trigger', 'run-now', 'failure', 'check-in'].includes(
+			String(origin.kind),
+		) ||
 		typeof snapshot.agentId !== 'string' ||
 		typeof snapshot.context !== 'string' ||
-		Buffer.byteLength(snapshot.context) > 256 * 1024 ||
-		!Number.isSafeInteger(snapshot.maxTurnMs) ||
-		(snapshot.maxTurnMs as number) < 1
+		Buffer.byteLength(snapshot.context) > 256 * 1024
 	)
 		throw new Error('invalid session snapshot');
+	// Records written when turns had a time limit still carry this field.
+	delete snapshot.maxTurnMs;
 	for (const k of [
 		'open',
 		'canLoad',

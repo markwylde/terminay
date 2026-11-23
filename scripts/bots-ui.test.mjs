@@ -72,7 +72,6 @@ function bot(id, name, patch = {}) {
 		modelId: null,
 		signIn: { kind: 'none' },
 		approvalMode: 'autonomous',
-		maxTurnMs: 30 * 60_000,
 		pinnedMemories: [],
 		createdAt: NOW - 86_400_000,
 		updatedAt: NOW - 86_400_000,
@@ -92,7 +91,6 @@ function session(id, botId, patch = {}) {
 			approvalMode: 'autonomous',
 			instructions: '',
 			context: '',
-			maxTurnMs: 1_800_000,
 		},
 		state: 'completed',
 		startedAt: NOW - 600_000,
@@ -1476,6 +1474,77 @@ test('Sessions filters and reads diagnostics without conversation continuation',
 	} finally {
 		await page.close();
 	}
+});
+
+test('a session whose background work was stopped shows failed with the reason', async () => {
+	const reason =
+		'The agent stopped its background work at a time limit before it finished, so this task may be incomplete.';
+	const page = await configure('sessions', {
+		sessions: {
+			[BIRD]: [
+				session('s3', BIRD, {
+					state: 'failed',
+					open: false,
+					canLoad: false,
+					reason,
+				}),
+			],
+		},
+		transcripts: { s3: [{ kind: 'user', text: 'Watch CI' }] },
+	});
+	try {
+		await page.locator('[data-terminay-bot-session="s3"]').waitFor();
+		const text = await page
+			.locator('[data-terminay-bot-session="s3"]')
+			.innerText();
+		assert.ok(text.includes(`Reason: ${reason}`));
+		assert.equal(/completed/i.test(text), false);
+	} finally {
+		await page.close();
+	}
+});
+
+test('a check-in session names and opens the session it watches', async () => {
+	const page = await configure('sessions', {
+		sessions: {
+			[BIRD]: [
+				session('c1', BIRD, {
+					state: 'completed',
+					open: false,
+					canLoad: false,
+					origin: {
+						kind: 'check-in',
+						watchedSessionId: 'w1',
+						runningMinutes: 30,
+					},
+				}),
+				session('w1', BIRD, { state: 'running', startedAt: NOW - 1_800_000 }),
+			],
+		},
+		transcripts: { c1: [{ kind: 'user', text: 'Check on it' }] },
+	});
+	try {
+		await page.locator('[data-terminay-bot-session="c1"]').waitFor();
+		assert.equal(
+			await page
+				.locator('[data-terminay-bot-session-check-in]')
+				.getAttribute('data-terminay-bot-session-check-in'),
+			'w1',
+		);
+		await shot(page, 'check-in-session');
+		await page.locator('[data-terminay-bot-check-in-session]').click();
+		await page.locator('[data-terminay-bot-session="w1"]').waitFor();
+	} finally {
+		await page.close();
+	}
+});
+
+test('the bot profile has no maximum turn setting', async () => {
+	const source = await readFile(
+		new URL('../src/workspace/bots/BotProfilePanel.tsx', import.meta.url),
+		'utf8',
+	);
+	assert.equal(/maximum turn|maxTurn/i.test(source), false);
 });
 
 test('Use this engine asks before replacing a pinned engine', async () => {

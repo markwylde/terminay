@@ -15,7 +15,6 @@ const snapshot = {
 	approvalMode: 'autonomous',
 	instructions: '',
 	context: '',
-	maxTurnMs: 10000,
 };
 const BOT = 'aaaaaaaaaaaa';
 const OTHER = 'bbbbbbbbbbbb';
