@@ -114,6 +114,24 @@ test('Investigate failures defaults on, round-trips an explicit value and reject
 	);
 });
 
+test('Inspect other bots defaults off, round-trips an explicit value and rejects a non-boolean', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bots-store-inspect-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const path = join(root, 'bots.json');
+	const store = new BotStore(path);
+	const bot = store.save({ name: 'Bird', agentId: 'fake.agent' });
+	assert.equal(bot.inspectOtherBots, false);
+	store.save({ ...store.get(bot.id), inspectOtherBots: true });
+	assert.equal(new BotStore(path).get(bot.id).inspectOtherBots, true);
+	const raw = JSON.parse(readFileSync(path, 'utf8'));
+	for (const b of raw.bots) delete b.inspectOtherBots;
+	writeFileSync(path, JSON.stringify(raw));
+	assert.equal(new BotStore(path).get(bot.id).inspectOtherBots, false);
+	assert.throws(() =>
+		store.save({ ...store.get(bot.id), inspectOtherBots: 'yes' }),
+	);
+});
+
 test('Terminay MCP access defaults off, round-trips an explicit value and rejects a non-boolean', (t) => {
 	const root = mkdtempSync(join(tmpdir(), 'bots-store-mcp-access-'));
 	t.after(() => rmSync(root, { recursive: true, force: true }));

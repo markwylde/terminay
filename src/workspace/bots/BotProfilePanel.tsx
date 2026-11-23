@@ -14,6 +14,7 @@ import { useOptionalTerminalSettings } from '../../hooks/useTerminalSettings';
 import { BotSignInSection } from './BotSignInSection';
 import {
 	botActivity,
+	canInspectOtherBots,
 	ENVIRONMENT_LABELS,
 	hasTerminayMcpAccess,
 	investigatesFailures,
@@ -68,6 +69,7 @@ type ProfileForm = Readonly<{
 	maxTurnMinutes: string;
 	investigateFailures: boolean;
 	terminayMcpAccess: boolean;
+	inspectOtherBots: boolean;
 }>;
 
 function formFromBot(bot: BotProfile): ProfileForm {
@@ -83,6 +85,7 @@ function formFromBot(bot: BotProfile): ProfileForm {
 		maxTurnMinutes: String(Math.round(bot.maxTurnMs / 60_000)),
 		investigateFailures: investigatesFailures(bot),
 		terminayMcpAccess: hasTerminayMcpAccess(bot),
+		inspectOtherBots: canInspectOtherBots(bot),
 	};
 }
 
@@ -193,6 +196,7 @@ export function BotProfilePanel({
 				maxTurnMs: Number(form.maxTurnMinutes) * 60_000,
 				investigateFailures: form.investigateFailures,
 				terminayMcpAccess: form.terminayMcpAccess,
+				inspectOtherBots: form.inspectOtherBots,
 			})
 			.then((next) => {
 				setBase(next);
@@ -439,6 +443,32 @@ export function BotProfilePanel({
 									This applies once it is turned on.
 								</small>
 							) : null}
+						</div>
+					</div>
+					<div className="bots-form__row">
+						<div className="bots-field">
+							<span id="bots-inspect-other-label">Inspect other bots</span>
+							<div className="bots-check">
+								<button
+									type="button"
+									role="switch"
+									aria-checked={form.inspectOtherBots}
+									aria-labelledby="bots-inspect-other-label"
+									aria-describedby="bots-inspect-other-help"
+									className="bots-toggle"
+									onClick={() =>
+										update({ inspectOtherBots: !form.inspectOtherBots })
+									}
+									data-terminay-bot-inspect-other="true"
+								/>
+							</div>
+							<small id="bots-inspect-other-help" className="bots-faint">
+								The bot can read the config, sessions, output, chats and
+								triggers of every other bot on this server, including anything
+								written in them. It cannot change them, and never sees their
+								sign-ins, instructions or trigger commands. Changes apply at
+								once, to running sessions too.
+							</small>
 						</div>
 					</div>
 					<div className="bots-actionrow">

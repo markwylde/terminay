@@ -183,6 +183,17 @@ function profile(value: unknown): BotProfile {
 								'invalid Terminay MCP access setting',
 							);
 						})(),
+		inspectOtherBots:
+			d.inspectOtherBots === undefined
+				? false
+				: typeof d.inspectOtherBots === 'boolean'
+					? d.inspectOtherBots
+					: (() => {
+							throw new BotError(
+								'validation',
+								'invalid Inspect other bots setting',
+							);
+						})(),
 		pinnedMemories: pins,
 		createdAt: d.createdAt as number,
 		updatedAt: d.updatedAt as number,
@@ -377,6 +388,7 @@ export class BotStore extends EventEmitter {
 			maxTurnMs: 30 * 60_000,
 			investigateFailures: true,
 			terminayMcpAccess: false,
+			inspectOtherBots: false,
 			pinnedMemories: [],
 			...previous,
 			...draft,

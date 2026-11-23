@@ -235,6 +235,13 @@ export function hasTerminayMcpAccess(
 	return bot.terminayMcpAccess === true;
 }
 
+/** Inspecting other bots is off unless the profile turns it on (ADR-0138). */
+export function canInspectOtherBots(
+	bot: Pick<BotProfile, 'inspectOtherBots'>,
+): boolean {
+	return bot.inspectOtherBots === true;
+}
+
 /** How many failures a failure investigation covers, listed or only counted. */
 function failureCount(origin: BotSessionRecord['origin']): number {
 	return origin.kind === 'failure'

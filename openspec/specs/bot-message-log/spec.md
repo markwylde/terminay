@@ -44,7 +44,7 @@ Bots SHALL expose a durable monotonic event cursor for message, execution, trigg
 - **THEN** it receives only bounded subsequent changes and a continuation cursor
 
 ### Requirement: Scoped runtime MCP
-Runtime tools SHALL be bound to a live server-authenticated bot and execution. They SHALL offer message list/search/get/post, execution list/get/post/stop/replace, a read of an ended execution's runner output, incremental events, and management of the calling bot's triggers. They SHALL grant no project, terminal, host path or other bot authority. Request/response sizes, waits and execution concurrency SHALL be bounded. Revoked or terminal executions SHALL not post or mutate state. Retry-safe mutations SHALL accept idempotency keys.
+Runtime tools SHALL be bound to a live server-authenticated bot and execution. They SHALL offer message list/search/get/post, execution list/get/post/stop/replace, a read of an ended execution's runner output, incremental events, and management of the calling bot's triggers. They SHALL grant no project, terminal or host path authority, and no authority over another bot except the read-only inspection that the bot-inspection contract permits. Request/response sizes, waits and execution concurrency SHALL be bounded. Revoked or terminal executions SHALL not post or mutate state. Retry-safe mutations SHALL accept idempotency keys.
 
 #### Scenario: Execution revoked
 - **WHEN** a stopped execution retries a chat post
