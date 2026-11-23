@@ -50,14 +50,14 @@ const BOT_CLEANUP_UNCONFIRMED =
 	"An earlier execution's processes could not be cleaned up in the bot container. Check the container engine, then send a new message.";
 
 import {
+	type BotActionCall,
+	describeRedactedBotAction,
+} from './actionWording.js';
+import {
 	removeExecutionAttachments,
 	writeExecutionAttachments,
 } from './images.js';
 import type { BotMemories } from './memories.js';
-import {
-	type BotActionCall,
-	describeRedactedBotAction,
-} from './actionWording.js';
 import { type BotActionRecord, BotMessageStore } from './messages.js';
 import type { BotNativeClient } from './native.js';
 import {
@@ -804,6 +804,36 @@ export class BotService extends EventEmitter {
 		} finally {
 			lease?.release();
 		}
+	}
+	/**
+	 * Redact many strings under one credential lease. The caller must release
+	 * it. Refuses, as a message post does, when a sign-in cannot be read.
+	 */
+	async openRedactor(
+		botId: string,
+	): Promise<{ redact(value: string): string; release(): void }> {
+		const bot = this.bots.get(botId);
+		let lease: BotCredentialLease | undefined;
+		try {
+			lease = await this.hooks.credentials.acquire(botId, {
+				...bot,
+				context: '',
+				signIn: bot.signIn,
+			});
+		} catch {
+			if (bot.signIn.kind !== 'none')
+				throw new BotError(
+					'unavailable',
+					"Unable to safely read this bot's content with its current sign-in",
+				);
+		}
+		return {
+			redact: (value) => {
+				const clean = this.runtime.sanitizeSecrets(botId, value);
+				return lease ? lease.redact(clean) : clean;
+			},
+			release: () => lease?.release(),
+		};
 	}
 	/** Stage one user-supplied file of any type. Its bytes are untrusted: the
 	 * store types them by content and bounds them by that type. */
