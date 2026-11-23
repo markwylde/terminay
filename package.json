@@ -230,6 +230,9 @@
 		"ws": "^8.22.2"
 	},
 	"overrides": {
+		"@markwylde/all-your-agents": {
+			"koffi": "2.16.3"
+		},
 		"@hono/node-server": "2.1.7",
 		"brace-expansion": "5.0.13",
 		"dompurify": "3.4.17",

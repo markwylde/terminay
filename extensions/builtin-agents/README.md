@@ -43,7 +43,7 @@ usual per-user install directories, including nvm's. A missing CLI reports
 ## Detection
 
 All detection is done by [`@markwylde/all-your-agents`](https://github.com/markwylde/all-your-agents),
-pinned to exactly **1.4.4**. The extension runs one library instance with the
+pinned to exactly **1.6.1**. The extension runs one library instance with the
 providers of the switched-on harnesses. It has no journal parser, process
 matcher, status inference, or timer of its own, and it never polls.
 
@@ -56,7 +56,7 @@ matcher, status inference, or timer of its own, and it never polls.
 
 OpenCode sessions are not reported until the library has an OpenCode provider.
 
-### Capability matrix (all-your-agents 1.4.4)
+### Capability matrix (all-your-agents 1.6.1)
 
 
 | Agent | Live detection | Status | Waiting for | Titles | Model | Tools | Turn outcome | Subagents | Transcript | History | Print mode |
