@@ -268,13 +268,17 @@ test('file kind comes from content, never the claimed type or name', () => {
 	assert.equal(chatFileKind(new Uint8Array()), 'file');
 });
 
-test('only raster images render; every other attachment is a chip', () => {
+test('only raster images and known video render; the rest are chips', () => {
 	for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 		assert.equal(attachmentView(mime), 'image');
+	for (const mime of ['video/mp4', 'video/webm'])
+		assert.equal(attachmentView(mime), 'video');
 	for (const mime of [
 		'application/octet-stream',
 		'text/html',
 		'image/svg+xml',
+		'video/x-matroska',
+		'video/quicktime',
 		'',
 	])
 		assert.equal(attachmentView(mime), 'file');

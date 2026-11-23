@@ -170,7 +170,7 @@ function createLegacyWireModel(files) {
 		bundleFormatVersion: 1,
 		bundleId,
 		contentSecurityPolicy:
-			"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+			"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 		entryPath: `/remote-app/${bundleId}/server.html`,
 		hostCompatibility: {
 			bootstrap: { maximum: 1, minimum: 1 },

@@ -17,6 +17,7 @@ import {
 	BOT_MESSAGE_UPLOAD_LIMITS,
 	botAttachmentType,
 	isBotImageMime,
+	isBotVideoMime,
 } from '@terminay/protocol';
 
 /** What a bot is doing, as its card and tab show it. */
@@ -460,10 +461,11 @@ export function formatFileSize(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** How a message attachment shows: only raster images are ever rendered;
- * every other type, known or not, is a download-only chip. */
-export function attachmentView(mime: string): 'image' | 'file' {
-	return isBotImageMime(mime) ? 'image' : 'file';
+/** How a message attachment shows: raster images and playable video are
+ * rendered; every other type, known or not, is a download-only chip. */
+export function attachmentView(mime: string): 'image' | 'video' | 'file' {
+	if (isBotImageMime(mime)) return 'image';
+	return isBotVideoMime(mime) ? 'video' : 'file';
 }
 
 /** A send attempt's idempotency key. A retry of the same content reuses it, so

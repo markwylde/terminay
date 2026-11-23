@@ -1,9 +1,12 @@
 // Stateful fake Docker/Podman executable. No sockets, containers or providers.
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { MessageChannel } from 'node:worker_threads';
 
+/** Container paths under this prefix are `<fake root>/attachments/<name>`. */
+const FIXTURE_ATTACHMENTS = '/tmp/fixture-attachments/';
 const root = process.env.TERMINAY_FAKE_BOT_ROOT;
 const calls = path.join(root, 'calls.jsonl');
 let args = process.argv.slice(2);
@@ -288,6 +291,25 @@ if (kind === 'info' && fs.existsSync(path.join(root, 'engine-down'))) {
 			`${JSON.stringify({ status: true, home: process.env.HOME })}\n`,
 		);
 		out(`terminay-status=${read('login', 'state') === 'gone' ? 1 : 0}`);
+	} else if (
+		command[0] === 'python3' &&
+		command[1] === '-c' &&
+		command[3]?.startsWith(FIXTURE_ATTACHMENTS)
+	) {
+		// The real attachment reader, rooted at the test's own files.
+		const directory = path.join(root, 'attachments');
+		const source = command[2].replace(
+			"root='/tmp' if path.startswith('/tmp/') else '/home/bot'",
+			`root=${JSON.stringify(directory)}`,
+		);
+		const target = path.join(
+			directory,
+			command[3].slice(FIXTURE_ATTACHMENTS.length),
+		);
+		const run = spawnSync('python3', ['-c', source, target], {
+			stdio: ['ignore', 'inherit', 'inherit'],
+		});
+		process.exit(run.status ?? 1);
 	} else {
 		let input = '';
 		for await (const chunk of process.stdin) input += chunk;

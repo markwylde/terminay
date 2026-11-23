@@ -11,8 +11,13 @@ if (process.env.FAKE_IGNORE_EOF === '1') {
 	port1.on('message', () => {});
 }
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
-/** `threadId`: answer in the thread the briefing names, as a real agent is told to. */
-async function postReply(needsHuman = false, threadId = undefined) {
+/** `threadId`: answer in the thread the briefing names, as a real agent is told to.
+ * `attachment`: a file name to attach from the fixture's attachment directory. */
+async function postReply(
+	needsHuman = false,
+	threadId = undefined,
+	attachment = undefined,
+) {
 	if (
 		!process.env.TERMINAY_RUNTIME_SOCKET ||
 		process.env.FAKE_MCP_DISCONNECTED === '1'
@@ -44,6 +49,16 @@ async function postReply(needsHuman = false, threadId = undefined) {
 								text: 'secret',
 								key: 'fixture-reply',
 								...(threadId ? { threadId } : {}),
+								...(attachment
+									? {
+											attachments: [
+												{
+													path: `/tmp/fixture-attachments/${attachment}`,
+													name: attachment,
+												},
+											],
+										}
+									: {}),
 							},
 						},
 					},
@@ -287,6 +302,7 @@ lines.on('line', async (line) => {
 		await postReply(
 			prompt.includes('fixture-portal-refused'),
 			context?.thread?.rootId,
+			/post-file:([\w.-]+)/.exec(prompt)?.[1],
 		);
 		result();
 	}

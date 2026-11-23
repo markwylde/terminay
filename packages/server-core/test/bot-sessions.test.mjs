@@ -450,6 +450,32 @@ test('every attachment is copied into the container; only images become model in
 		],
 	);
 });
+test('a video reaches the execution as a file and never as model image input', async (t) => {
+	const execs = [];
+	let nativeImages;
+	const recordInput = join(mkdtempSync(join(tmpdir(), 'bot-input-')), 'in.jsonl');
+	const r = await setup(t, { execs, env: { FAKE_RECORD_INPUT: recordInput }, onProcess: (options) => { nativeImages = options.images; } });
+	const bytes = Buffer.alloc(2048, 7);
+	Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom')]).copy(bytes);
+	const clip = await r.service.uploadUserFile(r.bot.id, 'clip.mp4', bytes);
+	assert.equal(clip.attachment.mime, 'video/mp4');
+	const sent = await r.service.postUserMessage(r.bot.id, 'watch', 'video-post', [clip.token]);
+	await settled(r, sent.sessionId);
+	assert.equal(r.sessions.get(sent.sessionId).state, 'completed');
+	const writes = execs.filter((e) => e.args[2]?.includes('os.replace'));
+	assert.deepEqual(writes.map((e) => e.args[4]), ['1.mp4']);
+	assert.deepEqual(Buffer.from(writes[0].options.input), bytes);
+	assert.deepEqual(nativeImages ?? [], []);
+	const { readFileSync } = await import('node:fs');
+	const first = JSON.parse(readFileSync(recordInput, 'utf8').trim().split('\n')[0]).message.content;
+	const blocks = Array.isArray(first) ? first : [{ type: 'text', text: first }];
+	assert.equal(blocks.filter((x) => x.type === 'image').length, 0);
+	const briefing = JSON.parse(blocks[0].text.split('\n').find((line) => line.startsWith('{"executionId":')));
+	assert.deepEqual(
+		briefing.triggerMessage.attachments.map((x) => [x.name, x.mime, x.path]),
+		[['clip.mp4', 'video/mp4', `/tmp/terminay-attachments/${sent.sessionId}/1.mp4`]],
+	);
+});
 test('a part-way copy failure fails the execution and removes the copies made', async (t) => {
 	const execs = [];
 	let writes = 0;

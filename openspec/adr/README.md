@@ -151,3 +151,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0134](./0134-a-bots-terminay-actions-are-recorded-by-the-server-in-its-message-log.md) | A bot's Terminay actions are recorded by the server in its message log | accepted | 2026-11-17 |
 | [0135](./0135-bot-message-threads-live-in-the-message-log.md) | Bot message threads are one level deep and live in the message log | accepted | 2026-11-17 |
 | [0137](./0137-the-workspace-admits-terminay-com-as-its-only-hosted-content-origin.md) | The workspace admits terminay.com as its only hosted content origin, in a sandboxed frame with a closed message bridge | accepted | 2026-11-17 |
+| [0138](./0138-the-workspace-plays-media-only-from-its-own-origin-and-blob-urls.md) | The workspace plays media only from its own origin and blob URLs | accepted | 2026-11-23 |

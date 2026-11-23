@@ -30,7 +30,18 @@ export type TranscriptItem =
 				size: number;
 			}>[];
 	  }>
-	| Readonly<{ kind: 'agent'; key: string; text: string }>
+	| Readonly<{
+			kind: 'agent';
+			key: string;
+			text: string;
+			/** A post's non-image attachments; its images are in the Markdown. */
+			attachments?: readonly Readonly<{
+				id: string;
+				name: string;
+				mime: string;
+				size: number;
+			}>[];
+	  }>
 	| Readonly<{ kind: 'thought'; key: string; text: string }>
 	| Readonly<{
 			kind: 'tool';

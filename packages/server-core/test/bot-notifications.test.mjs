@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { BOT_IMAGE_ONLY_EXCERPT, BotMessageStore } from "../dist/botService/messages.js";
+import { BOT_FILE_ONLY_EXCERPT, BOT_IMAGE_ONLY_EXCERPT, BOT_VIDEO_ONLY_EXCERPT, BotMessageStore } from "../dist/botService/messages.js";
 import { BotNotificationFeed } from "../dist/botService/notificationFeed.js";
 
 const bot = "abc123def456";
@@ -113,6 +113,21 @@ test("a post with images and no text says it sent an image", (t) => {
   const { held } = fed(store);
   say(store, "bot", "", [store.putAttachment(bot, "screen.png", png)]);
   assert.equal(held.get(bot).body, BOT_IMAGE_ONLY_EXCERPT);
+});
+
+test("a post of only videos or files names what it sent", (t) => {
+  const { store } = setup(t);
+  const { held } = fed(store);
+  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"), Buffer.alloc(12)]);
+  const video = store.putAttachment(bot, "clip.mp4", mp4);
+  const zip = store.putAttachment(bot, "logs.zip", Buffer.from("PK\x03\x04"));
+  const image = store.putAttachment(bot, "screen.png", png);
+  say(store, "bot", "", [video]);
+  assert.equal(held.get(bot).body, BOT_VIDEO_ONLY_EXCERPT);
+  say(store, "bot", "", [zip]);
+  assert.equal(held.get(bot).body, BOT_FILE_ONLY_EXCERPT);
+  say(store, "bot", "", [image, video]);
+  assert.equal(held.get(bot).body, BOT_FILE_ONLY_EXCERPT);
 });
 
 test("deleting a bot removes its notification and leaves other bots alone", (t) => {

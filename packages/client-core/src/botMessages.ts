@@ -9,15 +9,20 @@ import {
 	botAttachmentLimit,
 	botMessageActivity,
 	isBotImageMime,
+	isBotVideoMime,
 	type JsonValue,
 	BOT_MESSAGE_OPERATIONS as op,
 } from '@terminay/protocol';
 import type { BotTransport } from './bots.js';
 
-/** A raster image type, or the opaque type every other file is stored as. */
+/** A raster image or video type, or the opaque type of every other file. */
 function knownMime(value: unknown): boolean {
 	const mime = String(value);
-	return isBotImageMime(mime) || mime === BOT_OPAQUE_ATTACHMENT_MIME;
+	return (
+		isBotImageMime(mime) ||
+		isBotVideoMime(mime) ||
+		mime === BOT_OPAQUE_ATTACHMENT_MIME
+	);
 }
 function json(value: unknown): JsonValue {
 	const clean = JSON.parse(JSON.stringify(value));
