@@ -145,20 +145,17 @@ export class BotAgentProcess {
 			throw error;
 		}
 	}
-	close(
-		reason: 'stop' | 'end' | 'suspend' | 'timeout' | 'bot-stop',
-	): Promise<void> {
+	close(reason: 'stop' | 'end' | 'suspend' | 'bot-stop'): Promise<void> {
 		if (this.closing) return this.closing;
 		this.closing = (async () => {
 			const client = this.clientValue;
-			if (reason === 'timeout') client?.timeout();
-			if ((reason === 'stop' || reason === 'timeout') && client)
+			if (reason === 'stop' && client)
 				await deadline(
 					client.cancel().catch(() => undefined),
 					10_000,
 				);
 			try {
-				await this.endProcess(reason !== 'stop' && reason !== 'timeout');
+				await this.endProcess(reason !== 'stop');
 			} catch (error) {
 				// The relays are still closed; the agent's lease stays held
 				// because its process group was not confirmed gone.

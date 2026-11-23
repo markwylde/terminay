@@ -61,6 +61,8 @@ interface State {
 	 * the sequence at load, so history raises nothing.
 	 */
 	acknowledged?: number;
+	/** When history was last cleared; nothing older may be re-posted. */
+	clearedAt?: number;
 }
 
 /** One bot's unacknowledged posts, as its notification shows them. */
@@ -143,7 +145,9 @@ function parse(value: unknown): State {
 		typeof d.epoch !== 'string' ||
 		!Number.isSafeInteger(d.sequence) ||
 		(d.acknowledged !== undefined &&
-			(!Number.isSafeInteger(d.acknowledged) || (d.acknowledged as number) < 0))
+			(!Number.isSafeInteger(d.acknowledged) ||
+				(d.acknowledged as number) < 0)) ||
+		(d.clearedAt !== undefined && !Number.isSafeInteger(d.clearedAt))
 	)
 		throw new BotError('state_unreadable', 'Invalid bot communication state');
 	for (const raw of d.rows) {
@@ -668,7 +672,10 @@ export class BotMessageStore extends EventEmitter {
 			.filter((r) => r.author === 'user' && r.dispatch?.state === 'pending')
 			.map((r) => this.public(r));
 	}
-	clear(botId: string): void {
+	clearedAt(botId: string): number {
+		return this.state(botId).clearedAt ?? 0;
+	}
+	clear(botId: string, at = Date.now()): void {
 		const previous = this.state(botId);
 		const next: State = {
 			...previous,
@@ -677,6 +684,7 @@ export class BotMessageStore extends EventEmitter {
 			keys: {},
 			events: [],
 			imported: true,
+			clearedAt: at,
 		};
 		this.change(next, 'messages.cleared', botId, 1);
 		this.save(botId, next);

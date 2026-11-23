@@ -41,7 +41,17 @@ export interface BotQueueHooks {
 	changed(botId: string, running: number, queued: number): void;
 	failure(item: BotQueuedTurn, failure: BotQueueFailure): void | Promise<void>;
 }
-/** Four work executions and one user-message coordination slot. No idle provider is retained. */
+const isCheckIn = (item: BotQueuedTurn): boolean =>
+	item.origin.kind === 'check-in';
+/** Active executions holding an ordinary work slot. */
+const workCount = (lane: Lane): number =>
+	[...lane.active.values()].filter((i) => !i.coordinationOnly && !isCheckIn(i))
+		.length;
+/**
+ * Four work executions, one user-message coordination slot, and one check-in
+ * slot that nothing else uses, so a stuck check-in can never hold up work or
+ * a user's correction (ADR-0140). No idle provider is retained.
+ */
 export class BotTurnQueue {
 	private lanes = new Map<string, Lane>();
 	constructor(private readonly hooks: BotQueueHooks) {}
@@ -114,10 +124,7 @@ export class BotTurnQueue {
 			);
 			if (retired) retired.coordinationOnly = true;
 		}
-		if (
-			[...lane.active.values()].filter((i) => !i.coordinationOnly).length >= 4
-		)
-			return false;
+		if (workCount(lane) >= 4) return false;
 		item.coordinationOnly = false;
 		return true;
 	}
@@ -199,7 +206,7 @@ export class BotTurnQueue {
 	private returnReserve(lane: Lane): void {
 		if (lane.reservation) return;
 		const active = [...lane.active.values()];
-		let work = active.filter((i) => !i.coordinationOnly).length;
+		let work = workCount(lane);
 		for (const item of active.filter((i) => i.coordinationOnly)) {
 			if (work >= 4) return;
 			item.coordinationOnly = false;
@@ -210,21 +217,18 @@ export class BotTurnQueue {
 		this.returnReserve(lane);
 		if (lane.stopped || lane.reservation) return;
 		while (lane.waiting.length) {
-			const work = [...lane.active.values()].filter(
-				(i) => !i.coordinationOnly,
-			).length;
-			const coordination = work >= 4;
-			if (
-				coordination &&
-				[...lane.active.values()].some((i) => i.coordinationOnly)
-			)
-				break;
-			const index = coordination
-				? lane.waiting.findIndex((i) => i.origin.kind === 'chat')
-				: 0;
+			const active = [...lane.active.values()];
+			const coordination = workCount(lane) >= 4;
+			const reserveBusy = active.some((i) => i.coordinationOnly);
+			const checkInBusy = active.some(isCheckIn);
+			const index = lane.waiting.findIndex((i) =>
+				isCheckIn(i)
+					? !checkInBusy
+					: !coordination || (i.origin.kind === 'chat' && !reserveBusy),
+			);
 			if (index < 0) break;
 			const [item] = lane.waiting.splice(index, 1);
-			item!.coordinationOnly = coordination;
+			item!.coordinationOnly = coordination && !isCheckIn(item!);
 			lane.active.set(item!.id, item!);
 			this.changed(id, lane);
 			void this.hooks

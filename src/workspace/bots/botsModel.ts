@@ -305,6 +305,8 @@ export function sessionTitle(session: BotSessionRecord): string {
 			? `Investigate failure (${n} failures)`
 			: 'Investigate failure';
 	}
+	if (session.origin.kind === 'check-in')
+		return `Check-in at ${session.origin.runningMinutes} minutes`;
 	if (session.origin.kind !== 'chat') return session.origin.triggerName;
 	const text = session.queuedMessage?.text?.trim();
 	if (text) return text.length > 80 ? `${text.slice(0, 79)}…` : text;
@@ -322,6 +324,7 @@ export const SESSION_ORIGIN_FILTER_LABELS: Readonly<
 	trigger: 'Trigger',
 	'run-now': 'Run now',
 	failure: 'Failure',
+	'check-in': 'Check-in',
 };
 /** The short chip on a session row. */
 export const SESSION_ORIGIN_CHIPS: Readonly<Record<SessionOrigin, string>> = {
@@ -329,6 +332,7 @@ export const SESSION_ORIGIN_CHIPS: Readonly<Record<SessionOrigin, string>> = {
 	'run-now': 'Manual',
 	trigger: 'Trigger',
 	failure: 'Investigate',
+	'check-in': 'Check-in',
 };
 /** What started a session, as its detail view says it. */
 export function sessionOriginLabel(origin: BotSessionRecord['origin']): string {
@@ -337,6 +341,8 @@ export function sessionOriginLabel(origin: BotSessionRecord['origin']): string {
 			return 'Chat';
 		case 'failure':
 			return 'Investigate failure';
+		case 'check-in':
+			return `Check-in · after ${origin.runningMinutes} minutes`;
 		case 'run-now':
 			return `Run now · ${origin.triggerName}`;
 		case 'trigger':

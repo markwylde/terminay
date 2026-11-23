@@ -123,12 +123,6 @@ function profile(value: unknown): BotProfile {
 		throw new BotError('validation', 'avatar must be one character or emoji');
 	if (d.approvalMode !== 'autonomous' && d.approvalMode !== 'ask')
 		throw new BotError('validation', 'invalid approval mode');
-	if (
-		!Number.isSafeInteger(d.maxTurnMs) ||
-		(d.maxTurnMs as number) < 1 ||
-		(d.maxTurnMs as number) > 2_147_483_647
-	)
-		throw new BotError('validation', 'invalid turn duration');
 	if (!Array.isArray(d.pinnedMemories) || d.pinnedMemories.length > 10000)
 		throw new BotError('validation', 'invalid memory pins');
 	const pins = d.pinnedMemories.map(memoryPath);
@@ -160,7 +154,6 @@ function profile(value: unknown): BotProfile {
 		modelId: d.modelId === null ? null : text(d.modelId, 256, 'model id'),
 		signIn: signIn(d.signIn),
 		approvalMode: d.approvalMode,
-		maxTurnMs: d.maxTurnMs as number,
 		investigateFailures:
 			d.investigateFailures === undefined
 				? true
@@ -385,7 +378,6 @@ export class BotStore extends EventEmitter {
 			modelId: null,
 			signIn: { kind: 'none' },
 			approvalMode: 'autonomous',
-			maxTurnMs: 30 * 60_000,
 			investigateFailures: true,
 			terminayMcpAccess: false,
 			inspectOtherBots: false,

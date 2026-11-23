@@ -194,12 +194,22 @@ Each bot SHALL have one durable shared message log independent of executions. Ev
 
 ### Requirement: Bounded concurrent execution admission
 
-The server SHALL admit four work executions and one reserved user-message coordination execution per bot, with at most twenty waiting executions. Each trigger SHALL have at most one pending firing. Every admitted execution, including one in the reserved coordination slot, SHALL be able to use the bot's shell and desktop alongside the bot's other live executions, without acquiring ownership of either. When an ordinary work slot frees while an execution occupies the reserved coordination slot, the server SHALL move that execution into the ordinary slot so the reserved slot is available for the next user message. Instructions, pinned memories, agent, model, sign-in and approval mode SHALL be snapshotted per execution. Completed providers SHALL close rather than remaining idle for later messages.
+The server SHALL admit four work executions and one reserved user-message coordination execution per bot, plus one check-in execution in a slot of its own that no other execution uses, with at most twenty waiting executions. Each trigger SHALL have at most one pending firing. Every admitted execution, including one in the reserved coordination slot, SHALL be able to use the bot's shell and desktop alongside the bot's other live executions, without acquiring ownership of either. When an ordinary work slot frees while an execution occupies the reserved coordination slot, the server SHALL move that execution into the ordinary slot so the reserved slot is available for the next user message. Instructions, pinned memories, agent, model, sign-in and approval mode SHALL be snapshotted per execution. Completed providers SHALL close rather than remaining idle for later messages.
 
 #### Scenario: Coordination while work capacity is full
 
 - **WHEN** four work executions run and a user posts a correction
 - **THEN** a reserved coordination execution can inspect, message, stop or replace older work, and can run shell commands of its own
+
+#### Scenario: Check-in while work capacity is full
+
+- **WHEN** four work executions and a reserved-slot execution run, and one of them reaches a 15-minute mark
+- **THEN** its check-in runs in the check-in slot
+
+#### Scenario: Stuck check-in does not block a user message
+
+- **WHEN** four work executions run, a check-in is stuck in the check-in slot, and a user posts a correction
+- **THEN** the correction is admitted into the reserved coordination slot
 
 #### Scenario: Profile edited during work
 
@@ -222,11 +232,11 @@ The server SHALL admit four work executions and one reserved user-message coordi
 
 Stop SHALL revoke the execution capability, close the execution and retain its diagnostics. The next user message SHALL start a fresh execution.
 
-An agent SHALL be closed whenever its session ends, is suspended, or times out, and whenever its bot stops. Closing SHALL first close the agent's input, then end its process group after 5 seconds. An agent SHALL count as closed only once its process group is confirmed gone.
+An agent SHALL be closed whenever its session ends or is suspended, and whenever its bot stops. Closing SHALL first close the agent's input, then end its process group after 5 seconds. An agent SHALL count as closed only once its process group is confirmed gone.
 
 Each session SHALL run under a root supervisor that leads its process group for the whole session. That supervisor SHALL hold a root-only record of the group, the leader's start time, and a random session nonce, and SHALL retire the record once the group is empty. A signal SHALL be sent to a group only while its recorded leader is alive with a matching start time. Otherwise, it SHALL be sent only to processes that are in that group and carry the session's nonce, so that a reused group number never reaches unrelated work. The session view SHALL say that a process the agent moved into its own process group is not ended by Stop, but is ended by stopping the bot.
 
-Each turn SHALL have a maximum duration, settable per bot and 30 minutes by default. A turn that exceeds it SHALL be stopped as above, and the session SHALL be marked timed out.
+A turn SHALL have no maximum duration. The server SHALL run no timer that ends a turn, and SHALL launch each agent with its own background-work time limit turned off, so a session runs until its work ends, it fails, or it is stopped.
 
 Each request to the container engine that ends a session's process group, or every process group in a bot container, SHALL be allowed 5 minutes to complete before the server treats that request as failed. The limit applies to each request, so closing an agent and its runtime relays can take longer in total.
 
@@ -265,7 +275,7 @@ Any other failure while finishing an execution SHALL block the bot at once, with
 
 #### Scenario: Cleanup failure keeps a stopped or timed-out outcome
 
-- **WHEN** a user stops a turn, or a turn times out, and ending its agent's process group then fails
+- **WHEN** a turn is recorded as stopped or timed out and ending its agent's process group then fails
 - **THEN** the turn stays stopped or timed out, and the cleanup failure is counted and recorded
 
 #### Scenario: Relay cleanup failure
@@ -313,6 +323,16 @@ Any other failure while finishing an execution SHALL block the bot at once, with
 - **WHEN** a user disables and re-enables a blocked bot
 - **THEN** neither action fails, and the bot's next execution retries the unconfirmed cleanup before it runs
 
+#### Scenario: Turn runs for hours
+
+- **WHEN** a turn is still working after several hours
+- **THEN** the server does not time it out and the session stays running
+
+#### Scenario: Background monitor outlasts ten minutes
+
+- **WHEN** a Claude Code bot ends its turn with a background monitor that finishes 40 minutes later
+- **THEN** the agent is still running when the monitor finishes, and the monitor wakes it
+
 ### Requirement: Sessions survive a server restart as records
 
 When the server starts, it SHALL:
@@ -339,7 +359,7 @@ Each bot SHALL have an approval mode, **Autonomous** or **Ask me**. The approval
 
 A bot whose agent is Autonomous only SHALL always be Autonomous. Its Profile SHALL show the approval mode as fixed and say why: that agent cannot ask permission inside a container.
 
-The first answer from any device SHALL decide a request. Later answers SHALL receive "already answered". A request that is still unanswered when its turn's maximum duration ends SHALL be answered with the agent's reject option.
+The first answer from any device SHALL decide a request. Later answers SHALL receive "already answered". A request SHALL stay open until it is answered or its turn ends. A request still unanswered when its turn ends SHALL be answered with the agent's reject option.
 
 #### Scenario: Agent that cannot ask
 
@@ -363,9 +383,9 @@ The first answer from any device SHALL decide a request. Later answers SHALL rec
 
 ### Requirement: Sessions
 
-Every user-message execution, every trigger run and every failure investigation SHALL be a session of exactly one bot. A session SHALL record:
+Every user-message execution, every trigger run, every failure investigation and every check-in SHALL be a session of exactly one bot. A session SHALL record:
 
-- its origin: chat, trigger (naming the trigger), Run now (naming the trigger), or failure (naming the failures it was started for);
+- its origin: chat, trigger (naming the trigger), Run now (naming the trigger), failure (naming the failures it was started for), or check-in (naming the session it watches and how long that session had run);
 - the agent and model it ran with;
 - its start time, end time, and duration;
 - its state: queued, running, suspended, needs you, completed, stopped, timed out, failed, or interrupted;
@@ -374,7 +394,7 @@ Every user-message execution, every trigger run and every failure investigation 
 The Sessions tab SHALL:
 
 - list a bot's sessions, newest first;
-- filter them by origin, including failure, and by outcome, and search them by text;
+- filter them by origin, including failure and check-in, and by outcome, and search them by text;
 - filter them by the trigger that started them, covering both its firings and its Run now sessions;
 - show the trigger filter as a removable control naming the trigger, with the name the trigger had when the filter was applied;
 - show a selected session's transcript and its runner output;

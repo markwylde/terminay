@@ -446,6 +446,32 @@ function SessionDetail({
 					) : null}
 				</div>
 			) : null}
+			{record.origin.kind === 'check-in' ? (
+				<div
+					className="bots-note"
+					data-terminay-bot-session-check-in={record.origin.watchedSessionId}
+				>
+					<p>
+						Checked on a session that had been running for{' '}
+						{record.origin.runningMinutes} minutes.
+					</p>
+					<div className="bots-row-actions">
+						<button
+							type="button"
+							className="bots-btn bots-btn--sm"
+							onClick={() =>
+								record.origin.kind === 'check-in' &&
+								onSelect(record.origin.watchedSessionId)
+							}
+							data-terminay-bot-check-in-session={
+								record.origin.watchedSessionId
+							}
+						>
+							Open watched session
+						</button>
+					</div>
+				</div>
+			) : null}
 			{record.origin.kind === 'failure' ? (
 				<div data-terminay-bot-session-failures="true">
 					<h4 className="bots-lab">Failures</h4>

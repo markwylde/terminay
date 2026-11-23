@@ -23,7 +23,6 @@ export const snapshot = {
 	approvalMode: 'autonomous',
 	instructions: '',
 	context: '',
-	maxTurnMs: 1800000,
 };
 function setup(t, now) {
 	const root = mkdtempSync(join(tmpdir(), 'bots-sessions-'));
@@ -31,6 +30,17 @@ function setup(t, now) {
 	const clock = fakeClock();
 	return { root, clock, store: new BotSessionStore(root, clock, now) };
 }
+test('a stored session holding the old turn limit still loads, without it', (t) => {
+	const { root, store } = setup(t);
+	const s = store.create(botId, { kind: 'chat' }, snapshot);
+	const path = join(root, s.id, 'session.json');
+	const stored = JSON.parse(readFileSync(path, 'utf8'));
+	stored.snapshot.maxTurnMs = 1_800_000;
+	writeFileSync(path, JSON.stringify(stored));
+	const loaded = new BotSessionStore(root).get(s.id);
+	assert.equal(loaded.id, s.id);
+	assert.equal('maxTurnMs' in loaded.snapshot, false);
+});
 test('5.5 uncounted segment from a crash is preserved; only committed updates recover', (t) => {
 	const { root, store } = setup(t);
 	const s = store.create(botId, { kind: 'chat' }, snapshot);

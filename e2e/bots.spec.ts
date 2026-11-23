@@ -833,6 +833,22 @@ test.describe('Home: Bots', () => {
 		await expect(investigation).toHaveCount(1);
 	});
 
+	test('the bot profile has no maximum turn setting and still saves', async ({
+		mainWindow,
+	}, testInfo) => {
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'No turn limit');
+		const profile = tab.locator('[data-terminay-bot-panel="profile"]');
+		await expect(profile).toBeVisible();
+		await expect(profile.getByText(/maximum turn/i)).toHaveCount(0);
+		await tab.locator('[data-terminay-bot-investigate-failures]').click();
+		await tab.locator('[data-terminay-bot-profile-save]').click();
+		await expect(tab.locator('.bots-done')).toContainText('Saved');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-profile-no-turn-limit.png'),
+		});
+	});
+
 	test('Terminay MCP access is off by default, saves on, and explains when the server has MCP off', async ({
 		appHarness,
 		mainWindow,

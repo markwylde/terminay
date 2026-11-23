@@ -76,7 +76,6 @@ export interface BotProfile {
 	readonly modelId: string | null;
 	readonly signIn: BotSignIn;
 	readonly approvalMode: BotApprovalMode;
-	readonly maxTurnMs: number;
 	/** Wake the bot to investigate its own failures. Missing reads as true. */
 	readonly investigateFailures?: boolean;
 	/**
@@ -127,6 +126,13 @@ export type BotSessionOrigin =
 			readonly kind: 'failure';
 			readonly failures: readonly BotFailureRef[];
 			readonly overflow: number;
+	  }
+	| {
+			readonly kind: 'check-in';
+			/** The execution this check-in was started to look at. */
+			readonly watchedSessionId: string;
+			/** Whole minutes the watched execution had run at creation. */
+			readonly runningMinutes: number;
 	  };
 export type BotTriggerOrigin = Extract<
 	BotSessionOrigin,
@@ -144,7 +150,6 @@ export interface BotSessionSnapshot {
 	readonly approvalMode: BotApprovalMode;
 	readonly instructions: string;
 	readonly context: string;
-	readonly maxTurnMs: number;
 }
 export interface BotPermission {
 	readonly id: string;

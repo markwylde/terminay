@@ -74,15 +74,19 @@ test('a second user message starts while older work runs; stopping ends the old 
 	assert.ok(child.exitCode !== null || child.signalCode !== null);
 	assert.equal(r.sessions.get(first.sessionId).open, false);
 });
-test('5.3 timeout rejects approval and closes the process before releasing activity', async (t) => {
+test('5.3 an unanswered permission waits with no time limit until Stop rejects it', async (t) => {
 	const r = await setup(t);
-	await r.service.save({ ...r.bot, approvalMode: 'ask', maxTurnMs: 80 });
+	await r.service.save({ ...r.bot, approvalMode: 'ask' });
 	const first = await r.service.send(r.bot.id, 'permission');
 	await until(
 		r.service,
 		'changed',
-		() => r.sessions.get(first.sessionId).state === 'timed-out',
+		() => r.sessions.get(first.sessionId).state === 'needs-you',
 	);
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(r.sessions.get(first.sessionId).state, 'needs-you');
+	await r.service.stop(r.bot.id, first.sessionId);
+	assert.equal(r.sessions.get(first.sessionId).state, 'stopped');
 	assert.equal(r.sessions.get(first.sessionId).permission, null);
 	assert.equal(r.sessions.get(first.sessionId).open, false);
 	await until(r.service, 'changed', () => r.activity.at(-1)?.[1] === 0);
@@ -183,7 +187,6 @@ test('5.1 bot records remain editable without an engine, and 5.6 records reconci
 			approvalMode: 'ask',
 			instructions: '',
 			context: '',
-			maxTurnMs: 1800000,
 		},
 	);
 	sessions.patch(previous.id, {
@@ -508,3 +511,196 @@ test('an execution whose snapshotted file disappeared says a file is gone', asyn
 	assert.match(r.sessions.get(sent.sessionId).reason, /attached file is no longer available/);
 });
 
+const notices = (r, id) =>
+	r.service.messages
+		.list(r.bot.id)
+		.items.filter(
+			(m) =>
+				m.executionId === id &&
+				/background work was stopped/.test(r.service.messages.get(r.bot.id, m.id).text),
+		);
+test('stopped background work is failed, not completed, and posts one notice', async (t) => {
+	const r = await setup(t);
+	await r.service.save({ ...r.bot, investigateFailures: false });
+	const sent = await r.service.send(r.bot.id, 'background-stopped');
+	await until(r.service, 'changed', () =>
+		['failed', 'completed'].includes(r.sessions.get(sent.sessionId).state),
+	);
+	const record = r.sessions.get(sent.sessionId);
+	assert.equal(record.state, 'failed');
+	assert.match(record.reason, /stopped its background work/);
+	assert.equal(notices(r, sent.sessionId).length, 1);
+	assert.equal(
+		r.sessions.list(r.bot.id).some((s) => s.origin.kind === 'failure'),
+		false,
+	);
+});
+test('stopped background work wakes failure follow-up and still posts its notice', async (t) => {
+	const r = await setup(t);
+	const sent = await r.service.send(r.bot.id, 'background-stopped');
+	await until(r.service, 'changed', () =>
+		r.sessions.list(r.bot.id).some((s) => s.origin.kind === 'failure'),
+	);
+	assert.equal(r.sessions.get(sent.sessionId).state, 'failed');
+	assert.equal(notices(r, sent.sessionId).length, 1);
+});
+test('a check-in runs beside a held session and names it', async (t) => {
+	const r = await setup(t);
+	const held = await r.service.send(r.bot.id, 'hold');
+	await until(r.service, 'changed', () =>
+		r.sessions
+			.get(held.sessionId)
+			.updates.some((u) => u.sessionUpdate === 'plan'),
+	);
+	const watched = r.sessions.get(held.sessionId);
+	assert.equal(
+		r.service.checkIns.nextMark(watched.id),
+		watched.dispatchedAt + 15 * 60_000,
+	);
+	r.service.checkIns.fire(watched.id, watched.dispatchedAt + 15 * 60_000);
+	const find = () =>
+		r.sessions.list(r.bot.id).find((s) => s.origin.kind === 'check-in');
+	await until(r.service, 'changed', () =>
+		find() ? r.sessions.get(find().id).updates.length > 0 : false,
+	);
+	const checkIn = r.sessions.get(find().id);
+	assert.equal(checkIn.origin.watchedSessionId, watched.id);
+	assert.equal(checkIn.origin.runningMinutes, 15);
+	assert.ok(
+		checkIn.updates
+			.find((u) => u.kind === 'user')
+			.text.startsWith(
+				`You have another session running at ${watched.id} and it's been running for 15 minutes.`,
+			),
+	);
+	await r.service.stop(r.bot.id, watched.id);
+	assert.equal(r.service.checkIns.nextMark(watched.id), undefined);
+});
+const failedWith = (r, id) =>
+	until(r.service, 'changed', () => r.sessions.get(id).state === 'failed');
+test('a stale turn limit never ends a long quiet turn and no turn timer is armed', async (t) => {
+	const delays = [];
+	const original = globalThis.setTimeout;
+	globalThis.setTimeout = (fn, ms, ...rest) => {
+		delays.push(ms);
+		return original(fn, ms, ...rest);
+	};
+	t.after(() => {
+		globalThis.setTimeout = original;
+	});
+	const r = await setup(t);
+	await r.service.save({ ...r.bot, maxTurnMs: 50 });
+	const held = await r.service.send(r.bot.id, 'hold');
+	await until(r.service, 'changed', () =>
+		r.sessions
+			.get(held.sessionId)
+			.updates.some((u) => u.sessionUpdate === 'plan'),
+	);
+	await new Promise((resolve) => original(resolve, 150));
+	assert.equal(r.sessions.get(held.sessionId).state, 'running');
+	assert.equal(delays.includes(30 * 60_000), false);
+	assert.equal(delays.includes(50), false);
+});
+test('the notice is posted for trigger failures inside an open episode', async (t) => {
+	const r = await setup(t);
+	const origin = {
+		kind: 'trigger',
+		triggerId: 'a'.repeat(24),
+		triggerName: 'Nightly',
+		fireTime: 1,
+	};
+	for (const fireTime of [1, 2]) {
+		const sent = await r.service.send(
+			r.bot.id,
+			'background-stopped',
+			undefined,
+			{ ...origin, fireTime },
+		);
+		await failedWith(r, sent.sessionId);
+		assert.equal(notices(r, sent.sessionId).length, 1);
+	}
+});
+test('the notice is posted for failure and check-in origins, which start no follow-up', async (t) => {
+	const r = await setup(t);
+	const ref = {
+		kind: 'execution',
+		sessionId: 'b'.repeat(24),
+		firingId: null,
+		triggerId: 'a'.repeat(24),
+		triggerName: 'Nightly',
+		at: 1,
+		reason: 'failed',
+	};
+	const held = await r.service.send(r.bot.id, 'hold');
+	await until(r.service, 'changed', () =>
+		r.sessions
+			.get(held.sessionId)
+			.updates.some((u) => u.sessionUpdate === 'plan'),
+	);
+	for (const origin of [
+		{ kind: 'failure', failures: [ref], overflow: 0 },
+		{
+			kind: 'check-in',
+			watchedSessionId: held.sessionId,
+			runningMinutes: 15,
+		},
+	]) {
+		const sent = await r.service.send(
+			r.bot.id,
+			'background-stopped',
+			undefined,
+			origin,
+		);
+		await failedWith(r, sent.sessionId);
+		assert.equal(notices(r, sent.sessionId).length, 1);
+	}
+	assert.equal(
+		r.sessions.list(r.bot.id).filter((s) => s.origin.kind === 'failure').length,
+		1,
+	);
+});
+test('a lost notice is replayed once on reconcile and never after chat is cleared', async (t) => {
+	const r = await setup(t);
+	await r.service.save({ ...r.bot, investigateFailures: false });
+	const post = r.service.messages.post;
+	r.service.messages.post = function (botId, author, body, ...rest) {
+		if (/background work was stopped/.test(body)) throw new Error('disk full');
+		return post.call(this, botId, author, body, ...rest);
+	};
+	const sent = await r.service.send(r.bot.id, 'background-stopped');
+	await failedWith(r, sent.sessionId);
+	assert.equal(notices(r, sent.sessionId).length, 0);
+	r.service.messages.post = post;
+	await r.service.reconcileNow();
+	await r.service.reconcileNow();
+	assert.equal(notices(r, sent.sessionId).length, 1);
+	await r.service.clearMessages(r.bot.id);
+	await r.service.reconcileNow();
+	assert.equal(notices(r, sent.sessionId).length, 0);
+});
+test('a queued check-in ends unrun when its watched session needs the user or is gone', async (t) => {
+	const r = await setup(t);
+	const held = await r.service.send(r.bot.id, 'hold');
+	await until(r.service, 'changed', () =>
+		r.sessions
+			.get(held.sessionId)
+			.updates.some((u) => u.sessionUpdate === 'plan'),
+	);
+	r.sessions.patch(held.sessionId, { state: 'needs-you' });
+	for (const watchedSessionId of [held.sessionId, 'd'.repeat(24)]) {
+		const record = r.sessions.create(
+			r.bot.id,
+			{ kind: 'check-in', watchedSessionId, runningMinutes: 15 },
+			r.sessions.get(held.sessionId).snapshot,
+		);
+		r.service.runtime.register(record.id);
+		assert.deepEqual(await r.service.runNow({ sessionId: record.id }), {
+			cleanup: 'ok',
+		});
+		const ended = r.sessions.get(record.id);
+		assert.equal(ended.state, 'stopped');
+		assert.match(ended.reason, /no longer running/);
+	}
+	assert.equal(r.sessions.get(held.sessionId).state, 'needs-you');
+	r.sessions.patch(held.sessionId, { state: 'running' });
+});

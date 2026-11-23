@@ -246,6 +246,14 @@ lines.on('line', async (line) => {
 			);
 			return;
 		}
+		if (prompt.includes('background-stopped')) {
+			// Claude Code's report when its print-mode ceiling ends a monitor.
+			process.stderr.write(
+				'Background tasks still running 10m after the last turn (monitor "CI"); stopping them. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.\n',
+				() => result(),
+			);
+			return;
+		}
 		if (prompt.includes('permission')) {
 			send({
 				type: 'control_request',

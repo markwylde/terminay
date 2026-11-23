@@ -38,7 +38,6 @@ test('5.1 profiles survive restart, names are unique and revisions conflict with
 		{ instructions: '🦜'.repeat(8193) },
 		{ avatar: 'two' },
 		{ signIn: { kind: 'token', environmentVariable: 'bad-name' } },
-		{ maxTurnMs: 0 },
 	])
 		assert.throws(() => store.save({ ...bot, ...draft }));
 	store.save({ ...bot, modelId: 'selected' });
@@ -47,6 +46,24 @@ test('5.1 profiles survive restart, names are unique and revisions conflict with
 		null,
 	);
 	assert.equal(JSON.parse(readFileSync(path, 'utf8')).revision, 3);
+});
+test('a stored turn limit is ignored on load and dropped on save', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bots-turn-limit-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const path = join(root, 'bots.json');
+	const store = new BotStore(path);
+	const bot = store.save({ name: 'Bird', agentId: 'fake.agent' });
+	const stored = JSON.parse(readFileSync(path, 'utf8'));
+	stored.bots[0].maxTurnMs = 1_800_000;
+	writeFileSync(path, JSON.stringify(stored));
+	const loaded = new BotStore(path);
+	assert.equal('maxTurnMs' in loaded.get(bot.id), false);
+	const saved = loaded.save({ ...loaded.get(bot.id), maxTurnMs: 5 });
+	assert.equal('maxTurnMs' in saved, false);
+	assert.equal(
+		'maxTurnMs' in JSON.parse(readFileSync(path, 'utf8')).bots[0],
+		false,
+	);
 });
 test('5.1 corrupt canonical file is preserved and a previous committed copy restored', (t) => {
 	const root = mkdtempSync(join(tmpdir(), 'bots-corrupt-'));

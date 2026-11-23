@@ -267,6 +267,7 @@
 					"autonomousOnly": false,
 					"launchEnvironment": {
 						"CLAUDE_CODE_MAX_RETRIES": "0",
+						"CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS": "0",
 						"CLAUDE_CODE_SHELL_PREFIX": "/usr/local/bin/terminay-tool-shell"
 					},
 					"nativeDriver": "claude-code-cli",

@@ -321,7 +321,6 @@ function runtimeSetup(t, driver) {
 				approvalMode: 'autonomous',
 				instructions: '',
 				context: '',
-				maxTurnMs: 10000,
 			},
 		);
 		runtime.register(record.id);

@@ -66,7 +66,6 @@ type ProfileForm = Readonly<{
 	agentId: string;
 	modelId: string | null;
 	approvalMode: BotApprovalMode;
-	maxTurnMinutes: string;
 	investigateFailures: boolean;
 	terminayMcpAccess: boolean;
 	inspectOtherBots: boolean;
@@ -82,7 +81,6 @@ function formFromBot(bot: BotProfile): ProfileForm {
 		agentId: bot.agentId,
 		modelId: bot.modelId,
 		approvalMode: bot.approvalMode,
-		maxTurnMinutes: String(Math.round(bot.maxTurnMs / 60_000)),
 		investigateFailures: investigatesFailures(bot),
 		terminayMcpAccess: hasTerminayMcpAccess(bot),
 		inspectOtherBots: canInspectOtherBots(bot),
@@ -121,9 +119,6 @@ export function profileProblem(form: ProfileForm): string | undefined {
 		new TextEncoder().encode(form.instructions).length > MAX_INSTRUCTIONS_BYTES
 	)
 		return 'Instructions are at most 32 KiB.';
-	const minutes = Number(form.maxTurnMinutes);
-	if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60)
-		return 'The maximum turn is a whole number of minutes, 1 to 1440.';
 	return undefined;
 }
 
@@ -193,7 +188,6 @@ export function BotProfilePanel({
 				agentId: form.agentId,
 				modelId: form.modelId,
 				approvalMode,
-				maxTurnMs: Number(form.maxTurnMinutes) * 60_000,
 				investigateFailures: form.investigateFailures,
 				terminayMcpAccess: form.terminayMcpAccess,
 				inspectOtherBots: form.inspectOtherBots,
@@ -376,18 +370,6 @@ export function BotProfilePanel({
 										: 'Each request waits for you, here and in Needs you.'}
 							</small>
 						</div>
-						<label className="bots-field">
-							<span>Maximum turn (minutes)</span>
-							<input
-								type="number"
-								min={1}
-								max={1440}
-								value={form.maxTurnMinutes}
-								onChange={(event) =>
-									update({ maxTurnMinutes: event.target.value })
-								}
-							/>
-						</label>
 					</div>
 					<div className="bots-form__row">
 						<div className="bots-field">

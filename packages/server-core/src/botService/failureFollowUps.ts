@@ -206,7 +206,8 @@ export class BotFailureFollowUps {
 
 	/** An execution moved into failed or timed out. */
 	execution(record: BotSessionRecord): Promise<void> {
-		if (record.origin.kind === 'failure') return Promise.resolve();
+		if (record.origin.kind === 'failure' || record.origin.kind === 'check-in')
+			return Promise.resolve();
 		const trigger = botTriggerOrigin(record.origin);
 		if (record.state === 'completed')
 			return trigger
