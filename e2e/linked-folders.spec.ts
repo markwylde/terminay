@@ -2397,9 +2397,13 @@ test('cards slide to their new places, and take them at once where the device as
 	 * the slide before any given frame, so the furthest point comes from each
 	 * style the slide writes, never from a frame or a time.
 	 */
-	const moveAndWatch = async (folder: string, key: string, passed: string) => {
+	const moveAndWatch = async (
+		folder: string,
+		key: string,
+		passed: string,
+		order: string[],
+	) => {
 		const card = folderGroup(mainWindow, passed);
-		await grip(folder).focus();
 		await card.evaluate((element) => {
 			let peak = 0;
 			const observer = new MutationObserver(() => {
@@ -2418,7 +2422,17 @@ test('cards slide to their new places, and take them at once where the device as
 					return peak;
 				};
 		});
-		await mainWindow.keyboard.press(key);
+		// A reloaded terminal can take focus back as it reattaches and swallow
+		// the key. Press again only while the order is unchanged, since a second
+		// move that landed would carry the folder one place too far.
+		await expect(async () => {
+			const names = await folderNames(mainWindow).allTextContents();
+			if (names.join('\n') !== order.join('\n')) {
+				await grip(folder).focus();
+				await mainWindow.keyboard.press(key);
+			}
+			await expect(folderNames(mainWindow)).toHaveText(order, { timeout: 1_000 });
+		}).toPass({ timeout: 10_000 });
 		const early = await card.evaluate(
 			(element) =>
 				new Promise<number>((resolve) =>
@@ -2445,8 +2459,11 @@ test('cards slide to their new places, and take them at once where the device as
 	};
 
 	// With motion, the passed card is drawn away from its place on its way there.
-	const sliding = await moveAndWatch('beta', 'Alt+ArrowUp', 'alpha');
-	await expect(folderNames(mainWindow)).toHaveText(['General', 'beta', 'alpha']);
+	const sliding = await moveAndWatch('beta', 'Alt+ArrowUp', 'alpha', [
+		'General',
+		'beta',
+		'alpha',
+	]);
 	expect(sliding.peak).toBeGreaterThan(2);
 
 	// The preference is read when the tree is first shown.
@@ -2456,9 +2473,13 @@ test('cards slide to their new places, and take them at once where the device as
 		['General', 'beta', 'alpha'],
 		{ timeout: 15_000 },
 	);
-	const still = await moveAndWatch('alpha', 'Alt+ArrowUp', 'beta');
-	await expect(folderNames(mainWindow)).toHaveText(['General', 'alpha', 'beta']);
+	const still = await moveAndWatch('alpha', 'Alt+ArrowUp', 'beta', [
+		'General',
+		'alpha',
+		'beta',
+	]);
 	expect(Math.abs(still.early - still.settled)).toBeLessThan(0.5);
+	expect(still.peak).toBeLessThan(0.5);
 
 	// Carried by its title, it ends where it would without the preference.
 	await installRendererClock(mainWindow);
