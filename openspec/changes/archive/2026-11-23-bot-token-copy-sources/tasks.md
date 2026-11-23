@@ -9,4 +9,4 @@
 ## 3. Verification
 
 - [x] 3.1 Run the credential and token tests, the bots UI suite, `openspec validate bot-token-copy-sources --strict`, `biome lint` on the changed files, and `turbo run typecheck`. Verified by each command's output.
-- [ ] 3.2 Pull request checks green. Verified by reading back every commit status on the head SHA.
+- [x] 3.2 Pull request checks green. Verified by reading back all 30 commit statuses on `4928068a` as `success`.
