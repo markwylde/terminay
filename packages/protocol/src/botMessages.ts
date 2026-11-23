@@ -24,8 +24,99 @@ export const BOT_MESSAGE_UPLOAD_LIMITS = Object.freeze({
 		'image/webp',
 	] as const),
 });
-/** Raster type from magic bytes, or the opaque type. Never trusts names. */
-export function botAttachmentType(head: Uint8Array): string {
+/** Video types Chat can play inline. They are limited and stored as files. */
+export const BOT_VIDEO_MIMES = Object.freeze([
+	'video/mp4',
+	'video/webm',
+] as const);
+/** Only this many leading bytes decide a type, so a refused file and an
+ * accepted one with the same start always get the same type. */
+export const BOT_ATTACHMENT_TYPE_BYTES = 64;
+const MP4_BRANDS: ReadonlySet<string> = new Set([
+	'isom',
+	'iso2',
+	'iso3',
+	'iso4',
+	'iso5',
+	'iso6',
+	'mp41',
+	'mp42',
+	'avc1',
+	'M4V ',
+]);
+/** An EBML variable-length size at `from`, or undefined when truncated,
+ * malformed or the reserved unknown size. */
+function ebmlSize(
+	bytes: Uint8Array,
+	from: number,
+): { value: number; next: number } | undefined {
+	const first = bytes[from];
+	if (first === undefined || first === 0) return undefined;
+	const length = Math.clz32(first) - 23;
+	if (from + length > bytes.length) return undefined;
+	let value = first & (0xff >> length);
+	let unknown = value === 0xff >> length;
+	for (let i = 1; i < length; i++) {
+		const byte = bytes[from + i]!;
+		unknown &&= byte === 0xff;
+		value = value * 256 + byte;
+	}
+	return unknown ? undefined : { value, next: from + length };
+}
+/** Walks the EBML header's children for a DocType of exactly `webm`. */
+function isWebm(bytes: Uint8Array): boolean {
+	if (![0x1a, 0x45, 0xdf, 0xa3].every((b, i) => bytes[i] === b)) return false;
+	const header = ebmlSize(bytes, 4);
+	if (!header) return false;
+	const declaredEnd = header.next + header.value;
+	if (declaredEnd > bytes.length && bytes.length < BOT_ATTACHMENT_TYPE_BYTES)
+		return false;
+	const end = Math.min(declaredEnd, bytes.length);
+	let webm = false;
+	let at = header.next;
+	while (at < end) {
+		const first = bytes[at]!;
+		if (first < 0x10) return false;
+		const idLength = Math.clz32(first) - 23;
+		if (at + idLength > end) return false;
+		const isDocType =
+			idLength === 2 && first === 0x42 && bytes[at + 1] === 0x82;
+		const size = ebmlSize(bytes, at + idLength);
+		if (!size || size.next + size.value > end) return false;
+		if (isDocType) {
+			if (webm) return false;
+			webm =
+				size.value === 4 &&
+				String.fromCharCode(...bytes.subarray(size.next, size.next + 4)) ===
+					'webm';
+			if (!webm) return false;
+		}
+		at = size.next + size.value;
+	}
+	return webm;
+}
+function videoType(bytes: Uint8Array): string | undefined {
+	if (bytes.length >= 16) {
+		const box =
+			(bytes[0]! * 0x1000000 +
+				(bytes[1]! << 16) +
+				(bytes[2]! << 8) +
+				bytes[3]!) >>>
+			0;
+		if (
+			box >= 16 &&
+			Math.min(box, BOT_ATTACHMENT_TYPE_BYTES) <= bytes.length &&
+			box % 4 === 0 &&
+			String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp' &&
+			MP4_BRANDS.has(String.fromCharCode(...bytes.subarray(8, 12)))
+		)
+			return 'video/mp4';
+	}
+	return isWebm(bytes) ? 'video/webm' : undefined;
+}
+/** Image or video type from magic bytes, or the opaque type. Never trusts names. */
+export function botAttachmentType(content: Uint8Array): string {
+	const head = content.subarray(0, BOT_ATTACHMENT_TYPE_BYTES);
 	const at = (i: number) => head[i] ?? -1;
 	const ascii = (from: number, to: number) =>
 		String.fromCharCode(...head.subarray(from, to));
@@ -38,12 +129,15 @@ export function botAttachmentType(head: Uint8Array): string {
 	if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return 'image/jpeg';
 	if (/^GIF8[79]a$/.test(ascii(0, 6))) return 'image/gif';
 	if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
-	return BOT_OPAQUE_ATTACHMENT_MIME;
+	return videoType(head) ?? BOT_OPAQUE_ATTACHMENT_MIME;
 }
 export function isBotImageMime(mime: string): boolean {
 	return (BOT_MESSAGE_UPLOAD_LIMITS.imageMimes as readonly string[]).includes(
 		mime,
 	);
+}
+export function isBotVideoMime(mime: string): boolean {
+	return (BOT_VIDEO_MIMES as readonly string[]).includes(mime);
 }
 /** The size limit for content of this type. */
 export function botAttachmentLimit(mime: string): number {

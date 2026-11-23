@@ -7,7 +7,7 @@ import { CLIENT_SERVER_COMPATIBILITY } from "@terminay/protocol";
 
 /** Must match `DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY` in packages/ui-bundle. */
 export const UI_BUNDLE_CSP =
-  "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /** Must match `DEFAULT_LIMITS.maxTotalBytes` in packages/ui-bundle. */
 export const UI_BUNDLE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;

@@ -1,12 +1,24 @@
 import { Buffer } from 'node:buffer';
 import {
+	BOT_ATTACHMENT_TYPE_BYTES,
 	BOT_MESSAGE_UPLOAD_LIMITS,
 	botAttachmentLimit,
+	botAttachmentType,
 	botEnvironmentId,
+	isBotImageMime,
 } from '@terminay/protocol';
 import { type EngineDriver, ownedResource } from './engine.js';
+import { BotError } from './store.js';
 
 export const BOT_IMAGE_BYTES = 2 * 1024 * 1024;
+/** The reader's header line plus the base64 of the largest allowed file. */
+const ATTACHMENT_OUTPUT_BYTES =
+	Math.ceil(BOT_MESSAGE_UPLOAD_LIMITS.fileBytes / 3) * 4 + 4096;
+/** Strict base64: Buffer alone skips bad characters, so re-encode and compare. */
+function strictBase64(value: string): Buffer | undefined {
+	const bytes = Buffer.from(value, 'base64');
+	return bytes.toString('base64') === value ? bytes : undefined;
+}
 const reader = `import os,sys,stat,base64
 path=sys.argv[1]
 root='/tmp' if path.startswith('/tmp/') else '/home/bot'
@@ -27,23 +39,64 @@ try:
  finally: os.close(out)
 finally: os.close(fd)
 `;
-export function botImagePath(value: unknown): string {
+// One JSON header line, then the base64 content when the file is within the
+// limit. An oversized file sends only its size and first bytes. Failures that
+// are expected report a cause, and never facts about a file not safely opened.
+const attachmentReader = `import base64,errno,json,os,stat,sys
+limit=${BOT_MESSAGE_UPLOAD_LIMITS.fileBytes}
+head=${BOT_ATTACHMENT_TYPE_BYTES}
+path=sys.argv[1]
+root='/tmp' if path.startswith('/tmp/') else '/home/bot'
+parts=path[len(root)+1:].split('/')
+def say(**value): sys.stdout.write(json.dumps(value)+'\\n')
+def read():
+ fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+ try:
+  for part in parts[:-1]:
+   nxt=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+   os.close(fd)
+   fd=nxt
+  out=os.open(parts[-1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+  try:
+   info=os.fstat(out)
+   if not stat.S_ISREG(info.st_mode): return say(error='not-regular')
+   with os.fdopen(out,'rb',closefd=False) as f:
+    if info.st_size>limit:
+     return say(size=info.st_size,over=True,head=base64.b64encode(f.read(head)).decode())
+    data=f.read(limit+1)
+   if len(data)>limit:
+    return say(size=len(data),over=True,head=base64.b64encode(data[:head]).decode())
+   say(size=len(data))
+   sys.stdout.write(base64.b64encode(data).decode())
+  finally: os.close(out)
+ finally: os.close(fd)
+try: read()
+except OSError as e:
+ causes={errno.ENOENT:'missing',errno.ELOOP:'unsafe',errno.ENOTDIR:'unsafe',errno.EACCES:'denied'}
+ if e.errno not in causes: raise
+ say(error=causes[e.errno])
+`;
+function containerPath(value: unknown, label: string): string {
+	const lower = label.toLowerCase();
 	if (
 		typeof value !== 'string' ||
 		value.length > 4096 ||
 		[...value].some((char) => char.charCodeAt(0) < 32)
 	)
-		throw new Error('Invalid image path');
+		throw new Error(`Invalid ${lower} path`);
 	if (!value.startsWith('/tmp/') && !value.startsWith('/home/bot/'))
-		throw new Error('Image must be inside the bot container');
+		throw new Error(`${label} must be inside the bot container`);
 	if (
 		value
 			.split('/')
 			.slice(1)
 			.some((p) => !p || p === '.' || p === '..')
 	)
-		throw new Error('Invalid image path');
+		throw new Error(`Invalid ${lower} path`);
 	return value;
+}
+export function botImagePath(value: unknown): string {
+	return containerPath(value, 'Image');
 }
 export function botImageMime(bytes: Uint8Array): string {
 	const b = Buffer.from(bytes);
@@ -83,6 +136,126 @@ export async function readBotImage(
 	const bytes = Buffer.from(encoded.trim(), 'base64');
 	if (bytes.length > BOT_IMAGE_BYTES) throw new Error('Image exceeds 2 MiB');
 	return { mime: botImageMime(bytes), bytes };
+}
+
+const mebibytes = (bytes: number) =>
+	`${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+function attachmentSizeRefusal(
+	name: string,
+	size: number,
+	mime: string,
+): BotError {
+	if (!isBotImageMime(mime))
+		return new BotError(
+			'validation',
+			`${name} is ${mebibytes(size)} (${mime}); non-image attachments are limited to 5 MiB`,
+		);
+	const hint =
+		mime === 'image/gif'
+			? '. Convert an animation to MP4 or WebM to attach up to 5 MiB'
+			: '';
+	return new BotError(
+		'validation',
+		`${name} is ${mebibytes(size)} (${mime}); images are limited to 2 MiB${hint}`,
+	);
+}
+const READ_REFUSALS: Readonly<Record<string, string>> = {
+	missing: 'does not exist in the bot container',
+	unsafe: 'cannot be attached through a symlink',
+	denied: 'cannot be read by the bot',
+	'not-regular': 'is not a regular file',
+};
+/**
+ * Read one file a bot attaches to a post, under the user-upload rules. The
+ * bytes, size and path are untrusted; the name is used only in refusals.
+ */
+export async function readBotAttachment(
+	driver: EngineDriver,
+	serverId: string,
+	botId: string,
+	path: unknown,
+	displayName: string,
+	signal?: AbortSignal,
+): Promise<{ mime: string; bytes: Uint8Array }> {
+	let safe: string;
+	try {
+		safe = containerPath(path, 'Attachment');
+	} catch (error) {
+		throw new BotError('validation', (error as Error).message);
+	}
+	const name = `terminay-bot-${botEnvironmentId(botId)}`;
+	const container = await driver.inspect('container', name);
+	if (
+		!container ||
+		!ownedResource(container, serverId, botId) ||
+		!container.State?.Running
+	)
+		throw new BotError(
+			'conflict',
+			'The bot container must be running to read this attachment',
+		);
+	const output = await driver.exec(
+		name,
+		['python3', '-c', attachmentReader, safe],
+		{
+			user: 'bot',
+			signal,
+			deadlineMs: 30000,
+			maxBytes: ATTACHMENT_OUTPUT_BYTES,
+		},
+	);
+	const malformed = () =>
+		new BotError('internal', `${displayName} could not be read`);
+	// A transport may trim the final newline of a header-only reply.
+	const newline = output.indexOf('\n');
+	const headerEnd = newline < 0 ? output.length : newline;
+	if (headerEnd > 1024) throw malformed();
+	let header: {
+		error?: unknown;
+		size?: unknown;
+		over?: unknown;
+		head?: unknown;
+	};
+	try {
+		header = JSON.parse(output.slice(0, headerEnd));
+	} catch {
+		throw malformed();
+	}
+	if (!header || typeof header !== 'object' || Array.isArray(header))
+		throw malformed();
+	if (typeof header.error === 'string') {
+		const reason = READ_REFUSALS[header.error];
+		if (!reason) throw malformed();
+		throw new BotError('validation', `${displayName} ${reason}`);
+	}
+	const size = header.size;
+	if (!Number.isSafeInteger(size) || (size as number) < 0) throw malformed();
+	if (header.over === true) {
+		const head =
+			typeof header.head === 'string' ? strictBase64(header.head) : undefined;
+		if (
+			!head ||
+			head.length > BOT_ATTACHMENT_TYPE_BYTES ||
+			(size as number) <= BOT_MESSAGE_UPLOAD_LIMITS.fileBytes
+		)
+			throw malformed();
+		throw attachmentSizeRefusal(
+			displayName,
+			size as number,
+			botAttachmentType(head),
+		);
+	}
+	if (header.over !== undefined || header.head !== undefined) throw malformed();
+	const bytes = strictBase64(
+		newline < 0 ? '' : output.slice(newline + 1).trim(),
+	);
+	if (!bytes || bytes.length !== size) throw malformed();
+	if (bytes.length < 1)
+		throw new BotError('validation', `${displayName} is empty`);
+	const mime = botAttachmentType(bytes);
+	if (bytes.length > botAttachmentLimit(mime))
+		throw attachmentSizeRefusal(displayName, bytes.length, mime);
+	return { mime, bytes };
 }
 
 /** Where an execution's message images are copied inside its bot container. */

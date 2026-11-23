@@ -25,6 +25,7 @@ import {
 	botEnvironmentId,
 	botMessageActivity,
 	isBotImageMime,
+	isBotVideoMime,
 } from '@terminay/protocol';
 import {
 	loadCanonicalStateSync,
@@ -72,6 +73,17 @@ export interface BotUnacknowledgedPosts {
 
 /** What a notification says of a post with images and no text. */
 export const BOT_IMAGE_ONLY_EXCERPT = 'Sent an image';
+export const BOT_VIDEO_ONLY_EXCERPT = 'Sent a video';
+export const BOT_FILE_ONLY_EXCERPT = 'Sent a file';
+function attachmentOnlyExcerpt(
+	attachments: readonly BotMessageAttachment[],
+): string {
+	if (attachments.every((a) => isBotImageMime(a.mime)))
+		return BOT_IMAGE_ONLY_EXCERPT;
+	return attachments.every((a) => isBotVideoMime(a.mime))
+		? BOT_VIDEO_ONLY_EXCERPT
+		: BOT_FILE_ONLY_EXCERPT;
+}
 const EXCERPT_CHARS = 280;
 interface Cursor {
 	botId: string;
@@ -376,7 +388,7 @@ export class BotMessageStore extends EventEmitter {
 			body:
 				words.length > 0
 					? [...words].slice(0, EXCERPT_CHARS).join('')
-					: BOT_IMAGE_ONLY_EXCERPT,
+					: attachmentOnlyExcerpt(latest.attachments),
 			raisedAt: latest.createdAt,
 			throughSequence: latest.sequence,
 		};

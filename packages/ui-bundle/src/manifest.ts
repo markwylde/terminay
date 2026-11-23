@@ -41,14 +41,18 @@ const VERSION = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
  * keeps `'self'` for the workspace's own frames.
  */
 export const DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY =
-	"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+	"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 /**
- * The policy bundles carried before ADR-0137. It is strictly narrower, so a
- * manifest that names it is accepted and served with the current policy.
+ * The policies bundles carried before ADR-0137 and ADR-0139. Each is strictly
+ * narrower, so a manifest naming one is accepted and served with the current
+ * policy.
  */
-const PREVIOUS_UI_BUNDLE_CONTENT_SECURITY_POLICY =
-	"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const PREVIOUS_UI_BUNDLE_CONTENT_SECURITY_POLICIES: ReadonlySet<string> =
+	new Set([
+		"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+		"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: https://terminay.com; frame-src 'self' https://terminay.com; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+	]);
 
 export class UiBundleError extends Error {
 	readonly code: UiBundleErrorCode;
@@ -117,7 +121,9 @@ export function validateUiBundleManifest(
 			? DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY
 			: stringField(value.contentSecurityPolicy, 'contentSecurityPolicy');
 	const contentSecurityPolicy =
-		suppliedContentSecurityPolicy === PREVIOUS_UI_BUNDLE_CONTENT_SECURITY_POLICY
+		PREVIOUS_UI_BUNDLE_CONTENT_SECURITY_POLICIES.has(
+			suppliedContentSecurityPolicy,
+		)
 			? DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY
 			: suppliedContentSecurityPolicy;
 	if (contentSecurityPolicy !== DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY) {

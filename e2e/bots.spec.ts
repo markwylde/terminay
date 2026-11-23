@@ -2929,6 +2929,202 @@ test.describe('Home: Bots', () => {
 		expect((await readFile(target)).equals(zip)).toBe(true);
 	});
 
+	test('videos play inline in bot, user and thread messages, with their download kept', async ({
+		electronApp,
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(180_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Starling'));
+		const transcript = tab.locator('[data-terminay-bot-transcript]').first();
+		const input = tab.locator('[data-terminay-bot-attach-input]').first();
+		const composer = tab.locator('[data-terminay-bot-composer]').first();
+		const player = (scope: Locator, name: string) =>
+			scope.locator(`[data-terminay-bot-video="${name}"] video`);
+		const playable = (video: Locator) =>
+			expect
+				.poll(() => video.evaluate((el: HTMLVideoElement) => el.readyState), {
+					timeout: 30_000,
+				})
+				.toBeGreaterThanOrEqual(1);
+
+		// A real WebM, recorded here so the test needs no binary fixture.
+		const webm = Buffer.from(
+			await mainWindow.evaluate(async () => {
+				const canvas = document.createElement('canvas');
+				canvas.width = 320;
+				canvas.height = 180;
+				const g = canvas.getContext('2d')!;
+				const recorder = new MediaRecorder(canvas.captureStream(15), {
+					mimeType: 'video/webm;codecs=vp8',
+				});
+				const chunks: Blob[] = [];
+				recorder.ondataavailable = (event) => chunks.push(event.data);
+				const stopped = new Promise((done) => {
+					recorder.onstop = done;
+				});
+				recorder.start();
+				for (let frame = 0; frame < 15; frame++) {
+					g.fillStyle = `hsl(${frame * 24} 70% 45%)`;
+					g.fillRect(0, 0, 320, 180);
+					g.fillStyle = '#fff';
+					g.font = 'bold 36px sans-serif';
+					g.fillText('Terminay', 70, 100);
+					await new Promise((next) => setTimeout(next, 66));
+				}
+				recorder.stop();
+				await stopped;
+				const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+				let text = '';
+				for (const byte of bytes) text += String.fromCharCode(byte);
+				return btoa(text);
+			}),
+			'base64',
+		);
+		const files = path.join(fakeRoot(tempDir), 'attachments');
+		await mkdir(files, { recursive: true });
+		await writeFile(path.join(files, 'clip.webm'), webm);
+		// A recognised MP4 header with nothing playable behind it.
+		await writeFile(
+			path.join(files, 'broken.mp4'),
+			Buffer.concat([
+				Buffer.from([0, 0, 0, 24]),
+				Buffer.from('ftypisom'),
+				Buffer.alloc(2048, 7),
+			]),
+		);
+
+		// A bot posts a video: an inline player that waits to be started.
+		await send(tab, 'post-file:clip.webm');
+		const video = player(transcript, 'clip.webm').first();
+		await expect(video).toBeVisible({ timeout: 30_000 });
+		await playable(video);
+		expect(
+			await video.evaluate((el: HTMLVideoElement) => ({
+				controls: el.controls,
+				loop: el.loop,
+				muted: el.muted,
+				inline: el.playsInline,
+				autoplay: el.autoplay,
+				paused: el.paused,
+				blob: el.currentSrc.startsWith('blob:'),
+			})),
+		).toEqual({
+			controls: true,
+			loop: true,
+			muted: true,
+			inline: true,
+			autoplay: false,
+			paused: true,
+			blob: true,
+		});
+		await video.evaluate((el: HTMLVideoElement) => el.play());
+		await expect
+			.poll(() => video.evaluate((el: HTMLVideoElement) => el.currentTime))
+			.toBeGreaterThan(0);
+		await video.evaluate((el: HTMLVideoElement) => el.pause());
+		await video.scrollIntoViewIfNeeded();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-inline-video.png'),
+		});
+
+		// Its download saves the exact bytes.
+		const target = path.join(tempDir, 'saved-clip.webm');
+		await electronApp.evaluate(({ dialog }, filePath) => {
+			dialog.showSaveDialog = (async () => ({
+				canceled: false,
+				filePath,
+			})) as typeof dialog.showSaveDialog;
+		}, target);
+		await transcript
+			.locator('[data-terminay-bot-file-chip="clip.webm"]')
+			.first()
+			.click();
+		await expect
+			.poll(async () =>
+				existsSync(target) ? (await readFile(target)).length : 0,
+			)
+			.toBe(webm.length);
+		expect((await readFile(target)).equals(webm)).toBe(true);
+
+		// Scrolled far away, a paused player lets go of its bytes and reloads.
+		await transcript.evaluate((el) => {
+			let scroller = el.parentElement as HTMLElement;
+			while (!/auto|scroll/.test(getComputedStyle(scroller).overflowY))
+				scroller = scroller.parentElement as HTMLElement;
+			const spacer = document.createElement('div');
+			spacer.id = 'e2e-video-spacer';
+			spacer.style.height = `${scroller.clientHeight * 8}px`;
+			el.append(spacer);
+			scroller.scrollTop = scroller.scrollHeight;
+		});
+		await expect(player(transcript, 'clip.webm')).toHaveCount(0);
+		await transcript.evaluate((el) => {
+			el.querySelector('#e2e-video-spacer')?.remove();
+		});
+		await video.scrollIntoViewIfNeeded().catch(() => undefined);
+		await expect(player(transcript, 'clip.webm').first()).toBeVisible();
+		await playable(player(transcript, 'clip.webm').first());
+
+		// A user's video plays too; its type comes from content, not its name.
+		await input.setInputFiles({
+			name: 'mine.bin',
+			mimeType: 'text/plain',
+			buffer: webm,
+		});
+		await composer.fill('My clip');
+		await composer.press('Enter');
+		await expect(player(transcript, 'mine.bin')).toBeVisible({
+			timeout: 30_000,
+		});
+		await expect(transcript.locator('.bots-msg').last()).toContainText(
+			'secret',
+			{ timeout: 30_000 },
+		);
+
+		// A text file named like a video is only a download.
+		await input.setInputFiles({
+			name: 'fake.mp4',
+			mimeType: 'video/mp4',
+			buffer: Buffer.from('just some text'),
+		});
+		await composer.fill('Not a video');
+		await composer.press('Enter');
+		await expect(
+			transcript.locator('[data-terminay-bot-file-chip="fake.mp4"]'),
+		).toBeVisible({ timeout: 30_000 });
+		await expect(
+			transcript.locator('[data-terminay-bot-video="fake.mp4"]'),
+		).toHaveCount(0);
+
+		// A video that cannot be decoded falls back to its download chip.
+		await send(tab, 'post-file:broken.mp4');
+		const brokenChip = transcript.locator(
+			'[data-terminay-bot-file-chip="broken.mp4"]',
+		);
+		await expect(brokenChip).toBeVisible({ timeout: 30_000 });
+		await expect(
+			transcript.locator('[data-terminay-bot-video="broken.mp4"]'),
+		).toHaveCount(0, { timeout: 30_000 });
+
+		// A reply in a thread plays the same way.
+		const root = transcript.locator(':scope > .bots-msg').first();
+		await root.hover();
+		await root.locator('[data-terminay-bot-reply-in-thread]').click();
+		const panel = tab.locator('[data-terminay-bot-thread]');
+		const panelComposer = panel.locator('[data-terminay-bot-composer]');
+		await panelComposer.fill('post-file:clip.webm');
+		await panelComposer.press('Enter');
+		const threaded = player(panel, 'clip.webm').last();
+		await expect(threaded).toBeVisible({ timeout: 30_000 });
+		await playable(threaded);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('thread-inline-video.png'),
+		});
+	});
+
 	test('a turn running when Terminay is killed comes back interrupted', async ({
 		electronApp,
 		mainWindow,

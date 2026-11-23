@@ -102,13 +102,13 @@ Fresh message executions SHALL not wait behind a single per-bot conversation tur
 - **THEN** those later commands run, and none fails because an earlier command stripped its runtime token
 
 ### Requirement: Durable messages and attachments
-Messages SHALL have stable IDs, monotonic order, author provenance, timestamps and revisions. Edit/delete/clear SHALL act on communication records, never rewrite diagnostic transcripts or replay prior actions. Running executions SHALL observe these changes through events. Raster attachments posted by a bot SHALL be captured into bounded server-owned storage and remain readable after execution completion or container replacement. Tool results SHALL return attachment metadata rather than image bytes.
+Messages SHALL have stable IDs, monotonic order, author provenance, timestamps and revisions. Edit/delete/clear SHALL act on communication records, never rewrite diagnostic transcripts or replay prior actions. Running executions SHALL observe these changes through events. Attachments posted by a bot SHALL be captured into bounded server-owned storage and remain readable after execution completion or container replacement. Tool results SHALL return attachment metadata rather than file bytes.
 
 User messages SHALL be able to carry attachments of any file type that an authorized client uploads before posting.
 
 **Upload.**
 
-Each upload carries one file and returns an opaque upload token bound to that bot, the file and the name offered for it. The server SHALL determine the type from the file content alone: PNG, JPEG, GIF and WebP content is an image of that type, and any other content is stored as `application/octet-stream`, whatever type or name the client offers. It SHALL refuse an empty upload, an image larger than 2 MiB, any other file larger than 5 MiB, and any upload that would push the bot's attachment storage, staged uploads included, past its bound. Offered names SHALL be treated as display text, never as paths.
+Each upload carries one file and returns an opaque upload token bound to that bot, the file and the name offered for it. The server SHALL determine the type from the file content alone: PNG, JPEG, GIF and WebP content is an image of that type, MP4 and WebM content is a video of that type, and any other content is stored as `application/octet-stream`, whatever type or name the client offers. It SHALL refuse an empty upload, an image larger than 2 MiB, any other file larger than 5 MiB, and any upload that would push the bot's attachment storage, staged uploads included, past its bound. Offered names SHALL be treated as display text, never as paths.
 
 **Post.**
 
@@ -140,6 +140,10 @@ A staged upload SHALL NOT be pruned while its token is valid. Tokens SHALL expir
 - **THEN** the user message records the attachment named `logs.zip` with type `application/octet-stream` and its size
 - **AND** the attachment operation returns the archive's exact bytes
 
+#### Scenario: User posts a video
+- **WHEN** an authorized client uploads a 3 MiB MP4 named `clip.bin` with a claimed type of `text/plain` and posts a message referencing it
+- **THEN** the user message records the attachment named `clip.bin` with type `video/mp4` and its size
+
 #### Scenario: Unsupported or oversized upload
 - **WHEN** a client uploads an empty file, a PNG over 2 MiB, or any other file over 5 MiB
 - **THEN** the upload is refused with a validation error and nothing is stored
@@ -169,7 +173,7 @@ Chat SHALL show the bot's shared message log with paginated history, explicit pe
 
 Each device SHALL remember, per bot, the last message it has read. When Chat opens with bot messages posted after that point, a labelled divider SHALL mark where they begin, and SHALL stay in place for the rest of that visit. Leaving Chat, closing or leaving the bot tab, hiding the window, or sending a message SHALL mark every loaded message read. A bot this device has never shown SHALL start with every message read.
 
-The composer SHALL offer an attach button that opens a picker for files of any type. Files dropped onto the composer, and files pasted into it, SHALL be added the same way. The composer SHALL classify each file by its content, never by its claimed type or name. Each pending file SHALL show before sending with a remove control: PNG, JPEG, GIF or WebP content as a thumbnail, and any other file as a chip with a file icon, its name and its size. Send SHALL be enabled when the draft has text or at least one pending file. The composer SHALL refuse a fifth file, an image over 2 MiB or any other file over 5 MiB with an inline message, and leave the other pending files unchanged. Pending files SHALL be cleared once the message is posted and kept if posting fails. When the outcome of a send is unknown, a retry SHALL reuse the same idempotency key and any tokens already obtained, so the message is not duplicated. User messages SHALL show their image attachments inline, the same way bot posts do, and every other attachment as a file chip with its name and size. Activating a file chip SHALL save the attachment's bytes through the host's save flow; a non-image attachment SHALL never be rendered or opened in the workspace.
+The composer SHALL offer an attach button that opens a picker for files of any type. Files dropped onto the composer, and files pasted into it, SHALL be added the same way. The composer SHALL classify each file by its content, never by its claimed type or name. Each pending file SHALL show before sending with a remove control: PNG, JPEG, GIF or WebP content as a thumbnail, and any other file as a chip with a file icon, its name and its size. Send SHALL be enabled when the draft has text or at least one pending file. The composer SHALL refuse a fifth file, an image over 2 MiB or any other file over 5 MiB with an inline message, and leave the other pending files unchanged. Pending files SHALL be cleared once the message is posted and kept if posting fails. When the outcome of a send is unknown, a retry SHALL reuse the same idempotency key and any tokens already obtained, so the message is not duplicated. User and bot messages SHALL show image attachments inline, video attachments as inline players, and every other attachment as a file chip with its name and size. Activating a file chip SHALL save the attachment's bytes through the host's save flow; an attachment that is neither an image nor a video SHALL never be rendered or opened in the workspace.
 
 #### Scenario: Read execution details
 - **WHEN** a user selects a recent execution
@@ -302,7 +306,7 @@ A bot's own post to its message log SHALL raise a notification for that bot on i
 
 ### Requirement: Bot notification content
 
-A bot notification SHALL carry the bot's identity, the number of its unacknowledged posts, a plain-text excerpt of the latest of them of at most 280 characters, and the time that post was made. A post with attachments and no text SHALL have an excerpt saying the bot sent an image. Editing an unacknowledged post SHALL update the notification to reflect the latest remaining one.
+A bot notification SHALL carry the bot's identity, the number of its unacknowledged posts, a plain-text excerpt of the latest of them of at most 280 characters, and the time that post was made. A post with attachments and no text SHALL have an excerpt saying the bot sent an image when every attachment is an image, a video when every attachment is a video, and a file otherwise. Editing an unacknowledged post SHALL update the notification to reflect the latest remaining one.
 
 #### Scenario: Content of one post
 
@@ -313,6 +317,16 @@ A bot notification SHALL carry the bot's identity, the number of its unacknowled
 
 - **WHEN** Bird posts a screenshot with no text
 - **THEN** its notification's excerpt says that Bird sent an image
+
+#### Scenario: A video without text
+
+- **WHEN** Bird posts an MP4 with no text
+- **THEN** its notification's excerpt says that Bird sent a video
+
+#### Scenario: A file without text
+
+- **WHEN** Bird posts a zip and an image with no text
+- **THEN** its notification's excerpt says that Bird sent a file
 
 #### Scenario: Latest post edited
 
@@ -497,3 +511,90 @@ Attachments SHALL be delivered only to the execution triggered by that message. 
 #### Scenario: Later execution
 - **WHEN** a schedule starts an execution after a message with attachments was posted
 - **THEN** its briefing shows the message's attachment count and metadata, and no attachment is attached to its prompt or copied for it
+
+### Requirement: Bots attach files to their posts
+`chat_post` SHALL accept up to four attachments, each a regular file under `/tmp` or `/home/bot` in the bot's own running container. The type SHALL come from the file's content alone. An image SHALL be at most 2 MiB and any other file at most 5 MiB. The `chat_post` description and the execution briefing SHALL state that bots can attach files and videos, with these limits.
+
+#### Scenario: Bot posts an MP4
+- **WHEN** a bot calls `chat_post` with an 833 KB MP4 at `/home/bot/out/clip.mp4`
+- **THEN** the message records the attachment with type `video/mp4` and its size
+- **AND** the tool result returns attachment metadata and no file bytes
+
+#### Scenario: Bot posts another file type
+- **WHEN** a bot calls `chat_post` with a 3 MiB zip
+- **THEN** the message records it with type `application/octet-stream` and Chat shows it as a file chip
+
+### Requirement: Bot attachment refusals state the limit
+A size refusal SHALL name the file and state its size, its type and the limit that applied. An empty file SHALL be refused by name. Path, symlink, missing-file, container and storage refusals SHALL state that cause and SHALL NOT report facts about a file the server did not safely open. Any refused attachment SHALL refuse the whole post with no message created.
+
+#### Scenario: One bad attachment among good ones
+- **WHEN** a bot posts a valid PNG and an empty file together
+- **THEN** the post is refused naming the empty file, and no message is created
+
+#### Scenario: Oversized video
+- **WHEN** a bot attaches a 6.1 MiB MP4 named `video.mp4`
+- **THEN** the post is refused with an error stating that `video.mp4` is 6.1 MiB, its type is `video/mp4`, and non-image attachments are limited to 5 MiB
+
+#### Scenario: Large animated GIF
+- **WHEN** a bot attaches a 3 MiB GIF
+- **THEN** the post is refused with an error stating its size, its type and the 2 MiB image limit, and suggesting MP4 or WebM
+
+### Requirement: Bot attachment reads stay inside the container
+The server SHALL read a bot attachment only from that bot's own running container, without following a symlink at any path component. It SHALL refuse a directory, device, pipe, socket or path outside `/tmp` and `/home/bot`.
+
+#### Scenario: Symlink or special file
+- **WHEN** a bot attaches a symlink, a path through a symlinked directory, a directory or a pipe
+- **THEN** the post is refused and nothing outside the regular file is read
+
+### Requirement: Video types come from a bounded content check
+The type SHALL be decided from at most the first 64 bytes of content, so a file gets the same type whether it is accepted or refused for size. Truncated or malformed content SHALL be `application/octet-stream`. A recognised type SHALL NOT imply the content is playable.
+
+#### Scenario: Recognised MP4 brand
+- **WHEN** content starts with an `ftyp` box whose major brand is `isom`, `iso2` to `iso6`, `mp41`, `mp42`, `avc1` or `M4V `
+- **THEN** its type is `video/mp4`
+
+#### Scenario: Recognised WebM header
+- **WHEN** content starts with an EBML header whose DocType, within the first 64 bytes, is `webm`
+- **THEN** its type is `video/webm`
+
+#### Scenario: Similar containers stay opaque
+- **WHEN** a file is HEIC, AVIF or Matroska, or has a truncated video header
+- **THEN** its type is `application/octet-stream` and it shows as a file chip
+
+#### Scenario: Oversized file keeps its type
+- **WHEN** a 6 MiB WebM is refused
+- **THEN** the refusal reports `video/webm`, the type the same content would receive at an allowed size
+
+### Requirement: Inline video attachments
+Chat SHALL render an attachment whose server-derived type is `video/mp4` or `video/webm` as an inline player with controls, looping, muted and inline playback, and SHALL NOT autoplay it. The message SHALL keep a download action for the video. The workspace SHALL load media only from its own origin and from `blob:` URLs.
+
+#### Scenario: Video plays in Chat
+- **WHEN** a bot posts a WebM
+- **THEN** its message shows a player with controls that is looped, muted and inline, and does not start on its own
+- **AND** the message offers a download of the video's exact bytes
+
+#### Scenario: Misnamed file is not played
+- **WHEN** a message carries a text file named `clip.mp4`
+- **THEN** it shows as a file chip and no player is created
+
+### Requirement: Video attachments load on demand
+The player SHALL load the attachment's bytes through the authorized attachment operation only when it nears the viewport. A paused player far from the viewport SHALL release its loaded bytes and load them again when it returns. A load that finishes after the player is gone SHALL be discarded. If the video cannot be loaded or decoded, the message SHALL show its download action without a broken player.
+
+#### Scenario: Video scrolled far away
+- **WHEN** a paused video that has loaded is scrolled far from the viewport
+- **THEN** its loaded bytes are released, and it loads again when scrolled back
+
+#### Scenario: Video outside the viewport
+- **WHEN** Chat history contains a video far above the visible messages
+- **THEN** its bytes are not requested until it nears the viewport
+
+#### Scenario: Video cannot be decoded
+- **WHEN** a video attachment fails to load or decode
+- **THEN** the message shows the download action and the chat stays usable
+
+### Requirement: Video is not model input
+Video attachments SHALL reach an execution only as files and SHALL NOT be sent to the model as image input.
+
+#### Scenario: Video is not model input
+- **WHEN** a user sends a bot an MP4
+- **THEN** the execution receives it as a container file and the agent receives no image input for it

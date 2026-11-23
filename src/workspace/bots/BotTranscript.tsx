@@ -31,6 +31,7 @@ import {
 	type Ref,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from 'react';
 import { saveDownload } from '../../host/nativeActions';
@@ -173,6 +174,141 @@ function FileChip({
 	);
 }
 
+type AttachmentLoader = (
+	id: string,
+	signal?: AbortSignal,
+) => Promise<{ mime: string; bytes: Uint8Array }>;
+
+/** The nearest ancestor that scrolls: an observer's margin only extends its root. */
+function scrollParent(element: HTMLElement): HTMLElement | null {
+	for (let at = element.parentElement; at; at = at.parentElement)
+		if (/auto|scroll/.test(getComputedStyle(at).overflowY)) return at;
+	return null;
+}
+
+/** Plays a video attachment from a blob URL. Bytes load near the viewport, a
+ * paused player far away releases them, and any failure removes the player so
+ * only the message's download chip remains. */
+function VideoPlayer({
+	attachment,
+	load,
+}: Readonly<{
+	attachment: Pick<BotMessageAttachment, 'id' | 'name'>;
+	load: AttachmentLoader;
+}>) {
+	const frame = useRef<HTMLDivElement>(null),
+		video = useRef<HTMLVideoElement>(null),
+		near = useRef(false);
+	const [wanted, setWanted] = useState(false),
+		[url, setUrl] = useState<string>(),
+		[failed, setFailed] = useState(false);
+	useEffect(() => {
+		const element = frame.current;
+		if (!element || typeof IntersectionObserver === 'undefined') {
+			setWanted(true);
+			return;
+		}
+		const observer = new IntersectionObserver(
+			(entries) => {
+				const entry = entries[entries.length - 1];
+				if (!entry) return;
+				near.current = entry.isIntersecting;
+				if (entry.isIntersecting) setWanted(true);
+				else if (video.current?.paused ?? true) setWanted(false);
+			},
+			{ root: scrollParent(element), rootMargin: '200% 0px' },
+		);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, []);
+	useEffect(() => {
+		if (!wanted || failed) return;
+		const controller = new AbortController();
+		let created: string | undefined;
+		load(attachment.id, controller.signal)
+			.then(({ mime, bytes }) => {
+				if (controller.signal.aborted) return;
+				// The server's content type decides, never the name or record.
+				if (attachmentView(mime) !== 'video')
+					throw new Error('The attachment is not a video');
+				created = URL.createObjectURL(
+					new Blob([bytes as BlobPart], { type: mime }),
+				);
+				setUrl(created);
+			})
+			.catch(() => {
+				if (!controller.signal.aborted) setFailed(true);
+			});
+		return () => {
+			controller.abort();
+			if (created) URL.revokeObjectURL(created);
+			setUrl(undefined);
+		};
+	}, [wanted, failed, load, attachment.id]);
+	if (failed) return null;
+	return (
+		<div
+			ref={frame}
+			className="bots-video"
+			data-terminay-bot-video={attachment.name}
+		>
+			{url ? (
+				<video
+					ref={video}
+					src={url}
+					controls
+					loop
+					muted
+					playsInline
+					preload="metadata"
+					aria-label={attachment.name}
+					onError={() => setFailed(true)}
+					onPause={() => {
+						if (!near.current) setWanted(false);
+					}}
+				/>
+			) : (
+				<LoaderCircle size={18} className="bots-spin" aria-hidden="true" />
+			)}
+		</div>
+	);
+}
+
+/** A message's non-image attachments: videos play inline, and every one keeps
+ * its download chip. */
+function MessageFiles({
+	attachments,
+	load,
+}: Readonly<{
+	attachments: readonly BotMessageAttachment[] | undefined;
+	load: AttachmentLoader | undefined;
+}>) {
+	const files = attachments?.filter((a) => attachmentView(a.mime) !== 'image');
+	if (!files?.length) return null;
+	return (
+		<ul className="bots-msg__files" aria-label="Attached files">
+			{files.map((a) => (
+				<li
+					key={a.id}
+					className={
+						attachmentView(a.mime) === 'video'
+							? 'bots-msg__file--video'
+							: undefined
+					}
+				>
+					{load && attachmentView(a.mime) === 'video' ? (
+						<VideoPlayer attachment={a} load={load} />
+					) : null}
+					<FileChip
+						attachment={a}
+						download={load ? () => load(a.id) : undefined}
+					/>
+				</li>
+			))}
+		</ul>
+	);
+}
+
 import { BotActionGroup, type RevealAction } from './BotActionRow';
 import type { BotActionItem } from './botActions';
 import {
@@ -295,6 +431,11 @@ export const BotTranscript = memo(function BotTranscript({
 					)
 				: io.image(bot.id, path, { signal });
 	}, [transport, bot.id]);
+	const attachmentLoader = useMemo<AttachmentLoader | undefined>(() => {
+		if (!transport) return undefined;
+		const messages = new BotMessagesClient(transport as never);
+		return (id, signal) => messages.attachment(bot.id, id, signal);
+	}, [transport, bot.id]);
 	const separate = messageTimes !== undefined;
 	const blocks = useMemo(() => turnBlocks(items, separate), [items, separate]);
 	const activeBlock = [...blocks]
@@ -384,29 +525,10 @@ export const BotTranscript = memo(function BotTranscript({
 								imageLoader={imageLoader}
 							/>
 						) : null}
-						{block.item.attachments?.some(
-							(a) => attachmentView(a.mime) === 'file',
-						) ? (
-							<ul className="bots-msg__files" aria-label="Attached files">
-								{block.item.attachments
-									.filter((a) => attachmentView(a.mime) === 'file')
-									.map((a) => (
-										<li key={a.id}>
-											<FileChip
-												attachment={a}
-												download={
-													transport
-														? () =>
-																new BotMessagesClient(
-																	transport as never,
-																).attachment(bot.id, a.id)
-														: undefined
-												}
-											/>
-										</li>
-									))}
-							</ul>
-						) : null}
+						<MessageFiles
+							attachments={block.item.attachments}
+							load={attachmentLoader}
+						/>
 						{replyBar(block.item.key)}
 					</div>
 				</div>
@@ -460,16 +582,43 @@ export const BotTranscript = memo(function BotTranscript({
 									<div>{part.text}</div>
 								</details>
 							);
-						if (part.kind === 'agent')
+						if (part.kind === 'agent') {
+							// A post of only files still needs a target for its menu.
+							const fileMenu = part.text
+								? {}
+								: messageMenuHandlers(
+										part.key,
+										(element) => element,
+										onMessageMenu,
+									);
 							return (
-								<AgentText
-									key={part.key}
-									text={part.text}
-									messageKey={part.key}
-									imageLoader={imageLoader}
-									onMessageMenu={onMessageMenu}
-								/>
+								<Fragment key={part.key}>
+									{part.text ? (
+										<AgentText
+											text={part.text}
+											messageKey={part.key}
+											imageLoader={imageLoader}
+											onMessageMenu={onMessageMenu}
+										/>
+									) : null}
+									{part.attachments?.length ? (
+										<div
+											data-terminay-message-key={
+												part.text ? undefined : part.key
+											}
+											tabIndex={!part.text && onMessageMenu ? 0 : undefined}
+											onMouseDown={fileMenu.onMouseDown}
+											onContextMenu={fileMenu.onContextMenu}
+										>
+											<MessageFiles
+												attachments={part.attachments}
+												load={attachmentLoader}
+											/>
+										</div>
+									) : null}
+								</Fragment>
 							);
+						}
 						return null;
 					})}
 					{separate ? replyBar(block.key) : null}

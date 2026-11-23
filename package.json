@@ -182,7 +182,7 @@
 		"test:daemon-cli-smoke": "node --test --test-force-exit --test-timeout=120000 scripts/daemon-cli-smoke.test.mjs scripts/published-udp-port.test.mjs scripts/advertised-ice-reachability.test.mjs",
 		"test:bots:mcp-real": "npm run build:shared && node scripts/run-bot-mcp-real-tests.mjs",
 		"test:bots:credentials": "node extensions/builtin-agents/scripts/bot-credentials.mjs",
-		"test:bots-ui": "node --test --test-force-exit --test-timeout=120000 --test-concurrency=1 scripts/bots-ui.test.mjs scripts/context-menu-keyboard.test.mjs"
+		"test:bots-ui": "node --test --test-force-exit --test-timeout=120000 --test-concurrency=1 scripts/bots-ui.test.mjs scripts/bot-video.test.mjs scripts/context-menu-keyboard.test.mjs"
 	},
 	"dependencies": {
 		"@fontsource/open-sans": "^5.3.0",

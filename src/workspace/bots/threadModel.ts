@@ -6,6 +6,7 @@ import type {
 	BotThreadSummary,
 	TranscriptItem,
 } from '@terminay/protocol';
+import { isBotImageMime } from '@terminay/protocol';
 import type { BotActionItem } from './botActions';
 
 /** A message with its whole text, read in as many slices as it takes. */
@@ -81,11 +82,13 @@ export function messageItem(
 				text:
 					message.text +
 					message.attachments
+						.filter((a) => isBotImageMime(a.mime))
 						.map(
 							(a) =>
 								`\n\n![${a.name.replace(/[[\]]/g, '')}](bot-attachment:${a.id})`,
 						)
 						.join(''),
+				attachments: message.attachments.filter((a) => !isBotImageMime(a.mime)),
 			};
 }
 
