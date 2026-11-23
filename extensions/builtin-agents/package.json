@@ -41,7 +41,7 @@
 		"test:packed": "npm run compile && node --test --test-force-exit --test-timeout=120000 test/packed.test.mjs"
 	},
 	"dependencies": {
-		"@markwylde/all-your-agents": "1.4.4"
+		"@markwylde/all-your-agents": "1.6.1"
 	},
 	"peerDependencies": {
 		"@terminay/extension-api": "^3.7.0"
