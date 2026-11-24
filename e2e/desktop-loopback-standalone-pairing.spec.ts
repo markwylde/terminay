@@ -4,7 +4,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
-import { prepareWindow, sendAppCommand } from './support/app';
+import {
+	prepareWindow,
+	presentNativeRoute,
+	sendAppCommand,
+} from './support/app';
 import { createStartedProject } from './support/project-start';
 import {
 	holdTornOffProjectTab,
@@ -702,7 +706,9 @@ test('a file dropped on a terminal of another server is copied there, not given 
 		await mainWindow.keyboard.press('Escape');
 		if ((await projectIds(mainWindow)).length === 0) {
 			await createStartedProject(mainWindow);
-			await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
+			await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(
+				0,
+			);
 		}
 		const nativePath = path.join(tempDir, 'desktop-only', 'dropped notes.txt');
 		await mkdir(path.dirname(nativePath), { recursive: true });
@@ -725,13 +731,19 @@ test('a file dropped on a terminal of another server is copied there, not given 
 		await mainWindow.keyboard.type('cat ');
 		await terminal.evaluate((element) => {
 			const file = (
-				document.querySelector('#terminal-remote-drop-source') as HTMLInputElement
+				document.querySelector(
+					'#terminal-remote-drop-source',
+				) as HTMLInputElement
 			).files?.[0];
 			if (!file) throw new Error('The native drop fixture is unavailable.');
 			const transfer = new DataTransfer();
 			transfer.items.add(file);
 			element.dispatchEvent(
-				new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }),
+				new DragEvent('drop', {
+					bubbles: true,
+					cancelable: true,
+					dataTransfer: transfer,
+				}),
 			);
 		});
 
@@ -741,7 +753,66 @@ test('a file dropped on a terminal of another server is copied there, not given 
 		await expect(rows).not.toContainText('desktop-only');
 		await terminal.locator('.xterm-helper-textarea').focus();
 		await mainWindow.keyboard.press('Enter');
-		await expect(rows).toContainText('dropped-on-the-server-42', { timeout: 15_000 });
+		await expect(rows).toContainText('dropped-on-the-server-42', {
+			timeout: 15_000,
+		});
+	} finally {
+		await server.stop();
+	}
+});
+
+type WindowLoad = { url: string; visible: boolean };
+
+test('Settings opened from a window on a remote server is on screen before it connects', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const server = await startStandaloneServer(tempDir);
+	try {
+		const serverHost = await pairAndLand(appHarness, mainWindow, server);
+		// Record, from main, the next window's main-frame documents and whether
+		// it was visible as each started to load.
+		await electronApp.evaluate(({ app, BrowserWindow }) => {
+			const loads: WindowLoad[] = [];
+			(
+				globalThis as { __remoteSettingsLoads?: WindowLoad[] }
+			).__remoteSettingsLoads = loads;
+			app.once('browser-window-created', (_event, window) => {
+				window.webContents.on(
+					'did-start-navigation',
+					(details: { url: string; isMainFrame: boolean }) => {
+						if (!details.isMainFrame) return;
+						const owner = BrowserWindow.fromWebContents(window.webContents);
+						loads.push({
+							url: details.url,
+							visible: owner?.isVisible() ?? false,
+						});
+					},
+				);
+			});
+		});
+		const settings = await appHarness.openChildWindow(() =>
+			presentNativeRoute(mainWindow, '/?auxiliary=settings', 'settings'),
+		);
+		await expect(settings.locator('.settings-status')).toBeVisible({
+			timeout: 45_000,
+		});
+		const loads = await electronApp.evaluate(
+			() =>
+				(globalThis as { __remoteSettingsLoads?: WindowLoad[] })
+					.__remoteSettingsLoads ?? [],
+		);
+		expect(loads[0]?.url.startsWith('data:text/html')).toBe(true);
+		const workspaceLoad = loads.find((load) => load.url.startsWith('file:'));
+		// On screen, on the loader, before its own remote connection's page.
+		expect(workspaceLoad?.visible).toBe(true);
+		// The project window keeps its own connection to the server.
+		await expectShowing(mainWindow, serverHost);
+		await settings.close();
 	} finally {
 		await server.stop();
 	}

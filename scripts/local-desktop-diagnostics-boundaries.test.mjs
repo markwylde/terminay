@@ -65,10 +65,16 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 		main,
 		/await embeddedStartupWindow\.loadURL\(desktopStartupLoadingDocument\(\)\)/u,
 	);
-	// The loading document is navigated exactly once. Any second navigation
-	// would destroy the renderer's execution context mid-startup.
+	// The startup window is navigated to the loading document exactly once. Any
+	// second navigation would destroy the renderer's execution context
+	// mid-startup. (Auxiliary windows load their own copy, in createWindow.)
+	const startupStart = main.indexOf('async function prepareEmbeddedRuntime(');
+	const startupEnd = main.indexOf('\nasync function ', startupStart + 1);
+	assert.ok(startupStart > 0 && startupEnd > startupStart);
 	assert.equal(
-		main.split('loadURL(desktopStartupLoadingDocument').length - 1,
+		main
+			.slice(startupStart, startupEnd)
+			.split('loadURL(desktopStartupLoadingDocument').length - 1,
 		1,
 	);
 });

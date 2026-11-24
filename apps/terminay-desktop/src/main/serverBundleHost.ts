@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { serverUiPartitionKey } from "./serverUiPartition.js";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
@@ -58,7 +59,7 @@ export class DesktopServerBundleHost {
     const compatibility = evaluateTerminayHostCompatibility(bundle.manifest.hostCompatibility, this.support);
     if (!compatibility.compatible) throw new DesktopBundleCompatibilityError(compatibility);
     const context = parseTerminayHostContext({ schemaVersion: TERMINAY_HOST_CONTEXT_SCHEMA_VERSION, bootstrapVersion: TERMINAY_HOST_BOOTSTRAP_VERSION, sourceId: `source:${randomBytes(18).toString("base64url")}`, windowId, serverId: identity.serverId, profileId: identity.profileId, bundleId: bundle.manifest.bundleId, applicationProtocolVersion: bundle.manifest.protocolVersion, hostKind: "desktop", hostBridgeVersion: TERMINAY_HOST_BRIDGE_VERSION, byteEndpointVersion: TERMINAY_HOST_BYTE_ENDPOINT_VERSION, capabilities: this.support.capabilities });
-    return Object.freeze({ context, compatibility, entryPath: relativeAssetPath(bundle.manifest.bundleId, bundle.manifest.entryPath), assetRoot, source: "embedded" as const, partitionKey: createHash("sha256").update(`${identity.serverId}\0${identity.profileId}`).digest("base64url"), byteEndpointHandle: `bytes:${randomBytes(24).toString("base64url")}` });
+    return Object.freeze({ context, compatibility, entryPath: relativeAssetPath(bundle.manifest.bundleId, bundle.manifest.entryPath), assetRoot, source: "embedded" as const, partitionKey: serverUiPartitionKey(identity.serverId, identity.profileId), byteEndpointHandle: `bytes:${randomBytes(24).toString("base64url")}` });
   }
 }
 

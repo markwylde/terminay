@@ -69,6 +69,7 @@ import {
 	type DesktopBundleLaunch,
 	DesktopServerBundleHost,
 } from '../apps/terminay-desktop/src/main/serverBundleHost';
+import { serverUiPartitionKey } from '../apps/terminay-desktop/src/main/serverUiPartition';
 import {
 	ControlSocketPlacementError,
 	createMcpHost,
@@ -1059,6 +1060,10 @@ const remoteProfileBindingsByWebContents = new Map<number, string>();
 const desktopWindowIds = new DesktopWindowIds();
 const desktopProfileConnects = createProfileConnectQueue();
 const auxiliaryWindowsByPresentation = new Map<string, BrowserWindow>();
+/** The route each auxiliary window opens on. A request made while the window
+ * is still on its loading document replaces it; the mount reads it. */
+const auxiliaryRouteByWebContents = new Map<number, string>();
+const mountingAuxiliaryWebContents = new Set<number>();
 /** Settings-family windows, as opposed to torn-off workspace windows. */
 const auxiliaryWindows = new WeakSet<BrowserWindow>();
 const launchRecoveryWebContents = new Set<number>();
@@ -3834,9 +3839,20 @@ async function presentCanonicalAuxiliaryRoute(
 	const presentationId = `${context.profileId}:${auxiliary.logicalViewId}`;
 	const existing = auxiliaryWindowsByPresentation.get(presentationId);
 	if (existing !== undefined && !existing.isDestroyed()) {
-		const current = new URL(existing.webContents.getURL());
+		const currentUrl = existing.webContents.getURL();
 		const requested = new URL(auxiliary.route, 'https://terminay.invalid');
-		if (current.search !== requested.search) {
+		// The latest request decides the page. A window that has no document
+		// yet, or is still on its loading (or recovery) document, opens on it
+		// when it mounts; navigating now would replace the loader, so only
+		// record it.
+		auxiliaryRouteByWebContents.set(existing.webContents.id, auxiliary.route);
+		const current = URL.canParse(currentUrl) ? new URL(currentUrl) : undefined;
+		if (
+			current !== undefined &&
+			current.protocol !== 'data:' &&
+			!mountingAuxiliaryWebContents.has(existing.webContents.id) &&
+			current.search !== requested.search
+		) {
 			current.search = requested.search;
 			// Settings may keep its page to protect unsaved edits.
 			await existing.loadURL(current.toString()).catch(() => undefined);
@@ -3851,39 +3867,20 @@ async function presentCanonicalAuxiliaryRoute(
 		sourceWindow.getBounds(),
 	).workArea;
 
-	let auxiliaryWindow: BrowserWindow | null;
-	if (context.profileId === embeddedLocalProfileId) {
-		auxiliaryWindow = createWindow({
-			auxiliary: { ...auxiliary, presentationId },
-			auxiliaryWorkArea,
-		});
-	} else {
+	let remoteProfile: RememberedRemoteConnection | undefined;
+	if (context.profileId !== embeddedLocalProfileId) {
 		loadRememberedRemoteConnections();
-		const profile = rememberedRemoteConnections.get(context.profileId);
-		if (profile === undefined)
+		remoteProfile = rememberedRemoteConnections.get(context.profileId);
+		if (remoteProfile === undefined)
 			throw new Error('The selected remote profile is no longer available.');
-		// The window does not exist yet; it adopts this id once it does.
-		const windowId = desktopWindowIds.mint();
-		const lanes = await openDesktopRemoteLanes(profile, windowId);
-		try {
-			auxiliaryWindow = createWindow({
-				auxiliary: { ...auxiliary, presentationId },
-				auxiliaryWorkArea,
-				serverUiLaunch: await prepareCanonicalRemoteLaunch(profile, lanes),
-				serverUiTransport: lanes.transport,
-			});
-		} catch (error) {
-			await lanes.transport.close({ code: 'normal' }).catch(() => undefined);
-			throw error;
-		}
-		if (auxiliaryWindow !== null) {
-			desktopWindowIds.adopt(auxiliaryWindow.webContents.id, windowId);
-			remoteProfileBindingsByWebContents.set(
-				auxiliaryWindow.webContents.id,
-				profile.id,
-			);
-		}
 	}
+	// The window opens at once on the loading document and connects from
+	// there, so a slow remote handshake is spent with the window on screen.
+	const auxiliaryWindow = createWindow({
+		auxiliary: { ...auxiliary, presentationId },
+		auxiliaryWorkArea,
+		...(remoteProfile === undefined ? {} : { remoteProfile }),
+	});
 	if (auxiliaryWindow === null) throw new Error('Desktop is closing.');
 	auxiliaryWindowsByPresentation.set(presentationId, auxiliaryWindow);
 	auxiliaryWindow.setParentWindow(sourceWindow);
@@ -4060,6 +4057,9 @@ function createWindow(options?: {
 	workspaceViewId?: string;
 	serverUiLaunch?: DesktopBundleLaunch;
 	serverUiTransport?: ByteTransport;
+	/** Connect to this remembered server after the window exists, showing the
+	 * loading document meanwhile. Excludes `serverUiLaunch`. */
+	remoteProfile?: RememberedRemoteConnection;
 }): BrowserWindow | null {
 	if (isQuitting) {
 		return null;
@@ -4124,7 +4124,15 @@ function createWindow(options?: {
 			contextIsolation: true,
 			nodeIntegration: false,
 			partition: getServerUiPartitionName(
-				options?.serverUiLaunch?.partitionKey ?? localServerUiPartitionKey,
+				options?.serverUiLaunch?.partitionKey ??
+					// Remote launch metadata is not available yet. Never put its
+					// document in Local's persistent storage partition.
+					(options?.remoteProfile === undefined
+						? localServerUiPartitionKey
+						: serverUiPartitionKey(
+								options.remoteProfile.serverId ?? options.remoteProfile.origin,
+								options.remoteProfile.id,
+							)),
 			),
 			sandbox: true,
 			webSecurity: true,
@@ -4248,6 +4256,8 @@ function createWindow(options?: {
 				auxiliaryWindowsByPresentation.delete(key);
 		}
 		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+		auxiliaryRouteByWebContents.delete(windowWebContentsId);
+		mountingAuxiliaryWebContents.delete(windowWebContentsId);
 		desktopWindowIds.release(windowWebContentsId);
 		windowServerControllers.delete(windowWebContentsId);
 		launchRecoveryWebContents.delete(windowWebContentsId);
@@ -4318,7 +4328,9 @@ function createWindow(options?: {
 	let cancelDesktopPairing: (attemptId: string) => void;
 	// The server this window shows. It changes only when a launch is mounted.
 	let boundProfileId: string =
-		options?.serverUiLaunch?.context.profileId ?? embeddedLocalProfileId;
+		options?.serverUiLaunch?.context.profileId ??
+		options?.remoteProfile?.id ??
+		embeddedLocalProfileId;
 	// The view it presents there, and the server a torn-off view belongs to.
 	let boundViewKey: WindowViewKey | undefined;
 	let tornOffProfileId: string | undefined;
@@ -4373,7 +4385,8 @@ function createWindow(options?: {
 		);
 		if (options?.auxiliary !== undefined) {
 			const requested = new URL(
-				options.auxiliary.route,
+				auxiliaryRouteByWebContents.get(windowWebContentsId) ??
+					options.auxiliary.route,
 				'https://terminay.invalid',
 			);
 			entryUrl.search = requested.search;
@@ -4731,7 +4744,25 @@ function createWindow(options?: {
 				unbindEndpoint,
 			);
 		}
-		await window.loadURL(entryUrl.toString());
+		if (isAuxiliary) mountingAuxiliaryWebContents.add(windowWebContentsId);
+		try {
+			await window.loadURL(entryUrl.toString());
+			// A later request can arrive after loadURL starts but before the new
+			// document commits, while getURL still names the loader. Apply that
+			// request too; it could not navigate the uncommitted document itself.
+			while (!window.isDestroyed() && options?.auxiliary !== undefined) {
+				const requested = new URL(
+					auxiliaryRouteByWebContents.get(windowWebContentsId) ??
+						options.auxiliary.route,
+					'https://terminay.invalid',
+				);
+				if (entryUrl.search === requested.search) break;
+				entryUrl.search = requested.search;
+				await window.loadURL(entryUrl.toString());
+			}
+		} finally {
+			mountingAuxiliaryWebContents.delete(windowWebContentsId);
+		}
 		if (options?.deferCanonicalLaunch === true && !window.isDestroyed())
 			window.show();
 	};
@@ -4857,7 +4888,114 @@ function createWindow(options?: {
 			? undefined
 			: controller;
 	};
+	const remoteProfile = options?.remoteProfile;
+	if (remoteProfile !== undefined)
+		remoteProfileBindingsByWebContents.set(
+			windowWebContentsId,
+			remoteProfile.id,
+		);
+	if (options?.auxiliary !== undefined)
+		auxiliaryRouteByWebContents.set(
+			windowWebContentsId,
+			options.auxiliary.route,
+		);
+	// Closing the window cancels a connection attempt still queued behind
+	// another window's handshake, or still handshaking.
+	const windowClosed = new AbortController();
+	window.once('closed', () => windowClosed.abort());
+	// loadURL resolves at did-finish-load, which can precede the first paint.
+	// Keep the first ready-to-show promise for retries, when it will not fire again.
+	const auxiliaryReady = isAuxiliary
+		? new Promise<void>((resolve) => {
+				const ready = () => {
+					window.off('ready-to-show', ready);
+					window.off('closed', ready);
+					resolve();
+				};
+				window.once('ready-to-show', ready);
+				window.once('closed', ready);
+			})
+		: Promise.resolve();
 	const launchCanonical = async (): Promise<void> => {
+		if (window.isDestroyed()) return;
+		if (isAuxiliary) {
+			// Paint the loading document first; its ready-to-show reveals the
+			// window before any connection work for it starts.
+			await window.loadURL(desktopStartupLoadingDocument());
+			await auxiliaryReady;
+			if (window.isDestroyed()) return;
+			window.show();
+		}
+		if (remoteProfile !== undefined) {
+			let lanes: DesktopRemoteLanes;
+			try {
+				lanes = await openDesktopRemoteLanes(
+					remoteProfile,
+					desktopWindowIds.for(windowWebContentsId),
+					undefined,
+					undefined,
+					windowClosed.signal,
+				);
+			} catch (error) {
+				if (window.isDestroyed()) return;
+				throw error;
+			}
+			const closeLanes = () =>
+				lanes.transport.close({ code: 'normal' }).catch(() => undefined);
+			if (window.isDestroyed()) {
+				await closeLanes();
+				return;
+			}
+			// Identity discovery is connection work, not packaged-bundle
+			// verification: network failures must recover with Retry, and close
+			// must abort this fetch just as it aborts the handshake.
+			try {
+				if (
+					lanes.serverId === undefined &&
+					remoteProfile.serverId === undefined
+				)
+					lanes = {
+						...lanes,
+						serverId: await readRemoteServerIdentity(
+							remoteProfile.origin,
+							windowClosed.signal,
+						),
+					};
+			} catch (error) {
+				await closeLanes();
+				if (window.isDestroyed()) return;
+				throw error;
+			}
+			if (window.isDestroyed()) {
+				await closeLanes();
+				return;
+			}
+			let launch: DesktopBundleLaunch;
+			try {
+				launch = await prepareCanonicalRemoteLaunch(remoteProfile, lanes);
+			} catch (error) {
+				// A bundle Desktop cannot safely prepare leaves no window open.
+				await closeLanes();
+				console.error('[window] workspace bundle could not be prepared', error);
+				try {
+					await recordCanonicalRecoveryDiagnostic(
+						error instanceof Error ? error.message : String(error),
+					);
+				} finally {
+					if (!window.isDestroyed()) window.close();
+				}
+				return;
+			}
+			try {
+				if (window.isDestroyed()) throw new Error('The window was closed.');
+				await mountCanonicalLaunch(launch, lanes.transport);
+			} catch (error) {
+				await closeLanes();
+				if (window.isDestroyed()) return;
+				throw error;
+			}
+			return;
+		}
 		const launch = await (options?.serverUiLaunch === undefined
 			? localServerUiSession.prepare(windowWebContentsId)
 			: Promise.resolve(options.serverUiLaunch));
@@ -4868,6 +5006,8 @@ function createWindow(options?: {
 			await launchCanonical();
 		} catch (error) {
 			console.error('[window] canonical server UI launch failed', error);
+			documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
+			documentEndpointUnbindByWebContents.delete(windowWebContentsId);
 			releaseServerUiWindowBinding(windowWebContentsId, 'failed-launch');
 			releaseLocalServerUiSessionSafely(windowWebContentsId);
 			await showCanonicalLaunchRecovery({
@@ -4905,11 +5045,15 @@ const REMOTE_SERVER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 /** Learn a standalone server's stable identity from its unauthenticated host
  * bootstrap. Only identity is read: Desktop never downloads a remote bundle. */
-async function readRemoteServerIdentity(origin: string): Promise<string> {
+async function readRemoteServerIdentity(
+	origin: string,
+	abort?: AbortSignal,
+): Promise<string> {
 	const bootstrapUrl = new URL('/host-bootstrap.json', origin);
 	const response = await fetch(bootstrapUrl, {
 		headers: { accept: 'application/json' },
 		redirect: 'error',
+		...(abort === undefined ? {} : { signal: abort }),
 	});
 	if (!response.ok)
 		throw new Error('The remote server host bootstrap is unavailable.');

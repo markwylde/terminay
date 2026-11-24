@@ -51,6 +51,7 @@ async function openChildWindow(
   const nextWindowPromise = electronApp.waitForEvent('window')
   await action()
   const nextWindow = await nextWindowPromise
+  await nextWindow.waitForURL((url) => url.protocol !== 'data:' && url.protocol !== 'about:')
   await nextWindow.waitForLoadState('domcontentloaded')
   return nextWindow
 }
