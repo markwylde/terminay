@@ -28,8 +28,10 @@ export async function createRepository(prefix = "terminay-git-observe-") {
  * see exactly which watches are open, so "nothing is watched after close" is
  * an assertion rather than a hope.
  */
-export function createFakeWatcher() {
+export function createFakeWatcher({ holdReady = false } = {}) {
   const entries = [];
+  /** While set, every new watch fails as it opens, as on a host out of watches. */
+  let refusal = null;
   const waiters = new Set();
   const notify = () => {
     for (const waiter of [...waiters])
@@ -66,9 +68,17 @@ export function createFakeWatcher() {
     watch(path, options) {
       const entry = { path: resolve(path), options, closed: false };
       entries.push(entry);
+      if (refusal !== null) {
+        const error = refusal;
+        queueMicrotask(() => { if (!entry.closed) options.onError(error); });
+        return { close() { entry.closed = true; } };
+      }
       // The service finishes what it does around opening a watch (such as
       // recording the Git directory) in the same turn, so waiters run after it.
       queueMicrotask(notify);
+      // A fake watch covers its scope as soon as it opens, unless the test
+      // holds it back to drive readiness itself.
+      if (!holdReady) queueMicrotask(() => { if (!entry.closed) options.onReady?.(); });
       return {
         close() {
           entry.closed = true;
@@ -80,6 +90,15 @@ export function createFakeWatcher() {
       const targets = this.open().filter((entry) => entry.path === resolve(path));
       if (targets.length === 0) throw new Error(`no open watch on ${path}`);
       for (const entry of targets) entry.options.onChange(relativePath);
+    },
+    /** Make every watch opened from now on fail as it opens; `null` lifts it. */
+    refuse(error = Object.assign(new Error("watch limit"), { code: "ENOSPC" })) {
+      refusal = error;
+    },
+    /** Report a held-back watch on `path` ready. */
+    ready(path) {
+      for (const entry of this.open().filter((candidate) => candidate.path === resolve(path)))
+        entry.options.onReady?.();
     },
     fail(path, error = Object.assign(new Error("watch limit"), { code: "ENOSPC" })) {
       for (const entry of this.open().filter((candidate) => candidate.path === resolve(path)))

@@ -50,6 +50,7 @@ import {
 	type GitPaneSyncOutcome,
 	type GitPaneSyncTrigger,
 	isFreshGitPaneSync,
+	rootLoadTrigger,
 } from './gitPaneSyncLog';
 
 const WATCH_REFRESH_DELAY_MS = 120;
@@ -414,6 +415,9 @@ export function useFileExplorerController({
 	const directoryLoadsRef = useRef<Map<string, Promise<void>>>(new Map());
 	const gitRefreshRequestIdRef = useRef(0);
 	const latestGitRootRef = useRef(project.rootFolder);
+	/** The last non-empty root this workspace loaded: what tells a root change
+	 *  from a mount or a re-run of the root-load effect. */
+	const lastLoadedRootRef = useRef<string | undefined>(undefined);
 	const dialogRequestIdRef = useRef(0);
 	latestGitRootRef.current = project.rootFolder;
 
@@ -1023,7 +1027,19 @@ export function useFileExplorerController({
 		if (project.rootFolder && explorerReady) {
 			recordBootstrapDiagnostic('explorer.root-load');
 			void loadDirectory(project.rootFolder);
-			void refreshGitStatusesForRoot(project.rootFolder, true, undefined, 'root');
+			// Only a different root than this workspace last loaded is measured;
+			// a mount or a dependency-only re-run reads the watched cache.
+			const trigger = rootLoadTrigger(
+				lastLoadedRootRef.current,
+				project.rootFolder,
+			);
+			lastLoadedRootRef.current = project.rootFolder;
+			void refreshGitStatusesForRoot(
+				project.rootFolder,
+				true,
+				undefined,
+				trigger,
+			);
 		}
 	}, [
 		loadDirectory,

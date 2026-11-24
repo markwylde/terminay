@@ -1,9 +1,12 @@
-/** What raised a Git pane synchronisation. `root` and `refresh` are the two
- *  the user asked for, so the server measures them rather than answering from
- *  its cached listing. */
+/** What raised a Git pane synchronisation. `root` (the project root changed)
+ *  and `refresh` (the user asked) are measured by the server rather than
+ *  answered from its watched cache. `mount` (a folder workspace loading the
+ *  root it already had, on connect, first show, or remount) is not: the
+ *  server's watches keep that cache current (ADR-0141). */
 export type GitPaneSyncTrigger =
 	| 'event'
 	| 'resync'
+	| 'mount'
 	| 'root'
 	| 'refresh'
 	| 'directory'
@@ -29,6 +32,24 @@ export interface GitPaneSyncLog {
 
 export function isFreshGitPaneSync(trigger: GitPaneSyncTrigger): boolean {
 	return trigger === 'root' || trigger === 'refresh';
+}
+
+/**
+ * What loading `root` in a mounted folder workspace is. It is a root change
+ * only when this workspace already loaded a different root; the first load,
+ * a reload of the same root, and a root that comes back after being empty
+ * are mounts. `previousLoadedRoot` is the last non-empty root it loaded.
+ */
+export function rootLoadTrigger(
+	previousLoadedRoot: string | undefined,
+	root: string,
+): 'mount' | 'root' {
+	return previousLoadedRoot !== undefined &&
+		previousLoadedRoot.length > 0 &&
+		root.length > 0 &&
+		previousLoadedRoot !== root
+		? 'root'
+		: 'mount';
 }
 
 /**

@@ -686,6 +686,11 @@ export interface GitWatchOptions {
 	/** Called once when the watch can no longer be trusted: it failed to start,
 	 *  the host reported an error, or the watched path went away. */
 	readonly onError: (error: unknown) => void;
+	/** Called once when the watch first covers its whole scope. A watch built
+	 *  from per-directory watches is ready once every directory its filter
+	 *  keeps is armed; a native watch is ready once it is open. Never called
+	 *  after `onError` or `close`. */
+	readonly onReady?: () => void;
 	/**
 	 * Consulted only where the host has no kernel recursive watch (Linux) and
 	 * the watcher builds one from per-directory watches. Native recursive

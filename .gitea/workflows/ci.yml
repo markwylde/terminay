@@ -250,6 +250,18 @@ jobs:
           test "$(node -p 'process.platform')" = darwin
           test "$(node -p 'process.arch')" = arm64
           test "$(uname -m)" = arm64
+      # The Git service's watches behave differently on FSEvents than on the
+      # Linux built-up watch (ADR-0114, ADR-0141): a worktree removed, a branch
+      # pushed, the default branch pulled, all observed through the real host
+      # watch. This is the only macOS runner, so they run here.
+      - name: Run the real-watch Git service tests on macOS
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        run: |
+          npx turbo run build --filter=@terminay/server-core...
+          node --test --test-force-exit --test-timeout=120000 \
+            packages/server-core/test/git-real-watch-accuracy.test.mjs \
+            packages/server-core/test/git-real-watch-default-branch-move.test.mjs \
+            packages/server-core/test/git-watch-root-and-readiness.test.mjs
       # The DMG boot works on a staged copy with its own data directory, so it
       # runs beside the two checks of the application in the release directory:
       # the built-in extension lifecycle, then the session holder starting a

@@ -66,6 +66,24 @@ export class TreeWatchError extends Error {
 	}
 }
 
+/**
+ * The watched root itself went away: removed, replaced by another directory,
+ * or already gone when the watch was armed. A Git working tree whose root is
+ * gone has been removed; that is a change to act on, not a loss of coverage
+ * (ADR-0141).
+ */
+export class WatchedRootGoneError extends TreeWatchError {
+	constructor(message = 'the watched path went away', options?: { cause?: unknown }) {
+		super('ENOENT', message, options);
+		this.name = 'WatchedRootGoneError';
+	}
+}
+
+/** Whether a watch failed only because its root went away. */
+export function isWatchedRootGone(error: unknown): boolean {
+	return error instanceof WatchedRootGoneError;
+}
+
 interface WatchedDirectory {
 	readonly watcher: FSWatcher;
 	dev: number;
@@ -199,7 +217,7 @@ export function createTreeWatch(
 	/** Forget `rel` and everything beneath it: it was removed or replaced. */
 	const closeSubtree = (rel: string) => {
 		if (rel === '') {
-			fail(new TreeWatchError('ENOENT', 'the watched path went away'));
+			fail(new WatchedRootGoneError());
 			return;
 		}
 		for (const [path, entry] of [...dirs])
@@ -237,6 +255,15 @@ export function createTreeWatch(
 		lists.length > 0 ||
 		listing !== undefined;
 
+	/** Discovery still owes a directory: one waits for the filter, its arm, or
+	 *  its listing. Changed entries waiting to be classified are not discovery;
+	 *  sustained writes must not hold readiness back. */
+	const discovering = () =>
+		candidates.size > 0 ||
+		arms.size > 0 ||
+		lists.length > 0 ||
+		listing !== undefined;
+
 	const run = async () => {
 		if (signal.aborted) return;
 		running = true;
@@ -248,8 +275,13 @@ export function createTreeWatch(
 			running = false;
 		}
 		if (signal.aborted) return;
+		if (!settled && !discovering()) {
+			// Every directory the filter kept is armed: the watch now covers its
+			// whole scope. Events still queued are delivered as usual.
+			settled = true;
+			options.onReady?.();
+		}
 		if (hasWork()) schedule();
-		else settled = true;
 	};
 
 	const onWatchEvent = (rel: string, filename: string | Buffer | null) => {
@@ -442,8 +474,14 @@ export function createTreeWatch(
 					onWatchEvent(rel, name),
 				);
 			} catch (error) {
-				// Gone before it could be watched: its parent's event covers it.
-				if (rel !== '' && isCode(error, 'ENOENT', 'ENOTDIR')) continue;
+				if (isCode(error, 'ENOENT', 'ENOTDIR')) {
+					// Gone before it could be watched: its parent's event covers it.
+					if (rel !== '') continue;
+					throw new WatchedRootGoneError(
+						'the watched path was gone before it could be watched',
+						{ cause: error },
+					);
+				}
 				throw error;
 			}
 			const entry: WatchedDirectory = {

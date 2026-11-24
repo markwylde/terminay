@@ -13,7 +13,7 @@ await build({
   stdin: {
     contents: `
       export { applyGitWorkspaceRefresh } from './src/workspace/useFileExplorerController.ts'
-      export { createGitPaneSyncLog, isFreshGitPaneSync } from './src/workspace/gitPaneSyncLog.ts'
+      export { createGitPaneSyncLog, isFreshGitPaneSync, rootLoadTrigger } from './src/workspace/gitPaneSyncLog.ts'
       export { createGitListingMemory } from './src/workspace/gitListingMemory.ts'
     `,
     loader: 'ts',
@@ -24,7 +24,7 @@ await build({
   outfile: output,
   platform: 'node',
 })
-const { applyGitWorkspaceRefresh, createGitListingMemory, createGitPaneSyncLog, isFreshGitPaneSync } = await import(
+const { applyGitWorkspaceRefresh, createGitListingMemory, createGitPaneSyncLog, isFreshGitPaneSync, rootLoadTrigger } = await import(
   pathToFileURL(output).href
 )
 
@@ -62,13 +62,12 @@ function harness({ fail = false, current = true, changed = true } = {}) {
 
 test('only a root change and an explicit refresh ask the server to measure', async () => {
   const { requests, refresh } = harness()
-  for (const trigger of ['event', 'resync', 'directory', 'action', 'root', 'refresh'])
-    await refresh(trigger, 'worktree-a')
+  const triggers = ['event', 'resync', 'directory', 'action', 'mount', 'root', 'refresh']
+  for (const trigger of triggers) await refresh(trigger, 'worktree-a')
 
-  const asked = Object.fromEntries(
-    ['event', 'resync', 'directory', 'action', 'root', 'refresh'].map((trigger, index) => [trigger, requests[index]]),
-  )
-  for (const trigger of ['event', 'resync', 'directory', 'action']) {
+  const asked = Object.fromEntries(triggers.map((trigger, index) => [trigger, requests[index]]))
+  // A mount is answered from the server's watched cache, like an event.
+  for (const trigger of ['event', 'resync', 'directory', 'action', 'mount']) {
     assert.equal(isFreshGitPaneSync(trigger), false)
     assert.deepEqual(asked[trigger], { projectId: 'project-a', worktreeId: 'worktree-a' }, trigger)
   }
@@ -144,12 +143,15 @@ test('every Git pane refresh names what raised it, and the reload control measur
   const controller = await readFile('src/workspace/useFileExplorerController.ts', 'utf8')
   const app = await readFile('src/App.tsx', 'utf8')
 
-  for (const trigger of ['directory', 'root', 'event', 'resync'])
+  for (const trigger of ['directory', 'event', 'resync'])
     assert.match(
       controller,
       new RegExp(`refreshGitStatusesForRoot\\([^;]*?'${trigger}',?\\s*\\)`, 'u'),
       `no refresh is raised as ${trigger}`,
     )
+  // Loading the root is a mount or a root change, as rootLoadTrigger decides.
+  assert.match(controller, /const trigger = rootLoadTrigger\(\s*lastLoadedRootRef\.current,\s*project\.rootFolder,?\s*\)/u)
+  assert.match(controller, /refreshGitStatusesForRoot\(\s*project\.rootFolder,\s*true,\s*undefined,\s*trigger,?\s*\)/u)
   assert.match(controller, /trigger: GitPaneSyncTrigger = 'action'/u)
   // The renderer reports through the console main already observes: it has
   // no diagnostics channel of its own.
@@ -161,6 +163,34 @@ test('every Git pane refresh names what raised it, and the reload control measur
     [...app.matchAll(/refreshGitStatusesForRoot\([^;]*?'root'\)/gu)].length,
     2,
     'both root-change paths in App raise a measured refresh',
+  )
+})
+
+test('loading a root is a root change only when a different root was loaded before', () => {
+  // The first load of a mounted workspace, on connect or first show.
+  assert.equal(rootLoadTrigger(undefined, '/repo'), 'mount')
+  // The root-load effect re-running for another dependency, or a remount.
+  assert.equal(rootLoadTrigger('/repo', '/repo'), 'mount')
+  // A different root, given directly.
+  assert.equal(rootLoadTrigger('/repo', '/other'), 'root')
+  // The root went empty and then a different one arrived: the last loaded
+  // root is still '/repo', so this is a change.
+  assert.equal(rootLoadTrigger('/repo', '/other'), 'root')
+  // The root went empty and came back to the same one.
+  assert.equal(rootLoadTrigger('/repo', '/repo'), 'mount')
+  // A project that was still being created loads its root for the first time.
+  assert.equal(rootLoadTrigger(undefined, '/new-project'), 'mount')
+  assert.equal(rootLoadTrigger('', '/repo'), 'mount')
+})
+
+test('the root-load effect remembers only roots it actually loaded', async () => {
+  const controller = await readFile('src/workspace/useFileExplorerController.ts', 'utf8')
+  const effect = controller.match(/recordBootstrapDiagnostic\('explorer\.root-load'\);[\s\S]*?\n\t\t\}/u)?.[0] ?? ''
+  assert.match(effect, /lastLoadedRootRef\.current = project\.rootFolder;/u, 'set where a root is loaded')
+  assert.equal(
+    [...controller.matchAll(/lastLoadedRootRef\.current =/gu)].length,
+    1,
+    'an empty root, or a project not yet ready, never overwrites it',
   )
 })
 
