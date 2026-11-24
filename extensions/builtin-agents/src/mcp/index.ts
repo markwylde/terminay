@@ -1,4 +1,11 @@
 import {
+	getAntigravityConfigPath,
+	inspectAntigravityRegistration,
+	installAntigravity,
+	isAntigravityInstalled,
+	uninstallAntigravity,
+} from './antigravity.js';
+import {
 	getClaudeCodeConfigPath,
 	inspectClaudeCodeRegistration,
 	installClaudeCode,
@@ -19,13 +26,6 @@ import {
 	isCursorInstalled,
 	uninstallCursor,
 } from './cursor.js';
-import {
-	getGeminiConfigPath,
-	inspectGeminiRegistration,
-	installGemini,
-	isGeminiInstalled,
-	uninstallGemini,
-} from './gemini.js';
 import {
 	getGrokConfigPath,
 	inspectGrokRegistration,
@@ -109,13 +109,13 @@ export const MCP_INSTALL_PROVIDERS: readonly McpInstallProvider[] = [
 		uninstall: uninstallCursor,
 	},
 	{
-		id: 'gemini',
-		label: 'Gemini CLI',
-		getConfigPath: getGeminiConfigPath,
-		inspect: inspectGeminiRegistration,
-		isInstalled: isGeminiInstalled,
-		install: installGemini,
-		uninstall: uninstallGemini,
+		id: 'antigravity',
+		label: 'Antigravity CLI',
+		getConfigPath: getAntigravityConfigPath,
+		inspect: inspectAntigravityRegistration,
+		isInstalled: isAntigravityInstalled,
+		install: installAntigravity,
+		uninstall: uninstallAntigravity,
 	},
 	{
 		id: 'grok',

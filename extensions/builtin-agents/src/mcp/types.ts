@@ -5,7 +5,7 @@ export type McpAgentId =
 	| 'claudeCode'
 	| 'codex'
 	| 'cursor'
-	| 'gemini'
+	| 'antigravity'
 	| 'grok'
 	| 'openCode';
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -13,7 +13,14 @@ const clients = [
   { id: 'claudeCode', binary: 'claude', listArgs: ['mcp', 'list'] },
   { id: 'codex', binary: 'codex', listArgs: ['mcp', 'list'] },
   { id: 'cursor', binary: 'cursor-agent', listArgs: ['mcp', 'list'] },
-  { id: 'gemini', binary: 'gemini', listArgs: ['mcp', 'list'] },
+  {
+    id: 'antigravity',
+    binary: 'agy',
+    listArgs: ['mcp', 'list'],
+    // `agy mcp list` prints NAME, TYPE, STATUS, COMMAND/URL columns. Require an
+    // enabled stdio row so an error message naming the server cannot pass.
+    listedRow: /^terminay\s+stdio\s+enabled\s/mu,
+  },
   { id: 'openCode', binary: 'opencode', listArgs: ['mcp', 'list'] },
 ]
 
@@ -55,14 +62,70 @@ try {
       const listed = runClient(client.binary, client.listArgs, 30_000)
       assert.equal(listed.timedOut, false, boundedFailure(client, client.listArgs.join(' '), listed))
       assert.match(listed.output, /terminay/iu, boundedFailure(client, client.listArgs.join(' '), listed))
+      if (client.listedRow) {
+        assert.equal(listed.status, 0, boundedFailure(client, client.listArgs.join(' '), listed))
+        assert.match(listed.output, client.listedRow, boundedFailure(client, client.listArgs.join(' '), listed))
+      }
       process.stdout.write(`${client.binary} recognized terminay\n`)
     }
   } finally {
     if (originalHome === undefined) delete process.env.HOME
     else process.env.HOME = originalHome
   }
+
+  await assertAntigravityPassesTerminalEnvironment(installMcpAgent)
 } finally {
   await rm(workDirectory, { recursive: true, force: true })
+}
+
+/**
+ * Terminay's capability reaches the adapter only through the environment agy
+ * gives its stdio MCP children. agy starts its MCP servers before it asks for
+ * sign-in, so a probe registered as `terminay` can check that, credential-free.
+ * The probe records only whether the marker arrived, never its value.
+ */
+async function assertAntigravityPassesTerminalEnvironment(installMcpAgent) {
+  const probeHome = join(workDirectory, 'agy-probe-home')
+  const probePath = join(workDirectory, 'agy-env-probe.mjs')
+  const resultPath = join(workDirectory, 'agy-env-probe.result')
+  await mkdir(probeHome, { recursive: true })
+  await writeFile(
+    probePath,
+    [
+      "import { writeFileSync } from 'node:fs'",
+      `writeFileSync(${JSON.stringify(resultPath)}, process.env.TERMINAY_COMPAT_MARKER === 'present' ? 'inherited' : 'missing')`,
+      'process.stdin.resume()',
+      '',
+    ].join('\n'),
+  )
+  const installed = await installMcpAgent(
+    'antigravity',
+    { command: process.execPath, args: [probePath] },
+    { homeDirectory: probeHome },
+  )
+  assert.equal(installed.ok, true, `agy probe: ${installed.error ?? installed.message}`)
+
+  const run = spawnSync('agy', ['-p', 'reply with ok'], {
+    cwd: probeHome,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: probeHome,
+      NO_COLOR: '1',
+      TERM: 'dumb',
+      TERMINAY_COMPAT_MARKER: 'present',
+    },
+    input: '',
+    maxBuffer: 1024 * 1024,
+    timeout: 90_000,
+  })
+  const result = await readFile(resultPath, 'utf8').catch(() => 'not started')
+  assert.equal(
+    result,
+    'inherited',
+    `agy did not pass the terminal environment to its MCP server (probe: ${result}, agy status ${String(run.status)}):\n${`${run.stdout ?? ''}\n${run.stderr ?? ''}`.trim().slice(0, 4_000)}`,
+  )
+  process.stdout.write('agy passed the terminal environment to its MCP server\n')
 }
 
 function runClient(binary, args, timeout) {

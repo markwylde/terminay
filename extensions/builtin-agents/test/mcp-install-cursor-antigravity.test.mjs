@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-const [cursor, gemini] = await Promise.all([
+const [cursor, antigravity] = await Promise.all([
 	import('../dist/mcp/cursor.js'),
-	import('../dist/mcp/gemini.js'),
+	import('../dist/mcp/antigravity.js'),
 ]);
 
 const server = {
@@ -36,20 +43,24 @@ const providers = [
 		},
 	},
 	{
-		name: 'Gemini CLI',
-		adapter: gemini,
-		directory: '.gemini',
-		filename: 'settings.json',
-		configPath: gemini.getGeminiConfigPath,
-		inspect: gemini.inspectGeminiRegistration,
-		install: gemini.installGemini,
-		uninstall: gemini.uninstallGemini,
-		isInstalled: gemini.isGeminiInstalled,
+		name: 'Antigravity CLI',
+		adapter: antigravity,
+		directory: join('.gemini', 'config'),
+		filename: 'mcp_config.json',
+		configPath: antigravity.getAntigravityConfigPath,
+		inspect: antigravity.inspectAntigravityRegistration,
+		install: antigravity.installAntigravity,
+		uninstall: antigravity.uninstallAntigravity,
+		isInstalled: antigravity.isAntigravityInstalled,
 		unrelated: {
-			general: { defaultApprovalMode: 'default' },
-			mcp: { allowed: ['existing'], excluded: ['experimental'] },
+			version: 2,
 			mcpServers: {
-				existing: { command: '/usr/bin/existing', args: ['--kept'] },
+				existing: {
+					command: '/usr/bin/existing',
+					args: ['--kept'],
+					disabled: true,
+				},
+				remote: { serverUrl: 'https://example.invalid/mcp' },
 			},
 		},
 	},
@@ -171,7 +182,13 @@ for (const provider of providers) {
 		const path = provider.configPath(home);
 		try {
 			await mkdir(join(home, provider.directory), { recursive: true });
-			for (const original of ['{ malformed', '{"mcpServers":[]}']) {
+			for (const original of [
+				'{ malformed',
+				'[]',
+				'"text"',
+				'{"mcpServers":[]}',
+				'{"mcpServers":"x"}',
+			]) {
 				await writeFile(path, original);
 				const status = await provider.inspect(server, home);
 				assert.equal(status.state, 'unavailable');
@@ -189,3 +206,117 @@ for (const provider of providers) {
 		}
 	});
 }
+
+test('Antigravity CLI registers at ~/.gemini/config/mcp_config.json without a disabled flag', async () => {
+	const home = await mkdtemp(join(tmpdir(), 'terminay-mcp-antigravity-'));
+	try {
+		const path = antigravity.getAntigravityConfigPath(home);
+		assert.equal(path, join(home, '.gemini', 'config', 'mcp_config.json'));
+		await antigravity.installAntigravity(server, home);
+		const written = JSON.parse(await readFile(path, 'utf8'));
+		assert.deepEqual(Object.keys(written.mcpServers.terminay).sort(), [
+			'args',
+			'command',
+			'env',
+		]);
+	} finally {
+		await rm(home, { recursive: true, force: true });
+	}
+});
+
+test('Antigravity CLI parse diagnostics never include configuration secrets', async () => {
+	const home = await mkdtemp(join(tmpdir(), 'terminay-mcp-antigravity-'));
+	try {
+		const path = antigravity.getAntigravityConfigPath(home);
+		await mkdir(join(home, '.gemini', 'config'), { recursive: true });
+		const original = '{"secret":"private-api-key", BROKEN}';
+		await writeFile(path, original);
+		for (const result of [
+			await antigravity.inspectAntigravityRegistration(server, home),
+			await antigravity.installAntigravity(server, home),
+			await antigravity.uninstallAntigravity(server, home),
+		]) {
+			assert.match(result.message ?? result.error, /Could not parse/);
+			assert.doesNotMatch(JSON.stringify(result), /private-api-key|BROKEN/);
+		}
+		assert.equal(await readFile(path, 'utf8'), original);
+	} finally {
+		await rm(home, { recursive: true, force: true });
+	}
+});
+
+test('Antigravity CLI treats a disabled flag as a changed entry that Replace clears and Uninstall removes', async () => {
+	const home = await mkdtemp(join(tmpdir(), 'terminay-mcp-antigravity-'));
+	const path = antigravity.getAntigravityConfigPath(home);
+	try {
+		await mkdir(join(home, '.gemini', 'config'), { recursive: true });
+		for (const disabled of [true, false]) {
+			const flagged = {
+				mcpServers: {
+					existing: { command: '/usr/bin/existing', args: [] },
+					terminay: { ...server, disabled },
+				},
+			};
+			const original = `${JSON.stringify(flagged, null, 2)}\n`;
+			await writeFile(path, original);
+
+			assert.equal(
+				(await antigravity.inspectAntigravityRegistration(server, home)).state,
+				'changed',
+			);
+			const install = await antigravity.installAntigravity(server, home);
+			assert.equal(install.ok, false);
+			assert.equal(await readFile(path, 'utf8'), original);
+
+			const replaced = await antigravity.installAntigravity(server, home, {
+				replace: true,
+			});
+			assert.equal(replaced.ok, true);
+			const afterReplace = JSON.parse(await readFile(path, 'utf8'));
+			assert.deepEqual(afterReplace.mcpServers.terminay, server);
+			assert.deepEqual(
+				afterReplace.mcpServers.existing,
+				flagged.mcpServers.existing,
+			);
+
+			await writeFile(path, original);
+			const removed = await antigravity.uninstallAntigravity(server, home);
+			assert.equal(removed.ok, true);
+			assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), {
+				mcpServers: { existing: flagged.mcpServers.existing },
+			});
+		}
+	} finally {
+		await rm(home, { recursive: true, force: true });
+	}
+});
+
+test('Antigravity CLI leaves every other file under ~/.gemini untouched', async () => {
+	const home = await mkdtemp(join(tmpdir(), 'terminay-mcp-antigravity-'));
+	try {
+		const settingsPath = join(home, '.gemini', 'settings.json');
+		await mkdir(join(home, '.gemini'), { recursive: true });
+		const settings = `${JSON.stringify(
+			{ mcpServers: { terminay: { command: '/old/terminay', args: [] } } },
+			null,
+			2,
+		)}\n`;
+		await writeFile(settingsPath, settings);
+
+		await antigravity.inspectAntigravityRegistration(server, home);
+		await antigravity.installAntigravity(server, home);
+		await antigravity.installAntigravity(server, home, { replace: true });
+		await antigravity.uninstallAntigravity(server, home);
+
+		assert.equal(await readFile(settingsPath, 'utf8'), settings);
+		assert.deepEqual((await readdir(join(home, '.gemini'))).sort(), [
+			'config',
+			'settings.json',
+		]);
+		assert.deepEqual(await readdir(join(home, '.gemini', 'config')), [
+			'mcp_config.json',
+		]);
+	} finally {
+		await rm(home, { recursive: true, force: true });
+	}
+});

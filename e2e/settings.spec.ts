@@ -41,8 +41,8 @@ test('shows selected-server extensions and installs an uploaded extension', asyn
   await expect(agentsCard).toBeVisible()
   await expect(settingsWindow.getByRole('article')).toHaveCount(1)
   const harnessSwitches = agentsCard.locator('[data-harness-switch] input[type="checkbox"]')
-  await expect(harnessSwitches).toHaveCount(4)
-  for (const harness of ['Claude Code', 'Codex', 'Grok', 'oh-my-pi']) {
+  await expect(harnessSwitches).toHaveCount(5)
+  for (const harness of ['Claude Code', 'Codex', 'Grok', 'oh-my-pi', 'Antigravity']) {
     await expect(agentsCard.getByLabel(`Report ${harness} sessions`)).toBeChecked()
   }
   // A harness switch is a persisted server setting: it survives reopening Settings.

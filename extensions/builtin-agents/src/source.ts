@@ -10,6 +10,7 @@ import type {
 	Subagent,
 } from '@markwylde/all-your-agents';
 import AllYourAgents, {
+	antigravityCli,
 	claudeCode,
 	codexCli,
 	grokBuild,
@@ -43,7 +44,23 @@ export const HARNESSES: readonly HarnessDefinition[] = [
 	{ id: 'codex', displayName: 'Codex', createProvider: () => codexCli() },
 	{ id: 'grok', displayName: 'Grok', createProvider: () => grokBuild() },
 	{ id: 'oh-my-pi', displayName: 'oh-my-pi', createProvider: () => ohMyPi() },
+	{
+		id: 'antigravity',
+		displayName: 'Antigravity',
+		createProvider: () => antigravityCli(),
+	},
 ];
+
+/**
+ * `waitingFor` words the library uses for a turn that has ended while background
+ * work it started is still running. Nothing is asked of the user.
+ */
+const BACKGROUND_WAITS: ReadonlySet<string> = new Set([
+	'shell',
+	'monitor',
+	'task',
+	'subagent',
+]);
 
 export type SessionSourceOptions = {
 	harnesses?: readonly HarnessDefinition[];
@@ -270,11 +287,12 @@ function toSnapshot({
 	);
 	if (model) snapshot.model = model;
 	// The library also reports `waiting` for an ended turn whose background
-	// shell or monitor will wake the session. Nothing is asked of the user
-	// there, so it crosses as `running`.
+	// shell, monitor, task or subagent is still running. Nothing is asked of
+	// the user there, so it crosses as `running`.
 	const backgroundWait =
 		session.status === 'waiting' &&
-		(session.waitingFor === 'shell' || session.waitingFor === 'monitor');
+		session.waitingFor !== undefined &&
+		BACKGROUND_WAITS.has(session.waitingFor);
 	if (session.status)
 		snapshot.status = backgroundWait ? 'running' : session.status;
 	const waitingFor = boundedAgentText(

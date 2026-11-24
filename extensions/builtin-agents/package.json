@@ -41,7 +41,7 @@
 		"test:packed": "npm run compile && node --test --test-force-exit --test-timeout=120000 test/packed.test.mjs"
 	},
 	"dependencies": {
-		"@markwylde/all-your-agents": "1.6.1"
+		"@markwylde/all-your-agents": "1.7.0"
 	},
 	"peerDependencies": {
 		"@terminay/extension-api": "^3.7.0"
@@ -60,7 +60,7 @@
 		"manifestVersion": 1,
 		"id": "com.terminay.builtin-agents",
 		"displayName": "Built-in Agents",
-		"description": "Shows Claude Code, Codex, Grok, and oh-my-pi sessions in the Agents panel, registers the Terminay MCP server with coding-agent CLIs, runs Claude Code and Codex chats, starts Claude Code and Codex in new terminals, and runs Codex without its shared background server in Terminay terminals.",
+		"description": "Shows Claude Code, Codex, Grok, oh-my-pi, and Antigravity sessions in the Agents panel, registers the Terminay MCP server with coding-agent CLIs, runs Claude Code and Codex chats, starts Claude Code and Codex in new terminals, and runs Codex without its shared background server in Terminay terminals.",
 		"api": "^3.7.0",
 		"engines": {
 			"terminay": ">=1.0.0",
@@ -105,6 +105,10 @@
 						{
 							"id": "oh-my-pi",
 							"displayName": "oh-my-pi"
+						},
+						{
+							"id": "antigravity",
+							"displayName": "Antigravity"
 						}
 					],
 					"environmentVariables": [
@@ -203,8 +207,8 @@
 					"displayName": "Cursor CLI"
 				},
 				{
-					"id": "com.terminay.builtin-agents/gemini",
-					"displayName": "Gemini CLI"
+					"id": "com.terminay.builtin-agents/antigravity",
+					"displayName": "Antigravity CLI"
 				},
 				{
 					"id": "com.terminay.builtin-agents/grok",

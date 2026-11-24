@@ -4280,9 +4280,9 @@ const ProjectWorkspace = memo(forwardRef<
 					id: 'install-terminay-mcp',
 					title: 'Install Terminay MCP',
 					description:
-						'Let Claude Code, Codex, Cursor CLI, Gemini CLI, Grok, or OpenCode control sibling terminals in this project.',
+						'Let Claude Code, Codex, Cursor CLI, Antigravity CLI, Grok, or OpenCode control sibling terminals in this project.',
 					searchText:
-						'install terminay mcp model context protocol claude codex cursor gemini grok opencode terminal control',
+						'install terminay mcp model context protocol claude codex cursor antigravity agy grok opencode terminal control',
 					onSelect: () => {
 						setIsMacroLauncherOpen(false);
 						setMacroQuery('');

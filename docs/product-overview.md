@@ -125,8 +125,8 @@ project or are absent.
 
 Coding-agent awareness is another. The server bundles two built-in extensions:
 `terminay-builtin-agents` and `terminay-language-typescript`. The agents
-extension reports every live Claude Code, Codex, Grok, and oh-my-pi session on
-the server's machine through one session source, detected by the
+extension reports every live Claude Code, Codex, Grok, oh-my-pi, and Antigravity
+session on the server's machine through one session source, detected by the
 [`@markwylde/all-your-agents`](https://github.com/markwylde/all-your-agents)
 library. The server decides which project a session belongs to (its working
 directory is under the project root or inside one of the repository's linked

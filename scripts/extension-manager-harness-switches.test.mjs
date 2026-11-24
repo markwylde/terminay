@@ -49,6 +49,7 @@ const agentsExtension = {
 				{ id: 'codex', displayName: 'Codex' },
 				{ id: 'grok', displayName: 'Grok' },
 				{ id: 'oh-my-pi', displayName: 'oh-my-pi' },
+				{ id: 'antigravity', displayName: 'Antigravity' },
 			],
 		},
 	],
@@ -76,14 +77,14 @@ function render(props) {
 
 test('a session source extension card shows one switch per declared harness, on by default', () => {
 	const markup = render({ onHarnessSwitchChange: () => {} });
-	for (const harness of ['claude-code', 'codex', 'grok', 'oh-my-pi']) {
+	for (const harness of ['claude-code', 'codex', 'grok', 'oh-my-pi', 'antigravity']) {
 		assert.match(
 			markup,
 			new RegExp(`data-harness-switch="${SOURCE}/${harness}"`),
 		);
 	}
-	assert.equal(markup.match(/aria-label="Report [^"]+ sessions"/g)?.length, 4);
-	assert.equal(markup.match(/checked=""/g)?.length, 4);
+	assert.equal(markup.match(/aria-label="Report [^"]+ sessions"/g)?.length, 5);
+	assert.equal(markup.match(/checked=""/g)?.length, 5);
 });
 
 test('a switched-off harness renders off and the others stay on', () => {
@@ -91,7 +92,7 @@ test('a switched-off harness renders off and the others stay on', () => {
 		harnessSwitches: { [`${SOURCE}/grok`]: false },
 		onHarnessSwitchChange: () => {},
 	});
-	assert.equal(markup.match(/checked=""/g)?.length, 3);
+	assert.equal(markup.match(/checked=""/g)?.length, 4);
 	assert.match(
 		markup,
 		/data-harness-switch="com\.terminay\.builtin-agents\/agents\/grok"[\s\S]*?<input type="checkbox"\/>/,
