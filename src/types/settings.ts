@@ -189,9 +189,12 @@ export type DictationTranscriptionModel =
 	| 'gpt-4o-mini-transcribe'
 	| 'mlx-community/parakeet-tdt-0.6b-v3';
 
-export type DictationProvider = 'openai' | 'parakeet';
+export type DictationProvider = 'openai' | 'parakeet' | 'openai-compatible';
 
 export type DictationSettings = {
+	endpointUrl: string;
+	customModel: string;
+	bypassTlsVerification: boolean;
 	enabled: boolean;
 	provider: DictationProvider;
 	model: DictationTranscriptionModel;

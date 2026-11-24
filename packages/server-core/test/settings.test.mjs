@@ -184,3 +184,20 @@ test("repository migrates a v2 convertEol default and keeps a later opt-in acros
   assert.equal(reloaded.settings.scrollback, 4321);
   assert.equal(backups.length, 1);
 });
+
+test('custom dictation settings survive server normalization and repository reload', async () => {
+  let persisted;
+  const backend = { async load() { return persisted; }, async commit(state) { persisted = structuredClone(state); }, async backup() {} };
+  const repository = new ServerSettingsRepository(backend);
+  await repository.load();
+  assert.equal(repository.settings.dictation.bypassTlsVerification, false);
+  for (const [key, value] of Object.entries({ provider: 'openai-compatible', endpointUrl: 'https://pop-os:2345/sherpaonnx/v1/audio/transcriptions', customModel: 'profile:custom', bypassTlsVerification: true })) {
+    assert.equal((await repository.set(`dictation.${key}`, value)).ok, true);
+  }
+  const reopened = new ServerSettingsRepository(backend);
+  await reopened.load();
+  assert.equal(reopened.settings.dictation.provider, 'openai-compatible');
+  assert.equal(reopened.settings.dictation.endpointUrl, 'https://pop-os:2345/sherpaonnx/v1/audio/transcriptions');
+  assert.equal(reopened.settings.dictation.customModel, 'profile:custom');
+  assert.equal(reopened.settings.dictation.bypassTlsVerification, true);
+});

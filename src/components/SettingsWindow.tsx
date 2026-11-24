@@ -1,3 +1,4 @@
+import { DictationCredentialControl, TranscriptionEndpointControl } from './settings/DictationCredentialControl';
 import type {
 	ShellProfilesClient,
 	TerminayClient,
@@ -1156,7 +1157,7 @@ export function SettingsWindow({
 	useEffect(() => {
 		let isMounted = true;
 
-		const credentialStatus = serverAiClient?.dictationCredentialStatus();
+		const credentialStatus = serverAiClient?.dictationCredentialStatus({ provider: 'openai' });
 		void credentialStatus
 			?.then((status) => {
 				if (isMounted) {
@@ -1705,6 +1706,7 @@ export function SettingsWindow({
 				);
 			const status = await serverAiClient.setDictationCredential(
 				dictationOpenAiKeyDraft,
+				{ provider: 'openai' },
 			);
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
@@ -1725,7 +1727,7 @@ export function SettingsWindow({
 				throw new Error(
 					'The selected server does not support dictation credentials.',
 				);
-			const status = await serverAiClient.clearDictationCredential();
+			const status = await serverAiClient.clearDictationCredential({ provider: 'openai' });
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
 		} catch (error) {
@@ -2238,6 +2240,14 @@ export function SettingsWindow({
 					</div>
 				</div>
 			);
+		}
+
+		if (field.key === 'dictation.endpointUrl') {
+			return <TranscriptionEndpointControl key={selectedServerPlaceId} value={String(value)} save={(next) => updateField(field, next)} />;
+		}
+
+		if (field.key === 'dictation.customApiKey') {
+			return <DictationCredentialControl key={selectedServerPlaceId} client={serverAiClient} />;
 		}
 
 		if (field.key === 'dictation.openaiApiKey') {

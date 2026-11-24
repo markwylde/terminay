@@ -156,6 +156,13 @@ export function useDictationController({
 			return;
 		}
 
+		const currentSettings = getSettings();
+		if (currentSettings.provider === 'openai-compatible' && (!currentSettings.endpointUrl.trim() || !currentSettings.customModel.trim())) {
+			setErrorText('Configure a transcription URL and model ID in Settings before recording.');
+			void openSettings('dictation');
+			return;
+		}
+
 		if (!getSettings().enabled) {
 			setErrorText('Enable dictation in Settings before recording.');
 			void openSettings('dictation');
@@ -209,6 +216,9 @@ export function useDictationController({
 				const message = error instanceof Error ? error.message : String(error);
 				throw new Error(`Unable to open the microphone: ${message}`);
 			}
+			// Register resources as soon as they exist so failed disclosure or
+			// recorder setup cannot leave the microphone running.
+			streamRef.current = stream;
 			const audioTrack = stream.getAudioTracks()[0] ?? null;
 			console.info('Dictation microphone stream opened', {
 				requestedDevice: selectedMicrophoneDeviceId ? 'selected' : 'default',
@@ -233,6 +243,7 @@ export function useDictationController({
 				serverDisclosureRef.current = disclosure;
 			}
 			const audioContext = new AudioContext();
+			audioContextRef.current = audioContext;
 			await audioContext.resume();
 			const source = audioContext.createMediaStreamSource(stream);
 			const analyser = audioContext.createAnalyser();
@@ -256,9 +267,7 @@ export function useDictationController({
 			pcmChunksRef.current = [];
 			pcmLengthRef.current = 0;
 			pcmSampleRateRef.current = audioContext.sampleRate;
-			streamRef.current = stream;
 			mediaRecorderRef.current = recorder;
-			audioContextRef.current = audioContext;
 			mediaSourceRef.current = source;
 			analyserRef.current = analyser;
 			monitorGainRef.current = monitorGain;
@@ -321,7 +330,7 @@ export function useDictationController({
 						: current,
 				);
 
-				const config = getSettings();
+				const config = dictationSettings;
 				const maxDurationMs = config.maxDurationSeconds * 1000;
 				const silenceStopMs = config.silenceStopSeconds * 1000;
 				if (elapsedMs >= maxDurationMs) {
@@ -467,7 +476,7 @@ export function useDictationController({
 					);
 
 					try {
-						const config = getSettings();
+						const config = dictationSettings;
 						if (serverCaptureRef.current === null) {
 							throw new Error(
 								'The selected-server dictation request is unavailable.',
@@ -488,7 +497,8 @@ export function useDictationController({
 								durationMs: upload.durationMs,
 								language: config.language.trim() || defaultLanguage,
 								mimeType: upload.mimeType,
-								model: config.model,
+								model: config.provider === 'openai-compatible' ? config.customModel : config.model,
+								...(upload.disclosure.expectedConfiguration === undefined ? {} : { expectedConfiguration: upload.disclosure.expectedConfiguration }),
 								peakLevel: effectivePeakRms,
 								prompt: config.prompt,
 							});
@@ -545,7 +555,9 @@ export function useDictationController({
 					? `Audio stays on ${serverDisclosureRef.current.serverLabel}.`
 					: serverDisclosureRef.current?.audioDestination === 'openai'
 						? `Audio is sent from ${serverDisclosureRef.current.serverLabel} to OpenAI.`
-						: undefined;
+						: serverDisclosureRef.current?.audioDestination === 'custom-provider'
+							? `Audio is sent from ${serverDisclosureRef.current.serverLabel} to ${serverDisclosureRef.current.endpointUrl}.`
+							: undefined;
 			setSession({
 				sessionId,
 				...(disclosureText === undefined ? {} : { disclosure: disclosureText }),

@@ -415,6 +415,9 @@ export const defaultTerminalSettings: TerminalSettings = {
 		},
 	},
 	dictation: {
+		endpointUrl: '',
+		customModel: '',
+		bypassTlsVerification: false,
 		enabled: true,
 		provider: 'openai',
 		model: 'gpt-4o-transcribe',
@@ -1041,19 +1044,20 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		categoryId: 'ai',
 		title: 'Dictation',
 		description:
-			'Record speech, transcribe it on this Mac or with OpenAI, and type the result into the active terminal.',
+			'Record speech, transcribe it on the selected server or with a speech service, and type the result into the active terminal.',
 		fields: [
 			makeField({
 				key: 'dictation.provider',
 				label: 'Transcription provider',
 				description:
-					'Choose whether audio stays on this Mac or is sent to OpenAI.',
+					'Choose on-device transcription, OpenAI, or a custom OpenAI-compatible endpoint reached from this server.',
 				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'select',
 				options: [
 					{ label: 'On-device (Parakeet)', value: 'parakeet' },
 					{ label: 'OpenAI', value: 'openai' },
+					{ label: 'OpenAI-compatible', value: 'openai-compatible' },
 				],
 				keywords: [
 					'dictation',
@@ -1065,10 +1069,54 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				],
 			}),
 			makeField({
+				key: 'dictation.endpointUrl',
+				label: 'Transcription URL',
+				description: 'Full transcription endpoint URL. This server sends audio to it. Use a URL without credentials or query parameters.',
+				sectionId: 'dictation',
+				categoryId: 'ai',
+				input: 'text',
+				placeholder: 'https://pop-os:2345/sherpaonnx/v1/audio/transcriptions',
+				visibleWhen: { key: 'dictation.provider', value: 'openai-compatible' },
+				keywords: ['dictation', 'custom', 'openai-compatible', 'transcription', 'tls'],
+			}),
+			makeField({
+				key: 'dictation.customModel',
+				label: 'Model ID',
+				description: 'Model identifier accepted by your service, including profile: identifiers.',
+				sectionId: 'dictation',
+				categoryId: 'ai',
+				input: 'text',
+				placeholder: 'profile:hL9sOEcV4rY37MUWN7BZSDJ2',
+				visibleWhen: { key: 'dictation.provider', value: 'openai-compatible' },
+				keywords: ['dictation', 'custom', 'openai-compatible', 'transcription', 'tls'],
+			}),
+			makeField({
+				key: 'dictation.customApiKey',
+				label: 'API key (optional)',
+				description: 'Stored only in this server’s vault, separately from your OpenAI key. Leave unset for services without authentication.',
+				sectionId: 'dictation',
+				categoryId: 'ai',
+				input: 'text',
+				placeholder: 'Optional Bearer API key',
+				visibleWhen: { key: 'dictation.provider', value: 'openai-compatible' },
+				keywords: ['dictation', 'custom', 'openai-compatible', 'transcription', 'tls'],
+			}),
+			makeField({
+				key: 'dictation.bypassTlsVerification',
+				label: 'Bypass TLS verification',
+				description: 'Accept self-signed certificates for this custom endpoint. This disables server certificate verification for these dictation requests.',
+				sectionId: 'dictation',
+				categoryId: 'ai',
+				input: 'boolean',
+				placeholder: '',
+				visibleWhen: { key: 'dictation.provider', value: 'openai-compatible' },
+				keywords: ['dictation', 'custom', 'openai-compatible', 'transcription', 'tls'],
+			}),
+			makeField({
 				key: 'dictation.openaiApiKey',
 				label: 'OpenAI API key',
 				description:
-					'Stored with OS-level encryption and used only by the local main process for dictation transcription.',
+					'Stored in this server’s vault and used only for OpenAI dictation transcription.',
 				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'text',
@@ -2983,7 +3031,10 @@ export function normalizeTerminalSettings(
 				typeof dictationInput.enabled === 'boolean'
 					? dictationInput.enabled
 					: defaultTerminalSettings.dictation.enabled,
-			provider: dictationInput.provider === 'parakeet' ? 'parakeet' : 'openai',
+			provider: dictationInput.provider === 'parakeet' || dictationInput.provider === 'openai-compatible' ? dictationInput.provider : 'openai',
+			endpointUrl: typeof dictationInput.endpointUrl === 'string' ? dictationInput.endpointUrl.trim() : '',
+			customModel: typeof dictationInput.customModel === 'string' ? dictationInput.customModel.trim() : '',
+			bypassTlsVerification: dictationInput.bypassTlsVerification === true,
 			model:
 				dictationInput.provider === 'parakeet'
 					? 'mlx-community/parakeet-tdt-0.6b-v3'

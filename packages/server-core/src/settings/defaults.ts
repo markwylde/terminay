@@ -36,6 +36,9 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 	shellIntegration: true,
 	convertEol: false,
 	dictation: {
+		endpointUrl: '',
+		customModel: '',
+		bypassTlsVerification: false,
 		enabled: true,
 		provider: 'openai',
 		model: 'gpt-4o-transcribe',

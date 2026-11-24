@@ -2358,7 +2358,11 @@ const ProjectWorkspace = memo(forwardRef<
 				const provider = settingsRef.current.dictation.provider;
 				return {
 					audioDestination:
-						provider === 'openai' ? 'openai' : 'selected-server',
+						provider === 'openai' ? 'openai' : provider === 'openai-compatible' ? 'custom-provider' : 'selected-server',
+					...(provider !== 'openai-compatible' ? {} : {
+						endpointUrl: settingsRef.current.dictation.endpointUrl,
+						expectedConfiguration: JSON.stringify([provider, settingsRef.current.dictation.endpointUrl, settingsRef.current.dictation.customModel, settingsRef.current.dictation.bypassTlsVerification]),
+					}),
 					confirmed: true,
 					credentialStatus: 'configured',
 					provider,

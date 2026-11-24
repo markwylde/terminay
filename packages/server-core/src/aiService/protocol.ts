@@ -56,8 +56,8 @@ export function createAiOperationHandlers(
 		},
 		[AI_SERVER_OPERATIONS.runtimeStatus]: async () =>
 			runtimeStatusPayload(await service.runtimeStatus()),
-		[AI_SERVER_OPERATIONS.credentialStatus]: async () =>
-			service.credentialStatus(),
+		[AI_SERVER_OPERATIONS.credentialStatus]: async (request) =>
+			service.credentialStatus(credentialProvider(request.envelope.payload)),
 	};
 
 	const commands: Record<string, CommandHandler> = {
@@ -109,10 +109,20 @@ export function createAiOperationHandlers(
 				'prompt',
 				'appendNewline',
 				'peakLevel',
+				'expectedConfiguration',
 			]);
 			const durationMs = optionalUInt(payload.durationMs, 'durationMs');
 			const peakLevel = optionalNumber(payload.peakLevel, 'peakLevel');
 			const result = await service.transcribe({
+				...(payload.expectedConfiguration === undefined
+					? {}
+					: {
+							expectedConfiguration: stringField(
+								payload,
+								'expectedConfiguration',
+								4096,
+							),
+						}),
 				requestId: stringField(payload, 'requestId', 128),
 				clientId: request.context.clientId,
 				target: targetField(payload, 'target'),
@@ -147,12 +157,15 @@ export function createAiOperationHandlers(
 			return runtimeStatusPayload(await service.installRuntime());
 		},
 		[AI_SERVER_OPERATIONS.setCredential]: async (request) => {
-			exactPayload(request.envelope.payload, []);
-			return service.setCredential(new Uint8Array(request.body));
+			return service.setCredential(
+				new Uint8Array(request.body),
+				credentialProvider(request.envelope.payload),
+			);
 		},
 		[AI_SERVER_OPERATIONS.clearCredential]: async (request) => {
-			exactPayload(request.envelope.payload, []);
-			return service.clearCredential();
+			return service.clearCredential(
+				credentialProvider(request.envelope.payload),
+			);
 		},
 	};
 
@@ -470,4 +483,12 @@ function publicMessage(code: string): string {
 			} as Record<string, string>
 		)[code] ?? 'AI operation failed.'
 	);
+}
+
+function credentialProvider(value: unknown): string | undefined {
+	const payload = exactPayload(value, ['provider']);
+	if (payload.provider === undefined) return undefined;
+	if (payload.provider !== 'openai' && payload.provider !== 'openai-compatible')
+		throw protocolError('validation', 'Invalid dictation credential provider.');
+	return payload.provider;
 }

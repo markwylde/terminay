@@ -112,14 +112,32 @@ export class DictationService {
 			request.clientId,
 			request.target,
 		);
-		const settings = await this.readSettings();
+		const settings = { ...(await this.readSettings()) };
+		if (
+			settings.provider === 'openai-compatible' ||
+			request.expectedConfiguration !== undefined
+		) {
+			const expected = JSON.stringify([
+				settings.provider,
+				settings.endpointUrl ?? '',
+				settings.model ?? '',
+				settings.bypassTlsVerification === true,
+			]);
+			if (request.expectedConfiguration !== expected)
+				throw new AiServiceError(
+					'invalid_request',
+					'Dictation configuration changed. Start a new recording.',
+				);
+		}
 		if (settings.enabled === false || settings.provider === 'disabled')
 			throw new AiServiceError(
 				'provider_disabled',
 				'dictation provider is disabled.',
 			);
 		const model = (
-			request.model ??
+			(settings.provider === 'openai-compatible'
+				? settings.model
+				: request.model) ??
 			settings.model ??
 			DEFAULT_DICTATION_MODEL
 		).trim();
@@ -204,6 +222,9 @@ export class DictationService {
 							);
 			const pending = Promise.resolve(
 				this.options.provider.transcribe({
+					provider: settings.provider,
+					endpointUrl: settings.endpointUrl,
+					bypassTlsVerification: settings.bypassTlsVerification,
 					model,
 					language,
 					prompt,
@@ -258,6 +279,10 @@ export class DictationService {
 				);
 			const appendNewline =
 				request.appendNewline ?? settings.appendNewline ?? false;
+			throwIfAborted(
+				controller.signal,
+				bounded.timedOut() ? 'audio_timeout' : 'provider_cancelled',
+			);
 			await this.options.authority.writeInput(
 				request.target,
 				appendNewline ? `${text}\n` : text,

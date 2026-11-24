@@ -71,7 +71,9 @@ import {
 	McpInstallRouter,
 	MdxRuntime,
 	type NodePtyModuleLike,
-	OpenAiDictationProvider,
+	ServerDictationProvider,
+	serverDictationSettings,
+	createDictationCredentials,
 	OrderedEventJournal,
 	openCanonicalWorkspace,
 	ParakeetRuntime,
@@ -105,7 +107,6 @@ import {
 	serverVaultWorktreeCredentials,
 	TerminalActivityService,
 	TerminalReplayRegistry,
-	VaultProviderCredentialResolver,
 	WORKFLOW_RECORDS_DIRECTORY,
 	WorkflowTemplateRepository,
 	WorktreeInsightService,
@@ -1098,8 +1099,7 @@ async function createServerComposition(
 		parakeetRuntime,
 		join(options.dataRoot, 'dictation', 'temporary'),
 	);
-	const openAiProvider = new OpenAiDictationProvider();
-	const openAiSecretId = 'dictation-openai-api-key';
+	const dictationProvider = new ServerDictationProvider(parakeetProvider);
 	const ai = new AiService({
 		serverId: options.serverId,
 		authority: {
@@ -1124,45 +1124,11 @@ async function createServerComposition(
 			},
 		},
 		replay: new TerminalReplayRegistry(),
-		dictationProvider: {
-			transcribe: (request) =>
-				request.model === 'mlx-community/parakeet-tdt-0.6b-v3'
-					? parakeetProvider.transcribe(request)
-					: openAiProvider.transcribe(request),
-		},
+		dictationProvider,
 		dictationRuntime: parakeetProvider,
-		credentialResolver: new VaultProviderCredentialResolver({
-			vault: vault.vault,
-			bindings: [{ provider: 'openai', secretId: openAiSecretId }],
-		}),
-		dictationCredential: {
-			status: () => ({
-				configured: vault
-					.status()
-					.entries.some((entry) => entry.id === openAiSecretId),
-			}),
-			set: async (value) => {
-				const exists = vault
-					.status()
-					.entries.some((entry) => entry.id === openAiSecretId);
-				await (exists
-					? vault.vault.replace({
-							id: openAiSecretId,
-							label: 'OpenAI API key',
-							value,
-						})
-					: vault.vault.put({
-							id: openAiSecretId,
-							label: 'OpenAI API key',
-							value,
-						}));
-				return { configured: true };
-			},
-			clear: async () => ({
-				configured: !(await vault.vault.remove(openAiSecretId)).deleted,
-			}),
-		},
-		dictationSettings: () => standaloneDictationSettings(settings.settings),
+		credentialResolver: createDictationCredentials(vault.vault),
+		dictationCredential: createDictationCredentials(vault.vault),
+		dictationSettings: () => serverDictationSettings(settings.settings),
 		providers: selectAiProviders(
 			options.aiProviders,
 			createServerAiProviderAdapters({
@@ -1546,25 +1512,6 @@ function mcpInstallTarget(payload: unknown): string {
 	return agent;
 }
 
-function standaloneDictationSettings(
-	settings: Readonly<Record<string, JsonValue>>,
-) {
-	const value = settings.dictation;
-	const dictation =
-		typeof value === 'object' && value !== null && !Array.isArray(value)
-			? (value as Record<string, JsonValue>)
-			: {};
-	return {
-		enabled: dictation.enabled !== false,
-		provider: dictation.provider === 'parakeet' ? 'parakeet' : 'disabled',
-		model:
-			typeof dictation.model === 'string' && dictation.model.length > 0
-				? dictation.model
-				: 'mlx-community/parakeet-tdt-0.6b-v3',
-		language: typeof dictation.language === 'string' ? dictation.language : '',
-		prompt: typeof dictation.prompt === 'string' ? dictation.prompt : '',
-	};
-}
 
 function selectAiProviders(
 	enabled: readonly ('codex' | 'claude-code')[],
