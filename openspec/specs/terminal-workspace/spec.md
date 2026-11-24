@@ -76,12 +76,33 @@ Clipboard text that exceeds one terminal-input frame SHALL be sent in ordered, b
 
 ### Requirement: Desktop clipboard preference order
 
-On Desktop, a user-initiated terminal paste SHALL prefer copied file paths, then text, then convert an image-only clipboard item into a PNG in Terminay's temporary clipboard directory and insert its shell-escaped path. Clipboard images and their temporary paths SHALL be read and created only by Electron. A browser client SHALL paste non-empty clipboard text as text, and SHALL materialise an image-only clipboard on the server into a server-owned clipboard directory and insert its shell-escaped path.
+On Desktop, a user-initiated paste into a terminal whose server is this machine's own Local server SHALL prefer copied file paths, then text, then convert an image-only clipboard item into a PNG in Terminay's temporary clipboard directory and insert its shell-escaped path. Clipboard images and their temporary paths SHALL be read and created only by Electron.
+
+On Desktop, a user-initiated paste into a terminal whose server is not Local SHALL NOT insert a path from this machine. It SHALL prefer copied files, copying each to the terminal's server exactly as a dropped file is copied, with the same progress indicator and Stop control, and inserting the shell-escaped server paths once every file has arrived; then text, pasted as text; then an image-only clipboard, materialised on the server into the server-owned clipboard directory with its shell-escaped server path inserted. Electron SHALL read the copied files and SHALL give the renderer only their names, sizes and bounded parts of their contents, never their local paths. A copied folder, or a server that cannot receive files, SHALL produce a visible failure message and insert nothing.
+
+A browser client SHALL paste non-empty clipboard text as text, and SHALL materialise an image-only clipboard on the server into a server-owned clipboard directory and insert its shell-escaped path.
 
 #### Scenario: Image-only clipboard on Desktop
 
-- **WHEN** a Desktop user pastes with only an image on the clipboard
+- **WHEN** a Desktop user pastes with only an image on the clipboard into a terminal whose server is Local
 - **THEN** Electron writes a PNG into Terminay's temporary clipboard directory and inserts its shell-escaped path
+
+#### Scenario: Copied file pasted into a remote terminal on Desktop
+
+- **WHEN** a Desktop user pastes a copied file into a terminal whose server is remote
+- **THEN** the file is uploaded into a per-drop folder under the server's `terminay-drops` scratch directory, keeping its name
+- **AND** the shell-escaped server path is inserted once the file has arrived
+- **AND** the Desktop machine's native path is not inserted
+
+#### Scenario: Image-only clipboard pasted into a remote terminal on Desktop
+
+- **WHEN** a Desktop user pastes with only an image on the clipboard into a terminal whose server is remote
+- **THEN** the image is written under the server-owned clipboard directory and its shell-escaped server path is inserted
+
+#### Scenario: Copied folder pasted into a remote terminal on Desktop
+
+- **WHEN** a Desktop user pastes a copied folder into a terminal whose server is remote
+- **THEN** a failure message is shown and nothing is inserted
 
 #### Scenario: Browser paste
 
@@ -254,18 +275,46 @@ On touch devices, xterm SHALL own scrollback and the terminal mouse and key sequ
 
 ### Requirement: File drop behaviour
 
-Dropping operating-system files onto a Desktop terminal SHALL insert their native paths without copying the files. Dropping browser-local files onto a web terminal SHALL upload bounded file contents into the selected server project's root and insert the resulting server paths. Browser clients SHALL NOT receive or infer a local absolute path.
+Dropping operating-system files onto a Desktop terminal whose server is this machine's own Local server SHALL insert their native paths without copying the files. Dropping files onto any other terminal, from Desktop or from a browser client, SHALL copy each file to the server that runs the terminal and insert the shell-escaped server paths. A client-local path SHALL NOT be inserted into a terminal whose server is not Local, and browser clients SHALL NOT receive or infer a local absolute path.
+
+Terminay Server SHALL write dropped files into a server-owned scratch directory, `terminay-drops` inside the server's per-account scratch root under the process temporary directory, in a folder it creates for that drop, keeping a sanitised form of each file's offered name. The client SHALL supply only names and bytes, never a destination. The upload SHALL be authorised for the same project and terminal session that will receive the paths. It SHALL travel in bounded, ordered parts so that neither side holds a whole file, and SHALL have no total size limit.
+
+While files upload, the terminal SHALL show the upload's progress with a Stop control. Nothing SHALL be inserted until every file has arrived. A stopped, failed or abandoned upload SHALL insert nothing, and the server SHALL remove its partial files. A dropped folder, or a server that cannot receive dropped files, SHALL produce a visible failure message and insert nothing.
 
 #### Scenario: Desktop file drop
 
-- **WHEN** operating-system files are dropped onto a Desktop terminal
+- **WHEN** operating-system files are dropped onto a Desktop terminal whose server is Local
 - **THEN** their native paths are inserted and the files are not copied
+
+#### Scenario: Desktop file drop on a remote terminal
+
+- **WHEN** operating-system files are dropped onto a Desktop terminal whose server is remote
+- **THEN** each file is uploaded into a per-drop folder under the server's `terminay-drops` scratch directory, keeping its name
+- **AND** the shell-escaped server paths are inserted once every file has arrived
+- **AND** the Desktop machine's native paths are not inserted
 
 #### Scenario: Browser file drop
 
 - **WHEN** browser-local files are dropped onto a web terminal
-- **THEN** bounded file contents are uploaded into the selected server project's root and the resulting server paths are inserted
+- **THEN** each file is uploaded into the server's `terminay-drops` scratch directory, not into the project
+- **AND** the shell-escaped server paths are inserted
 - **AND** the browser client receives no local absolute path
+
+#### Scenario: Stopping a drop upload
+
+- **WHEN** the user activates the upload indicator's Stop control before every file has arrived
+- **THEN** nothing is inserted into the terminal
+- **AND** the server removes the files it had partially written
+
+#### Scenario: Dropping a folder on a remote terminal
+
+- **WHEN** a folder is dropped onto a terminal whose server is not Local
+- **THEN** a failure message is shown and nothing is inserted
+
+#### Scenario: Server that cannot receive dropped files
+
+- **WHEN** files are dropped onto a remote terminal whose server does not advertise `terminal-file-drop.v1`
+- **THEN** a failure message is shown and no path is inserted
 
 ### Requirement: Tab identity, styling, and actions
 

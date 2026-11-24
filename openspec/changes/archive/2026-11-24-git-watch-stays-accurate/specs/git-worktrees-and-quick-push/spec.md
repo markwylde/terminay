@@ -112,7 +112,11 @@ on a timer. For every bound project it SHALL watch the repository's Git
 directory (`HEAD`, `index`, `refs`, `packed-refs`, and the worktree registry),
 the gitdir of every linked worktree, and the working tree of every registered
 worktree. Writes that cannot change status on their own (object storage,
-reflogs, hooks, and lock files) SHALL NOT schedule a refresh.
+reflogs, hooks, and lock files) SHALL NOT schedule a refresh. On a host whose
+filesystem watch is not recursive in the kernel (Linux), directories that Git
+ignores in a working tree, and every `.git` directory inside one, SHALL NOT be
+watched as part of that working tree, so changes inside them SHALL NOT schedule
+a refresh.
 
 A watch event SHALL schedule a refresh scoped to the worktree it belongs to,
 through the shared ramping schedule: the first event after a quiet period runs
@@ -147,6 +151,13 @@ a root reappears watches it again.
 - **THEN** a refresh scoped to that worktree runs within the ramp's first step
 - **AND** the Git sidebar reflects the edit
 
+#### Scenario: A file is created in a new directory
+
+- **WHEN** a new directory that Git does not ignore is created in a working
+  tree, and a file is then saved inside it
+- **THEN** a refresh scoped to that worktree runs
+- **AND** later saves inside that directory are observed as well
+
 #### Scenario: A commit or branch switch happens outside Terminay
 
 - **WHEN** `HEAD`, `index`, or a ref changes because of a Git command run in a
@@ -164,6 +175,12 @@ a root reappears watches it again.
 - **WHEN** watch events keep arriving, for example during a dependency install
 - **THEN** refreshes for that project run no more often than the ramp allows
 - **AND** events inside an interval collapse into one refresh at its end
+
+#### Scenario: Build output in an ignored directory
+
+- **WHEN** a build on a Linux server deletes and recreates a directory that Git
+  ignores, such as `dist/` or `node_modules/`
+- **THEN** no refresh is scheduled for that churn
 
 #### Scenario: A worktree is added
 

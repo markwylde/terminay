@@ -46,7 +46,7 @@ An episode SHALL close when an execution of that trigger completes, or when the 
 
 When **Investigate failures** is on for a bot, the server SHALL start a failure execution for that bot after any of these failures, except where the requirements below exclude it:
 
-- one of the bot's executions ends as failed or timed out;
+- one of the bot's executions, other than a check-in, ends as failed or timed out;
 - one of the bot's trigger firings is recorded as failed;
 - a failure episode starts for one of the bot's trigger condition checks.
 
@@ -66,6 +66,11 @@ The exclusions are temporary startup failures, failures with a cause that stops 
 
 - **WHEN** a bot with Investigate failures off has an execution fail
 - **THEN** the failure is recorded in Sessions as before and no failure execution starts
+
+#### Scenario: Check-in fails
+
+- **WHEN** a check-in execution ends as failed
+- **THEN** it appears in Sessions as failed and no failure execution starts for it
 
 ### Requirement: Failure executions are coalesced
 

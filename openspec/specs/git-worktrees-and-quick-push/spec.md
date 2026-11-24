@@ -719,7 +719,7 @@ The Git service SHALL report its observation lifecycle to the server host that c
 
 ### Requirement: Explicit refresh and root change are measured
 
-A worktree listing requested because the user explicitly refreshed the Explorer or because the project root changed SHALL be measured against Git for every worktree and SHALL NOT be answered from the cached listing, whatever the watches report. When that measurement differs from the cached listing the watches reported as current, the Git service SHALL report a cache mismatch naming each differing worktree's diagnostic id and which measured values differed, and SHALL serve the measurement. Listings raised by status-change events, event-stream resynchronisation, and directory changes continue to be answered from the cached listing while the watches report no change.
+A worktree listing requested because the user explicitly refreshed the Explorer or because the project root changed SHALL be measured against Git for every worktree and SHALL NOT be answered from the cached listing, whatever the watches report. When that measurement differs from the cached listing the watches reported as current, the Git service SHALL report a cache mismatch naming each differing worktree's diagnostic id and which measured values differed, and SHALL serve the measurement. A project root changes only when a folder workspace that already loaded one root is given a different non-empty root. Listings raised by mounting a folder workspace, by status-change events, by event-stream resynchronisation, and by directory changes SHALL be answered from the cached listing while the watches report no change.
 
 #### Scenario: Refresh after an unobserved change
 
@@ -736,6 +736,21 @@ A worktree listing requested because the user explicitly refreshed the Explorer 
 
 - **WHEN** a status-change event raises a listing and the watches report no change since the last measurement
 - **THEN** the listing is answered from the cached listing without running Git
+
+#### Scenario: A folder workspace mounts
+
+- **WHEN** a renderer connects, or a folder workspace mounts or remounts (for example after a sidebar resize), and the repository's watches report no change
+- **THEN** its listing is answered from the cached listing without running Git
+
+#### Scenario: A new project becomes ready
+
+- **WHEN** a mounted folder workspace's project finishes being created and loads its root for the first time
+- **THEN** its listing is answered as a mount, from the cache when the watches report no change
+
+#### Scenario: The project root changes
+
+- **WHEN** a mounted folder workspace that loaded one root is given a different non-empty root, whether directly or after its root was empty for a while
+- **THEN** its listing is measured for every worktree
 
 ### Requirement: Listing scoped to a departed worktree
 
@@ -835,20 +850,32 @@ on a timer. For every bound project it SHALL watch the repository's Git
 directory (`HEAD`, `index`, `refs`, `packed-refs`, and the worktree registry),
 the gitdir of every linked worktree, and the working tree of every registered
 worktree. Writes that cannot change status on their own (object storage,
-reflogs, hooks, and lock files) SHALL NOT schedule a refresh.
+reflogs, hooks, and lock files) SHALL NOT schedule a refresh. On a host whose
+filesystem watch is not recursive in the kernel (Linux), directories that Git
+ignores in a working tree, and every `.git` directory inside one, SHALL NOT be
+watched as part of that working tree, so changes inside them SHALL NOT schedule
+a refresh.
 
 A watch event SHALL schedule a refresh scoped to the worktree it belongs to,
 through the shared ramping schedule: the first event after a quiet period runs
 promptly, and sustained change widens the interval up to its ceiling. A change
-to the Git directory that affects every worktree (for example `packed-refs`
-or the worktree registry) SHALL schedule an unscoped refresh.
+to the Git directory that affects every worktree (for example `packed-refs`,
+a remote-tracking ref, or the worktree registry) SHALL schedule an unscoped
+refresh.
 
 While a project's watches are live and no event has arrived since the last
 measurement, the server SHALL answer a worktree listing from that measurement
 without running Git.
 
 Projects that share a repository SHALL share its watches, and the watch set
-SHALL follow the worktree registry as worktrees are added and removed.
+SHALL follow the worktree registry as worktrees are added and removed. When a
+watched working tree's root directory goes away, or is gone by the time its
+watch is armed, the server SHALL close that working tree's watch only, SHALL
+schedule an unscoped refresh, and SHALL keep every other watch of the
+repository live. A working tree whose root goes away is a removal, not a watch
+failure. A registered worktree with no working tree has no working-tree watch.
+Each measurement re-derives the watch set, so the first measurement after such
+a root reappears watches it again.
 
 #### Scenario: Idle repository
 
@@ -861,6 +888,13 @@ SHALL follow the worktree registry as worktrees are added and removed.
 - **WHEN** a file in a worktree's working tree is saved
 - **THEN** a refresh scoped to that worktree runs within the ramp's first step
 - **AND** the Git sidebar reflects the edit
+
+#### Scenario: A file is created in a new directory
+
+- **WHEN** a new directory that Git does not ignore is created in a working
+  tree, and a file is then saved inside it
+- **THEN** a refresh scoped to that worktree runs
+- **AND** later saves inside that directory are observed as well
 
 #### Scenario: A commit or branch switch happens outside Terminay
 
@@ -880,10 +914,48 @@ SHALL follow the worktree registry as worktrees are added and removed.
 - **THEN** refreshes for that project run no more often than the ramp allows
 - **AND** events inside an interval collapse into one refresh at its end
 
+#### Scenario: Build output in an ignored directory
+
+- **WHEN** a build on a Linux server deletes and recreates a directory that Git
+  ignores, such as `dist/` or `node_modules/`
+- **THEN** no refresh is scheduled for that churn
+
 #### Scenario: A worktree is added
 
 - **WHEN** a new worktree is registered for a watched repository
 - **THEN** its gitdir and working tree are watched from then on
+
+#### Scenario: A worktree is removed with Git
+
+- **WHEN** `git worktree remove` deletes a linked worktree from a terminal
+- **THEN** the server publishes a status change without any client asking
+- **AND** the next ordinary listing no longer includes that worktree
+- **AND** the repository's remaining watches stay live, so a later edit in
+  another worktree is still observed
+
+#### Scenario: A worktree folder is deleted and then pruned
+
+- **WHEN** a linked worktree's folder is deleted with `rm -rf`, and later
+  `git worktree prune` runs
+- **THEN** after the deletion the next ordinary listing shows the worktree as
+  prunable
+- **AND** after the prune the server publishes a status change and the next
+  ordinary listing no longer includes it
+
+#### Scenario: A worktree root is gone before its watch is armed
+
+- **WHEN** a linked worktree's folder is deleted after the listing that named
+  it but before its working-tree watch is armed
+- **THEN** only that working tree goes unwatched and an unscoped refresh is
+  scheduled
+- **AND** the repository's observation stays available
+
+#### Scenario: A deleted worktree folder is restored
+
+- **WHEN** a deleted linked worktree's folder is restored without changing the
+  worktree registry, and the user then refreshes the Explorer
+- **THEN** the worktree is listed with its working tree again
+- **AND** a later edit in it publishes a status change without any client asking
 
 ### Requirement: Unavailable Git watches do not fall back to polling
 
@@ -894,11 +966,42 @@ demand each time a client asks. It SHALL NOT schedule any timer-driven Git
 refresh in its place. Losing a watch SHALL publish one unattributed
 status-change event so that clients re-query once.
 
+A client's listing request against an unavailable observation SHALL also start
+one attempt to re-establish the repository's watches, unless an attempt is
+already under way. Nothing else SHALL start an attempt. An attempt succeeds only
+when every watch is ready. The observation is then live again: later changes
+are observed and later listings are answered from the cache. When it fails, the
+observation stays unavailable and the failure is reported like any other watch
+failure, but without publishing another status-change event.
+
 #### Scenario: Watch limit reached
 
 - **WHEN** a working-tree watch fails because the host watch limit is reached
 - **THEN** the project's listing is measured whenever a client asks for it
 - **AND** no Git command runs for that project between client requests
+
+#### Scenario: Watch capacity comes back
+
+- **WHEN** a repository's observation is unavailable because the host watch
+  limit was reached, capacity is freed, and a client then lists its worktrees
+- **THEN** the repository's watches are re-established
+- **AND** a later edit in a working tree publishes a status change without any
+  client asking
+
+#### Scenario: A worktree changed while unwatched is re-measured on re-arm
+
+- **WHEN** a linked worktree changes while its repository's observation is
+  unavailable, and capacity then comes back and a client lists only another
+  worktree of that repository
+- **THEN** the next listing of the repository shows the linked worktree's
+  change
+
+#### Scenario: Re-arming fails again
+
+- **WHEN** a client lists the worktrees of an unavailable repository and the
+  watches still cannot be established
+- **THEN** the listing is measured and served
+- **AND** no Git command runs for that project until the next client request
 
 ### Requirement: Closed projects run no Git
 
@@ -956,3 +1059,292 @@ A worktree listing SHALL report, for each worktree, whether it holds unpushed co
 
 - **WHEN** a branch with unpushed commits is pushed
 - **THEN** the listing reports no unpushed commits for its worktree without the user refreshing
+
+### Requirement: Server-owned worktree creation
+
+The Git service SHALL offer a worktree creation operation for an open project.
+It SHALL take a branch name, the forge repository it is for, and either a new
+branch from the repository's default branch or a remote branch to track. It
+SHALL require write scope and authority for the project. The server SHALL
+choose the remote: the project's remote claimed for that repository, preferring
+`origin` and then the remote of the repository's current branch's upstream
+when several are claimed. The server SHALL validate the branch name with
+`git check-ref-format --branch` and SHALL choose the worktree path itself: a
+sibling of the repository root named `<repository directory name>-<branch with
+/ replaced by ->`, with a numeric suffix when that path exists.
+
+When the branch is already checked out in a worktree, the operation SHALL fail
+with a typed reason that names that worktree's path. When the branch exists
+locally and is not checked out, the operation SHALL refuse it unless the
+client asked to reuse it, and then SHALL add the worktree on the existing
+branch without moving it. Otherwise it SHALL fetch the base or tracked branch
+from the remote and run `git worktree add` with fixed arguments and no shell,
+creating the branch from the remote's default branch or tracking the remote
+branch. It SHALL return the new worktree's path and branch.
+
+Creation operations for one repository SHALL run one at a time, and each SHALL
+repeat its branch and path checks when it runs. When a step fails, the server
+SHALL remove a branch and a directory it created in that operation and SHALL
+leave everything else as it was. Asked to plan only, it SHALL return the path
+it would choose, whether the branch name is valid, and whether the branch
+exists or is checked out, without fetching or creating anything. The new
+worktree SHALL appear in the project's folders as any worktree created in a
+terminal does.
+
+#### Scenario: Planning a worktree
+
+- **WHEN** a client asks to plan a worktree for branch `issue-541-home-sidebar`
+- **THEN** it receives the path the server would use and nothing is created
+
+#### Scenario: New branch for an issue
+
+- **WHEN** a client creates a worktree for branch `issue-541-home-sidebar` from
+  the default branch in a project at `/src/terminay`
+- **THEN** `/src/terminay-issue-541-home-sidebar` is created on a new branch
+  `issue-541-home-sidebar` from the remote default branch
+
+#### Scenario: Tracking a pull request branch
+
+- **WHEN** a client creates a worktree tracking remote branch `change/13-events`
+- **THEN** a worktree on local branch `change/13-events` tracking the remote
+  branch is created
+
+#### Scenario: Existing local branch
+
+- **WHEN** a client asks for branch `change/13-events`, which exists locally and
+  is not checked out, without asking to reuse it
+- **THEN** the operation fails saying the branch exists, and nothing is created
+
+#### Scenario: Branch already checked out
+
+- **WHEN** a client asks for a branch already checked out at
+  `/src/terminay-change-13-events`
+- **THEN** the operation fails with a reason naming that path
+
+#### Scenario: Two requests at once
+
+- **WHEN** two clients create a worktree for the same new branch at the same
+  time
+- **THEN** one succeeds and the other fails saying the branch is checked out
+
+#### Scenario: Fetch fails
+
+- **WHEN** the fetch from the remote fails
+- **THEN** the operation fails with the reason and no branch or directory is
+  left behind
+
+#### Scenario: Invalid branch name
+
+- **WHEN** a client asks for branch `bad..name`
+- **THEN** the operation fails with a visible reason and nothing is created
+
+#### Scenario: Read-only client
+
+- **WHEN** a client with read scope asks to create a worktree
+- **THEN** the operation is refused
+
+### Requirement: Git observation never blocks the server
+
+Watching a repository SHALL NOT occupy the server's event loop for long enough
+to delay its other work. Establishing a watch, extending it to newly created
+directories, and handling its events SHALL proceed in steps whose synchronous
+work has a fixed bound and that yield between them. No step SHALL walk a
+directory tree or read a whole directory synchronously, on any platform. When
+many directories are created in a short time, the server SHALL take them up
+together rather than once per event.
+
+#### Scenario: Server stays responsive during a build
+
+- **WHEN** a build or dependency install creates and deletes thousands of
+  directories in an observed working tree on a Linux server
+- **THEN** a timer due on the server's event loop during that churn fires within
+  a quarter of a second of its due time
+- **AND** connected clients keep receiving terminal output throughout
+
+#### Scenario: Many directories appear at once
+
+- **WHEN** a tree of thousands of directories that Git does not ignore appears
+  in an observed working tree in one operation
+- **THEN** the server takes those directories into the watch in bounded steps
+- **AND** a timer due during that work fires within a quarter of a second of its
+  due time
+
+#### Scenario: One very wide directory
+
+- **WHEN** an observed directory holds tens of thousands of entries
+- **THEN** the server reads it across several bounded steps
+- **AND** a timer due during that work fires within a quarter of a second of its
+  due time
+
+### Requirement: Closing a Git watch stops its work
+
+Closing or failing a watch SHALL stop all of its pending work. After it closes,
+the watch SHALL open no further watches, deliver no further changes, and start
+no Git command.
+
+#### Scenario: Project closed while a watch is still being established
+
+- **WHEN** the only project bound to a repository is closed while its
+  working-tree watch is still discovering directories
+- **THEN** no further watch is opened for that repository
+- **AND** no Git command runs for it afterwards
+
+### Requirement: Built-up Git watches follow the tree they observe
+
+Where the server builds a recursive watch from per-directory watches (Linux),
+it SHALL keep that watch matched to the working tree. A directory that is
+created, renamed into place, or replaced at the same path SHALL be watched once
+it is there. A directory that is removed or renamed away SHALL stop being
+watched. A directory holding its own `.git` entry (a submodule or another
+nested repository) SHALL NOT be watched as part of the outer working tree.
+
+#### Scenario: A populated directory is renamed
+
+- **WHEN** a directory holding files is renamed within an observed working tree,
+  and a file inside it is then saved
+- **THEN** that save schedules a refresh scoped to its worktree
+
+#### Scenario: A directory is deleted and recreated at once
+
+- **WHEN** a non-ignored directory is deleted and a new directory is created at
+  the same path, and a file inside the new directory is then saved
+- **THEN** that save schedules a refresh scoped to its worktree
+
+#### Scenario: Repository with a submodule
+
+- **WHEN** an observed working tree contains a submodule
+- **THEN** the working-tree watch stays live
+- **AND** files inside the submodule are not watched as part of the outer
+  working tree
+
+#### Scenario: Linked worktree inside an ignored directory
+
+- **WHEN** a linked worktree lives inside a directory the main worktree ignores,
+  and a file in the linked worktree is saved
+- **THEN** a refresh scoped to the linked worktree runs
+
+### Requirement: Built-up Git watches follow ignore rules as they change
+
+Where the server builds a recursive watch from per-directory watches (Linux), it
+SHALL re-evaluate which directories it excludes when `.gitignore`,
+`.git/info/exclude`, the repository `config`, or the index changes. A directory
+that becomes un-ignored or tracked SHALL then be watched, and one that becomes
+ignored SHALL stop being watched. Edits to the contents of an external
+`core.excludesFile` are not observed.
+
+#### Scenario: A directory is un-ignored
+
+- **WHEN** a rule that ignored a directory is removed from `.gitignore`, and a
+  file inside that directory is then saved
+- **THEN** that save schedules a refresh scoped to its worktree
+
+#### Scenario: A directory becomes ignored
+
+- **WHEN** a rule ignoring an existing directory is added to `.gitignore`, and
+  that directory is then churned
+- **THEN** the churn schedules no refresh
+
+### Requirement: Built-up Git watches fail rather than degrade
+
+A built-up recursive watch SHALL observe at most a fixed number of directories.
+It SHALL fail when it would exceed that ceiling or when the host refuses a watch
+for lack of capacity. It SHALL also fail when any part of it stops observing for
+a reason other than its directory being removed, or when Git cannot say which
+directories are ignored. The project's Git observation then becomes unavailable
+as specified for unavailable Git watches. A built-up watch SHALL NOT continue
+with partial coverage.
+
+#### Scenario: Working tree larger than the watch ceiling
+
+- **WHEN** an observed working tree holds more non-ignored directories than the
+  watch ceiling
+- **THEN** that working-tree watch fails with an error naming the ceiling
+- **AND** the project's listing is measured whenever a client asks for it
+
+#### Scenario: Host inotify watch limit reached
+
+- **WHEN** the host refuses a per-directory watch because its watch limit
+  (`ENOSPC`) or descriptor limit (`EMFILE`) is reached
+- **THEN** that watch fails with that error's code
+- **AND** one status-change event is published and the listing is measured
+  whenever a client asks for it
+
+#### Scenario: A subdirectory watch stops unexpectedly
+
+- **WHEN** the watch on a subdirectory that still exists reports an error
+- **THEN** the whole working-tree watch fails
+- **AND** listings are no longer answered from the cached measurement
+
+#### Scenario: Git cannot report ignored directories
+
+- **WHEN** the ignore check fails or its output is truncated
+- **THEN** the working-tree watch fails rather than watching or skipping
+  directories by guesswork
+
+### Requirement: Status-change events follow every listed value
+
+The server SHALL publish `git.status.changed` for a worktree whenever a
+measurement finds that any value in the worktree's listing summary differs from
+the summary it last published for that worktree. The comparison SHALL leave out
+only values that change on every measurement without a change in the
+repository. The event keeps its metadata-only shape, and clients learn the
+changed values by listing again.
+
+#### Scenario: Push of a clean branch with no upstream
+
+- **WHEN** a linked worktree has no uncommitted changes, its branch has no
+  upstream, and the branch is pushed to a new remote branch from a terminal
+- **THEN** the server publishes a status change for that worktree without any
+  client asking
+- **AND** the next ordinary (not fresh) listing shows no unpushed commits and no
+  unpushed line delta for it
+
+#### Scenario: Push of a branch with uncommitted changes
+
+- **WHEN** a linked worktree with uncommitted tracked changes pushes its branch,
+  which has no upstream, to a new remote branch
+- **THEN** the server publishes a status change for that worktree
+- **AND** the next ordinary listing shows no unpushed commits, and an unpushed
+  line delta equal to the uncommitted changes alone
+
+#### Scenario: Default branch moves after a pull
+
+- **WHEN** the default branch advances because of a pull or fetch, and a linked
+  worktree's ahead count or line delta against it changes as a result
+- **THEN** the server publishes a status change for that worktree
+- **AND** the next ordinary listing shows the new ahead count and line delta
+
+#### Scenario: Unchanged re-measure
+
+- **WHEN** a worktree is re-measured, its listing summary equals the one last
+  published for it, and its branch status equals the one last published for it
+- **THEN** no status change is published for it
+
+### Requirement: Listings are cached only under ready watches
+
+A Git watch SHALL count as ready once it observes its whole intended scope; a
+watch built from per-directory watches is ready when every directory its filter
+keeps is armed. The server SHALL cache a measured listing only when every watch
+of the repository was ready before the measurement claimed its changes and is
+still ready and live when it ends. A listing raised while any watch is still
+becoming ready SHALL wait until each is ready or has failed before measuring.
+
+#### Scenario: Two listings right after binding
+
+- **WHEN** a project is bound and two ordinary listings follow, with no change
+  to the repository in between
+- **THEN** the repository's worktrees are measured once
+- **AND** the second listing is answered from the cached measurement
+
+#### Scenario: A file changes while a watch is still becoming ready
+
+- **WHEN** a file changes in a working-tree directory that its built-up watch
+  has not armed yet, while a listing is waiting for the watches to be ready
+- **THEN** that listing is measured after the watches are ready and includes the
+  change
+
+#### Scenario: A watch fails after it became ready
+
+- **WHEN** a ready working-tree watch later fails because the host watch limit
+  is reached
+- **THEN** the cached listing is dropped and the next listing is measured

@@ -110,7 +110,7 @@ The desktop SHALL open Chromium automatically on its own display when it starts,
 
 On Linux, the image's `bot` user SHALL have the user and group ids of the server account.
 
-The image SHALL carry a fingerprint of its inputs. Build progress and the build log SHALL be shown. A failed build SHALL keep the previous image and SHALL show the step that failed.
+The image SHALL carry a fingerprint of its inputs: the browser seccomp profile, the Dockerfile, its `.dockerignore`, the build-context files its COPY and ADD instructions read (contents and executable bit), the agent installs, and the `bot` user and group ids. Other files beside the Dockerfile SHALL NOT change the fingerprint. A COPY or ADD source the server cannot resolve to literal context paths SHALL fail the image plan rather than be left out of the fingerprint. Build progress and the build log SHALL be shown. A failed build SHALL keep the previous image and SHALL show the step that failed.
 
 #### Scenario: First start
 
@@ -127,24 +127,80 @@ The image SHALL carry a fingerprint of its inputs. Build progress and the build 
 - **WHEN** an image rebuild fails while installing a bot agent's native CLI
 - **THEN** the previous image is kept and the build log shows the failing step
 
+#### Scenario: Files the image is not built from
+
+- **WHEN** a file beside the Dockerfile that no COPY or ADD instruction reads changes
+- **THEN** the image fingerprint is unchanged and no container becomes out of date
+
+#### Scenario: Unreadable copy source
+
+- **WHEN** the Dockerfile copies a glob, an absolute path, a path outside the context, or uses the JSON or heredoc form
+- **THEN** the image plan fails and no image is built from it
+
 ### Requirement: Containers follow the current image
 
-A container whose fingerprint differs from the current image SHALL be updated as follows:
+A bot's container is out of date when it was made from a different image fingerprint, or under a different AppArmor choice, than the server would give a new container now. When the current fingerprint or AppArmor choice cannot be determined, the container SHALL NOT be treated as out of date.
 
-- if it is stopped, it SHALL be recreated from the current image when it next starts;
-- if it is running, its bot SHALL show **Recreate to update**, and the container SHALL be recreated only when the user chooses to.
+An out-of-date container SHALL be updated as follows:
 
-Recreating a running bot whose session is running SHALL first ask the user to confirm, and SHALL then stop that session.
+- if it is stopped, it SHALL be recreated from the current image when it next starts, including by Restart;
+- if it is running and a run is about to start while that run is the bot's only running session and no shell or desktop is open (the desktop preview beside Chat does not count), the current image SHALL first be built if needed, and the container SHALL then be recreated from it before the run, without stopping that run and without asking for confirmation;
+- if that build fails, the bot SHALL keep its running container, the run SHALL proceed on it, and the failure SHALL be shown on the image;
+- otherwise it SHALL keep running, and its Environment › Overview SHALL show that an update is ready and installs before its next run, with **Update now**, which recreates the container when the user chooses to.
+
+Recreating a container SHALL create it with the bot's current resource limits, so a pending limits change is applied by any recreation. The update notice SHALL be derived from the bot's own container, never from whether the shared image is out of date. An image that is only out of date SHALL NOT be presented as a container engine problem. The engine status SHALL be shown above a bot's Chat and Configure panels only when the engine is unavailable or the image is missing or failed to build.
+
+When the user chooses Recreate or Update now for a running bot whose session is running, Terminay SHALL first ask the user to confirm, and SHALL then stop that session. Recreating SHALL succeed when one of the bot's containers is already being removed by the engine, and SHALL fail without creating a new container when an old one cannot be removed.
 
 #### Scenario: Rebuilt while stopped
 
 - **WHEN** the image is rebuilt while a bot is stopped and the bot then starts
 - **THEN** its container is recreated from the new image and its home is unchanged
 
+#### Scenario: Rebuilt while running and idle
+
+- **WHEN** the image is rebuilt while a bot is running with no shell or desktop open, and a run then starts
+- **THEN** its container is recreated from the new image before the run, its home is unchanged, and the run proceeds without being stopped or asking for confirmation
+
 #### Scenario: Rebuilt while running
 
-- **WHEN** the image is rebuilt while a bot is running
-- **THEN** the bot keeps running on its old container and shows Recreate to update
+- **WHEN** the image is rebuilt while a bot is running with its shell or desktop open, or with another run in progress
+- **THEN** the bot keeps running on its old container, its Overview shows that an update is ready with Update now, and no container engine card is shown
+
+#### Scenario: Chat open with its desktop preview
+
+- **WHEN** a user sends a message from a bot's Chat, whose context rail shows the desktop preview, while the bot's running container is out of date and no shell or desktop is open
+- **THEN** the container is recreated from the current image before the run, and the preview reconnects to the new container
+
+#### Scenario: Update build fails
+
+- **WHEN** an idle running bot's container is out of date, a run starts, and the image build fails
+- **THEN** the run proceeds on the old container, the bot is not marked failed, and the image shows its build failure
+
+#### Scenario: Another bot already rebuilt the image
+
+- **WHEN** one bot's start has rebuilt the shared image and a second bot is still running on a container from the old image
+- **THEN** the second bot's Overview still shows that an update is ready
+
+#### Scenario: AppArmor choice changed
+
+- **WHEN** the server's AppArmor choice for new containers changes while a bot runs on a container made under the old choice
+- **THEN** the bot's container is out of date and is updated as above
+
+#### Scenario: Restart applies an update
+
+- **WHEN** a user restarts a running bot whose container is out of date
+- **THEN** the container is stopped, recreated from the current image, and started, with its home unchanged
+
+#### Scenario: Pending limits applied by an update
+
+- **WHEN** a bot has a pending limits change and its container is recreated by an update
+- **THEN** the new container runs with the new limits and the pending-limits notice disappears
+
+#### Scenario: Recreate while Files is open
+
+- **WHEN** a user recreates a bot while its Files tab is open
+- **THEN** the Files helper is closed, the container is recreated from the current image, and no conflict is reported
 
 ### Requirement: Each bot has its own container, home, and network
 
@@ -178,6 +234,9 @@ A bot's environment SHALL be in one of these states: not created, building, star
 - **Idle stop.** A running bot SHALL be stopped after an idle period with no running or queued session, no open shell, and no viewed desktop. The idle period SHALL be settable per bot, SHALL default to 30 minutes, and SHALL also allow never.
 - **Starting on demand.** A session or trigger that needs a stopped container SHALL start it.
 - **Reconciliation.** The server SHALL reconcile each bot's recorded state with the engine at startup and whenever the engine reports a container event. Startup reconciliation SHALL NOT delay the server becoming ready. Bot triggers SHALL start only after it finishes, and a session requested before it finishes SHALL wait for it.
+- **Naming the start action.** While the environment is not created, Overview SHALL name its start action **Create environment** and SHALL also offer it in the Actions menu. After a failure it SHALL name the action **Try again**.
+- **Unavailable actions.** An Overview action that cannot run in the current state SHALL say why beside its name.
+- **Leftover name.** When the engine refuses the bot's container name, lists no container with it, and identifies storage that a removed container left behind under exactly that name, creation SHALL remove that storage by its own identifier and create the container once more. Nothing SHALL be removed by name, a name held by a listed container SHALL NOT be cleared, and a second refusal SHALL fail the start.
 
 #### Scenario: Idle stop
 
@@ -193,6 +252,21 @@ A bot's environment SHALL be in one of these states: not created, building, star
 
 - **WHEN** the container engine takes a minute to answer while Terminay Server starts
 - **THEN** the server becomes ready and opens projects and terminals without waiting for it, and the bots reconcile once the engine answers
+
+#### Scenario: Name held by leftover storage
+
+- **WHEN** a bot is not created and the engine refuses its container name without listing a container that has it, while holding leftover storage under that name
+- **THEN** that storage is removed by its identifier, the container is created, and the bot reaches running
+
+#### Scenario: Name refused with no leftover storage
+
+- **WHEN** the engine refuses the bot's container name and identifies no leftover storage under it
+- **THEN** nothing is removed, the start fails, and the bot reports a conflict with an existing container
+
+#### Scenario: Overview for a bot with no container
+
+- **WHEN** a user opens Environment › Overview for a bot that is not created
+- **THEN** the primary action reads Create environment, the Actions menu offers Create environment, and Restart and Recreate each say why they cannot run
 
 ### Requirement: Environment overview
 
@@ -253,6 +327,8 @@ Files SHALL never follow a symbolic link. It SHALL refuse any operation that wou
 
 A folder's contents SHALL update when they change, without the user reloading.
 
+Each entry's actions SHALL be offered in the app's context menu, with the same look as Terminay's other context menus. The menu SHALL open from a "More actions" button at the end of the entry's row, from right-clicking the row, and from the keyboard's context-menu key or Shift+F10 on the row. It SHALL list, as they apply to the entry: Open for a folder, Preview for a file, Download for a file or folder, Rename, and Delete in the danger style. A link or other special entry SHALL offer only Rename and Delete, and the parent-folder row SHALL offer no menu. Delete SHALL ask for confirmation before deleting. A credential link SHALL show as locked and offer no actions by any of these means. The menu SHALL be usable from the keyboard: opening it from the keyboard focuses its first item, the arrow keys move between enabled items, the focused item is visibly marked, and Escape closes it and returns focus to the row's button. An open menu or delete confirmation SHALL close when its entry leaves the listing or the user changes folder.
+
 #### Scenario: Upload while stopped
 
 - **WHEN** a user uploads a file to a stopped bot's home
@@ -267,6 +343,41 @@ A folder's contents SHALL update when they change, without the user reloading.
 
 - **WHEN** a user tries to delete `.codex` in a Codex bot's home
 - **THEN** the request is refused and `.codex` is unchanged
+
+#### Scenario: Row actions in a context menu
+
+- **WHEN** a user chooses the "More actions" button on a file's row
+- **THEN** the app's context menu opens with Preview, Download, Rename, and Delete, and the row shows no other action buttons
+
+#### Scenario: Right-click a row
+
+- **WHEN** a user right-clicks a folder's row
+- **THEN** the same context menu opens at the pointer with Open, Download, Rename, and Delete
+
+#### Scenario: Delete asks first
+
+- **WHEN** a user chooses Delete from a file's menu and then Cancel
+- **THEN** the file is still in the bot's home
+
+#### Scenario: Keyboard
+
+- **WHEN** a user focuses a row's "More actions" button, presses Enter, presses Down, and then Escape
+- **THEN** the menu opens with its first item focused, focus moves to the second item, and the menu closes with focus back on the button
+
+#### Scenario: Context-menu key
+
+- **WHEN** a user focuses a file's row and presses Shift+F10
+- **THEN** the context menu opens at the row with Preview focused
+
+#### Scenario: Credential link
+
+- **WHEN** a user right-clicks, or presses Shift+F10 on, a credential link's row
+- **THEN** no menu opens, and the row shows it as locked with no "More actions" button
+
+#### Scenario: Entry removed while its menu is open
+
+- **WHEN** a file is deleted from the bot's home while its row's menu is open
+- **THEN** the menu closes and the file's row is gone
 
 ### Requirement: Shell
 
