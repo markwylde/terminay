@@ -283,6 +283,23 @@ test('4.8 idle deadlines arm once, cancel on each activity, honour never and nev
 	assert.equal(clock.timers.size, 0);
 });
 
+test('Overview without usage reads state only, with no helper, stats, or log', async (t) => {
+	const { service, driver } = setup(t);
+	await service.start(botId);
+	const before = driver.calls.length;
+	const overview = await service.overview(botId, { usage: false });
+	const calls = driver.calls.slice(before);
+	assert.equal(calls.filter((args) => args[0] === 'stats').length, 0);
+	assert.equal(calls.filter((args) => args[0] === 'run').length, 0);
+	assert.equal(calls.filter((args) => args[0] === 'logs').length, 0);
+	assert.equal(overview.state, 'running');
+	assert.equal(overview.usageRead, false);
+	assert.equal(overview.cpuPercent, null);
+	assert.equal(overview.memoryBytes, null);
+	assert.equal(overview.homeBytes, null);
+	assert.equal(overview.log, '');
+});
+
 test('4.12 Overview reads figures on demand and Refresh rereads without creating timers, logs are bounded and redacted across chunks', async (t) => {
 	const { service, driver, clock } = setup(t);
 	await service.start(botId);
@@ -302,6 +319,7 @@ test('4.12 Overview reads figures on demand and Refresh rereads without creating
 	assert.equal(Buffer.byteLength(second.log), 256 * 1024);
 	assert.equal(second.log.includes('secret'), false);
 	assert.ok(second.log.endsWith('key=[redacted]\n'));
+	assert.equal(first.usageRead, true);
 	const log = new BotLogTail(['secret', 'secret-long'], 32);
 	log.push('secret-long');
 	log.push('secret');
@@ -999,4 +1017,34 @@ test('the removal deadline also bounds a stalled inspection', async () => {
 	assert.equal(calls, 2);
 	assert.equal(closed, true);
 	assert.equal(timers.timers.size, 0);
+});
+
+test('a slow home measurement does not delay stats or log reads', async (t) => {
+	const { service, driver } = setup(t);
+	await service.start(botId);
+	const run = driver.run;
+	let release;
+	const blockedHome = new Promise((resolve) => {
+		release = resolve;
+	});
+	let statsRead = false,
+		logRead = false,
+		homeRead = false;
+	driver.run = async (args, options) => {
+		if (args[0] === 'stats') statsRead = true;
+		if (args[0] === 'logs') logRead = true;
+		if (args[0] === 'run' && args.includes('du')) {
+			homeRead = true;
+			await blockedHome;
+		}
+		return run(args, options);
+	};
+	const pending = service.overview(botId);
+	try {
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.ok(homeRead && statsRead && logRead);
+	} finally {
+		release();
+		await pending;
+	}
 });

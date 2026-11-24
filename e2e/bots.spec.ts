@@ -1432,6 +1432,59 @@ test.describe('Home: Bots', () => {
 		await expect(outdated).toHaveCount(0);
 	});
 
+	test('Shell and Desktop keep an unstarted machine idle and Start machine is explicit', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(60_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Quiet machine');
+		await tab.locator('[data-terminay-bot-config-tab="environment"]').click();
+		for (const view of ['shell', 'desktop']) {
+			await tab.locator(`[data-terminay-bot-env-tab="${view}"]`).click();
+			await expect(
+				tab.locator('[data-terminay-bot-machine="not-created"]'),
+			).toContainText('Machine not created yet.');
+			await expect(
+				tab.getByRole('button', { name: 'Create machine', exact: true }),
+			).toBeVisible();
+		}
+		await tab
+			.getByRole('button', { name: 'Create machine', exact: true })
+			.click();
+		await tab.locator('[data-terminay-bot-env-tab="overview"]').click();
+		await expect(
+			tab.locator('[data-terminay-bot-env-state="running"]'),
+		).toBeVisible();
+		await tab.locator('[data-terminay-bot-env-action="stop"]').click();
+		await expect(
+			tab.locator('[data-terminay-bot-env-state="stopped"]'),
+		).toBeVisible();
+		for (const view of ['shell', 'desktop']) {
+			await tab.locator(`[data-terminay-bot-env-tab="${view}"]`).click();
+			const panel = tab.locator(
+				`[data-terminay-bot-machine="stopped"][data-terminay-bot-machine-view="${view}"]`,
+			);
+			await expect(panel).toContainText('Machine not started.');
+			await expect(
+				panel.getByRole('button', { name: 'Start machine', exact: true }),
+			).toBeVisible();
+			await expect(tab.locator('.bots-note--error')).toHaveCount(0);
+			await mainWindow.screenshot({
+				path: testInfo.outputPath(`environment-${view}-stopped.png`),
+			});
+		}
+		await tab
+			.getByRole('button', { name: 'Start machine', exact: true })
+			.click();
+		await expect(tab.locator('[data-terminay-bot-machine]')).toHaveCount(0);
+		await tab.locator('[data-terminay-bot-env-tab="overview"]').click();
+		await expect(
+			tab.locator('[data-terminay-bot-env-state="running"]'),
+		).toBeVisible();
+	});
+
 	test('deleting a bot can keep its home', async ({ mainWindow, tempDir }) => {
 		await setEngineDown(tempDir, false);
 		await engineReady(mainWindow);

@@ -10,6 +10,7 @@ import {
 	botStreamGeneration,
 } from '@terminay/protocol';
 import type { EngineDriver } from './engine.js';
+import { BotError } from './store.js';
 import {
 	assertBotStreamAuthority,
 	type BotStreamAuthority,
@@ -351,7 +352,7 @@ export class BotDesktopService {
 		)
 			throw new Error('invalid desktop mode');
 		if (!this.hooks.running(botId))
-			throw new Error('bot must be running to view desktop');
+			throw new BotError('conflict', 'The machine is not started.');
 		const key = JSON.stringify([
 			authority.connectionId,
 			botId,
@@ -366,10 +367,14 @@ export class BotDesktopService {
 		try {
 			const driver = await this.hooks.engine();
 			assertBotStreamAuthority(authority);
+			if (!this.hooks.running(botId))
+				throw new BotError('conflict', 'The machine is not started.');
 			if (mode === 'control') {
 				await ensureSelectionIsolated(driver, `terminay-bot-${botId}`);
 				assertBotStreamAuthority(authority);
 			}
+			if (!this.hooks.running(botId))
+				throw new BotError('conflict', 'The machine is not started.');
 			const child = driver.execStream(
 				`terminay-bot-${botId}`,
 				['terminay-init', '--tunnel', '5901'],

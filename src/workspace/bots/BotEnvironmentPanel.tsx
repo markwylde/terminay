@@ -23,12 +23,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BotDesktopView } from './BotDesktopView';
 import { EnvironmentSettingsCard } from './BotEnvironmentSettings';
 import { BotFilesView } from './BotFilesView';
+import { BotMachineGate } from './BotMachineGate';
 import { BotShellView } from './BotShellView';
 import {
 	ENVIRONMENT_LABELS,
 	SESSION_STATE_LABELS,
 	sessionTitle,
 	shortAge,
+	withPreviousUsage,
 } from './botsModel';
 import { refusalText, type ServerBots } from './useServerBots';
 
@@ -141,9 +143,13 @@ export function BotEnvironmentPanel({
 				) : tab === 'files' ? (
 					<BotFilesView server={server} bot={bot} />
 				) : tab === 'shell' ? (
-					<BotShellView server={server} bot={bot} visible={visible} />
+					<BotMachineGate server={server} bot={bot} view="shell">
+						<BotShellView server={server} bot={bot} visible={visible} />
+					</BotMachineGate>
 				) : tab === 'desktop' ? (
-					<BotDesktopView server={server} bot={bot} visible={visible} />
+					<BotMachineGate server={server} bot={bot} view="desktop">
+						<BotDesktopView server={server} bot={bot} visible={visible} />
+					</BotMachineGate>
 				) : (
 					<ContainersView
 						server={server}
@@ -176,22 +182,71 @@ function OverviewView({
 		(s) => s.state === 'running' || s.state === 'needs-you',
 	);
 
-	// Usage is read when the Overview opens and on Refresh, never on a timer.
-	const load = useCallback(() => {
-		server.environment
-			.overview(bot.id)
-			.then((next) => {
-				setOverview(next);
-				setError(undefined);
-			})
-			.catch((cause: unknown) => setError(refusalText(cause)));
-	}, [server.environment, bot.id]);
-	useEffect(load, [load]);
+	const [usageLoading, setUsageLoading] = useState(false);
+	const generation = useRef(0);
 
-	// Lifecycle changes move the projection's environment state.
+	// The Overview first reads state only, which is quick, and renders. CPU,
+	// memory, home size, and the log follow in a full read, which happens only
+	// when the Overview opens and on Refresh, never on a timer or a lifecycle
+	// change (bot-engine-recovery). Each load supersedes the ones before it,
+	// and within a load the full read wins over a slower state read.
+	const load = useCallback(
+		(full: boolean) => {
+			const current = ++generation.current;
+			const stale = () => current !== generation.current;
+			let fullLanded = false;
+			let fullFailed = false;
+			setUsageLoading(full);
+			server.environment
+				.overview(bot.id, {}, { usage: false })
+				.then((next) => {
+					if (stale() || fullLanded) return;
+					setOverview((previous) => withPreviousUsage(previous, next));
+					if (!fullFailed) setError(undefined);
+				})
+				.catch((cause: unknown) => {
+					if (!stale() && !fullLanded) setError(refusalText(cause));
+				});
+			if (!full) return;
+			server.environment
+				.overview(bot.id)
+				.then((next) => {
+					if (stale()) return;
+					fullLanded = true;
+					setOverview(next);
+					setError(undefined);
+				})
+				.catch((cause: unknown) => {
+					if (stale()) return;
+					fullFailed = true;
+					setOverview((previous) =>
+						previous === undefined
+							? previous
+							: {
+									...previous,
+									cpuPercent: null,
+									memoryBytes: null,
+									homeBytes: null,
+									log: '',
+									usageRead: false,
+								},
+					);
+					setError(refusalText(cause));
+				})
+				.finally(() => {
+					if (!stale()) setUsageLoading(false);
+				});
+		},
+		[server.environment, bot.id],
+	);
+	const measure = useCallback(() => load(true), [load]);
+	useEffect(measure, [measure]);
+
+	// Lifecycle changes move the projection's environment state: re-read
+	// state only.
 	const projected = server.environments.get(bot.id);
 	useEffect(() => {
-		if (overview !== undefined && projected !== overview.state) load();
+		if (overview !== undefined && projected !== overview.state) load(false);
 	}, [projected]);
 
 	const lifecycle = (
@@ -204,7 +259,7 @@ function OverviewView({
 			.lifecycle(bot.id, action, { confirmed })
 			.then(() => {
 				server.refreshBot(bot.id);
-				load();
+				load(false);
 			})
 			.catch((cause: unknown) => setError(refusalText(cause)))
 			.finally(() => setBusy(undefined));
@@ -223,6 +278,9 @@ function OverviewView({
 			</div>
 		);
 
+	// Figures not yet read show as being read, not as blank.
+	const reading = usageLoading && overview.usageRead === false;
+	const figure = (value: string) => (reading ? 'Reading…' : value);
 	const state = overview.state;
 	const up = state === 'running';
 	const missing = state === 'not-created';
@@ -256,11 +314,13 @@ function OverviewView({
 					</h3>
 					<p className="bots-faint">
 						{up
-							? `Up ${formatUptime(overview.uptimeMs)} · ${
-									overview.cpuPercent === null
-										? '—'
-										: `${overview.cpuPercent.toFixed(0)}%`
-								} CPU · ${formatBytes(overview.memoryBytes)} memory`
+							? reading
+								? `Up ${formatUptime(overview.uptimeMs)} · reading usage…`
+								: `Up ${formatUptime(overview.uptimeMs)} · ${
+										overview.cpuPercent === null
+											? '—'
+											: `${overview.cpuPercent.toFixed(0)}%`
+									} CPU · ${formatBytes(overview.memoryBytes)} memory`
 							: settling
 								? 'Getting ready…'
 								: missing
@@ -414,13 +474,16 @@ function OverviewView({
 						<button
 							type="button"
 							className="bots-usecard"
+							disabled={!up}
 							onClick={() => onTabChange('shell')}
 							data-terminay-bot-env-use="shell"
 						>
 							<SquareTerminal size={18} aria-hidden="true" />
 							<strong>Open a shell</strong>
 							<span className="bots-faint">
-								{up ? 'A terminal inside the machine.' : 'Starts the machine.'}
+								{up
+									? 'A terminal inside the machine.'
+									: 'Runs while the machine runs.'}
 							</span>
 						</button>
 						<button
@@ -464,7 +527,7 @@ function OverviewView({
 					{overview.limits.cpus} CPU ·{' '}
 					{formatBytes(overview.limits.memoryBytes)} ·{' '}
 					{overview.image || 'terminay-bot:local'} ·{' '}
-					{formatBytes(overview.homeBytes)} home
+					{figure(formatBytes(overview.homeBytes))} home
 				</span>
 				<button
 					type="button"
@@ -520,7 +583,13 @@ function OverviewView({
 						</section>
 						<h3 className="bots-lab bots-mt">Recent log</h3>
 						<pre className="bots-term" data-terminay-bot-env-log="true">
-							{overview.log.length === 0 ? 'No output yet.' : overview.log}
+							{reading
+								? 'Reading the log…'
+								: overview.usageRead === false
+									? 'The log could not be read.'
+									: overview.log.length === 0
+										? 'No output yet.'
+										: overview.log}
 						</pre>
 					</div>
 					<aside>
@@ -528,18 +597,20 @@ function OverviewView({
 							<div className="bots-kv">
 								<span>CPU</span>
 								<span>
-									{overview.cpuPercent === null
-										? '—'
-										: `${overview.cpuPercent.toFixed(1)}%`}
+									{figure(
+										overview.cpuPercent === null
+											? '—'
+											: `${overview.cpuPercent.toFixed(1)}%`,
+									)}
 								</span>
 							</div>
 							<div className="bots-kv">
 								<span>Memory</span>
-								<span>{formatBytes(overview.memoryBytes)}</span>
+								<span>{figure(formatBytes(overview.memoryBytes))}</span>
 							</div>
 							<div className="bots-kv">
 								<span>Home size</span>
-								<span>{formatBytes(overview.homeBytes)}</span>
+								<span>{figure(formatBytes(overview.homeBytes))}</span>
 							</div>
 							<div className="bots-kv">
 								<span className="bots-faint">
@@ -553,7 +624,8 @@ function OverviewView({
 								<button
 									type="button"
 									className="bots-btn bots-btn--sm"
-									onClick={load}
+									onClick={measure}
+									disabled={usageLoading}
 									data-terminay-bot-env-refresh="true"
 								>
 									<RefreshCw size={12} aria-hidden="true" /> Refresh
@@ -564,7 +636,7 @@ function OverviewView({
 							server={server}
 							bot={bot}
 							reloadKey={overview.sampledAt}
-							onSaved={load}
+							onSaved={() => load(false)}
 						/>
 					</aside>
 				</div>
@@ -634,7 +706,7 @@ function ContainersView({
 	const load = useCallback(() => {
 		Promise.all([
 			server.environment.containers(bot.id),
-			server.environment.overview(bot.id),
+			server.environment.overview(bot.id, {}, { usage: false }),
 		])
 			.then(([containers, overview]) => {
 				setList(containers);

@@ -9,6 +9,7 @@ import type {
 	TerminalDimensions,
 } from '../terminalService/types.js';
 import { type EngineDriver } from './engine.js';
+import { BotError } from './store.js';
 import {
 	assertBotStreamAuthority,
 	type BotStreamAuthority,
@@ -16,7 +17,9 @@ import {
 
 export interface BotShellHooks {
 	readonly engine: () => Promise<EngineDriver>;
+	/** Starts the container. Only sign-in starts it: a shell never does. */
 	readonly start: (id: string) => Promise<void>;
+	readonly running: (id: string) => boolean;
 	readonly activity: (id: string, delta: 1 | -1) => void;
 	/** The agent's declared device sign-in, run as the bot user in /home/bot. */
 	readonly signIn?: {
@@ -58,6 +61,9 @@ export class BotShellService {
 			purpose === 'sign-in' ? this.hooks.signIn?.command(botId) : undefined;
 		if (purpose === 'sign-in' && !signInCommand?.length)
 			throw new Error('this agent has no device sign-in');
+		// Opening a shell never starts the machine; the user starts it.
+		if (purpose === 'shell' && !this.hooks.running(botId))
+			throw new BotError('conflict', 'The machine is not started.');
 		const key = JSON.stringify([authority.connectionId, botId, purpose]);
 		const previous = this.streams.get(key);
 		if (generation <= (this.generations.get(key) ?? 0))
@@ -67,12 +73,19 @@ export class BotShellService {
 		this.hooks.activity(botId, 1);
 		try {
 			await previous?.close();
-			await this.hooks.start(botId);
-			if (purpose === 'sign-in') await this.hooks.signIn?.prepare?.(botId);
+			if (purpose === 'sign-in') {
+				await this.hooks.start(botId);
+				await this.hooks.signIn?.prepare?.(botId);
+			}
 			assertBotStreamAuthority(authority);
 			if (this.generations.get(key) !== generation)
 				throw new Error('stale shell generation');
 			const driver = await this.hooks.engine();
+			assertBotStreamAuthority(authority);
+			if (this.generations.get(key) !== generation)
+				throw new Error('stale shell generation');
+			if (purpose === 'shell' && !this.hooks.running(botId))
+				throw new BotError('conflict', 'The machine is not started.');
 			const sid = `${purpose === 'sign-in' ? 'signin' : 'shell'}-${randomUUID()}`;
 			let currentDimensions = dimensions;
 			const child = driver.execStream(

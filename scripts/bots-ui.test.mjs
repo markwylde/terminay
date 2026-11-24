@@ -909,7 +909,13 @@ test('Environment › Overview shows state, image, limits and usage, with Update
 			.innerText();
 		assert.match(text, /terminay-bot-birdbot00001-home/);
 		assert.match(text, /2 CPU/);
-		assert.match(text, /12\.5%/);
+		await page
+			.locator('[data-terminay-bot-env-state]')
+			.getByText('12.5%')
+			.waitFor();
+		const reads = (await calls(page, 'overview')).map((c) => c.args[2]);
+		// State first, then usage: the Overview never waits on usage to render.
+		assert.deepEqual(reads.slice(0, 2), [{ usage: false }, undefined]);
 		const outdated = page.locator('[data-terminay-bot-env-outdated]');
 		await outdated.waitFor();
 		assert.match(
@@ -930,6 +936,105 @@ test('Environment › Overview shows state, image, limits and usage, with Update
 			before,
 		);
 		await shot(page, 'environment-overview');
+	} finally {
+		await page.close();
+	}
+});
+
+test('Start from the Overview re-reads state only, never usage', async () => {
+	const page = await environment('overview', {
+		environments: { [BIRD]: 'stopped' },
+	});
+	try {
+		await page.locator('[data-terminay-bot-env-state="stopped"]').waitFor();
+		await page.waitForFunction(
+			() => window.__calls.filter((c) => c.op === 'overview').length >= 2,
+		);
+		const before = (await calls(page, 'overview')).length;
+		await page.locator('[data-terminay-bot-env-action="start"]').click();
+		await page.waitForFunction(() =>
+			window.__calls.some((c) => c.op === 'refreshBot'),
+		);
+		await page.waitForFunction(
+			(n) => window.__calls.filter((c) => c.op === 'overview').length > n,
+			before,
+		);
+		await page.waitForTimeout(200);
+		const after = (await calls(page, 'overview')).slice(before);
+		assert.ok(after.length > 0);
+		for (const call of after) assert.deepEqual(call.args[2], { usage: false });
+	} finally {
+		await page.close();
+	}
+});
+
+test('a state read that lands after the full read does not replace it', async () => {
+	const page = await environment('overview', {
+		overviewDelayMs: { state: 500 },
+	});
+	try {
+		const panel = page.locator('[data-terminay-bot-env-state]');
+		await panel.getByText('12.5%').waitFor();
+		await page.waitForTimeout(700);
+		assert.match(await panel.innerText(), /12\.5%/);
+		assert.match(await panel.innerText(), /container started/);
+	} finally {
+		await page.close();
+	}
+});
+
+test('when usage cannot be read, the Overview keeps its state and shows the figures as unavailable', async () => {
+	const page = await environment('overview', {
+		overviewFullRefusal: 'The container engine is not answering.',
+	});
+	try {
+		const panel = page.locator('[data-terminay-bot-env-state="running"]');
+		await panel.waitFor();
+		await panel.getByText('The container engine is not answering.').waitFor();
+		const text = await panel.innerText();
+		assert.doesNotMatch(text, /Reading…/);
+		assert.match(text, /Home size\s+—/);
+		assert.match(text, /The log could not be read\./);
+		assert.equal(
+			await page.locator('[data-terminay-bot-env-refresh]').isDisabled(),
+			false,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('a usage failure before the state response still renders state and its error', async () => {
+	const page = await environment('overview', {
+		overviewDelayMs: { state: 200 },
+		overviewFullRefusal: 'Usage failed before state arrived.',
+	});
+	try {
+		const panel = page.locator('[data-terminay-bot-env-state="running"]');
+		await panel.waitFor();
+		await panel.getByText('Usage failed before state arrived.').waitFor();
+		assert.match(await panel.innerText(), /Home size\s+—/);
+		assert.doesNotMatch(await panel.innerText(), /Reading…/);
+	} finally {
+		await page.close();
+	}
+});
+
+test('a failed Refresh clears old figures and keeps the state visible', async () => {
+	const page = await environment('overview');
+	try {
+		const panel = page.locator('[data-terminay-bot-env-state="running"]');
+		await panel.getByText('12.5%').waitFor();
+		await page.evaluate(() => {
+			window.__scenario.overviewFullRefusal = 'Refresh failed.';
+		});
+		await page.locator('[data-terminay-bot-env-refresh]').click();
+		await panel.getByText('Refresh failed.').waitFor();
+		assert.match(await panel.innerText(), /Home size\s+—/);
+		assert.doesNotMatch(
+			await panel.innerText(),
+			/12\.5%|Reading…|container started/,
+		);
 	} finally {
 		await page.close();
 	}
@@ -1127,6 +1232,103 @@ test('Environment › Shell opens a shell stream sized to the terminal', async (
 	}
 });
 
+for (const sub of ['shell', 'desktop'])
+	test(`Environment › ${sub} on a stopped machine offers Start and never starts it by itself`, async () => {
+		const page = await environment(sub, {
+			environments: { [BIRD]: 'stopped' },
+		});
+		try {
+			const panel = page.locator(
+				`[data-terminay-bot-machine="stopped"][data-terminay-bot-machine-view="${sub}"]`,
+			);
+			await panel.waitFor();
+			assert.match(await panel.innerText(), /Machine not started\./);
+			assert.equal(await page.locator('.bots-note--error').count(), 0);
+			assert.equal(
+				(await calls(page, 'transport.command')).filter((c) =>
+					/^bots\.(shell|desktop)\.open$/.test(c.args[0]),
+				).length,
+				0,
+			);
+			assert.equal((await calls(page, 'lifecycle')).length, 0);
+			await shot(page, `environment-${sub}-stopped`);
+			await panel.locator('[data-terminay-bot-machine-start]').click();
+			await page.waitForFunction(() =>
+				window.__calls.some((c) => c.op === 'refreshBot'),
+			);
+			const [start] = await calls(page, 'lifecycle');
+			assert.deepEqual(start.args.slice(0, 2), [BIRD, 'start']);
+		} finally {
+			await page.close();
+		}
+	});
+
+for (const [state, title, action, disabled] of [
+	['not-created', /Machine not created yet\./, 'Create machine', false],
+	['failed', /The machine failed to start\./, 'Try again', false],
+	['starting', /Starting the machine…/, 'Starting…', true],
+	['stopping', /The machine is stopping\./, 'Start machine', true],
+])
+	test(`Environment › Shell on a ${state} machine says so and offers ${action}`, async () => {
+		const page = await environment('shell', {
+			environments: { [BIRD]: state },
+		});
+		try {
+			const panel = page.locator(`[data-terminay-bot-machine="${state}"]`);
+			await panel.waitFor();
+			assert.match(await panel.innerText(), title);
+			const button = panel.locator('[data-terminay-bot-machine-start]');
+			assert.equal(await button.innerText(), action);
+			assert.equal(await button.isDisabled(), disabled);
+			assert.equal(await page.locator('.bots-note--error').count(), 0);
+		} finally {
+			await page.close();
+		}
+	});
+
+test('a refused start shows its cause in the panel', async () => {
+	const page = await environment('desktop', {
+		environments: { [BIRD]: 'stopped' },
+		startRefusal: 'The bot image could not be built.',
+	});
+	try {
+		const panel = page.locator('[data-terminay-bot-machine="stopped"]');
+		await panel.locator('[data-terminay-bot-machine-start]').click();
+		await panel
+			.locator('.bots-note--error')
+			.getByText('The bot image could not be built.')
+			.waitFor();
+	} finally {
+		await page.close();
+	}
+});
+
+test('Desktop opens when the machine runs, whatever started it, and gives way when it stops', async () => {
+	const page = await environment('desktop', {
+		environments: { [BIRD]: 'stopped' },
+	});
+	try {
+		await page.locator('[data-terminay-bot-machine="stopped"]').waitFor();
+		await page.evaluate(
+			(bot) => window.__harness.setEnvironment(bot, 'running'),
+			BIRD,
+		);
+		await page.waitForFunction(() =>
+			window.__calls.some((c) => c.args[0] === 'bots.desktop.open'),
+		);
+		assert.equal(await page.locator('[data-terminay-bot-machine]').count(), 0);
+		await page.evaluate(
+			(bot) => window.__harness.setEnvironment(bot, 'stopped'),
+			BIRD,
+		);
+		const panel = page.locator('[data-terminay-bot-machine="stopped"]');
+		await panel.waitFor();
+		assert.match(await panel.innerText(), /Machine not started\./);
+	} finally {
+		await page.close();
+	}
+});
+
 test('Environment › Desktop opens view-only, and Control opens a new stream', async () => {
 	const page = await environment('desktop');
 	try {
@@ -1168,6 +1370,20 @@ test('Environment › Containers explains proxy attribution without an opt-in se
 			/created through this bot’s engine proxy/,
 		);
 		assert.match(await panel.innerText(), /control other containers/);
+		await page.waitForFunction(() =>
+			window.__calls.some((c) => c.op === 'overview'),
+		);
+		const overviewReads = await calls(page, 'overview');
+		// Entering Configure initially opens Overview, which is allowed to measure.
+		assert.deepEqual(overviewReads.at(-1).args[2], { usage: false });
+		const before = overviewReads.length;
+		await panel.getByRole('button', { name: 'Refresh', exact: true }).click();
+		await page.waitForFunction(
+			(n) => window.__calls.filter((c) => c.op === 'overview').length > n,
+			before,
+		);
+		for (const call of (await calls(page, 'overview')).slice(before))
+			assert.deepEqual(call.args[2], { usage: false });
 		assert.equal(
 			await page.locator('[data-terminay-bot-socket-off]').count(),
 			0,

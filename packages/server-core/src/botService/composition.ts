@@ -250,6 +250,7 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	const shells = new BotShellService({
 		engine: () => images.driver(),
 		start: (id) => environment.start(id),
+		running: (id) => environment.state(id) === 'running',
 		activity: (id, delta) => streamActivity(id, 'shells', delta),
 		signIn: {
 			command: (id) => {

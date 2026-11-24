@@ -53,7 +53,11 @@ export function createBotEnvironmentOperations(
 			},
 			[op.overview]: async (request) => {
 				const p = payload(request);
-				const value = json(await service.overview(botEnvironmentId(p.botId)));
+				const value = json(
+					await service.overview(botEnvironmentId(p.botId), {
+						usage: p.usage !== false,
+					}),
+				);
 				assertBotAuthority(request.context);
 				if (p.encoding !== 'json') return value;
 				const body = Buffer.from(JSON.stringify(value));

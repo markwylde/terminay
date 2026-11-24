@@ -1,7 +1,8 @@
 /**
  * Environment › Shell: an interactive terminal in the bot's container, as
- * `bot` in /home/bot. Opening it starts the container when it is stopped;
- * closing the view ends the shell process.
+ * `bot` in /home/bot. It opens only while the container runs (the Shell tab
+ * shows a start panel otherwise); sign-in starts the container itself.
+ * Closing the view ends the shell process.
  */
 
 import { type BotByteStreamClient, BotIoClient } from '@terminay/client-core';
@@ -139,7 +140,7 @@ export function BotShellView({
 					{state === 'connecting'
 						? purpose === 'sign-in'
 							? 'Starting sign-in in the bot’s container…'
-							: 'Opening a shell (the container starts if it is stopped)…'
+							: 'Opening a shell…'
 						: state === 'open'
 							? purpose === 'sign-in'
 								? 'Follow the steps below.'

@@ -31,6 +31,7 @@ function setup(t, host, options = {}) {
 			driver.calls.push(args);
 			const named = args.includes('apparmor=terminay-bot');
 			probes.push({ args, callOptions, named });
+			if (host.hang) return new Promise(() => {});
 			if (host.engineDown)
 				throw new EngineCommandError('not-running', 'engine unavailable');
 			if (!named) {
@@ -47,7 +48,7 @@ function setup(t, host, options = {}) {
 		return run(args, callOptions);
 	};
 	const fingerprint = 'fingerprint-1';
-	const service = new BotEnvironmentService('server', {
+	const hooks = {
 		engine: async () => driver,
 		ensureImage: async () => fingerprint,
 		currentFingerprint: () => fingerprint,
@@ -58,13 +59,19 @@ function setup(t, host, options = {}) {
 		secrets: async () => [],
 		now: () => Date.parse('2026-11-01T00:01:00Z'),
 		timers: fakeClock(),
-	});
-	service.register({ id: botId });
-	t.after(() => service.close());
+	};
+	/** A service with a cold AppArmor decision, as after a server restart. */
+	const fresh = () => {
+		const next = new BotEnvironmentService('server', hooks);
+		next.register({ id: botId });
+		t.after(() => next.close());
+		return next;
+	};
+	const service = fresh();
 	const creates = () =>
 		driver.calls.filter((a) => a[0] === 'container' && a[1] === 'create');
 	const container = () => driver.resources.get(`container:${name}`);
-	return { service, driver, probes, creates, container };
+	return { service, driver, probes, creates, container, fresh };
 }
 
 const appArmorOpts = (create) =>
@@ -269,4 +276,25 @@ test('a --rm container the engine created but could not start is removed', async
 		/terminay-bot profile could not be loaded/u,
 	);
 	assert.ok(calls.includes('DELETE /containers/probe-id'), calls.join('\n'));
+});
+
+test('the Overview state read never waits on a cold AppArmor probe; the full read does', async (t) => {
+	const host = { defaultAllows: true, profileLoaded: true };
+	const { service, probes, fresh } = setup(t, host);
+	await service.start(botId);
+	host.hang = true;
+	const cold = fresh();
+	const before = probes.length;
+	const state = await cold.overview(botId, { usage: false });
+	assert.equal(state.state, 'running');
+	assert.equal(state.usageRead, false);
+	// Judged by fingerprint alone until the decision settles.
+	assert.equal(state.current, true);
+	let settled = false;
+	void cold.overview(botId).then(() => {
+		settled = true;
+	});
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.ok(probes.length > before, 'the full read probes AppArmor');
+	assert.equal(settled, false, 'the full read waits for the decision');
 });

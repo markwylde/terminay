@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { BotProfile, BotSessionRecord } from '@terminay/protocol';
+import type {
+	BotEnvironmentOverview,
+	BotProfile,
+	BotSessionRecord,
+} from '@terminay/protocol';
 import {
 	acceptChatFiles,
 	attachmentView,
@@ -25,6 +29,7 @@ import {
 	shortAge,
 	startupSummary,
 	visibleBots,
+	withPreviousUsage,
 } from './botsModel.ts';
 
 const bot = (id: string, name: string): BotProfile => ({
@@ -492,4 +497,75 @@ test('retained sessions keep the newest plus older active ones, newest first', (
 		'needs',
 		'the rail pins it first',
 	);
+});
+
+const overviewAt = (
+	state: BotEnvironmentOverview['state'],
+	sampledAt: number,
+	usageRead: boolean,
+	figures: Partial<BotEnvironmentOverview> = {},
+): BotEnvironmentOverview => ({
+	botId: 'birdbot00001',
+	state,
+	uptimeMs: 0,
+	image: 'terminay-bot:local',
+	fingerprint: 'f',
+	current: true,
+	homeVolume: 'terminay-bot-birdbot00001-home',
+	limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3, pids: 512 },
+	limitsEnforced: true,
+	engineSocket: 'proxy',
+	limitsChangePending: false,
+	cpuPercent: null,
+	memoryBytes: null,
+	homeBytes: null,
+	sampledAt,
+	log: '',
+	usageRead,
+	...figures,
+});
+
+test('a state read keeps the figures on screen with the time they were read', () => {
+	const shown = overviewAt('running', 100, true, {
+		cpuPercent: 12,
+		memoryBytes: 64,
+		homeBytes: 2048,
+		log: 'up\n',
+	});
+	const merged = withPreviousUsage(shown, overviewAt('running', 900, false));
+	assert.equal(merged.cpuPercent, 12);
+	assert.equal(merged.homeBytes, 2048);
+	assert.equal(merged.log, 'up\n');
+	assert.equal(merged.sampledAt, 100);
+	assert.equal(merged.usageRead, true);
+});
+
+test('a state read after the machine stops drops CPU and memory but keeps home and log', () => {
+	const shown = overviewAt('running', 100, true, {
+		cpuPercent: 12,
+		memoryBytes: 64,
+		homeBytes: 2048,
+		log: 'up\n',
+	});
+	const merged = withPreviousUsage(shown, overviewAt('stopped', 900, false));
+	assert.equal(merged.state, 'stopped');
+	assert.equal(merged.cpuPercent, null);
+	assert.equal(merged.memoryBytes, null);
+	assert.equal(merged.homeBytes, 2048);
+	assert.equal(merged.sampledAt, 100);
+});
+
+test('a state read with nothing read yet is shown as it is', () => {
+	const next = overviewAt('running', 900, false);
+	assert.equal(withPreviousUsage(undefined, next), next);
+	assert.equal(withPreviousUsage(overviewAt('running', 1, false), next), next);
+});
+
+test('an older server full response replaces previous measurements even on a state request', () => {
+	const previous = overviewAt('running', 100, true, { cpuPercent: 12 });
+	const next = {
+		...overviewAt('running', 900, true, { cpuPercent: 42 }),
+		usageRead: undefined,
+	};
+	assert.equal(withPreviousUsage(previous, next), next);
 });

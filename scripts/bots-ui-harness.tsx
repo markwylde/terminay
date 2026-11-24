@@ -49,6 +49,12 @@ type Scenario = {
 	imageDelayMs?: number;
 	attachmentMime?: string;
 	imageSize?: { width: number; height: number };
+	/** Delays for the Overview's state-only and full reads. */
+	overviewDelayMs?: { state?: number; full?: number };
+	/** Refuses the Overview's full read with this message. */
+	overviewFullRefusal?: string;
+	/** Refuses the lifecycle start command with this message. */
+	startRefusal?: string;
 };
 
 declare global {
@@ -58,6 +64,8 @@ declare global {
 			setSessions: (botId: string, sessions: BotSessionRecord[]) => void;
 			setTranscript: (sessionId: string, updates: unknown[]) => void;
 			setVisible: (visible: boolean) => void;
+			/** The watched environment state changes, as a projection would. */
+			setEnvironment: (botId: string, state: string) => void;
 		};
 		__scenario: Scenario;
 		/** Another client dismisses a start failure. */
@@ -350,9 +358,10 @@ const transport = {
 				}
 				return {
 					result: {
-						mime: op === 'bots.messages.attachment'
-							? (scenario.attachmentMime ?? 'image/png')
-							: 'image/png',
+						mime:
+							op === 'bots.messages.attachment'
+								? (scenario.attachmentMime ?? 'image/png')
+								: 'image/png',
 					},
 					body: Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
 				};
@@ -507,26 +516,48 @@ let settingsNow = {
 };
 
 const environment = {
-	overview: record('overview', (botId) => ({
-		botId,
-		state: scenario.environments?.[String(botId)] ?? 'running',
-		uptimeMs: 3_600_000,
-		image: 'terminay-bot:abc',
-		fingerprint: 'abc',
-		current: false,
-		homeVolume: `terminay-bot-${botId}-home`,
-		limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3, pids: 512 },
-		limitsEnforced: true,
+	overview: record('overview', async (botId, _options, read) => {
+		const stateOnly =
+			(read as { usage?: boolean } | undefined)?.usage === false;
+		const delay = stateOnly
+			? scenario.overviewDelayMs?.state
+			: scenario.overviewDelayMs?.full;
+		if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+		if (!stateOnly && scenario.overviewFullRefusal)
+			throw new Error(scenario.overviewFullRefusal);
+		return {
+			botId,
+			state: scenario.environments?.[String(botId)] ?? 'running',
+			uptimeMs: 3_600_000,
+			image: 'terminay-bot:abc',
+			fingerprint: 'abc',
+			current: false,
+			homeVolume: `terminay-bot-${botId}-home`,
+			limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3, pids: 512 },
+			limitsEnforced: true,
 
-		engineSocket: 'proxy',
-		limitsChangePending: scenario.limitsChangePending === true,
+			engineSocket: 'proxy',
+			limitsChangePending: scenario.limitsChangePending === true,
 
-		cpuPercent: 12.5,
-		memoryBytes: 512 * 1024 ** 2,
-		homeBytes: 80 * 1024 ** 2,
-		sampledAt: Date.now(),
-		log: 'container started\n',
-	})),
+			sampledAt: Date.now(),
+			// A state-only read carries no usage, as the server returns it.
+			...(stateOnly
+				? {
+						cpuPercent: null,
+						memoryBytes: null,
+						homeBytes: null,
+						log: '',
+						usageRead: false,
+					}
+				: {
+						cpuPercent: 12.5,
+						memoryBytes: 512 * 1024 ** 2,
+						homeBytes: 80 * 1024 ** 2,
+						log: 'container started\n',
+						usageRead: true,
+					}),
+		};
+	}),
 	settings: record('settings', (botId) => ({ ...settingsNow, botId })),
 	setSettings: record('setSettings', (input) => {
 		const request = input as Record<string, unknown>;
@@ -548,7 +579,10 @@ const environment = {
 		return settingsNow;
 	}),
 	containers: record('containers', () => scenario.containers ?? []),
-	lifecycle: record('lifecycle'),
+	lifecycle: record('lifecycle', (_botId, action) => {
+		if (action === 'start' && scenario.startRefusal)
+			throw new Error(scenario.startRefusal);
+	}),
 	remove: record('remove-env'),
 	containerAction: record('containerAction', () => null),
 };
@@ -596,6 +630,10 @@ function Harness() {
 			transcripts.set(id, updates);
 		},
 		setVisible,
+		setEnvironment: (botId, state) => {
+			scenario.environments = { ...scenario.environments, [botId]: state };
+			setRevision((r) => r + 1);
+		},
 	};
 	const server = makeServer(sessions, revision);
 	const host: BotTabHost = {
