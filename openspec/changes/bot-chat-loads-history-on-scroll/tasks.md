@@ -9,7 +9,7 @@
 - [x] 2.2 `BotChat`/`threadModel`: record the oldest sequence of the initial page as a floor, and give `observedThrough` an optional floor below which thread summaries are ignored. Older pages then acknowledge nothing and leave the read position alone — verified by a `threadModel.test.ts` unit case and the older-root case in 3.1
 - [x] 2.3 `BotThreadPanel`: remove "Load older replies" and the unpin-on-load. Render the sentinel, loading row ("Loading earlier replies…") and inline error with Retry under the reply-count divider, using the same hook with a `threadId` list — verified by the thread cases in 3.1
 - [x] 2.4 `botPanels.css`: styles for the loading row (small spinner, muted text, no spin under `prefers-reduced-motion`), the inline error, and the start-of-conversation marker, in the unread divider's quiet style — verified by the screenshots in 3.3
-- [x] 2.5 Update the "Load older replies" wording in `openspec/changes/bot-chat-threads/` (one spec scenario, one design paragraph) to say replies are loaded by scrolling up — verified by `openspec validate bot-chat-threads`
+- [x] 2.5 `bot-chat-threads` is archived, so its "Thread panel" requirement is now in the main `bot-message-log` spec. Modify that requirement in this change's delta so its "Reply deleted elsewhere" scenario says the older replies were loaded by scrolling up, not with "Load older replies", and leave the archive untouched — verified by `openspec validate bot-chat-loads-history-on-scroll`
 
 ## 3. Verification
 

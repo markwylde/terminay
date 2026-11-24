@@ -39,6 +39,7 @@ None.
 
 - `bot-message-log`: adds how Chat and the thread panel load older history on
   scroll, keep the reading position, and mark the start of the conversation.
+  It also modifies "Thread panel" so that scenario no longer names a button.
 
 ## Impact
 
@@ -47,8 +48,9 @@ None.
   `src/workspace/bots/botPanels.css`.
 - Tests: `scripts/bots-ui.test.mjs` (browser components against the fake
   server in `scripts/bots-ui-harness.tsx`) and `e2e/bots.spec.ts`.
-- `openspec/changes/bot-chat-threads/` is complete but not yet archived, and
-  one of its scenarios names the "Load older replies" button. That wording is
-  updated so the two changes archive coherently.
+- The archived `bot-chat-threads` change put a "Thread panel" requirement
+  into `bot-message-log`, and one of its scenarios names the "Load older
+  replies" button. This change modifies that requirement so the scenario
+  describes replies loaded by scrolling up.
 - Renderer only. It reads the existing `bots.messages.list` cursor pages, with
   no protocol, server or privileged-host change.

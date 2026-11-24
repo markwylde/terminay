@@ -131,7 +131,7 @@ Opening a thread SHALL show a thread panel beside the main stream, or over it wh
 - **THEN** the reply appears at the end of the panel without reloading
 
 #### Scenario: Reply deleted elsewhere
-- **WHEN** the panel for M shows older replies loaded by scrolling up and a reply is deleted on another device
+- **WHEN** the panel for M shows older replies loaded with "Load older replies" and a reply is deleted on another device
 - **THEN** only that reply disappears, the older replies stay loaded, and the divider shows the new count
 
 #### Scenario: Root edited elsewhere
