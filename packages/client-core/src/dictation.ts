@@ -23,7 +23,9 @@ export interface DictationTargetIdentity {
 export interface DictationDisclosure {
 	readonly serverLabel: string;
 	readonly provider: string;
-	readonly audioDestination: 'openai' | 'selected-server';
+	readonly audioDestination: 'openai' | 'selected-server' | 'custom-provider';
+	readonly endpointUrl?: string;
+	readonly expectedConfiguration?: string;
 	readonly credentialStatus: DictationCredentialStatus;
 	readonly confirmed: boolean;
 }
@@ -324,14 +326,38 @@ function normalizeDisclosure(value: DictationDisclosure): DictationDisclosure {
 		typeof value.provider !== 'string' ||
 		!PROVIDER_PATTERN.test(value.provider) ||
 		(value.audioDestination !== 'openai' &&
-			value.audioDestination !== 'selected-server') ||
+			value.audioDestination !== 'selected-server' &&
+			value.audioDestination !== 'custom-provider') ||
 		(value.provider === 'parakeet' &&
 			value.audioDestination !== 'selected-server') ||
 		(value.provider === 'openai' && value.audioDestination !== 'openai') ||
-		value.credentialStatus !== 'configured' ||
+		(value.credentialStatus !== 'configured' &&
+			!(
+				value.provider === 'openai-compatible' &&
+				value.credentialStatus === 'not-configured'
+			)) ||
 		value.confirmed !== true
 	)
 		throw new Error('dictation server/provider disclosure must be confirmed');
+	if (value.provider === 'openai-compatible') {
+		let endpoint: URL;
+		try {
+			endpoint = new URL(value.endpointUrl ?? '');
+		} catch {
+			throw new Error('Enter the custom transcription URL in Settings.');
+		}
+		if (
+			value.audioDestination !== 'custom-provider' ||
+			!['http:', 'https:'].includes(endpoint.protocol) ||
+			endpoint.username ||
+			endpoint.password ||
+			endpoint.search ||
+			endpoint.hash ||
+			!value.expectedConfiguration ||
+			value.expectedConfiguration.length > 4096
+		)
+			throw new Error('Custom dictation configuration is invalid.');
+	}
 	for (const key of Object.keys(value)) {
 		const normalizedKey = key.replace(/[-_]/gu, '').toLowerCase();
 		if (
@@ -345,7 +371,13 @@ function normalizeDisclosure(value: DictationDisclosure): DictationDisclosure {
 		serverLabel: value.serverLabel,
 		provider: value.provider,
 		audioDestination: value.audioDestination,
-		credentialStatus: 'configured',
+		credentialStatus: value.credentialStatus,
+		...(value.provider !== 'openai-compatible'
+			? {}
+			: {
+					endpointUrl: value.endpointUrl!,
+					expectedConfiguration: value.expectedConfiguration!,
+				}),
 		confirmed: true,
 	});
 }

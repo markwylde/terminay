@@ -45,11 +45,12 @@ import {
 	AiService,
 	createAiOperationHandlers,
 	createWorkspaceAiTargetAuthority,
-	OpenAiDictationProvider,
+	ServerDictationProvider,
+	serverDictationSettings,
+	createDictationCredentials,
 	ServerParakeetDictationProvider,
 	type ServerParakeetRuntime,
 	TerminalReplayBuffer,
-	VaultProviderCredentialResolver,
 } from '../packages/server-core/src/aiService/index';
 import type { ServerCoreCompositionOptions } from '../packages/server-core/src/composition';
 import {
@@ -931,18 +932,7 @@ export class ServerTerminalAuthority {
 							'temporary',
 						),
 					);
-		const openAiProvider = new OpenAiDictationProvider();
-		const dictationProvider = {
-			transcribe: (request: Parameters<typeof openAiProvider.transcribe>[0]) =>
-				request.model === 'mlx-community/parakeet-tdt-0.6b-v3'
-					? parakeetProvider === undefined
-						? Promise.reject(
-								new Error('Parakeet is unavailable on this server'),
-							)
-						: parakeetProvider.transcribe(request)
-					: openAiProvider.transcribe(request),
-		};
-		const openAiSecretId = 'dictation-openai-api-key';
+		const dictationProvider = new ServerDictationProvider(parakeetProvider);
 		const aiTargetAuthority = createWorkspaceAiTargetAuthority({
 			serverId: options.serverId,
 			state: () => this.workspace.state,
@@ -1042,40 +1032,10 @@ export class ServerTerminalAuthority {
 						...(parakeetProvider === undefined
 							? {}
 							: { dictationRuntime: parakeetProvider }),
-						credentialResolver: new VaultProviderCredentialResolver({
-							vault: options.vault.vault,
-							bindings: [{ provider: 'openai', secretId: openAiSecretId }],
-						}),
-						dictationCredential: {
-							status: () => ({
-								configured: options
-									.vault!.status()
-									.entries.some((entry) => entry.id === openAiSecretId),
-							}),
-							set: async (value) => {
-								const exists = options
-									.vault!.status()
-									.entries.some((entry) => entry.id === openAiSecretId);
-								await (exists
-									? options.vault!.vault.replace({
-											id: openAiSecretId,
-											label: 'OpenAI API key',
-											value,
-										})
-									: options.vault!.vault.put({
-											id: openAiSecretId,
-											label: 'OpenAI API key',
-											value,
-										}));
-								return { configured: true };
-							},
-							clear: async () => ({
-								configured: !(await options.vault!.vault.remove(openAiSecretId))
-									.deleted,
-							}),
-						},
+						credentialResolver: createDictationCredentials(options.vault.vault),
+						dictationCredential: createDictationCredentials(options.vault.vault),
 						dictationSettings: () =>
-							embeddedDictationSettings(options.settings?.settings),
+							serverDictationSettings(options.settings?.settings),
 					});
 		const dictationOperations =
 			dictationAi === undefined
@@ -2956,25 +2916,6 @@ function workspaceCommandTestRecord(
 	});
 }
 
-function embeddedDictationSettings(
-	settings: Readonly<Record<string, JsonValue>> | undefined,
-) {
-	const value = settings?.dictation;
-	const dictation =
-		typeof value === 'object' && value !== null && !Array.isArray(value)
-			? (value as Record<string, JsonValue>)
-			: {};
-	return {
-		enabled: dictation.enabled !== false,
-		provider: dictation.provider === 'parakeet' ? 'parakeet' : 'disabled',
-		model:
-			typeof dictation.model === 'string' && dictation.model.length > 0
-				? dictation.model
-				: 'mlx-community/parakeet-tdt-0.6b-v3',
-		language: typeof dictation.language === 'string' ? dictation.language : '',
-		prompt: typeof dictation.prompt === 'string' ? dictation.prompt : '',
-	};
-}
 
 function dictationOnlyOperations(
 	operations: ReturnType<typeof createAiOperationHandlers>,

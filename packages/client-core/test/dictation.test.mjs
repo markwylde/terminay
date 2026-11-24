@@ -129,3 +129,15 @@ test('dictation disclosure rejects credential-shaped fields', () => {
 	client.append(new Uint8Array([1]));
 	assert.equal(client.finish({ durationMs: 1 }).disclosure.audioDestination, 'selected-server');
 });
+
+test('keyless custom capture preserves endpoint and expected configuration without claiming local inference', () => {
+	const client = new DictationCaptureClient();
+	const custom = { ...disclosure, provider: 'openai-compatible', audioDestination: 'custom-provider', credentialStatus: 'not-configured', endpointUrl: 'https://pop-os:2345/sherpaonnx/v1/audio/transcriptions', expectedConfiguration: '["openai-compatible","https://pop-os:2345/sherpaonnx/v1/audio/transcriptions","profile:custom",true]' };
+	client.begin(target, custom, { mimeType: 'audio/wav' });
+	client.append(new Uint8Array([1]));
+	assert.deepEqual(client.finish({ durationMs: 1 }).disclosure, custom);
+	for (const endpointUrl of ['https://key:secret@host/stt', 'https://host/stt?api_key=secret']) {
+		client.reset();
+		assert.throws(() => client.begin(target, { ...custom, endpointUrl }), /configuration/);
+	}
+});

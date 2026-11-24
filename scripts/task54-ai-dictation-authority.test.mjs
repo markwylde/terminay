@@ -21,7 +21,10 @@ test('AI metadata and dictation use selected-server clients without legacy globa
 		declarations,
 		/terminayAiMetadataHost|terminayDictationHost/u,
 	);
-	assert.match(settings, /serverAiClient\?\.dictationCredentialStatus\(\)/u);
+	assert.match(
+		settings,
+		/serverAiClient\?\.dictationCredentialStatus\(\{ provider: 'openai' \}\)/u,
+	);
 	assert.match(settings, /serverAiClient\s*\?\.dictationRuntimeStatus\(\)/u);
 	assert.match(settings, /serverAiClient\.installDictationRuntime\(\)/u);
 	assert.match(controller, /aiClient\.transcribe\(/u);

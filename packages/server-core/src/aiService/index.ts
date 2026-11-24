@@ -1,3 +1,5 @@
+export * from './dictationConfig.js';
+export * from './openAiCompatibleDictationProvider.js';
 export * from './bounds.js';
 export * from './cliProvider.js';
 export * from './credentials.js';
@@ -36,9 +38,12 @@ export interface AiServiceOptions extends AiMetadataServiceOptions {
 		'status' | 'install'
 	>;
 	readonly dictationCredential?: {
-		status(): { readonly configured: boolean };
-		set(value: Uint8Array): Promise<{ readonly configured: boolean }>;
-		clear(): Promise<{ readonly configured: boolean }>;
+		status(provider?: string): { readonly configured: boolean };
+		set(
+			value: Uint8Array,
+			provider?: string,
+		): Promise<{ readonly configured: boolean }>;
+		clear(provider?: string): Promise<{ readonly configured: boolean }>;
 	};
 }
 
@@ -82,18 +87,18 @@ export class AiService {
 		return this.dictationRuntime.install();
 	}
 
-	credentialStatus() {
-		return this.dictationCredential?.status() ?? { configured: false };
+	credentialStatus(provider?: string) {
+		return this.dictationCredential?.status(provider) ?? { configured: false };
 	}
-	setCredential(value: Uint8Array) {
+	setCredential(value: Uint8Array, provider?: string) {
 		if (this.dictationCredential === undefined)
 			throw new Error('dictation credential management is unavailable');
-		return this.dictationCredential.set(value);
+		return this.dictationCredential.set(value, provider);
 	}
-	clearCredential() {
+	clearCredential(provider?: string) {
 		if (this.dictationCredential === undefined)
 			throw new Error('dictation credential management is unavailable');
-		return this.dictationCredential.clear();
+		return this.dictationCredential.clear(provider);
 	}
 
 	generate(request: AiMetadataRequest): Promise<AiMetadataResult> {

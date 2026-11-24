@@ -3,6 +3,7 @@ import test from 'node:test';
 import { DEVICE_OVERRIDE_PATHS, SETTING_AUTHORITY } from '@terminay/server-core';
 import {
 	defaultTerminalSettings,
+	normalizeTerminalSettings,
 	SERVER_OWNED_TERMINAL_SETTING_KEYS,
 	terminalSettingsCategories,
 	terminalSettingsSections,
@@ -245,4 +246,18 @@ test('the selected server detaching moves Settings to this device, never to anot
 		leavesServerPlace({ previousServerPlaceId: 'local', serverPlaceIds: ['local'] }),
 		false,
 	);
+});
+
+
+test('custom dictation fields belong to the server and preserve arbitrary model settings', () => {
+	const settings = normalizeTerminalSettings({ dictation: { provider: 'openai-compatible', endpointUrl: ' https://pop-os:2345/sherpaonnx/v1/audio/transcriptions ', customModel: ' profile:custom ', bypassTlsVerification: true } });
+	assert.equal(settings.dictation.endpointUrl, 'https://pop-os:2345/sherpaonnx/v1/audio/transcriptions');
+	assert.equal(settings.dictation.customModel, 'profile:custom');
+	assert.equal(settings.dictation.bypassTlsVerification, true);
+	for (const key of ['dictation.endpointUrl', 'dictation.customModel', 'dictation.bypassTlsVerification']) assert.equal(placeOfSettingKey(key), 'server');
+	const defaults = normalizeTerminalSettings({}).dictation;
+	assert.equal(defaults.bypassTlsVerification, false);
+	assert.equal(defaults.endpointUrl, '');
+	const fields = terminalSettingsSections.flatMap((section) => section.fields);
+	for (const key of ['endpointUrl', 'customModel', 'customApiKey', 'bypassTlsVerification']) assert.equal(fields.find((field) => field.key === `dictation.${key}`)?.visibleWhen?.value, 'openai-compatible');
 });

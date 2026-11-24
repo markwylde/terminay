@@ -1171,6 +1171,15 @@
   align-items: center;
 }
 
+.settings-shortcut-editor--dictation {
+  width: min(320px, 46vw);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-shortcut-editor--dictation input {
+  padding-right: 78px;
+}
+
 .settings-shortcut-value {
   position: relative;
   min-width: 0;

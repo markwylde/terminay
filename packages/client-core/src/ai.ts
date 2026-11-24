@@ -38,6 +38,7 @@ export interface AiMetadataGenerateRequest {
 }
 
 export interface AiDictationUploadRequest {
+	readonly expectedConfiguration?: string;
 	readonly requestId: ProtocolId;
 	readonly target: AiTargetIdentity;
 	readonly mimeType: string;
@@ -124,16 +125,22 @@ export class TerminayAiClient {
 	}
 
 	async dictationCredentialStatus(
-		options: QueryOptions = {},
+		options: QueryOptions & { provider?: 'openai' | 'openai-compatible' } = {},
 	): Promise<{ configured: boolean }> {
 		return readCredentialStatus(
-			await this.transport.query(AI_OPERATIONS.credentialStatus, {}, options),
+			await this.transport.query(
+				AI_OPERATIONS.credentialStatus,
+				options.provider === undefined ? {} : { provider: options.provider },
+				options,
+			),
 		);
 	}
 
 	async setDictationCredential(
 		value: string,
-		options: CommandOptions = {},
+		options: CommandOptions & {
+			provider?: 'openai' | 'openai-compatible';
+		} = {},
 	): Promise<{ configured: boolean }> {
 		const binary = this.transport as Partial<BinaryCommandTransport>;
 		if (typeof binary.commandWithBody !== 'function')
@@ -143,7 +150,7 @@ export class TerminayAiClient {
 		return readCredentialStatus(
 			await binary.commandWithBody(
 				AI_OPERATIONS.setCredential,
-				{},
+				options.provider === undefined ? {} : { provider: options.provider },
 				new TextEncoder().encode(value),
 				options,
 			),
@@ -151,10 +158,16 @@ export class TerminayAiClient {
 	}
 
 	async clearDictationCredential(
-		options: CommandOptions = {},
+		options: CommandOptions & {
+			provider?: 'openai' | 'openai-compatible';
+		} = {},
 	): Promise<{ configured: boolean }> {
 		return readCredentialStatus(
-			await this.transport.command(AI_OPERATIONS.clearCredential, {}, options),
+			await this.transport.command(
+				AI_OPERATIONS.clearCredential,
+				options.provider === undefined ? {} : { provider: options.provider },
+				options,
+			),
 		);
 	}
 
@@ -230,6 +243,15 @@ function dictationPayload(request: AiDictationUploadRequest): JsonValue {
 		requestId: boundedId(request.requestId, 'requestId'),
 		target: targetPayload(request.target),
 		mimeType: boundedMime(request.mimeType),
+		...(request.expectedConfiguration === undefined
+			? {}
+			: {
+					expectedConfiguration: boundedText(
+						request.expectedConfiguration,
+						'expectedConfiguration',
+						4096,
+					),
+				}),
 		...(request.durationMs === undefined
 			? {}
 			: { durationMs: boundedDuration(request.durationMs) }),

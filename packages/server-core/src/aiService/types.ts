@@ -120,6 +120,7 @@ export interface AiMetadataResult {
 }
 
 export interface DictationTranscribeRequest {
+	readonly expectedConfiguration?: string;
 	readonly requestId: ProtocolId;
 	readonly clientId: ProtocolId;
 	readonly target: TerminalTarget;
@@ -137,6 +138,9 @@ export interface DictationTranscribeRequest {
 }
 
 export interface DictationProviderRequest {
+	readonly provider?: string;
+	readonly endpointUrl?: string;
+	readonly bypassTlsVerification?: boolean;
 	readonly model: string;
 	readonly language?: string;
 	readonly prompt?: string;
@@ -310,6 +314,8 @@ export interface DictationServiceOptions {
 }
 
 export interface DictationSettings {
+	readonly endpointUrl?: string;
+	readonly bypassTlsVerification?: boolean;
 	readonly enabled?: boolean;
 	readonly provider?: string;
 	readonly model?: string;

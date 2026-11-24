@@ -263,6 +263,9 @@ test('normalizes dictation settings defaults and bounds', () => {
       },
     }).dictation,
   ).toEqual({
+    endpointUrl: '',
+    customModel: '',
+    bypassTlsVerification: false,
     enabled: false,
     language: 'en',
     maxDurationSeconds: 300,
@@ -352,4 +355,34 @@ test('resets settings back to defaults', async ({ appHarness, mainWindow }) => {
 
   await expect(fontSizeInput).toHaveValue(String(defaultTerminalSettings.fontSize))
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+})
+
+
+test('custom dictation settings persist endpoint, model and scoped TLS choice', async ({ appHarness, mainWindow }, testInfo) => {
+  const settings = await appHarness.openSettingsAt('Local', 'dictation')
+  await settings.setViewportSize({ width: 1280, height: 1000 })
+  const provider = settings.getByRole('combobox', { name: 'Transcription provider' })
+  await provider.selectOption('openai-compatible')
+  await expect(settings.getByRole('textbox', { name: 'Transcription URL', exact: true })).toBeVisible()
+  await expect(settings.getByRole('checkbox', { name: 'Bypass TLS verification' })).not.toBeChecked()
+  await settings.getByRole('textbox', { name: 'Transcription URL', exact: true }).fill('https://pop-os:2345/sherpaonnx/v1/audio/transcriptions')
+  await settings.getByRole('textbox', { name: 'Model ID', exact: true }).fill('profile:hL9sOEcV4rY37MUWN7BZSDJ2')
+  await settings.locator('.settings-switch[aria-label="Bypass TLS verification"]').click()
+  await expect(settings.getByRole('checkbox', { name: 'Bypass TLS verification' })).toBeChecked()
+  await expect(settings.getByLabel('Custom transcription API key')).toHaveAttribute('type', 'password')
+  await expect(settings.getByText('API key (optional)', { exact: true })).toBeVisible()
+  await expect(settings.getByText('Saved', { exact: true })).toBeVisible()
+  await expect(settings.getByRole('textbox', { name: 'Model ID', exact: true })).toHaveValue('profile:hL9sOEcV4rY37MUWN7BZSDJ2')
+  const path = testInfo.outputPath('openai-compatible-dictation.png')
+  await settings.screenshot({ path, fullPage: true })
+  await testInfo.attach('OpenAI-compatible dictation settings', { path, contentType: 'image/png' })
+  await provider.selectOption('openai')
+  await expect(settings.getByRole('textbox', { name: 'Transcription URL', exact: true })).toHaveCount(0)
+  await provider.selectOption('openai-compatible')
+  await expect(settings.getByRole('textbox', { name: 'Model ID', exact: true })).toHaveValue('profile:hL9sOEcV4rY37MUWN7BZSDJ2')
+  await settings.close()
+  const reopened = await appHarness.openSettingsAt('Local', 'dictation')
+  await expect(reopened.getByRole('combobox', { name: 'Transcription provider' })).toHaveValue('openai-compatible')
+  await expect(reopened.getByRole('textbox', { name: 'Transcription URL', exact: true })).toHaveValue('https://pop-os:2345/sherpaonnx/v1/audio/transcriptions')
+  await expect(reopened.getByRole('checkbox', { name: 'Bypass TLS verification' })).toBeChecked()
 })
