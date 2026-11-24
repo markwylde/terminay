@@ -54,6 +54,9 @@ export async function openChildWindow(
   const nextWindowPromise = electronApp.waitForEvent('window')
   await action()
   const nextWindow = await nextWindowPromise
+  // An auxiliary window opens on Desktop's loading document and navigates to
+  // its route once connected; prepare the route's document, not the loader.
+  await nextWindow.waitForURL((url) => url.protocol !== 'data:' && url.protocol !== 'about:')
   return prepareWindow(nextWindow)
 }
 
