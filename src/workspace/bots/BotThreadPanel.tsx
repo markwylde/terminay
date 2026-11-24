@@ -16,6 +16,7 @@ import {
 	useState,
 } from 'react';
 import { BotComposer, type BotPostResult } from './BotComposer';
+import { BotHistoryEdge } from './BotHistoryEdge';
 import { BotStartFailures } from './BotStartFailures';
 import { BotTranscript, type MessageMenuRequest } from './BotTranscript';
 import {
@@ -26,6 +27,7 @@ import {
 	replyCountLabel,
 	visibleStartFailures,
 } from './threadModel';
+import { useOlderHistory } from './useOlderHistory';
 import { refusalText } from './useServerBots';
 
 export function BotThreadPanel({
@@ -73,6 +75,7 @@ export function BotThreadPanel({
 		[error, setError] = useState<string>(),
 		[recovering, setRecovering] = useState<string>();
 	const scroller = useRef<HTMLDivElement>(null),
+		sentinel = useRef<HTMLDivElement>(null),
 		pinned = useRef(true),
 		composer = useRef<HTMLTextAreaElement | null>(null),
 		// Bumped whenever the panel starts over; late responses are dropped.
@@ -236,13 +239,9 @@ export function BotThreadPanel({
 		const viewport = scroller.current;
 		if (viewport && pinned.current) viewport.scrollTop = viewport.scrollHeight;
 	}, [items, rootItems, failures]);
-	const loadOlder = async () => {
-		const next = older,
-			view = generation.current;
-		if (!next) return;
-		setLoading(true);
-		const before = scroller.current?.scrollHeight ?? 0;
-		try {
+	// Older replies arrive as the reader scrolls up; see useOlderHistory.
+	const fetchOlder = useCallback(
+		async (next: string) => {
 			const page = await client.list(bot.id, {
 				threadId: rootId,
 				cursor: next,
@@ -253,20 +252,27 @@ export function BotThreadPanel({
 				bot.id,
 				page.items.map((m) => m.id),
 			);
-			if (view !== generation.current) return;
-			pinned.current = false;
+			return { details, next: page.nextCursor };
+		},
+		[client, bot.id, rootId],
+	);
+	const applyOlder = useCallback(
+		({ details, next }: { details: BotMessage[]; next: string | null }) => {
 			for (const m of details) upsert(m);
-			setOlder(page.nextCursor);
-			requestAnimationFrame(() => {
-				if (scroller.current)
-					scroller.current.scrollTop += scroller.current.scrollHeight - before;
-			});
-		} catch (cause) {
-			if (view === generation.current) setError(refusalText(cause));
-		} finally {
-			if (view === generation.current) setLoading(false);
-		}
-	};
+			setOlder(next);
+		},
+		[upsert],
+	);
+	const history = useOlderHistory({
+		scroller,
+		sentinel,
+		cursor: older,
+		generation,
+		enabled: !loading,
+		pinned,
+		fetchPage: fetchOlder,
+		apply: applyOlder,
+	});
 	const recover = async (message: BotMessage, action: 'retry' | 'dismiss') => {
 		if (recovering) return;
 		const view = generation.current,
@@ -347,17 +353,15 @@ export function BotThreadPanel({
 				>
 					<span>{count ? replyCountLabel(count) : 'No replies yet'}</span>
 				</div>
-				{older ? (
-					<button
-						type="button"
-						className="bots-btn bots-btn--sm bots-thread__older"
-						disabled={loading}
-						data-terminay-bot-thread-older="true"
-						onClick={() => void loadOlder()}
-					>
-						Load older replies
-					</button>
-				) : null}
+				<BotHistoryEdge
+					sentinel={sentinel}
+					more={!!older}
+					loading={history.loading}
+					error={history.error}
+					onRetry={history.retry}
+					noun="replies"
+					start={false}
+				/>
 				{loading && !replies.size && count > 0 ? (
 					<p className="bots-faint">Loading replies…</p>
 				) : null}

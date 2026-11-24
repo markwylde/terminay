@@ -19,9 +19,10 @@ import { ContextMenu } from '../../components/ContextMenu';
 import { recallBotChatRead, rememberBotChatRead } from '../localViewState';
 import { BotComposer, type BotPostResult } from './BotComposer';
 import { BotContextRail } from './BotContextRail';
-import { BotsRailSeparator } from './BotsRailSeparator';
 import type { BotEnvironmentSubTab } from './BotEnvironmentPanel';
+import { BotHistoryEdge } from './BotHistoryEdge';
 import { BotStartFailures } from './BotStartFailures';
+import { BotsRailSeparator } from './BotsRailSeparator';
 import type { BotConfigTab } from './BotTab';
 import { BotThreadPanel } from './BotThreadPanel';
 import {
@@ -35,12 +36,14 @@ import { appendQuote, quoteMessage } from './quoteMessage';
 import {
 	deleteLabel,
 	fullMessage,
+	fullMessages,
 	messageItem,
 	observedThrough,
 	threadIsNew,
 	visibleStartFailures,
 } from './threadModel';
 import { botsRailStyle, useBotsRailWidth } from './useBotsRailWidth';
+import { useOlderHistory } from './useOlderHistory';
 import { refusalText, type ServerBots } from './useServerBots';
 
 export function BotChat({
@@ -82,6 +85,9 @@ export function BotChat({
 		new Map(),
 	);
 	const [older, setOlder] = useState<string | null>(null),
+		// The oldest sequence on the first page; anything below arrived by
+		// scrolling back.
+		[floor, setFloor] = useState<number>(),
 		[loading, setLoading] = useState(true),
 		[error, setError] = useState<string>(),
 		[mutating, setMutating] = useState(false),
@@ -133,6 +139,7 @@ export function BotChat({
 	const scroller = useRef<HTMLDivElement>(null),
 		transcript = useRef<HTMLDivElement>(null),
 		divider = useRef<HTMLDivElement>(null),
+		sentinel = useRef<HTMLDivElement>(null),
 		jumpPending = useRef(false),
 		pinned = useRef(true),
 		cursor = useRef<string | undefined>(undefined),
@@ -148,8 +155,6 @@ export function BotChat({
 		threadComposerRef = useCallback((element: HTMLTextAreaElement | null) => {
 			threadComposer.current = element;
 		}, []);
-	const olderRef = useRef(older);
-	olderRef.current = older;
 	const full = useCallback(
 		(id: string) => fullMessage(client, bot.id, id),
 		[client, bot.id],
@@ -172,6 +177,11 @@ export function BotChat({
 					if (!live) return;
 					setMessages(new Map(details.map((m) => [m.id, m])));
 					setOlder(page.nextCursor);
+					setFloor(
+						details.length
+							? Math.min(...details.map((m) => m.sequence))
+							: undefined,
+					);
 					cursor.current = page.eventsCursor;
 					initialized = true;
 				}
@@ -192,6 +202,7 @@ export function BotChat({
 						generation.current++;
 						setMessages(new Map());
 						setOlder(null);
+						setFloor(undefined);
 						setThread(undefined);
 						setPanelSeen(undefined);
 						initialized = false;
@@ -266,6 +277,8 @@ export function BotChat({
 		};
 		generation.current++;
 		setMessages(new Map());
+		setOlder(null);
+		setFloor(undefined);
 		setLoading(true);
 		setThread(undefined);
 		cursor.current = undefined;
@@ -295,10 +308,10 @@ export function BotChat({
 	// What this view has observed: top-level messages and, through their
 	// summaries, the replies in their threads.
 	const latest = useMemo(() => {
-		const main = observedThrough(ordered);
+		const main = observedThrough(ordered, floor);
 		if (panelSeen === undefined) return main;
 		return main === undefined ? panelSeen : Math.max(main, panelSeen);
-	}, [ordered, panelSeen]);
+	}, [ordered, floor, panelSeen]);
 	const latestRef = useRef(latest);
 	latestRef.current = latest;
 	// Read position: snapshotted when Chat is entered so the divider stays put
@@ -526,34 +539,41 @@ export function BotChat({
 				?.focus(),
 		);
 	}, []);
-	const loadOlder = async () => {
-		const next = olderRef.current,
-			view = generation.current;
-		if (!next || loading) return;
-		setLoading(true);
-		const before = scroller.current?.scrollHeight ?? 0;
-		try {
+	// Older history arrives as the reader scrolls up; see useOlderHistory.
+	const fetchOlder = useCallback(
+		async (next: string) => {
 			const page = await client.list(bot.id, { cursor: next, limit: 25 });
-			const details = await Promise.all(page.items.map((m) => full(m.id)));
-			if (view !== generation.current) return;
-			pinned.current = false;
+			const details = await fullMessages(
+				client,
+				bot.id,
+				page.items.map((m) => m.id),
+			);
+			return { details, next: page.nextCursor };
+		},
+		[client, bot.id],
+	);
+	const applyOlder = useCallback(
+		({ details, next }: { details: BotMessage[]; next: string | null }) => {
 			setMessages((current) => {
 				const map = new Map(current);
 				for (const m of details)
 					if ((map.get(m.id)?.revision ?? 0) <= m.revision) map.set(m.id, m);
 				return map;
 			});
-			setOlder(page.nextCursor);
-			requestAnimationFrame(() => {
-				if (scroller.current)
-					scroller.current.scrollTop += scroller.current.scrollHeight - before;
-			});
-		} catch (cause) {
-			if (view === generation.current) setError(refusalText(cause));
-		} finally {
-			if (view === generation.current) setLoading(false);
-		}
-	};
+			setOlder(next);
+		},
+		[],
+	);
+	const history = useOlderHistory({
+		scroller,
+		sentinel,
+		cursor: older,
+		generation,
+		enabled: visible && !loading && messages.size > 0,
+		pinned,
+		fetchPage: fetchOlder,
+		apply: applyOlder,
+	});
 	useEffect(() => {
 		const onEscape = (event: globalThis.KeyboardEvent) => {
 			if (event.key === 'Escape' && !mutating) {
@@ -792,16 +812,15 @@ export function BotChat({
 							pinned.current = true;
 					}}
 				>
-					{older ? (
-						<button
-							type="button"
-							className="bots-btn bots-btn--sm"
-							disabled={loading}
-							onClick={() => void loadOlder()}
-						>
-							Load older messages
-						</button>
-					) : null}
+					<BotHistoryEdge
+						sentinel={sentinel}
+						more={!!older}
+						loading={history.loading}
+						error={history.error}
+						onRetry={history.retry}
+						noun="messages"
+						start={!loading && messages.size > 0}
+					/>
 					{loading && messages.size === 0 ? (
 						<p className="bots-faint">Loading messages…</p>
 					) : null}
@@ -910,17 +929,17 @@ export function BotChat({
 				<>
 					<BotsRailSeparator rail={rail} />
 					<BotContextRail
-					server={server}
-					bot={bot}
-					sessions={sessions}
-					environment={environment}
-					visible={visible}
-					onConfigure={onConfigure}
-					onExecution={(id) => {
-						onSessionChange(id);
-						onConfigure('sessions');
-					}}
-				/>
+						server={server}
+						bot={bot}
+						sessions={sessions}
+						environment={environment}
+						visible={visible}
+						onConfigure={onConfigure}
+						onExecution={(id) => {
+							onSessionChange(id);
+							onConfigure('sessions');
+						}}
+					/>
 				</>
 			)}
 		</div>

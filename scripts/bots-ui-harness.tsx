@@ -6,8 +6,8 @@ import { foldTranscript } from '../src/workspace/bots/transcriptModel';
  */
 
 import type {
-	BotProfile,
 	BotMessage,
+	BotProfile,
 	BotRuntimeEvent,
 	BotSession,
 	BotSessionRecord,
@@ -55,6 +55,16 @@ type Scenario = {
 	overviewFullRefusal?: string;
 	/** Refuses the lifecycle start command with this message. */
 	startRefusal?: string;
+	/** Message rows to seed per bot, oldest first, instead of transcripts. */
+	messages?: Record<string, Partial<BotMessage>[]>;
+};
+
+/** Controls for `bots.messages.list` pages after the first (those with a cursor). */
+type OlderControl = {
+	/** Each later page waits this long. */
+	delayMs: number;
+	/** The next this-many later pages are refused. */
+	failures: number;
 };
 
 declare global {
@@ -67,6 +77,11 @@ declare global {
 			/** The watched environment state changes, as a projection would. */
 			setEnvironment: (botId: string, state: string) => void;
 		};
+		__older: OlderControl;
+		/** The bot posts a top-level message, as another execution would. */
+		__botPosts: (botId: string, text: string, threadId?: string) => void;
+		/** Another client deletes a message. */
+		__deleteElsewhere: (botId: string, messageId: string) => void;
 		__scenario: Scenario;
 		/** Another client dismisses a start failure. */
 		__dismissElsewhere: (botId: string, messageId: string) => void;
@@ -125,6 +140,52 @@ for (const [botId, rows] of sessionsNow) {
 		})),
 	);
 }
+for (const [botId, rows] of Object.entries(scenario.messages ?? {}))
+	messageRows.set(
+		botId,
+		rows.map(
+			(row, index) =>
+				({
+					id: `m${index + 1}`,
+					botId,
+					sequence: index + 1,
+					revision: 1,
+					author: 'bot',
+					executionId: null,
+					createdAt: 0,
+					updatedAt: 0,
+					text: `Message ${index + 1}`,
+					attachments: [],
+					...row,
+				}) as BotMessage,
+		),
+	);
+window.__older = { delayMs: 0, failures: 0 };
+window.__deleteElsewhere = (botId, messageId) => {
+	messageRows.set(
+		botId,
+		(messageRows.get(botId) ?? []).filter((m) => m.id !== messageId),
+	);
+	emitMessage(botId, 'message.deleted', messageId, 2);
+};
+window.__botPosts = (botId, text, threadId) => {
+	const rows = messageRows.get(botId) ?? [];
+	const message = {
+		id: crypto.randomUUID(),
+		botId,
+		...(threadId ? { threadId } : {}),
+		sequence: rows.length + 1,
+		revision: 1,
+		author: 'bot',
+		executionId: null,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+		text,
+		attachments: [],
+	} as BotMessage;
+	messageRows.set(botId, [...rows, message]);
+	emitMessage(botId, 'message.posted', message.id, 1);
+};
 const emitMessage = (
 	botId: string,
 	type: string,
@@ -175,10 +236,13 @@ const transport = {
 			text: string;
 		};
 		if (op === 'bots.messages.list') {
-			const rows = [...(messageRows.get(args.botId) ?? [])].reverse();
+			const threadId = (payload as { threadId?: string }).threadId;
+			const rows = [...(messageRows.get(args.botId) ?? [])]
+				.filter((m) => (threadId ? m.threadId === threadId : !m.threadId))
+				.reverse();
 			const offset = Number(args.cursor ?? 0),
 				items = rows.slice(offset, offset + (args.limit ?? 10));
-			return {
+			const page = {
 				items: items.map(({ text, attachments, ...rest }) => ({
 					...rest,
 					excerpt: text.slice(0, 256),
@@ -193,6 +257,18 @@ const transport = {
 				total: rows.length,
 				truncated: false,
 			};
+			if (args.cursor !== undefined) {
+				const older = window.__older;
+				return new Promise((resolve, reject) =>
+					setTimeout(() => {
+						if (older.failures > 0) {
+							older.failures--;
+							reject(new Error('Older page refused'));
+						} else resolve(page);
+					}, older.delayMs),
+				);
+			}
+			return page;
 		}
 		if (op === 'bots.messages.get') {
 			const row = messageRows
@@ -247,6 +323,9 @@ const transport = {
 				updatedAt: Date.now(),
 				text: a.text,
 				attachments: [],
+				...((payload as { threadId?: string }).threadId
+					? { threadId: (payload as { threadId: string }).threadId }
+					: {}),
 			};
 			const outcome = nextStart();
 			const executionId = outcome === null ? crypto.randomUUID() : null;

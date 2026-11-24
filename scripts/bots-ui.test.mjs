@@ -2038,7 +2038,74 @@ test('chat renders container screenshots inline and blocks remote images and hos
 		await page.close();
 	}
 });
-test('shared history loads older messages on demand without rendering provider traces', async () => {
+// Older history loads as the reader scrolls up (bot-chat-loads-history-on-scroll).
+const HISTORY = (count, patch = () => ({})) =>
+	Array.from({ length: count }, (_, i) => ({
+		author: i % 2 ? 'bot' : 'user',
+		text: `Historical message ${i}`,
+		...patch(i),
+	}));
+const olderCalls = async (page, threadId) =>
+	(await calls(page, 'transport.query')).filter(
+		(c) =>
+			c.args[0] === 'bots.messages.list' &&
+			c.args[1].cursor !== undefined &&
+			c.args[1].threadId === threadId,
+	);
+/** How many distinct messages a scroller shows (a message may key several elements). */
+const shownMessages = (page, scope = '.bots-msgs') =>
+	page.evaluate(
+		(s) =>
+			new Set(
+				[...document.querySelectorAll(`${s} [data-terminay-message-key]`)].map(
+					(el) => el.dataset.terminayMessageKey,
+				),
+			).size,
+		scope,
+	);
+/** Wheel up over a scroller: a real gesture, so following stops. */
+async function wheelUp(page, selector = '.bots-msgs', by = 100_000) {
+	const box = await page.locator(selector).boundingBox();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.wheel(0, -by);
+}
+/** The first message visible in a scroller, and its offset from the top. */
+const firstVisible = (page, selector = '.bots-msgs') =>
+	page.locator(selector).evaluate((viewport) => {
+		const top = viewport.getBoundingClientRect().top;
+		for (const el of viewport.querySelectorAll('[data-terminay-message-key]')) {
+			const box = el.getBoundingClientRect();
+			if (box.bottom > top)
+				return { key: el.dataset.terminayMessageKey, offset: box.top - top };
+		}
+		return null;
+	});
+const offsetOf = (page, key, selector = '.bots-msgs') =>
+	page
+		.locator(selector)
+		.evaluate(
+			(viewport, k) =>
+				viewport
+					.querySelector(`[data-terminay-message-key="${k}"]`)
+					.getBoundingClientRect().top - viewport.getBoundingClientRect().top,
+			key,
+		);
+const atBottom = (page, selector = '.bots-msgs') =>
+	page
+		.locator(selector)
+		.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 2);
+const waitForCount = (page, count, scope = '.bots-msgs') =>
+	page.waitForFunction(
+		([s, n]) =>
+			new Set(
+				[...document.querySelectorAll(`${s} [data-terminay-message-key]`)].map(
+					(el) => el.dataset.terminayMessageKey,
+				),
+			).size === n,
+		[scope, count],
+	);
+
+test('scrolling up loads older messages without a button, and never renders provider traces', async () => {
 	const entries = Array.from({ length: 60 }, (_, i) => ({
 		kind: 'user',
 		text: `Historical message ${i}`,
@@ -2046,14 +2113,27 @@ test('shared history loads older messages on demand without rendering provider t
 	const page = await open(TAB({ transcripts: { s1: entries } }));
 	try {
 		await page.getByText('Historical message 59', { exact: true }).waitFor();
-		assert.equal(await page.locator('[data-terminay-message-key]').count(), 25);
+		assert.equal(await shownMessages(page), 25);
+		assert.equal(await atBottom(page), true);
+		assert.equal((await olderCalls(page)).length, 0);
 		assert.equal(
-			await page.getByText('Historical message 0', { exact: true }).count(),
+			await page.getByRole('button', { name: /load older/i }).count(),
 			0,
 		);
-		await page.getByRole('button', { name: 'Load older messages' }).click();
+		await wheelUp(page);
 		await page.getByText('Historical message 10', { exact: true }).waitFor();
-		assert.equal(await page.locator('[data-terminay-message-key]').count(), 50);
+		await wheelUp(page);
+		await page.getByText('Historical message 0', { exact: true }).waitFor();
+		await page.locator('[data-terminay-bot-history="start"]').waitFor();
+		assert.equal(
+			await page.locator('[data-terminay-bot-history="start"]').innerText(),
+			'Start of conversation',
+		);
+		await wheelUp(page);
+		await shot(page, 'history-start-of-conversation');
+		await page.waitForTimeout(300);
+		assert.equal((await olderCalls(page)).length, 2);
+		assert.equal(await shownMessages(page), 60);
 		await page.evaluate(() =>
 			window.__harness.setTranscript('s1', [
 				{
@@ -2070,6 +2150,307 @@ test('shared history loads older messages on demand without rendering provider t
 		await page.close();
 	}
 });
+
+test('one older page is in flight at a time, with a loading row, and the message being read stays put', async () => {
+	const page = await open(TAB({ messages: { [BIRD]: HISTORY(60) } }));
+	try {
+		await page.getByText('Historical message 59', { exact: true }).waitFor();
+		await page.evaluate(() => {
+			window.__older.delayMs = 1200;
+		});
+		await wheelUp(page);
+		await page.locator('[data-terminay-bot-history="loading"]').waitFor();
+		assert.equal(
+			await page
+				.locator('[data-terminay-bot-history="loading"] [role="status"]')
+				.innerText(),
+			'Loading earlier messages…',
+		);
+		await shot(page, 'history-loading');
+		for (let i = 0; i < 4; i++) {
+			await wheelUp(page, '.bots-msgs', 400);
+			await page.waitForTimeout(50);
+		}
+		const anchor = await firstVisible(page);
+		assert.equal((await olderCalls(page)).length, 1);
+		await waitForCount(page, 50);
+		assert.ok(
+			Math.abs((await offsetOf(page, anchor.key)) - anchor.offset) < 2,
+			'the message being read stays where it was',
+		);
+		assert.equal(await atBottom(page), false);
+		await page.locator('[data-terminay-bot-history="idle"]').waitFor();
+		assert.equal((await olderCalls(page)).length, 1);
+	} finally {
+		await page.close();
+	}
+});
+
+test('a tall view fills older pages and stays at the bottom', async () => {
+	const page = await open(TAB({ messages: { [BIRD]: HISTORY(60) } }), {
+		width: 1280,
+		height: 2600,
+	});
+	try {
+		await page.locator('[data-terminay-bot-history="start"]').waitFor();
+		assert.equal(await shownMessages(page), 60);
+		assert.equal((await olderCalls(page)).length, 2);
+		assert.equal(await atBottom(page), true);
+		await page.getByText('Historical message 59', { exact: true }).waitFor();
+	} finally {
+		await page.close();
+	}
+});
+
+test('a failed older page waits for Retry', async () => {
+	const page = await open(TAB({ messages: { [BIRD]: HISTORY(40) } }));
+	try {
+		await page.getByText('Historical message 39', { exact: true }).waitFor();
+		await page.evaluate(() => {
+			window.__older.failures = 1;
+		});
+		await wheelUp(page);
+		const failed = page.locator('[data-terminay-bot-history="error"]');
+		await failed.waitFor();
+		assert.match(await failed.innerText(), /Couldn’t load earlier messages/);
+		await shot(page, 'history-error');
+		for (let i = 0; i < 3; i++) {
+			await wheelUp(page, '.bots-msgs', 300);
+			await page.waitForTimeout(150);
+		}
+		assert.equal((await olderCalls(page)).length, 1);
+		// The chat-wide error banner, which reloads everything, stays away.
+		assert.equal(
+			await page.locator('[data-terminay-bot-chat-error]').count(),
+			0,
+		);
+		await page.locator('[data-terminay-bot-history-retry]').click();
+		await page.locator('[data-terminay-bot-history="start"]').waitFor();
+		assert.equal(await shownMessages(page), 40);
+		assert.deepEqual(
+			(await olderCalls(page)).map((c) => c.args[1].cursor),
+			['25', '25'],
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('an older page that lands after Clear chat leaves no trace', async () => {
+	const page = await open(TAB({ messages: { [BIRD]: HISTORY(40) } }));
+	try {
+		await page.getByText('Historical message 39', { exact: true }).waitFor();
+		await page.evaluate(() => {
+			window.__older.delayMs = 1000;
+		});
+		await wheelUp(page);
+		await page.locator('[data-terminay-bot-history="loading"]').waitFor();
+		await page.getByRole('button', { name: 'Clear chat', exact: true }).click();
+		await page
+			.getByRole('alertdialog')
+			.getByRole('button', { name: 'Clear chat', exact: true })
+			.click();
+		await page.locator('[data-terminay-bot-chat="empty"]').waitFor();
+		await page.waitForTimeout(1300);
+		assert.equal(await shownMessages(page), 0);
+		assert.equal(await page.locator('[data-terminay-bot-history]').count(), 0);
+		await page.locator('[data-terminay-bot-chat="empty"]').waitFor();
+	} finally {
+		await page.close();
+	}
+});
+
+test('an older page dropped by a deletion mid-flight is requested again while the top is still near', async () => {
+	const page = await open(TAB({ messages: { [BIRD]: HISTORY(40) } }));
+	try {
+		await page.getByText('Historical message 39', { exact: true }).waitFor();
+		await page.evaluate(() => {
+			window.__older.delayMs = 600;
+		});
+		await wheelUp(page);
+		await page.locator('[data-terminay-bot-history="loading"]').waitFor();
+		// A deletion elsewhere (of a message not yet loaded) resets the view's
+		// generation, so the in-flight page is dropped.
+		await page.evaluate((id) => window.__deleteElsewhere(id, 'm1'), BIRD);
+		await page.locator('[data-terminay-bot-history="start"]').waitFor();
+		assert.equal(await shownMessages(page), 39);
+		assert.equal((await olderCalls(page)).length, 2);
+	} finally {
+		await page.close();
+	}
+});
+
+test('a new message while reading older history does not move the reader; at the bottom it follows', async () => {
+	const page = await open(TAB({ messages: { [BIRD]: HISTORY(60) } }));
+	try {
+		await page.getByText('Historical message 59', { exact: true }).waitFor();
+		await wheelUp(page);
+		await waitForCount(page, 50);
+		const anchor = await firstVisible(page);
+		const scrolled = await page
+			.locator('.bots-msgs')
+			.evaluate((el) => el.scrollTop);
+		await page.evaluate((id) => window.__botPosts(id, 'Fresh news'), BIRD);
+		await page.getByText('Fresh news', { exact: true }).waitFor();
+		assert.equal(
+			await page.locator('.bots-msgs').evaluate((el) => el.scrollTop),
+			scrolled,
+		);
+		assert.ok(Math.abs((await offsetOf(page, anchor.key)) - anchor.offset) < 2);
+		// Back at the bottom, the next post is followed.
+		await page
+			.locator('.bots-msgs')
+			.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+		await page.evaluate((id) => window.__botPosts(id, 'Fresher news'), BIRD);
+		await page.getByText('Fresher news', { exact: true }).waitFor();
+		await page.waitForFunction(() => {
+			const el = document.querySelector('.bots-msgs');
+			return el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+		});
+	} finally {
+		await page.close();
+	}
+});
+
+test('an older root with a newer reply stays new and is not acknowledged by scrolling back', async () => {
+	// m2 is an old root; its only reply (m61) is newer than every top-level message.
+	const rows = HISTORY(61, (i) =>
+		i === 1
+			? {
+					thread: {
+						replyCount: 1,
+						lastReplyAt: 0,
+						lastReplySequence: 61,
+						lastBotReplySequence: 61,
+						authors: ['bot'],
+					},
+				}
+			: i === 60
+				? { threadId: 'm2', text: 'A late reply' }
+				: {},
+	);
+	const page = await open(TAB({ messages: { [BIRD]: rows } }));
+	try {
+		await page.getByText('Historical message 59', { exact: true }).waitFor();
+		await wheelUp(page);
+		await waitForCount(page, 50);
+		await wheelUp(page);
+		await page.locator('[data-terminay-bot-history="start"]').waitFor();
+		const bar = page.locator('[data-terminay-bot-thread-replies="1"]');
+		await bar.waitFor();
+		assert.equal(
+			await bar.getAttribute('data-terminay-bot-thread-new'),
+			'true',
+		);
+		// Something the user does acknowledges what Chat observed, not the reply.
+		await page.locator('[data-terminay-bot-composer]').click();
+		await page.waitForFunction(() =>
+			window.__calls.some(
+				(c) =>
+					c.op === 'transport.command' &&
+					c.args[0] === 'bots.messages.acknowledge',
+			),
+		);
+		const through = (await calls(page, 'transport.command'))
+			.filter((c) => c.args[0] === 'bots.messages.acknowledge')
+			.map((c) => c.args[1].throughSequence);
+		assert.ok(
+			through.every((n) => n < 61),
+			`acknowledged ${through}`,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('a thread loads older replies by scrolling, keeps the reply being read, and follows at the bottom', async () => {
+	const rows = [
+		{
+			author: 'user',
+			text: 'Thread root',
+			thread: {
+				replyCount: 40,
+				lastReplyAt: 0,
+				lastReplySequence: 41,
+				lastBotReplySequence: 41,
+				authors: ['bot', 'user'],
+			},
+		},
+		...Array.from({ length: 40 }, (_, i) => ({
+			threadId: 'm1',
+			author: i % 2 ? 'bot' : 'user',
+			text: `Reply ${i}`,
+		})),
+	];
+	const page = await open(TAB({ messages: { [BIRD]: rows } }));
+	const body = '.bots-thread__body';
+	try {
+		await page.locator('[data-terminay-bot-thread-replies="40"]').click();
+		await page.locator(body).getByText('Reply 39', { exact: true }).waitFor();
+		assert.equal(await shownMessages(page, body), 26);
+		assert.equal(
+			await page.getByRole('button', { name: /load older/i }).count(),
+			0,
+		);
+		await page.evaluate(() => {
+			window.__older.delayMs = 400;
+		});
+		await wheelUp(page, body);
+		await page
+			.locator(`${body} [data-terminay-bot-history="loading"]`)
+			.waitFor();
+		const anchor = await firstVisible(page, body);
+		await page.locator(body).getByText('Reply 0', { exact: true }).waitFor();
+		assert.ok(
+			Math.abs((await offsetOf(page, anchor.key, body)) - anchor.offset) < 2,
+		);
+		assert.equal((await olderCalls(page, 'm1')).length, 1);
+		// Older replies sit between the divider and the replies already loaded.
+		const order = await page
+			.locator(body)
+			.evaluate((el) =>
+				[...el.querySelectorAll('.bots-thread__divider, .bots-msg')].map(
+					(n) => n.textContent,
+				),
+			);
+		const divider = order.findIndex((t) => /40 replies/.test(t));
+		const first = order.findIndex((t) => /Reply 0(?!\d)/.test(t));
+		const later = order.findIndex((t) => /Reply 30(?!\d)/.test(t));
+		assert.ok(divider >= 0 && divider < first && first < later, `${order}`);
+		// A reply arriving while the reader is up in the thread leaves them there.
+		const reading = await firstVisible(page, body);
+		const scrolled = await page.locator(body).evaluate((el) => el.scrollTop);
+		await page.evaluate(
+			(id) => window.__botPosts(id, 'A reply while reading', 'm1'),
+			BIRD,
+		);
+		await page
+			.locator(body)
+			.getByText('A reply while reading', { exact: true })
+			.waitFor();
+		assert.equal(
+			await page.locator(body).evaluate((el) => el.scrollTop),
+			scrolled,
+		);
+		assert.ok(
+			Math.abs((await offsetOf(page, reading.key, body)) - reading.offset) < 2,
+		);
+		// Back at the bottom, a new reply is followed.
+		await page
+			.locator(body)
+			.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+		await page.locator('[data-terminay-bot-thread] textarea').fill('One more');
+		await page.locator('[data-terminay-bot-thread] textarea').press('Enter');
+		await page.locator(body).getByText('One more', { exact: true }).waitFor();
+		await page.waitForFunction((s) => {
+			const el = document.querySelector(s);
+			return el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+		}, body);
+	} finally {
+		await page.close();
+	}
+});
+
 const composerLines = (count) =>
 	Array.from({ length: count }, (_, i) => `line ${i + 1}`).join('\n');
 const composerHeight = (composer) =>
