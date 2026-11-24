@@ -169,7 +169,7 @@ A staged upload SHALL NOT be pruned while its token is valid. Tokens SHALL expir
 - **THEN** those staged uploads are discarded and their tokens are refused
 
 ### Requirement: Communication UI
-Chat SHALL show the bot's shared message log with paginated history, explicit pending/failure states, message controls and inline durable attachments. Each message SHALL show its own author avatar, author name and the time it was posted, so consecutive messages from one author remain distinct. Session selection SHALL open execution details without changing chat history. Raw thoughts, tools and provider output SHALL remain in execution details. New chat and conversation continuation SHALL not define ordinary messaging behavior. Schedules and events SHALL start fresh executions with the same runtime tools and communication log.
+Chat SHALL show the bot's shared message log with paginated history, explicit pending/failure states, message controls and inline durable attachments. Each message SHALL show its own author avatar, author name and the time it was posted, so consecutive messages from one author remain distinct. Session selection SHALL open execution details without changing chat history. Raw thoughts, provider output and provider-reported tool use SHALL remain in execution details; the only tool use Chat shows is the action entries the server records (see Terminay actions in the message log). New chat and conversation continuation SHALL not define ordinary messaging behavior. Schedules and events SHALL start fresh executions with the same runtime tools and communication log.
 
 Each device SHALL remember, per bot, the last message it has read. When Chat opens with bot messages posted after that point, a labelled divider SHALL mark where they begin, and SHALL stay in place for the rest of that visit. Leaving Chat, closing or leaving the bot tab, hiding the window, or sending a message SHALL mark every loaded message read. A bot this device has never shown SHALL start with every message read.
 
@@ -178,6 +178,10 @@ The composer SHALL offer an attach button that opens a picker for files of any t
 #### Scenario: Read execution details
 - **WHEN** a user selects a recent execution
 - **THEN** its diagnostics open separately and the shared chat log remains intact
+
+#### Scenario: Provider tool use stays in details
+- **WHEN** an execution runs a shell command through its provider's own shell tool
+- **THEN** Chat shows no row for it, and the call appears in that execution's details
 
 #### Scenario: Consecutive bot messages
 - **WHEN** a bot posts three messages in a row
@@ -250,25 +254,41 @@ The composer SHALL offer an attach button that opens a picker for files of any t
 - **THEN** the composer shows the error and keeps the draft text and pending files
 
 ### Requirement: Briefings report recent failures
-A briefing SHALL list up to 5 of the bot's executions that ended as failed or timed out in the last 24 hours, each with its compact origin and failure reason cut to 256 bytes. It SHALL also list up to 5 of the bot's triggers whose condition health is failed or blocked, each with its health error cut to 256 bytes.
+A briefing SHALL list up to 5 of the bot's executions that ended as failed or timed out in the last 24 hours. Each entry SHALL give the execution's compact origin and its failure reason cut to 256 bytes. When the execution had a startup failure, the entry SHALL also give its stage, whether it was temporary, and how many attempts were made. When the execution reported an outcome, the entry SHALL give its disposition. The briefing SHALL also list up to 5 of the bot's triggers whose condition health is failed or blocked, or that are waiting for the user. Each such trigger SHALL have its health error or blocker reason cut to 256 bytes. The briefing SHALL tell the agent that a temporary startup failure is usually outside its control and needs no action unless it keeps recurring.
 
 #### Scenario: Briefing after failures
 - **WHEN** a chat execution starts an hour after a trigger execution failed and while that trigger's condition check is failing
 - **THEN** its briefing lists the failed execution with its reason and the trigger with its health error
 
+#### Scenario: Briefing after an overloaded host
+- **WHEN** an execution starts after a trigger execution failed four temporary startup attempts at the adapter check
+- **THEN** its briefing lists that execution as a temporary startup failure at the adapter check with four attempts
+
+#### Scenario: Briefing while a trigger waits for the user
+- **WHEN** an execution starts while one of the bot's triggers is waiting for the user
+- **THEN** its briefing lists that trigger with its blocker reason
+
 ### Requirement: Briefings trim in a fixed order
-When a briefing exceeds its budget, it SHALL drop entries in this order until it fits: older recent messages, then unhealthy triggers, then failed executions, then other active executions. Trigger identity and content SHALL always be kept.
+When a briefing exceeds its budget, it SHALL drop entries in this order until it fits: the thread's latest replies, then the root excerpt cut to 256 bytes, then older recent messages, then unhealthy triggers, then failed executions, then other active executions. Trigger identity and content, and the thread's root ID, SHALL always be kept.
 
 #### Scenario: Worst-case failure text
 - **WHEN** ten failed executions and ten failing triggers all have 1 KiB reasons of multibyte and JSON-escaped characters
 - **THEN** the briefing stays within its budget and lists at most five of each, cut on UTF-8 boundaries
 
+#### Scenario: Thread context trims first
+- **WHEN** a reply execution starts in a thread whose latest replies and root are long, with ten long recent messages
+- **THEN** the briefing drops the thread's latest replies and cuts the root excerpt before dropping any recent message, and keeps the root ID
+
 ### Requirement: Execution failure details
-Execution list results SHALL carry a compact origin: its kind, any trigger ID and name, and for a failure origin the number of failures. They SHALL also carry the failure reason cut to 256 bytes and the structured failure cause. A single execution read SHALL add the reason cut to 1 KiB and, for a failure origin, its listed failures, within the 8 KiB response budget.
+Execution list results SHALL carry a compact origin: its kind, any trigger ID and name, and for a failure origin the number of failures. They SHALL also carry the failure reason cut to 256 bytes, the structured failure cause, and the startup failure's stage, temporary flag and attempt count when there is one. A single execution read SHALL add the reason cut to 1 KiB, the reported outcome with its reason and action, and for a failure origin its listed failures, all within the 8 KiB response budget.
 
 #### Scenario: Failure origin detail
 - **WHEN** an execution reads a failure execution that lists 20 failures with 1 KiB reasons
 - **THEN** the response stays within 8 KiB and says how many failures were left out
+
+#### Scenario: Startup failure detail
+- **WHEN** an execution reads a sibling that failed three temporary startup attempts at the relay stage
+- **THEN** the result names the relay stage, marks it temporary and gives three attempts
 
 ### Requirement: Runner output read
 The runner output read SHALL accept any execution of the calling bot that has started, whether running, waiting on the user or ended. It SHALL return the stored, already-redacted runner output in slices of at most 6 KiB of text. Without a cursor it SHALL return the last slice, and its cursor SHALL continue towards earlier output. For an execution that has not ended it SHALL return only the latest slice, with no cursor, and SHALL refuse a supplied cursor as a conflict. It SHALL also return the time of the last recorded activity and the kind and status of at most the 10 latest activity entries, holding no title, command, plan text, tool input, tool output or message text. The whole response SHALL stay within the runtime response limit.
@@ -571,12 +591,16 @@ The type SHALL be decided from at most the first 64 bytes of content, so a file 
 - **THEN** the refusal reports `video/webm`, the type the same content would receive at an allowed size
 
 ### Requirement: Inline video attachments
-Chat SHALL render an attachment whose server-derived type is `video/mp4` or `video/webm` as an inline player with controls, looping, muted and inline playback, and SHALL NOT autoplay it. The message SHALL keep a download action for the video. The workspace SHALL load media only from its own origin and from `blob:` URLs.
+Chat SHALL render an attachment whose server-derived type is `video/mp4` or `video/webm` as an inline player with controls, looping, muted and inline playback, and SHALL NOT autoplay it. The player SHALL show the whole video at its own aspect ratio, no wider than the message and no taller than 70% of the window height. The message SHALL keep a download action for the video. The workspace SHALL load media only from its own origin and from `blob:` URLs.
 
 #### Scenario: Video plays in Chat
 - **WHEN** a bot posts a WebM
 - **THEN** its message shows a player with controls that is looped, muted and inline, and does not start on its own
 - **AND** the message offers a download of the video's exact bytes
+
+#### Scenario: Tall video is shown whole
+- **WHEN** a bot posts a video that is twice as tall as it is wide
+- **THEN** its player has that same shape and no part of the picture is cut off
 
 #### Scenario: Misnamed file is not played
 - **WHEN** a message carries a text file named `clip.mp4`
@@ -603,3 +627,465 @@ Video attachments SHALL reach an execution only as files and SHALL NOT be sent t
 #### Scenario: Video is not model input
 - **WHEN** a user sends a bot an MP4
 - **THEN** the execution receives it as a container file and the agent receives no image input for it
+
+### Requirement: Start-failure warning in Chat
+When a user message cannot start its execution, the message SHALL keep the failure and its reason. Chat SHALL show a warning for that message with the reason and two controls, Dismiss and Retry. Chat SHALL show the warning only while the failure is not dismissed and no later user message in the log has started an execution. Deleting the message or clearing Chat SHALL remove its warning.
+
+#### Scenario: A later message starts
+- **WHEN** a message fails to start, and the user then sends another message that starts an execution
+- **THEN** Chat no longer shows the first message's warning
+
+#### Scenario: Several unresolved failures
+- **WHEN** two messages fail to start and no later message has started
+- **THEN** Chat shows a warning for each of them
+
+#### Scenario: Deleting the failed message
+- **WHEN** the user deletes a message whose start failed
+- **THEN** its warning disappears
+
+### Requirement: Dismissing a start failure
+Dismiss SHALL be recorded on the message on the server, so the warning stays hidden on every client and after reloads and restarts. Every attached client SHALL observe the dismissal through message events.
+
+#### Scenario: Dismiss
+- **WHEN** the user dismisses a message's start-failure warning
+- **THEN** the warning disappears, and stays hidden after Chat reloads, after a server restart and on another client
+
+#### Scenario: Dismissed failure cannot be retried
+- **WHEN** a client retries a message whose failure was dismissed
+- **THEN** the request is refused as a conflict and no execution starts
+
+### Requirement: Retrying a start failure
+Retry SHALL start a fresh execution linked to the same message, without posting another message. Like a post, it SHALL act for the window of the client that asked. The message SHALL show as pending while it starts, then as started, or as failed with a new reason.
+
+#### Scenario: Retry succeeds
+- **WHEN** the user retries a message whose start failed, and the execution starts
+- **THEN** the warning disappears, no new message is posted, and the new execution is linked to that message
+
+#### Scenario: Retry fails again
+- **WHEN** the user retries a message and the execution still cannot start
+- **THEN** the warning stays, showing the new reason
+
+#### Scenario: Restart during a retry
+- **WHEN** the server restarts while a retried message is pending
+- **THEN** the message becomes started if its retried execution exists, and failed with a reason otherwise, and no further execution starts on its own
+
+### Requirement: Retry and Dismiss are guarded
+Retry and Dismiss SHALL name the message's revision and the dispatch attempt the client observed. Only a message whose start failed and was not dismissed, at that revision and attempt, SHALL be retried or dismissed. Any other request SHALL be refused as a conflict without changing the message. Each accepted retry SHALL start a new attempt, so at most one retry is accepted per failure.
+
+#### Scenario: Concurrent retries
+- **WHEN** two retry requests naming the same failed attempt arrive together
+- **THEN** exactly one is accepted and makes one start attempt, and the other is refused as a conflict
+
+#### Scenario: Late retry after a failed retry
+- **WHEN** a retry naming an earlier attempt arrives after a later attempt has already failed
+- **THEN** it is refused as a conflict and no execution starts
+
+#### Scenario: Message edited elsewhere
+- **WHEN** a client retries a failed message whose text another client has since edited
+- **THEN** the retry is refused as a conflict, and the client shows the current text
+
+#### Scenario: Retry a message that did not fail
+- **WHEN** a client asks to retry or dismiss a message that started, is pending, or was posted by the bot
+- **THEN** the request is refused as a conflict and the message is unchanged
+
+### Requirement: Quote in the message menu
+
+Every chat message whose text is not blank, whether the user or the bot wrote it, SHALL offer Quote as the first item of its message menu, above Edit message and Delete message. The menu SHALL open on right-click and, when the message has focus, on the context-menu key or Shift+F10. A menu opened from the keyboard SHALL appear at the message with its first item focused, SHALL be operable with Up, Down, Home, End and Enter, and SHALL return focus to the message when Escape closes it. A message whose text is empty or only whitespace SHALL NOT offer Quote.
+
+#### Scenario: Message with only an attachment
+- **WHEN** the user opens the menu on a message that has an image and no text
+- **THEN** the menu offers Edit message and Delete message but not Quote
+
+#### Scenario: Quote from the keyboard
+- **WHEN** a message has focus and the user presses Shift+F10
+- **THEN** the menu appears at the message with Quote focused
+- **AND** pressing Enter inserts the quote and focuses the composer
+
+#### Scenario: Dismiss from the keyboard
+- **WHEN** a keyboard-opened message menu is open and the user presses Escape
+- **THEN** the menu closes and the message has focus again
+
+### Requirement: Quote text
+
+Quote SHALL quote the message's stored text, its Markdown source, unless the user has a non-empty text selection lying wholly inside that message's body when the menu opens; then only the selected text, as displayed, SHALL be quoted. A selection outside the message, or spanning it and another message, SHALL be ignored. Choosing a quote SHALL NOT change what Edit message edits.
+
+The quoted text SHALL have CRLF and CR line endings turned into LF and blank lines at its start and end removed; other lines SHALL be kept as they are, trailing spaces included. Each line SHALL then be prefixed with `> `, an empty line written as `>`, and the quote followed by one blank line.
+
+Quoted text longer than 2,000 characters, counted as Unicode code points, SHALL be cut to at most 2,000 code points, at the last line break when one falls in the second half of the cut, and never inside a code point. When the cut leaves a fenced code block open, a closing fence SHALL be added. The quote SHALL then end with a `>` line and a `> …` line.
+
+#### Scenario: Multi-line bot reply
+- **WHEN** the user quotes the bot message "Build passed.\r\n\r\nDeployed to staging.\n"
+- **THEN** the quote is "> Build passed.\n>\n> Deployed to staging.\n\n"
+
+#### Scenario: Markdown is kept
+- **WHEN** the user quotes a message containing a fenced code block and a list
+- **THEN** every line of the fence and the list appears in the quote prefixed with `> `, unchanged otherwise
+
+#### Scenario: Quote a selection
+- **WHEN** the user selects one sentence inside a long bot message and chooses Quote on that message
+- **THEN** only that sentence is quoted
+- **AND** choosing Edit message on the same message still edits its full text
+
+#### Scenario: Selection elsewhere
+- **WHEN** the user has text selected in another message and chooses Quote on this message
+- **THEN** the whole of this message is quoted
+
+#### Scenario: Long message cut at a line break
+- **WHEN** the user quotes a message of 10,000 characters made of 80-character lines
+- **THEN** the quote holds the message's first whole lines up to 2,000 characters and ends with ">\n> …\n\n"
+
+#### Scenario: Long message cut inside a code block
+- **WHEN** the 2,000-character cut falls inside a fenced code block
+- **THEN** the quote closes the fence before its `> …` line
+
+### Requirement: Quote into the composer
+
+Choosing Quote SHALL append the quote to the composer's draft and SHALL NOT change the existing draft text or the pending files. An empty draft SHALL become the quote. A draft that ends in a blank line SHALL be followed directly by the quote; one that ends in a single line break SHALL get one more; any other draft, whitespace-only drafts included, SHALL get a blank line before the quote. The composer SHALL then have focus with the caret at the end of the draft. Quoting SHALL NOT send anything.
+
+#### Scenario: Quote into an empty composer
+- **WHEN** the composer is empty and the user quotes the bot message "Ship it"
+- **THEN** the draft is "> Ship it\n\n"
+- **AND** the composer has focus with the caret at the end
+- **AND** no message is sent
+
+#### Scenario: Quote the user's own message after a draft
+- **WHEN** the draft is "About this:" and the user quotes their own message "Ship it"
+- **THEN** the draft is "About this:\n\n> Ship it\n\n" and the caret is at the end
+
+#### Scenario: Draft ending in a line break
+- **WHEN** the draft is "Two things:\n" and the user quotes "A"
+- **THEN** the draft is "Two things:\n\n> A\n\n"
+
+#### Scenario: Two quotes in a row
+- **WHEN** the user quotes "A" and then quotes "B"
+- **THEN** the draft is "> A\n\n> B\n\n"
+
+#### Scenario: Pending files are kept
+- **WHEN** an image is pending in the composer and the user quotes a message
+- **THEN** the image is still pending
+
+### Requirement: Terminay actions in the message log
+When a live execution of a bot makes a recorded Terminay call, the server SHALL record one action entry in that bot's message log once the tool's handler has finished, whether the call succeeded or failed. The recorded calls SHALL be exactly these, and no others:
+
+- terminals: `open_terminal`, `split_terminal`, `write_terminal`, `run_command`, `close_terminal`, `focus_terminal`, `rename_terminal`, `update_terminal`, `move_terminal_to_project`, `run_macro`, `cancel_macro`;
+- tabs, folders and files: `focus_tab`, `move_tab`, `resize_pane`, `arrange_tabs`, `close_tab`, `focus_home`, `select_folder`, `create_folder`, `rename_folder`, `delete_folder`, `reorder_folders`, `move_tab_to_folder`, `open_file`;
+- projects and windows: `create_project`, `update_project`, `move_project`, `close_project`, `focus_project`, `open_workspace_window`, `rename_workspace_window`, `close_workspace_window`;
+- workflows: `create_workflow`, `update_workflow_step`, `create_workflow_template`, `update_workflow_template`, `delete_workflow_template`;
+- automations: `create_automation`, `update_automation`, `delete_automation`, `set_automation_enabled`, `run_automation`, `stop_automation_run`, `remove_automation_run`, `prune_automation_runs`, `dismiss_missed_runs`;
+- settings: `update_settings`, `save_shell_profile`, `delete_shell_profile`, `reorder_shell_profiles`, `set_default_shell_profile`;
+- the bot's runtime trigger tools `triggers_create`, `triggers_update`, `triggers_delete`, `triggers_enable` and `triggers_run`.
+
+A call refused before its operation is dispatched, because the capability is invalid, revoked or names no execution of that bot, SHALL NOT be recorded. An action whose message log was cleared while the call ran SHALL NOT be recorded.
+
+#### Scenario: Bot creates a project
+- **WHEN** an execution of a bot with Terminay MCP access calls `create_project` named "api" and it succeeds
+- **THEN** the bot's log gains one action entry reading Created the project “api”, with outcome done and the new project as its link target
+
+#### Scenario: Read calls are not recorded
+- **WHEN** an execution calls `list_terminals`, `read_terminal`, `get_workflow` and `wait_for_idle`
+- **THEN** the bot's log gains no entry
+
+#### Scenario: Failed call
+- **WHEN** an execution calls `create_automation` while Full Automation Management is Never Allow
+- **THEN** the bot's log gains one action entry with outcome failed and a reason naming the permission refusal
+
+#### Scenario: Bot creates a trigger
+- **WHEN** an execution creates a trigger through its runtime trigger tools
+- **THEN** the bot's log gains one action entry with that trigger as its link target
+
+#### Scenario: Revoked capability
+- **WHEN** a bot's Terminay MCP access is turned off and its running execution's next Terminay MCP call fails as revoked
+- **THEN** the bot's log gains no entry for that call
+
+#### Scenario: Chat cleared during a call
+- **WHEN** the user clears a bot's chat while one of its `run_command` calls is still running
+- **THEN** the cleared log gains no entry for that call
+
+### Requirement: Action entry content
+An action entry SHALL be authored by the bot, linked to its execution, and SHALL carry the tool's name, a description in Terminay's own words, its outcome, a failure reason for a failed call, a count, and a link target when the call created or addressed one. The description SHALL be in the past tense when the call was done and SHALL start "Couldn't" when it failed. The description and reason SHALL be redacted like the bot's own posts before they are cut and stored; when redaction fails, nothing SHALL be recorded. The description SHALL be at most 512 bytes and SHALL name terminals and projects by their display names. It SHALL quote only what the agent asked for, cut to 80 characters for a command and 60 for a name, and SHALL NEVER contain terminal output, setting values, file contents or a tool's result. The reason SHALL be at most 200 bytes, taken from the error code and message the tool returned.
+
+#### Scenario: Run command describes the command, not its output
+- **WHEN** an execution calls `run_command` with `npm test` in the terminal titled "api"
+- **THEN** the action entry reads Ran `npm test` in the terminal “api”, links to that terminal, and contains none of the command's output
+
+#### Scenario: Secret in a command
+- **WHEN** an execution runs a command containing a value Terminay injected into the bot as a secret
+- **THEN** the action entry shows that value redacted
+
+### Requirement: Action link targets
+A link target SHALL name a project, a terminal with its project, a terminal's workflow, an automation, a workflow template, one of the bot's own triggers, or Settings, by server ID. The server SHALL resolve it from the terminal or project the call addressed and from the call's result, never from the bot's text. A terminal target SHALL name the terminal by its session and by the project it is in once the call has finished. A call that closed or deleted its target, or that failed without addressing an existing one, SHALL carry no link target.
+
+#### Scenario: Moved terminal
+- **WHEN** an execution moves the terminal titled "api" to the project "web"
+- **THEN** the action entry links to that terminal in "web"
+
+#### Scenario: Failed trigger change names an unknown trigger
+- **WHEN** an execution's `triggers_update` fails because the trigger ID it gave is not one of the bot's triggers
+- **THEN** the failed action entry has no link target
+
+### Requirement: Folding repeated actions
+When the newest entry of the log is an action entry from the same execution with the same tool, description, outcome, reason and link target, the server SHALL fold the new action into it, increasing its count and revision, instead of adding an entry. The folded entry SHALL keep its place in the log.
+
+#### Scenario: Repeated typing folds
+- **WHEN** an execution calls `write_terminal` five times in a row on the terminal titled "api" and each call succeeds
+- **THEN** the log holds one action entry for it with a count of five
+
+#### Scenario: Different commands do not fold
+- **WHEN** an execution runs `npm test` and then `npm run build` in the same terminal
+- **THEN** the log holds two action entries
+
+### Requirement: Action entry storage
+Recording SHALL NOT delay or change the result of the call it records, and a failure to record SHALL NOT fail the call. A bot's log SHALL hold at most 2,000 action entries; recording one beyond that SHALL remove the oldest action entries, and never a message. Action entries SHALL NOT count against the history limit that refuses new messages.
+
+#### Scenario: Busy bot
+- **WHEN** a bot whose log holds 2,000 action entries and 50 messages records another action
+- **THEN** its oldest action entry is removed, every message remains, and the user can still post
+
+### Requirement: Action entries are not posts
+An action entry SHALL NOT raise or change a bot notification, SHALL NOT count as an unacknowledged post or an unread message, and SHALL NOT start an execution. It SHALL be refused by message edit and delete, and SHALL be removed by Clear chat. Execution briefings SHALL leave action entries out of their recent message excerpts and message counts. Runtime message list, search and get SHALL return action entries marked as actions, with their description as text. A client SHALL NOT show an entry whose action data is malformed.
+
+#### Scenario: No notification
+- **WHEN** a bot whose posts are all acknowledged records three action entries and posts nothing
+- **THEN** no bot notification is raised and Chat shows no unread divider when opened
+
+#### Scenario: Pending notification unchanged
+- **WHEN** a bot has one unacknowledged post with a notification and then records two action entries
+- **THEN** the notification still counts one post and shows that post
+
+#### Scenario: Edit refused
+- **WHEN** a client asks to edit or delete an action entry
+- **THEN** the request is refused and the entry is unchanged
+
+#### Scenario: Clear chat
+- **WHEN** the user clears a bot's chat
+- **THEN** its action entries are removed with its messages
+
+### Requirement: Action rows in Chat
+Chat SHALL show each action entry at its place in the log as one compact row, without an avatar or author header, aligned with message text and set in smaller, muted type than a message. A row SHALL show an icon for its link target's kind, the description, a done or failed mark, a ×N count when it holds more than one action, and the time on hover. A failed row SHALL show its reason. A row SHALL offer no message menu.
+
+Consecutive action rows SHALL be shown as one tight group. A group of more than three rows SHALL show its latest three and a control naming how many earlier actions are hidden, which shows them all. A group the user expanded SHALL stay expanded as rows arrive or fold into it. The unread divider SHALL never sit above an action row.
+
+#### Scenario: Long run of actions
+- **WHEN** a bot records six action entries in a row between two messages
+- **THEN** Chat shows one group with the latest three rows and a control saying 3 earlier actions, and activating it shows all six
+
+#### Scenario: Failed row
+- **WHEN** Chat shows an action entry whose outcome is failed
+- **THEN** its row shows a failed mark and the reason
+
+#### Scenario: Action reaches Chat
+- **WHEN** a bot execution's `open_terminal` call succeeds while its Chat is open
+- **THEN** a row for it appears without reloading Chat
+
+### Requirement: Action links
+A row with a link target SHALL offer one link named for the kind: Open project, Open terminal, Open workflow, Open automation, Open workflow template, Open triggers or Open settings. Activating it SHALL reveal the target on the bot's server through the workspace's existing navigation, the same way choosing it elsewhere in the workspace does. A project or terminal SHALL be revealed as Tabs reveals it, a terminal's workflow by revealing its terminal, an automation in Automations, a workflow template or Settings in Settings, and a trigger by opening the bot's Configure Triggers tab.
+
+When the window holds the inventory the target belongs to (the projects and terminals of the server it shows) and that inventory no longer has the target, activating the link SHALL say so in the row and change nothing else. An automation or workflow template is opened on its own page, which says when it no longer exists. A terminal on a server whose panels the window does not hold SHALL be revealed by revealing its project, as the dashboard does for such a server's agents. When the target lives in Settings and the window shows a different server than the bot's, the row SHALL say it is not available from this window.
+
+#### Scenario: Open the created terminal
+- **WHEN** Chat shows a done action row for `open_terminal` and the user activates Open terminal
+- **THEN** the workspace reveals that terminal as choosing it in Tabs does
+
+#### Scenario: Target gone
+- **WHEN** the user activates Open project on a row whose project has since been closed
+- **THEN** the row says the project no longer exists and the view does not change
+
+#### Scenario: Open triggers
+- **WHEN** the user activates Open triggers on a row for `triggers_create`
+- **THEN** the bot's Configure view opens on its Triggers tab
+
+### Requirement: Message threads
+
+A message MAY be posted as a reply in a thread. A thread SHALL be named by its root: a top-level message that is not itself a reply. A reply SHALL record the root's ID as its `threadId`. Threads SHALL be one level deep: a post that names a reply as its thread SHALL be stored in that reply's thread. A post that names a message that does not exist, has been deleted or belongs to another bot SHALL be refused with no message created and no execution started. A message posted without a thread SHALL be top-level. Threads SHALL NOT change author provenance, ordering, revisions, attachments or idempotency: a reply has its own ID, sequence and revision in the same log. The idempotency key SHALL be checked before the thread is resolved: a retried post with the same key, content and requested thread SHALL return the original reply even if the message it named has since been deleted, and a post reusing a key with a different requested thread SHALL be refused as a conflict.
+
+Deleting a root SHALL delete every reply in its thread. Deleting a reply SHALL leave its root and the other replies. Editing a root or a reply SHALL change only that message. Clearing the chat SHALL remove every thread.
+
+#### Scenario: User replies in a thread
+- **WHEN** the user posts "Use staging" with the thread set to Bird's top-level message M
+- **THEN** the message is stored with `threadId` M and does not appear among top-level messages
+
+#### Scenario: Reply to a reply
+- **WHEN** a post names reply R of thread M as its thread
+- **THEN** the post is stored with `threadId` M
+
+#### Scenario: Unknown or deleted root
+- **WHEN** a post names a deleted message, an unknown ID or another bot's message as its thread
+- **THEN** it is refused, no message is created and no execution starts
+
+#### Scenario: Retry after the named reply was deleted
+- **WHEN** a post naming reply R as its thread succeeds, R is then deleted, and the client retries with the same idempotency key and content
+- **THEN** the original reply is returned and no second message or execution is created
+
+#### Scenario: Same key, different thread
+- **WHEN** a post reuses an idempotency key with the same text but a different thread
+- **THEN** it is refused as a conflict and no message is created
+
+#### Scenario: Delete a root
+- **WHEN** the user deletes a root whose thread has three replies
+- **THEN** the root and its three replies are deleted, and the attachments only they referenced are removed
+
+#### Scenario: Delete one reply
+- **WHEN** the user deletes one of three replies in a thread
+- **THEN** the root and the two other replies remain and the root's reply count becomes 2
+
+### Requirement: Thread reads and events
+
+A message list without a thread SHALL return top-level messages only. A list naming a thread SHALL return that thread's replies, newest first, with the same page size, response-size bound, scope-bound cursors and snapshot rules as the top-level list; its cursor SHALL be refused for any other thread or for the top-level list. A list with a search SHALL match top-level messages and replies alike, unless it names a thread, when it SHALL match only that thread's replies. Every message and summary SHALL carry its `threadId`, or none for a top-level message.
+
+A root with at least one reply SHALL carry a thread summary: its reply count, the time and sequence of its latest reply, the sequence of its latest bot reply, and which authors, the user or the bot, have replied, most recent first. A root without replies SHALL carry none. The summary SHALL be derived from the replies present when it is read, so edits, deletions and clears are reflected without stored counters, and SHALL NOT be persisted with the root or change the root's revision.
+
+Posting or deleting a reply SHALL emit, besides the reply's own event, a `message.thread` event whose subject is the root, so clients and executions following events can refresh the root's summary. Events SHALL remain bounded summaries without bodies.
+
+#### Scenario: Main stream excludes replies
+- **WHEN** Bird's log holds two top-level messages and one of them has four replies
+- **THEN** the top-level list returns two items, and the one with replies carries a summary with a reply count of 4
+
+#### Scenario: Summary survives a root edit
+- **WHEN** a root with two replies is edited and its execution dispatch is updated, and the server restarts
+- **THEN** the root's revision reflects only the edit and its summary still reports two replies
+
+#### Scenario: Read a thread
+- **WHEN** a client lists thread M with a limit of 2 and its thread has five replies
+- **THEN** it receives the two newest replies and a cursor that continues to the older replies of M only
+
+#### Scenario: Cursor from another thread
+- **WHEN** a cursor issued for thread M is used to list thread N or the top-level list
+- **THEN** the request is refused without revealing the other scope
+
+#### Scenario: Search finds a reply
+- **WHEN** a client searches for "staging" and only a reply in thread M contains it
+- **THEN** the result contains that reply with `threadId` M
+
+#### Scenario: Reply event
+- **WHEN** Bird posts a reply in thread M
+- **THEN** the event stream carries `message.posted` for the reply and `message.thread` for M
+
+### Requirement: Thread runtime tools
+
+`chat_post` SHALL accept an optional `threadId`. With it, the bot's post SHALL be a reply in that thread under the rules of Message threads; without it, a top-level message. `chat_list` SHALL accept an optional `threadId` and then list that thread's replies. `chat_list` summaries and `chat_get` SHALL show each message's `threadId` and a root's thread summary. A thread named by a runtime tool SHALL belong to the calling execution's bot; any other SHALL be refused without revealing whether it exists. Runtime tools SHALL stay within their existing item, byte and authority bounds.
+
+#### Scenario: Bot replies in a thread
+- **WHEN** a live execution calls `chat_post` with text "Done" and `threadId` M
+- **THEN** a bot reply with `threadId` M is stored and Chat shows it in M's thread, not in the main stream
+
+#### Scenario: Bot reads a thread
+- **WHEN** a live execution calls `chat_list` with `threadId` M
+- **THEN** it receives bounded summaries of M's replies and a continuation cursor when more remain
+
+#### Scenario: Another bot's thread
+- **WHEN** an execution calls `chat_post` with the ID of another bot's message as `threadId`
+- **THEN** the post is refused and neither bot's log changes
+
+### Requirement: Executions from a thread reply
+
+A user reply in a thread SHALL start a fresh execution, as any accepted user message does. That execution's briefing SHALL name the thread's root ID, carry a bounded excerpt of the root with its author, the thread's reply count and bounded excerpts of its latest replies, and SHALL tell the agent to answer in that thread by passing `threadId` to `chat_post` and to read more of it with `chat_list`. Thread context SHALL count towards the briefing budget and SHALL be trimmed as Briefings trim in a fixed order requires. An execution started by a top-level message SHALL carry no thread context. Every briefing SHALL explain that threads are one level deep, that top-level lists show only top-level messages with a reply-count summary and not the replies, and that the agent should read a thread with `chat_list` and its `threadId` when the thread looks relevant to its task.
+
+#### Scenario: Reply starts a threaded execution
+- **WHEN** the user replies "and the logs?" in thread M
+- **THEN** a fresh execution starts whose briefing names M, its root excerpt and latest replies, and instructs the agent to post with `threadId` M
+
+#### Scenario: Top-level message beside an active thread
+- **WHEN** the user posts a top-level message while message M has 6 replies
+- **THEN** the briefing lists M with a reply count of 6 and no reply text, and explains that the agent can read M's thread with `chat_list` and `threadId` M when it is relevant
+
+#### Scenario: Large thread
+- **WHEN** the user replies in a thread with 200 long replies
+- **THEN** the briefing stays within its budget and keeps the trigger message and the thread's root ID
+
+### Requirement: Reply in thread
+
+Each top-level message in Chat SHALL offer **Reply in thread**, both as an action shown on the message while the pointer is over it or focus is within it, and as an item of its message menu after Quote. A reply SHALL NOT offer Reply in thread. A root with replies SHALL show a reply bar beneath it naming who has replied, the reply count and when the latest reply was posted; activating the reply bar SHALL open that thread. The reply bar SHALL be marked new when the thread's latest bot reply was posted after this device's read position for that bot. Thread replies SHALL NOT appear in the main stream, and the unread divider SHALL count top-level messages only.
+
+#### Scenario: Start a thread from the hover action
+- **WHEN** the user points at a bot message and activates Reply in thread
+- **THEN** the thread panel opens for that message with its composer focused
+
+#### Scenario: Reply bar
+- **WHEN** a root has three replies, the latest from the bot five minutes ago
+- **THEN** the reply bar under it shows the bot's avatar, "3 replies" and the latest reply's time
+
+#### Scenario: New replies while away
+- **WHEN** the bot replies in thread M while the user is on another screen, and the user then opens Chat
+- **THEN** M's reply bar is marked new and the main stream gains no message for the reply
+
+#### Scenario: Only the user replied since
+- **WHEN** thread M's only bot reply is older than this device's read position and the user has replied since
+- **THEN** M's reply bar is not marked new
+
+### Requirement: Thread panel
+
+Opening a thread SHALL show a thread panel beside the main stream, or over it where the chat is too narrow for both, with the root message, a divider giving the reply count, the replies oldest first with paginated older replies, and a composer. The panel composer SHALL behave as the main composer does: attachments by button, drop and paste with the same limits, Enter to send, failure kept with draft and files, and retries reusing the same idempotency key. A message sent from it SHALL be a reply in that thread. Each thread SHALL keep its own draft text while the bot tab stays open. Pending files and an unsent attempt SHALL belong to the thread they were added in: switching to another thread or closing the panel SHALL discard that thread's pending files, never carry them into another thread. A send already under way SHALL complete into the thread it was started in. New, edited and deleted replies and changes to the root SHALL appear in the panel live, without discarding older replies already loaded or moving the reading position. Replies SHALL offer Quote, Edit message and Delete message from their message menu, and Quote SHALL append to the panel's draft. Deleting a root whose thread has replies SHALL be labelled as deleting its replies too. The panel SHALL close with its close button or Escape, and SHALL close when its root is deleted or the chat is cleared. Opening a different thread SHALL replace the panel's contents.
+
+#### Scenario: Reply from the panel
+- **WHEN** the thread panel for M is open and the user types "Ship it" and presses Enter
+- **THEN** a reply with `threadId` M appears in the panel, the main stream is unchanged except for M's reply bar showing one more reply, and a fresh execution starts
+
+#### Scenario: Bot reply arrives live
+- **WHEN** the panel for M is open and the bot posts a reply in M
+- **THEN** the reply appears at the end of the panel without reloading
+
+#### Scenario: Reply deleted elsewhere
+- **WHEN** the panel for M shows older replies loaded with "Load older replies" and a reply is deleted on another device
+- **THEN** only that reply disappears, the older replies stay loaded, and the divider shows the new count
+
+#### Scenario: Root edited elsewhere
+- **WHEN** the panel for M is open and M is edited on another device
+- **THEN** the panel's root shows the edited text
+
+#### Scenario: Reply start failure
+- **WHEN** a reply sent from the panel fails to start an execution
+- **THEN** its failure with Retry and Dismiss appears in the panel, not in the main stream
+
+#### Scenario: Separate drafts
+- **WHEN** the user types "draft A" in thread M's composer, opens thread N, and returns to M
+- **THEN** M's composer holds "draft A" and N's composer was empty
+
+#### Scenario: Switching threads drops pending files
+- **WHEN** an image is pending in thread M's composer and the user opens thread N
+- **THEN** N's composer has no pending files, and returning to M shows its draft text without the image
+
+#### Scenario: Chat cleared while open
+- **WHEN** the panel for M is open and the chat is cleared
+- **THEN** the panel closes
+
+#### Scenario: Root deleted while open
+- **WHEN** the panel for M is open and M is deleted on another device
+- **THEN** the panel closes and the main stream no longer shows M
+
+#### Scenario: Close with Escape
+- **WHEN** focus is in the thread panel and no menu or dialog is open and the user presses Escape
+- **THEN** the panel closes
+
+#### Scenario: Narrow chat
+- **WHEN** the chat is narrower than the layout needs for both and the user opens a thread
+- **THEN** the panel covers the main stream, and closing it returns to the main stream at the same scroll position
+
+### Requirement: Thread notifications
+
+A bot's reply in a thread SHALL count as a bot post for its notification, its excerpt and its acknowledgement, exactly as a top-level post does. Whatever acknowledges a bot's posts in Chat SHALL acknowledge through the latest sequence the client has observed, where a client has observed a reply when it shows the reply's root with a summary whose latest reply sequence covers it, or shows the reply in an open thread panel. Threads SHALL NOT add any new cause of acknowledgement: a reply arriving while Chat is shown SHALL NOT acknowledge it by itself.
+
+#### Scenario: Bot replies in a thread while Chat is not shown
+- **WHEN** Bird replies in thread M while nobody views Bird's Chat
+- **THEN** Bird's notification counts the reply and shows its excerpt
+
+#### Scenario: Acting in Chat acknowledges thread replies
+- **WHEN** Bird's notification covers one thread reply and the user, in Bird's Chat where M's reply bar shows it, acts in Chat
+- **THEN** the acknowledgement covers that reply and Bird's notification is removed
+
+#### Scenario: Deleting the thread updates the notification
+- **WHEN** Bird's notification covers only replies in thread M and M is deleted
+- **THEN** Bird's notification is removed
+
+### Requirement: Outcome reporting tool
+
+The runtime tools SHALL include `outcome_report`, which a live execution uses to report its judged outcome as specified by bot-execution-resilience. It SHALL be bound to the calling execution and bot like every runtime tool. It SHALL NOT need the shell work lease. It SHALL accept an idempotency key, so that a retried report does not post a second chat message, and SHALL take the observed trigger revision as the trigger tools do. A revoked or ended execution SHALL NOT report an outcome. A briefing SHALL tell the agent when to use each disposition: `outside-control` for failures it cannot act on, `needs-human` only when it cannot continue without a person, and `fixed` after it repaired its own trigger, condition or script.
+
+#### Scenario: Retried report
+
+- **WHEN** an execution sends `outcome_report` with `needs-human` twice with the same idempotency key
+- **THEN** one chat message is posted and the second call returns the first result
+
+#### Scenario: Revoked execution
+
+- **WHEN** a stopped execution sends `outcome_report`
+- **THEN** it is refused and nothing is stored or posted

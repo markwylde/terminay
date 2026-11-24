@@ -224,3 +224,57 @@ When an `EAGAIN` failure to create a process or thread is seen but the engine ca
 
 - **WHEN** a trigger's condition command fails to start with `EAGAIN` while the container is at its process limit
 - **THEN** the trigger's health error says the bot container has run out of processes, with the count and limit
+
+### Requirement: Container listing uses filters every engine accepts
+
+Container listings over the engine socket SHALL send only filter keys that both Docker and Podman accept, and SHALL send positive filters unchanged. Label exclusions SHALL be applied by the server to the labels the engine returns, and SHALL NOT reach the engine. A container matching any exclusion SHALL be omitted.
+
+#### Scenario: Dashboard status on rootful Docker
+
+- **WHEN** the selected engine is a reachable rootful Docker whose identity marker matches the pin, and the Bots dashboard reads engine status
+- **THEN** the read succeeds, reports Docker as available, and counts the server's managed bot containers
+
+#### Scenario: Helper containers are not counted
+
+- **WHEN** the server has a managed bot container and a helper container labelled `terminay.helper` that carries the same server, bot and managed labels, and another server has a managed bot container on the same engine
+- **THEN** the dashboard counts one bot container on both Docker and Podman
+
+#### Scenario: Label negation never reaches the engine
+
+- **WHEN** a container listing with label exclusions and otherwise supported filters is made against an engine that answers unknown filter keys with HTTP 400
+- **THEN** the request carries only the positive filters, and the listing succeeds
+
+#### Scenario: Key and value exclusions
+
+- **WHEN** a listing excludes the key `a` and the label `b=x=y`, and the engine returns containers labelled `a=` (empty value), `a=1`, `b=x=y`, `b=x`, and one with no labels
+- **THEN** the listing contains only the containers labelled `b=x` and the one with no labels, because a key exclusion matches any value including empty, and a `key=value` exclusion matches only the exact value after the first `=`
+
+### Requirement: Desktop applications belong to the bot desktop
+
+The bot container SHALL provide an explicit launcher for installed graphical applications. It SHALL launch as `bot` on that bot's desktop outside agent and tool process groups, with independent standard streams. Applications SHALL remain running when the requesting execution completes, stops, suspends, times out, or crashes. Stopping the bot container SHALL end these applications. Closing an application SHALL leave it closed until another explicit launch request.
+
+The launcher SHALL accept bounded application identifiers and argument arrays without evaluating shell text. Invalid requests and unavailable executables SHALL return actionable failures. Launch acceptance SHALL mean only that process creation was requested successfully; it SHALL NOT claim the window appeared or a document loaded. Application output SHALL be available in bot-local diagnostics. Applications SHALL receive desktop environment values without execution credentials or session capabilities. Launch requests from agents SHALL retain execution-capability and shared-work checks.
+
+#### Scenario: Unsaved workbook survives a completed execution
+- **WHEN** a bot opens Gridcraft using the desktop launcher, edits an unsaved workbook, and completes its execution
+- **THEN** Gridcraft and the workbook remain open for the next execution and the user
+
+#### Scenario: Execution is interrupted
+- **WHEN** an execution that requested a desktop application is stopped, suspended, timed out, or crashes
+- **THEN** the desktop application remains open while session-owned commands are cleaned up
+
+#### Scenario: Application is explicitly closed
+- **WHEN** the user closes a launched application
+- **THEN** the launcher does not restart it automatically
+
+#### Scenario: Bot container stops
+- **WHEN** the bot container stops with desktop applications open
+- **THEN** those application processes end and no promise is made to recover unsaved documents
+
+#### Scenario: Invalid request or missing application
+- **WHEN** a request exceeds its bounds, has an invalid application identifier or argument shape, or names an unavailable executable
+- **THEN** the launcher rejects it with actionable diagnostics without evaluating shell text
+
+#### Scenario: Launch credentials and ownership
+- **WHEN** an agent requests an application launch
+- **THEN** the request requires its current execution capability and work ownership, and the application runs as the owning bot without execution credentials or session capabilities

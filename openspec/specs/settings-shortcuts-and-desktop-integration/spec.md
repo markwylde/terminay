@@ -417,7 +417,12 @@ owns the active project tab, and it SHALL present the settings, secrets, and
 extension inventory of exactly the selected server. Values from two servers SHALL
 NEVER be merged, summed, or shown as one list, and a change SHALL be committed
 only on the selected server. Selecting a connection that is unavailable or
-incompatible SHALL show that connection's state instead of settings.
+incompatible SHALL show that connection's state instead of settings. The
+Import & Export category SHALL be the one category that does not follow the
+selector. It SHALL show every attached server in its own column. Each column
+SHALL be read through that server's own connection, and each write SHALL be
+committed through that server's own connection. No value SHALL be merged across
+columns.
 
 #### Scenario: Default selection
 
@@ -441,6 +446,11 @@ incompatible SHALL show that connection's state instead of settings.
 - **WHEN** the selected connection is offline or incompatible
 - **THEN** the surface reports that connection's state and sends it no settings
   operation
+
+#### Scenario: Import & Export ignores the selector
+
+- **WHEN** the user opens the Import & Export category with three servers attached
+- **THEN** it shows a column for each of the three servers whichever server the selector names, and the selector is not shown for that category
 
 ### Requirement: Show Status Bar command
 
@@ -1029,3 +1039,37 @@ Settings SHALL offer a **Programs can copy to the clipboard** toggle among the t
 
 - **WHEN** a user turns the setting off on one device
 - **THEN** another device showing the same terminal still receives the program's copies
+
+### Requirement: Terminal line-feed semantics
+
+The **Convert LF to CRLF** setting SHALL be off by default and SHALL turn on only through an explicit choice by a user or an authorised client. That choice SHALL persist across restarts and later settings changes. While the setting is off, a bare line feed (LF) SHALL move the cursor down one row and keep its column, scrolling at the bottom margin. While it is on, each bare LF SHALL also return the cursor to column 0.
+
+#### Scenario: Raw-mode program positions text after a bare line feed
+
+- **WHEN** Convert LF to CRLF is off and a program writes text, a bare LF, and more text without a carriage return, and the cursor is above the bottom margin
+- **THEN** the second text starts on the next row, in the column where the first text ended
+
+#### Scenario: Bare line feed at the bottom margin
+
+- **WHEN** Convert LF to CRLF is off and a program writes a bare LF while the cursor is on the bottom row
+- **THEN** the screen scrolls up one line and the cursor keeps its column
+
+#### Scenario: Shell output keeps starting at column zero
+
+- **WHEN** a program in cooked mode writes lines ending in LF and the PTY translates them to CR LF
+- **THEN** each line starts at column 0
+
+#### Scenario: Explicit opt-in
+
+- **WHEN** a user turns Convert LF to CRLF on
+- **THEN** each bare LF also returns the cursor to column 0
+
+#### Scenario: Opt-in survives restarts and other settings changes
+
+- **WHEN** a user has turned Convert LF to CRLF on and then changes an unrelated setting and restarts Terminay and its server
+- **THEN** the setting is still on
+
+#### Scenario: Default
+
+- **WHEN** a server starts with no stored value for Convert LF to CRLF, or a user resets it
+- **THEN** the setting is off
