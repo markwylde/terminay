@@ -4,7 +4,11 @@ import path from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
-import { activeHome, frontHomeTab } from './support/home-tabs';
+import {
+	activeHome,
+	closeFrontHomeTab,
+	frontHomeTab,
+} from './support/home-tabs';
 
 /**
  * Home › Bots, end to end. The suite runs against a Docker-compatible socket API fixture
@@ -1553,6 +1557,77 @@ test.describe('Home: Bots', () => {
 			'again',
 		);
 		await expect(tab.locator('.bots-sess')).toHaveCount(3);
+	});
+
+	test('older chat history loads as the reader scrolls up, down to the start of the conversation', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(300_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Archivist'));
+		const transcript = tab.locator('[data-terminay-bot-transcript]').first();
+		const messages = transcript.locator(':scope > .bots-msg');
+		// Fourteen exchanges: 28 messages, more than the first page of 25.
+		for (let i = 1; i <= 14; i++) {
+			await send(tab, `note ${i}`);
+			await expect(messages).toHaveCount(2 * i, { timeout: 30_000 });
+		}
+
+		// A fresh tab reads the newest page first.
+		await closeFrontHomeTab(mainWindow);
+		const reopened = await openBotChat(mainWindow, 'Archivist');
+		const history = reopened.locator('.bots-msgs');
+		const shown = reopened
+			.locator('[data-terminay-bot-transcript]')
+			.first()
+			.locator(':scope > .bots-msg');
+		await expect(shown.last()).toContainText('secret');
+		await expect(
+			reopened.getByRole('button', { name: /load older/i }),
+		).toHaveCount(0);
+		await expect
+			.poll(() =>
+				history.evaluate(
+					(el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+				),
+			)
+			.toBeLessThan(2);
+
+		// Scrolling up brings the rest in; there is nothing to press.
+		const start = reopened.locator('[data-terminay-bot-history="start"]');
+		const box = await history.boundingBox();
+		if (!box) throw new Error('Chat history is not visible');
+		await mainWindow.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		for (let i = 0; i < 20 && !(await start.isVisible()); i++) {
+			await mainWindow.mouse.wheel(0, -2_000);
+			await mainWindow.waitForTimeout(150);
+		}
+		await expect(start).toHaveText('Start of conversation');
+		await expect(shown).toHaveCount(28);
+		await expect(shown.first()).toContainText('note 1');
+		// The last page kept the reader in place; show the top for the screenshot.
+		await history.evaluate((el) => el.scrollTo({ top: 0 }));
+		await expect(start).toBeInViewport();
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-history-start-of-conversation.png'),
+		});
+
+		// Back at the bottom, a new exchange is followed.
+		await history.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+		await send(reopened, 'note 15');
+		await expect(shown).toHaveCount(30, { timeout: 30_000 });
+		await expect
+			.poll(() =>
+				history.evaluate(
+					(el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+				),
+			)
+			.toBeLessThan(2);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-history-following.png'),
+		});
 	});
 
 	test('chat times every message, marks unread replies until left, and lists a repeating trigger once', async ({

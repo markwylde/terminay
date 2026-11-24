@@ -3379,6 +3379,60 @@
 	background: color-mix(in srgb, var(--bots-accent) 14%, transparent);
 }
 
+/* The top of a history that loads as the reader scrolls up. The row keeps
+ * one height whether idle, loading or failed, so it never moves the message
+ * being read; the sentinel at its top triggers the next page. */
+.bots-history-edge {
+	position: relative;
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 24px;
+	color: var(--bots-faint);
+	font-size: 11.5px;
+}
+.bots-history-sentinel {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 1px;
+	height: 1px;
+	pointer-events: none;
+}
+.bots-history-edge__loading,
+.bots-history-edge__error {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.bots-history-edge__error {
+	color: var(--bots-need);
+}
+.bots-history-edge__error .bots-link {
+	font-size: inherit;
+}
+/* Nothing older: a quiet rule with a centred label, like the unread divider
+ * but in the faint colour. */
+.bots-history-start {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 4px 0 2px;
+	color: var(--bots-faint);
+	font-size: 11.5px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+.bots-history-start::before,
+.bots-history-start::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--bots-line);
+}
+
 /* Upcoming in the rail: one row per trigger; repeating ones carry a mark. */
 .bots-upnext li {
 	align-items: center;
@@ -3708,9 +3762,6 @@
 	flex: 1;
 	height: 1px;
 	background: var(--bots-line);
-}
-.bots-thread__older {
-	align-self: center;
 }
 .bots-thread .bots-composer {
 	padding: 10px 14px 14px;

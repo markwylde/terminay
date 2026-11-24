@@ -109,13 +109,23 @@ export function threadIsNew(
 	);
 }
 
-/** The latest sequence a view has observed: its messages and their roots' latest replies. */
+/**
+ * The latest sequence a view has observed: its messages and their roots'
+ * latest replies. Roots older than `floor` (the oldest message of the view's
+ * first page) arrived by scrolling back, which acknowledges nothing, so only
+ * their own sequence counts.
+ */
 export function observedThrough(
 	messages: readonly Pick<BotMessage, 'sequence' | 'thread'>[],
+	floor?: number,
 ): number | undefined {
 	let latest: number | undefined;
 	for (const m of messages) {
-		const at = Math.max(m.sequence, m.thread?.lastReplySequence ?? 0);
+		const replies =
+			floor === undefined || m.sequence >= floor
+				? (m.thread?.lastReplySequence ?? 0)
+				: 0;
+		const at = Math.max(m.sequence, replies);
 		if (latest === undefined || at > latest) latest = at;
 	}
 	return latest;

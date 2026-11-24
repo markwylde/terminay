@@ -50,6 +50,16 @@ test('observed sequence covers roots and their latest replies', () => {
 	);
 });
 
+test('roots loaded by scrolling back do not count their newer replies', () => {
+	const messages = [
+		{ sequence: 3, thread: { ...summary(40), lastReplySequence: 40 } },
+		{ sequence: 20 },
+		{ sequence: 22, thread: { ...summary(25), lastReplySequence: 25 } },
+	];
+	assert.equal(observedThrough(messages, 20), 25);
+	assert.equal(observedThrough(messages), 40);
+});
+
 test('start failures hide behind a later started message or a dismissal', () => {
 	const failed = {
 		author: 'user' as const,
