@@ -208,7 +208,7 @@ The dashboard SHALL reflect workspace changes while it is shown. Creating, closi
 
 ### Requirement: Home sidebar sections
 
-While Home is selected, the workspace SHALL offer a Home sidebar that lists exactly six sections, in this order: **Home**, **Tabs**, **Bots**, **Automations**, **Workflows**, and **Recordings**.
+While Home is selected, the workspace SHALL offer a Home sidebar that lists these sections, in this order: **Home**, **Tabs**, **Bots**, **Automations**, **Workflows**, **Recordings**, **Pull Requests**, and **Issues**. **Pull Requests** SHALL be listed only while at least one enabled forge source serves pull requests with its Pull requests on Home setting on, and **Issues** only while one serves issues with its Issues on Home setting on. Both SHALL be hidden from a client whose authorization is bound to a project. **Pull Requests** SHALL carry a count of open pull requests that request the user's review, and **Issues** a count of open issues assigned to the user, each drawn in the neutral badge tone and omitted when zero or unknown.
 
 Activating a section SHALL open it as a Home tab, or bring its tab to the front where one is already open, so that no section is ever open twice. The sidebar SHALL show as current the section that owns the Home tab in front, and SHALL show none as current when no Home tab is open. A tab opened from within a section SHALL count as belonging to that section; for example, a bot's tab belongs to Bots, an automation's tab to Automations, and a recording's replay to Recordings.
 
@@ -247,7 +247,7 @@ The Home sidebar SHALL NOT show any project's Explorer, Documentation, Agents, o
 #### Scenario: Sidebars do not mix
 
 - **WHEN** a user moves between Home and a project
-- **THEN** Home shows only its six sections and the project shows only its own sidebar panes
+- **THEN** Home shows only its own sections and the project shows only its own sidebar panes
 
 #### Scenario: Replay belongs to Recordings
 
@@ -258,6 +258,23 @@ The Home sidebar SHALL NOT show any project's Explorer, Documentation, Agents, o
 
 - **WHEN** a user selects Home
 - **THEN** the sidebar lists Home, Tabs, Bots, Automations, Workflows, and Recordings in that order
+
+#### Scenario: Forge sections follow forge sources
+
+- **WHEN** the Gitea extension is enabled with a forge source serving pull
+  requests and issues
+- **THEN** the sidebar lists Pull Requests and Issues after Recordings
+
+#### Scenario: No forge source
+
+- **WHEN** no enabled extension contributes a forge source
+- **THEN** the sidebar lists Home, Tabs, Bots, Automations, Workflows, and
+  Recordings and nothing after them
+
+#### Scenario: Review count
+
+- **WHEN** two open pull requests request the user's review
+- **THEN** Pull Requests carries the count 2
 
 ### Requirement: Home sidebar visibility
 
@@ -666,7 +683,7 @@ project tab.
 
 ### Requirement: Dashboard shows a panel's pull request and checks
 
-Every panel the dashboard presents, and every agent card for an agent running in a panel, SHALL show the pull request and checks summary of the worktree its folder stands for, worded and coloured as that folder's Folders row shows them. Every panel in one folder SHALL show the same facts. A panel whose folder has neither SHALL show neither. The facts SHALL appear on every view mode and SHALL carry no action of their own.
+Every panel the dashboard presents, and every agent card for an agent running in a panel, SHALL show the pull request and checks summary of the worktree its folder stands for, worded and coloured as that folder's Folders row shows them. Every panel in one folder SHALL show the same facts. A panel whose folder has neither SHALL show neither. The facts SHALL appear on every view mode and SHALL carry no action of their own. On a List row they SHALL sit on the row's own line, after the agent detail and before any server name, which SHALL also stay on that line. The chips SHALL never be clipped; the agent detail and then the title SHALL give up width before they do.
 
 #### Scenario: Agent card in a worktree with a pull request
 
@@ -692,6 +709,16 @@ Every panel the dashboard presents, and every agent card for an agent running in
 
 - **WHEN** a user activates the pull request or checks chip on a dashboard card
 - **THEN** the card is activated and no browser or check list opens
+
+#### Scenario: Chips on a List row
+
+- **WHEN** the dashboard shows List on a wide window, an agent runs in a terminal, and that terminal's folder has pull request #605 open with checks running
+- **THEN** that terminal's row shows the agent's detail and then `PR #605` and the checks chip on the same line as its title, and nothing of the row is drawn below that line
+
+#### Scenario: Chips on a List row with no detail
+
+- **WHEN** a terminal with no agent is in a folder that has a pull request
+- **THEN** its List row shows the pull request chip on the title's line, whole and unclipped
 
 ### Requirement: Needs you widget
 
@@ -845,7 +872,7 @@ When saving a layout change fails, the overview SHALL return to the layout the s
 
 ### Requirement: Workflows section lists the window's workflows
 
-The Workflows section SHALL show, as one horizontally scrolling row of columns, one column for every workflow attached to a terminal panel that the window's dashboard lists. A workflow whose terminal the dashboard does not list SHALL NOT be shown. The section SHALL cover the window's one server and SHALL NOT merge workflows across servers.
+The Workflows section SHALL show one column for every workflow attached to a terminal panel that the window's dashboard lists. While the section is not narrow, the columns SHALL form one horizontally scrolling row. A workflow whose terminal the dashboard does not list SHALL NOT be shown. The section SHALL cover the window's one server and SHALL NOT merge workflows across servers.
 
 #### Scenario: Workflows from two projects
 
@@ -1018,11 +1045,11 @@ The section SHALL offer grouping by **None**, **Project**, or **Workflow**. By P
 
 ### Requirement: Workflows group layout
 
-While grouped, the section SHALL offer to lay groups out **Side by side**, one after another in the one horizontally scrolling row, or as **Rows**, each group a row of its own that scrolls sideways independently, with the rows stacked and scrolling vertically.
+While grouped and not narrow, the section SHALL offer to lay groups out **Side by side**, one after another in the one horizontally scrolling row, or as **Rows**, each group a row of its own that scrolls sideways independently, with the rows stacked and scrolling vertically.
 
 #### Scenario: Project rows
 
-- **WHEN** a user groups by Project and chooses Rows
+- **WHEN** a user groups by Project and chooses Rows while the section is not narrow
 - **THEN** each project is a row of its own, and scrolling one row sideways does not move the others
 
 ### Requirement: Folding a group
@@ -1050,7 +1077,7 @@ The section SHALL offer four sorts. **Needs you first** SHALL order by tone (Nee
 
 ### Requirement: Workflows density
 
-The section SHALL offer to show step notes **Full**, cut to **2 lines**, or for **Current only**, which shows the notes of every `running`, `failed`, or `needs_input` step and no other; and a **Narrow columns** toggle. Neither SHALL change which workflows are shown.
+The section SHALL offer to show step notes **Full**, cut to **2 lines**, or for **Current only**, which shows the notes of every `running`, `failed`, or `needs_input` step and no other; and, while the section is not narrow, a **Narrow columns** toggle. Neither SHALL change which workflows are shown.
 
 #### Scenario: Current only
 
@@ -1184,3 +1211,121 @@ The Home control, the Bots item, and a bot's sidebar row SHALL stop counting a b
 
 - **WHEN** another client shows Bird's Chat
 - **THEN** this window's Bird row, Bots item, and Home control no longer count Bird's posts
+
+### Requirement: A narrow Workflows section
+
+The Workflows section SHALL be narrow while its own width is 600 CSS pixels or less, whether because the device is a phone or because the Home tab is narrow, and SHALL NOT be narrow above 600 CSS pixels.
+
+#### Scenario: Narrow Home tab on a desktop
+
+- **WHEN** the Workflows tab is 600 pixels wide in a wide desktop window
+- **THEN** the section is narrow, and at 601 pixels it is not
+
+### Requirement: Stacked workflows on a narrow width
+
+While narrow, columns SHALL be stacked one above another, each at the full width of the section, and groups SHALL be stacked one above another with each group's columns stacked inside it, whatever the stored layout. The section SHALL have exactly one scroll area, which scrolls vertically and holds the header, toolbar, and every column; it SHALL NEVER scroll sideways, and no column or step list SHALL scroll on its own.
+
+#### Scenario: Two workflows on a phone
+
+- **WHEN** a phone shows the Workflows section with two workflows
+- **THEN** the two columns are stacked, each as wide as the section, and the section scrolls vertically with no sideways scrolling
+
+#### Scenario: Long workflow on a phone
+
+- **WHEN** a phone shows a workflow with more steps than fit on screen
+- **THEN** scrolling the section reaches its last step, and its step list does not scroll by itself
+
+#### Scenario: Grouped on a phone
+
+- **WHEN** a device that remembers grouping by Project, in either Side by side or Rows, shows the section on a phone
+- **THEN** each project's group is stacked above the next with its columns stacked inside it
+
+### Requirement: Workflows toolbar on a narrow width
+
+While narrow, the toolbar SHALL show the full-width text filter and the status filter, and place the project filter, grouping, sort, notes, Show finished, and Reset view behind one **View options** control. The layout control and Narrow columns SHALL NOT be offered. Every option SHALL be reachable by scrolling the section. While not narrow, View options SHALL NOT be offered and every option SHALL be shown directly.
+
+#### Scenario: Toolbar on a phone
+
+- **WHEN** a phone shows the Workflows section
+- **THEN** the text filter and status filter are shown, grouping, sort, and notes are behind a collapsed View options control, and neither the layout control nor Narrow columns is offered
+
+### Requirement: The View options control
+
+The View options control SHALL be reachable by keyboard, SHALL expose whether it is expanded, and SHALL start collapsed each time the section is shown. While the view differs from the default, the control SHALL say so in its visible label and accessible name.
+
+#### Scenario: Opening View options
+
+- **WHEN** a user on a phone activates View options
+- **THEN** it reports itself expanded and shows the project filter, grouping, sort, notes, and Show finished
+
+#### Scenario: A changed view on a phone
+
+- **WHEN** a user on a phone has grouped by Project and View options is collapsed
+- **THEN** View options says the view differs from the default
+
+#### Scenario: Short screen
+
+- **WHEN** View options is expanded on a screen too short to show every option
+- **THEN** scrolling the section reaches every option, including Reset view
+
+### Requirement: Narrow width leaves the stored view alone
+
+Becoming narrow or ceasing to be narrow SHALL NOT change any stored view option, including the layout and Narrow columns.
+
+#### Scenario: Round trip through a narrow width
+
+- **WHEN** a device that remembers grouping by Project in Rows with Narrow columns on shows the section narrow, reloads while narrow, and is then shown wide
+- **THEN** it is grouped by Project in Rows with Narrow columns on
+
+### Requirement: Touch-sized controls on a narrow width
+
+While narrow, every control in the toolbar and View options, every project filter entry, and each column's open and fold controls SHALL be at least 36 CSS pixels tall.
+
+#### Scenario: Control size on a phone
+
+- **WHEN** a phone shows the Workflows section with View options expanded
+- **THEN** no toolbar control, project filter entry, or open or fold control is less than 36 pixels tall
+
+### Requirement: Tabs status on a compact workspace matches the wide workspace
+
+On a compact workspace, a Tabs row with an agent, or with a non-idle status, SHALL show its status with the same agent status indicator, and the same accessible label, as a dashboard card on a wide window. Working SHALL be amber and breathing. Waiting and blocked SHALL be red. Done SHALL be green. Idle SHALL be neutral grey. An idle row with no agent and an untracked row SHALL show the panel's kind icon instead.
+
+#### Scenario: A working agent on a phone
+- **WHEN** an agent is working and a phone shows the Tabs section
+- **THEN** its row shows an amber, breathing status dot in the same colour as its card on a wide window
+
+#### Scenario: A waiting or blocked agent on a phone
+- **WHEN** one agent is waiting for approval, another is blocked, and a phone shows the Tabs section
+- **THEN** both rows show a red status dot, the blocked row's dot is labelled as blocked, and each detail line is red
+
+#### Scenario: A finished agent on a phone
+- **WHEN** an agent has finished and its result is unviewed
+- **THEN** its row on a phone shows a green status dot
+
+#### Scenario: Idle and untracked rows on a phone
+- **WHEN** a phone shows an idle agent, an idle terminal with no agent, and an untracked terminal
+- **THEN** the idle agent shows a grey dot, and the other two rows show their kind icon
+
+### Requirement: Status colours on compact section pages match the wide workspace
+
+Every compact section page SHALL draw status marks, status chips and needs-you detail text in the wide workspace's status colours: amber for running or working, red for needing the user, failed or interrupted, green for completed successfully, and neutral grey for idle. A working mark SHALL breathe unless the user prefers reduced motion. Colours that do not express status SHALL keep the accent colour.
+
+#### Scenario: A running workflow on a phone
+- **WHEN** a workflow is running and a phone shows the Workflows section
+- **THEN** its row's status mark is amber and breathing
+
+#### Scenario: A failed run on a phone
+- **WHEN** an automation's last run failed and a phone shows the Automations section
+- **THEN** its status is red
+
+#### Scenario: A working bot on a phone
+- **WHEN** a bot is working and a phone shows the Bots section
+- **THEN** its avatar dot and its status chip are both amber
+
+#### Scenario: Informational chips keep the accent
+- **WHEN** a phone shows a pull request row with an informational chip
+- **THEN** that chip keeps the accent colour
+
+#### Scenario: Reduced motion
+- **WHEN** the user prefers reduced motion and a phone shows a working row
+- **THEN** its amber mark does not breathe

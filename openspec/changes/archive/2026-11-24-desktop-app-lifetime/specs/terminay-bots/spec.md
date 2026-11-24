@@ -16,11 +16,11 @@ Bot instructions SHALL direct agents to the desktop-owned application launcher f
 
 Stop SHALL revoke the execution capability, close the execution and retain its diagnostics. The next user message SHALL start a fresh execution.
 
-An agent SHALL be closed whenever its session ends, is suspended, or times out, and whenever its bot stops. Closing SHALL first close the agent's input, then end its process group after 5 seconds. An agent SHALL count as closed only once its process group is confirmed gone.
+An agent SHALL be closed whenever its session ends or is suspended, and whenever its bot stops. Closing SHALL first close the agent's input, then end its process group after 5 seconds. An agent SHALL count as closed only once its process group is confirmed gone.
 
 Each session SHALL run under a root supervisor that leads its process group for the whole session. That supervisor SHALL hold a root-only record of the group, the leader's start time, and a random session nonce, and SHALL retire the record once the group is empty. A signal SHALL be sent to a group only while its recorded leader is alive with a matching start time. Otherwise, it SHALL be sent only to processes that are in that group and carry the session's nonce, so that a reused group number never reaches unrelated work. The session view SHALL say that a process the agent moved into its own process group is not ended by Stop, but is ended by stopping the bot.
 
-Each turn SHALL have a maximum duration, settable per bot and 30 minutes by default. A turn that exceeds it SHALL be stopped as above, and the session SHALL be marked timed out.
+A turn SHALL have no maximum duration. The server SHALL run no timer that ends a turn, and SHALL launch each agent with its own background-work time limit turned off, so a session runs until its work ends, it fails, or it is stopped.
 
 Each request to the container engine that ends a session's process group, or every process group in a bot container, SHALL be allowed 5 minutes to complete before the server treats that request as failed. The limit applies to each request, so closing an agent and its runtime relays can take longer in total.
 
@@ -57,11 +57,11 @@ Desktop-owned graphical applications SHALL remain outside execution process grou
 #### Scenario: One cleanup failure after a completed turn
 
 - **WHEN** a trigger turn's agent answers and ending its agent's process group then fails
-- **THEN** the turn stays completed, its shared-work ownership is released, its stored runner output records the redacted cleanup failure, the failure is logged, and the trigger's next firing starts a new execution
+- **THEN** the turn stays completed, its capability is revoked, its shared-work ownership is released, its stored runner output records the redacted cleanup failure, the failure is logged, and the trigger's next firing starts a new execution
 
 #### Scenario: Cleanup failure keeps a stopped or timed-out outcome
 
-- **WHEN** a user stops a turn, or a turn times out, and ending its agent's process group then fails
+- **WHEN** a turn is recorded as stopped or timed out and ending its agent's process group then fails
 - **THEN** the turn stays stopped or timed out, and the cleanup failure is counted and recorded
 
 #### Scenario: Relay cleanup failure
@@ -108,6 +108,16 @@ Desktop-owned graphical applications SHALL remain outside execution process grou
 
 - **WHEN** a user disables and re-enables a blocked bot
 - **THEN** neither action fails, and the bot's next execution retries the unconfirmed cleanup before it runs
+
+#### Scenario: Turn runs for hours
+
+- **WHEN** a turn is still working after several hours
+- **THEN** the server does not time it out and the session stays running
+
+#### Scenario: Background monitor outlasts ten minutes
+
+- **WHEN** a Claude Code bot ends its turn with a background monitor that finishes 40 minutes later
+- **THEN** the agent is still running when the monitor finishes, and the monitor wakes it
 
 #### Scenario: Stop preserves the desktop application
 

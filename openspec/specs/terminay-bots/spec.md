@@ -228,7 +228,7 @@ The server SHALL admit four work executions and one reserved user-message coordi
 
 ### Requirement: Stopping a turn and closing an agent
 
-**Stop** SHALL ask the agent to cancel the running turn. It SHALL then end the session's process group, so that no command the turn started keeps running: once the agent acknowledges the cancel, or after 10 seconds if it does not, first with a termination signal and then, 5 seconds later, with a kill signal. The turn SHALL be marked stopped, and the agent closed.
+**Stop** SHALL ask the agent to cancel the running turn. It SHALL then end the session's process group, so that no session-owned command the turn started keeps running: once the agent acknowledges the cancel, or after 10 seconds if it does not, first with a termination signal and then, 5 seconds later, with a kill signal. The turn SHALL be marked stopped, and the agent closed.
 
 Stop SHALL revoke the execution capability, close the execution and retain its diagnostics. The next user message SHALL start a fresh execution.
 
@@ -240,13 +240,15 @@ A turn SHALL have no maximum duration. The server SHALL run no timer that ends a
 
 Each request to the container engine that ends a session's process group, or every process group in a bot container, SHALL be allowed 5 minutes to complete before the server treats that request as failed. The limit applies to each request, so closing an agent and its runtime relays can take longer in total.
 
-An execution's cleanup has failed when ending its agent's process group is not confirmed. A failure to end one of its runtime relays SHALL be logged with its error but SHALL NOT count as a cleanup failure. After a cleanup failure, the server SHALL still revoke the execution's capability and durably record the execution. Except at the blocking threshold below, a cleanup failure SHALL NOT change the outcome the turn already recorded: a turn whose agent answered stays completed, and a stopped, timed-out or failed turn keeps that outcome. The server SHALL durably append the cleanup failure to that execution's runner output and log it with its error to the server diagnostics, both redacted with the bot's secrets.
+An execution's cleanup has failed when ending its agent's process group is not confirmed. A failure to end one of its runtime relays SHALL be logged with its error but SHALL NOT count as a cleanup failure. After a cleanup failure, the server SHALL still revoke the execution's capability, release any shared shell or desktop ownership it held, and durably record the execution. Except at the blocking threshold below, a cleanup failure SHALL NOT change the outcome the turn already recorded: a turn whose agent answered stays completed, and a stopped, timed-out or failed turn keeps that outcome. The server SHALL durably append the cleanup failure to that execution's runner output and log it with its error to the server diagnostics, both redacted with the bot's secrets.
 
 Cleanup failures SHALL be counted per bot in the order executions finish. A bot SHALL keep admitting executions until 3 consecutive finished executions of that bot have failed cleanup. An execution that finishes with confirmed cleanup SHALL reset that count while the bot is not blocked. On the third consecutive failure, the bot SHALL be blocked: that execution SHALL be marked failed with cause `engine` and a reason saying the bot is blocked after repeated cleanup failures, waiting work SHALL be cancelled, and new executions SHALL be refused. An execution that finishes after the bot is blocked SHALL NOT unblock it. The bot SHALL be unblocked when the server's startup reconciliation confirms it has ended every session process group in the bot's container, or when the retry below confirms every unconfirmed cleanup.
 
 Before admitting a new execution for a blocked bot, the server SHALL retry ending the process group of each execution whose cleanup has been unconfirmed since the bot's last confirmed cleanup. It SHALL NOT end any other running execution. When every retry is confirmed, the bot SHALL be unblocked and the new execution admitted, without a server restart, and each retried execution's runner output SHALL record the confirmation. While a retry fails, the new execution SHALL be refused, and a user message SHALL be refused with a reason naming the unconfirmed cleanup and the container engine, not sign-in. Enabling a blocked bot or saving its profile SHALL NOT fail; the bot stays blocked until a retry or reconciliation confirms cleanup.
 
 Any other failure while finishing an execution SHALL block the bot at once, with the same recovery.
+
+Desktop-owned graphical applications SHALL remain outside execution process groups and SHALL survive execution closure and Stop. Stopping the bot container SHALL end them. The session view SHALL explain this lifetime distinction.
 
 #### Scenario: Agent honours cancel, but its command keeps running
 
@@ -271,7 +273,7 @@ Any other failure while finishing an execution SHALL block the bot at once, with
 #### Scenario: One cleanup failure after a completed turn
 
 - **WHEN** a trigger turn's agent answers and ending its agent's process group then fails
-- **THEN** the turn stays completed, its capability is revoked, its stored runner output records the redacted cleanup failure, the failure is logged, and the trigger's next firing starts a new execution
+- **THEN** the turn stays completed, its capability is revoked, its shared-work ownership is released, its stored runner output records the redacted cleanup failure, the failure is logged, and the trigger's next firing starts a new execution
 
 #### Scenario: Cleanup failure keeps a stopped or timed-out outcome
 
@@ -332,6 +334,11 @@ Any other failure while finishing an execution SHALL block the bot at once, with
 
 - **WHEN** a Claude Code bot ends its turn with a background monitor that finishes 40 minutes later
 - **THEN** the agent is still running when the monitor finishes, and the monitor wakes it
+
+#### Scenario: Stop preserves the desktop application
+
+- **WHEN** a user stops an execution with a desktop-owned Gridcraft workbook and a session-owned `sleep 300` command
+- **THEN** the command ends, Gridcraft stays open with its workbook, and the session view explains that stopping the bot container ends desktop apps
 
 ### Requirement: Sessions survive a server restart as records
 
@@ -725,3 +732,11 @@ Each active row in the context rail's recent sessions SHALL show its state label
 
 - **WHEN** the rail shows a queued, running, or needs-you session
 - **THEN** its row shows a pulsing state dot, its state label, and a Stop button, an ended session's dot does not pulse, and no dot pulses when the user prefers reduced motion
+
+### Requirement: Bot instructions describe desktop application launch
+
+Bot instructions SHALL direct agents to the desktop-owned application launcher for graphical applications and the browser helper for websites. They SHALL require a fresh screenshot to verify visible results, distinguish launch acceptance from success, and explain that desktop applications outlive individual executions.
+
+#### Scenario: Agent opens a graphical application
+- **WHEN** an execution receives its bot instructions
+- **THEN** they describe the supported desktop launch command, diagnostic location, screenshot verification, and desktop application lifetime
