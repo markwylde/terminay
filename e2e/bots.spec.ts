@@ -3137,6 +3137,56 @@ test.describe('Home: Bots', () => {
 		await expect(player(transcript, 'clip.webm').first()).toBeVisible();
 		await playable(player(transcript, 'clip.webm').first());
 
+		// A tall video is shown whole: its frame takes the video's own shape.
+		const tall = Buffer.from(
+			await mainWindow.evaluate(async () => {
+				const canvas = document.createElement('canvas');
+				canvas.width = 180;
+				canvas.height = 360;
+				const g = canvas.getContext('2d')!;
+				const recorder = new MediaRecorder(canvas.captureStream(15), {
+					mimeType: 'video/webm;codecs=vp8',
+				});
+				const chunks: Blob[] = [];
+				recorder.ondataavailable = (event) => chunks.push(event.data);
+				const stopped = new Promise((done) => {
+					recorder.onstop = done;
+				});
+				recorder.start();
+				for (let frame = 0; frame < 10; frame++) {
+					g.fillStyle = `hsl(${frame * 36} 70% 45%)`;
+					g.fillRect(0, 0, 180, 360);
+					await new Promise((next) => setTimeout(next, 66));
+				}
+				recorder.stop();
+				await stopped;
+				const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+				let text = '';
+				for (const byte of bytes) text += String.fromCharCode(byte);
+				return btoa(text);
+			}),
+			'base64',
+		);
+		await writeFile(path.join(files, 'tall.webm'), tall);
+		await send(tab, 'post-file:tall.webm');
+		const tallVideo = player(transcript, 'tall.webm').first();
+		await expect(tallVideo).toBeVisible({ timeout: 30_000 });
+		await playable(tallVideo);
+		await expect
+			.poll(() =>
+				tallVideo.evaluate((el: HTMLVideoElement) => {
+					const shown = el.getBoundingClientRect();
+					const box = (el.parentElement as HTMLElement).getBoundingClientRect();
+					return (
+						Math.abs(shown.width / shown.height - 0.5) < 0.02 &&
+						Math.abs(box.width / box.height - 0.5) < 0.02 &&
+						shown.bottom <= box.bottom + 1 &&
+						box.height <= window.innerHeight * 0.7 + 1
+					);
+				}),
+			)
+			.toBe(true);
+
 		// A user's video plays too; its type comes from content, not its name.
 		await input.setInputFiles({
 			name: 'mine.bin',
