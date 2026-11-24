@@ -7,6 +7,7 @@
  */
 
 import type {
+	BotEnvironmentOverview,
 	BotEnvironmentState,
 	BotPermission,
 	BotProfile,
@@ -532,4 +533,32 @@ export function recoveryNotice(
 			create: 'Create environment',
 		};
 	return undefined;
+}
+
+/**
+ * Applies a state-only Overview read over the figures already on screen.
+ * Figures are kept with the time they were read until a full read replaces
+ * them; CPU and memory are dropped once the machine no longer runs, since
+ * they no longer describe it.
+ */
+export function withPreviousUsage(
+	previous: BotEnvironmentOverview | undefined,
+	next: BotEnvironmentOverview,
+): BotEnvironmentOverview {
+	if (
+		next.usageRead !== false ||
+		previous === undefined ||
+		previous.usageRead === false
+	)
+		return next;
+	const running = next.state === 'running' && previous.state === 'running';
+	return {
+		...next,
+		cpuPercent: running ? previous.cpuPercent : null,
+		memoryBytes: running ? previous.memoryBytes : null,
+		homeBytes: previous.homeBytes,
+		log: previous.log,
+		sampledAt: previous.sampledAt,
+		usageRead: previous.usageRead,
+	};
 }

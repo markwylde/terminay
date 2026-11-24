@@ -57,14 +57,18 @@ export class BotEnvironmentClient {
 			await this.transport.command(op.setSettings, payload, options),
 		);
 	}
+	/** With `usage: false`, reads state only: no CPU, memory, home size, or log. */
 	async overview(
 		botId: string,
 		options: QueryOptions = {},
+		{ usage = true }: { readonly usage?: boolean } = {},
 	): Promise<BotEnvironmentOverview> {
 		if (this.transport.queryWithBody) {
 			const response = await this.transport.queryWithBody(
 				op.overview,
-				{ botId: botEnvironmentId(botId), encoding: 'json' },
+				usage
+					? { botId: botEnvironmentId(botId), encoding: 'json' }
+					: { botId: botEnvironmentId(botId), encoding: 'json', usage: false },
 				options,
 			);
 			if (response.body.byteLength > 1024 * 1024)
@@ -78,7 +82,9 @@ export class BotEnvironmentClient {
 		return parseBotEnvironmentOverview(
 			await this.transport.query(
 				op.overview,
-				{ botId: botEnvironmentId(botId) },
+				usage
+					? { botId: botEnvironmentId(botId) }
+					: { botId: botEnvironmentId(botId), usage: false },
 				options,
 			),
 		);

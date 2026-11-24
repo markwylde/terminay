@@ -254,7 +254,6 @@ export function BotDesktopView({
 		return () => clearTimeout(clear);
 	}, [pasteTooLarge]);
 	const frame = useRef<HTMLDivElement>(null);
-	const environment = server.environments.get(bot.id);
 
 	return (
 		<div className="bots-desktop" data-terminay-bot-desktop={state}>
@@ -318,12 +317,6 @@ export function BotDesktopView({
 				</button>
 			</div>
 			{error ? <div className="bots-note bots-note--error">{error}</div> : null}
-			{environment !== 'running' && state !== 'open' ? (
-				<div className="bots-note">
-					The desktop runs while the container runs. Start the bot from
-					Overview, or send it a message.
-				</div>
-			) : null}
 			<div className="bots-desktop__frame" ref={frame}>
 				{visible ? (
 					<BotDesktopCanvas

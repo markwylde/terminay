@@ -9,6 +9,25 @@ import {
 } from '../dist/botService/index.js';
 
 const id = 'abc123def456';
+
+test('a desktop on a stopped machine is refused as not started, without touching the engine', async () => {
+	const activity = [];
+	const service = new BotDesktopService({
+		engine: async () => {
+			throw new Error('unexpected engine');
+		},
+		running: () => false,
+		withPassword: async () => {
+			throw new Error('unexpected password');
+		},
+		activity: (_id, delta) => activity.push(delta),
+	});
+	await assert.rejects(
+		service.open(authority(), id, 1),
+		(error) => error.code === 'conflict' && /not started/.test(error.message),
+	);
+	assert.deepEqual(activity, []);
+});
 const authority = (controller = new AbortController()) => ({
 	connectionId: 'connection',
 	clientId: 'client',
@@ -436,5 +455,34 @@ test('desktop opening reserves activity before awaits and releases it on failure
 	assert.deepEqual(activity, [1]);
 	fail(new Error('engine unavailable'));
 	await assert.rejects(pending, /engine unavailable/);
+	assert.deepEqual(activity, [1, -1]);
+});
+
+test('a desktop refuses a machine that stopped while acquiring the engine', async () => {
+	let running = true;
+	let acquire;
+	const activity = [];
+	const service = new BotDesktopService({
+		running: () => running,
+		engine: () =>
+			new Promise((resolve) => {
+				acquire = resolve;
+			}),
+		withPassword: async () => {
+			assert.fail('must not read password');
+		},
+		activity: (_id, delta) => activity.push(delta),
+	});
+	const pending = service.open(authority(), id, 1);
+	running = false;
+	acquire({
+		execStream: () => {
+			assert.fail('must not open stream');
+		},
+	});
+	await assert.rejects(pending, {
+		code: 'conflict',
+		message: 'The machine is not started.',
+	});
 	assert.deepEqual(activity, [1, -1]);
 });

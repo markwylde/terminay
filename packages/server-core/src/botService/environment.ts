@@ -123,6 +123,8 @@ export class BotEnvironmentService extends EventEmitter {
 		string,
 		Promise<BotAppArmorDecision>
 	>();
+	/** Decisions whose probe has finished, for reads that must not wait on one. */
+	private readonly settledAppArmor = new Map<string, BotAppArmorDecision>();
 	constructor(
 		readonly serverId: string,
 		private readonly hooks: BotEnvironmentHooks,
@@ -419,12 +421,35 @@ export class BotEnvironmentService extends EventEmitter {
 		if (!pending) {
 			pending = this.probeAppArmor(driver);
 			this.appArmorDecisions.set(key, pending);
+			const settling = pending;
+			settling.then(
+				(decision) => {
+					if (this.appArmorDecisions.get(key) === settling)
+						this.settledAppArmor.set(key, decision);
+				},
+				() => undefined,
+			);
 			pending.catch(() => {
 				if (this.appArmorDecisions.get(key) === pending)
 					this.appArmorDecisions.delete(key);
 			});
 		}
 		return pending.catch(() => undefined);
+	}
+	/**
+	 * The AppArmor decision if it is already known, without probing. Undefined
+	 * while a probe is pending or has not run: currency is then judged by
+	 * fingerprint alone, and a full read settles it.
+	 */
+	private settledAppArmorDecision(
+		driver: EngineDriver,
+	): BotAppArmorDecision | undefined {
+		const details = driver.details;
+		if (details.pin.kind !== 'docker' || details.appArmor !== true)
+			return ENGINE_DEFAULT;
+		return this.settledAppArmor.get(
+			`${details.pin.address}\0${details.pin.identity}`,
+		);
 	}
 	private async probeAppArmor(
 		driver: EngineDriver,
@@ -810,7 +835,15 @@ export class BotEnvironmentService extends EventEmitter {
 			bot.idleStopMs === undefined ? DEFAULT_BOT_IDLE_STOP_MS : bot.idleStopMs,
 		);
 	}
-	async overview(id: string): Promise<BotEnvironmentOverview> {
+	/**
+	 * The environment as the Overview shows it. With `usage: false` it reads
+	 * only the container's own record, so the Overview can render at once;
+	 * CPU, memory, home size, and the log are then read in a second call.
+	 */
+	async overview(
+		id: string,
+		{ usage = true }: { readonly usage?: boolean } = {},
+	): Promise<BotEnvironmentOverview> {
 		const bot = this.definition(id);
 		const driver = await this.hooks.engine();
 		const name = nameFor(id);
@@ -819,72 +852,21 @@ export class BotEnvironmentService extends EventEmitter {
 			container && ownedResource(container, this.serverId, id)
 				? container
 				: undefined;
-		let cpuPercent: number | null = null;
-		let memoryBytes: number | null = null;
 		// Usage figures are best-effort: a failed read leaves them blank rather
-		// than failing the whole overview.
-		if (owned?.State?.Running)
-			try {
-				const raw = await driver.run([
-					'stats',
-					'--no-stream',
-					'--format',
-					'json',
-					name,
-				]);
-				const parsed = JSON.parse(raw) as
-					| Record<string, unknown>
-					| Record<string, unknown>[];
-				const usage = Array.isArray(parsed) ? parsed[0] : parsed;
-				cpuPercent = parsePercent(
-					usage?.CPUPerc ?? usage?.cpu_percent ?? usage?.CPU,
-				);
-				memoryBytes = parseMemory(
-					String(
-						usage?.MemUsage ?? usage?.mem_usage ?? usage?.MemUsageBytes ?? '',
-					).split('/')[0] ?? '',
-				);
-			} catch {
-				// Left blank.
-			}
-		let homeBytes: number | null = null;
-		// Read on demand: the Overview asks only when it opens and on Refresh.
-		if (await this.owned(driver, 'volume', `${name}-home`, id))
-			try {
-				const size = await driver.run([
-					'run',
-					'--rm',
-					'--pull',
-					'never',
-					'--network',
-					'none',
-					...this.labels(id),
-					'--label',
-					'terminay.role=helper',
-					'--cpus',
-					'0.25',
-					'--memory',
-					'134217728',
-					'--pids-limit',
-					'64',
-					'--user',
-					'bot',
-					'--mount',
-					`type=volume,source=${name}-home,target=/home/bot,readonly`,
-					'--entrypoint',
-					'du',
-					BOT_IMAGE,
-					'-sk',
-					'/home/bot',
-				]);
-				const kib = Number(size.trim().split(/\s+/)[0]);
-				if (Number.isFinite(kib) && kib >= 0) homeBytes = kib * 1024;
-			} catch {
-				// Left blank.
-			}
-		const log = owned
-			? await this.readLogs(driver, name, id).catch(() => '')
-			: '';
+		// than failing the whole overview. The reads are independent, so they
+		// run together and the slowest one bounds the wait.
+		const [stats, homeBytes, log] = usage
+			? await Promise.all([
+					owned?.State?.Running
+						? this.readStats(driver, name)
+						: { cpuPercent: null, memoryBytes: null },
+					this.readHomeBytes(driver, name, id),
+					owned
+						? this.readLogs(driver, name, id).catch(() => '')
+						: Promise.resolve(''),
+				])
+			: [{ cpuPercent: null, memoryBytes: null }, null, ''];
+		const { cpuPercent, memoryBytes } = stats;
 		const started = Date.parse(owned?.State?.StartedAt ?? '');
 		const now = this.hooks.now?.() ?? Date.now();
 		return {
@@ -906,7 +888,11 @@ export class BotEnvironmentService extends EventEmitter {
 			current: botContainerCurrent(
 				owned,
 				this.hooks.currentFingerprint(),
-				owned ? (await this.appArmorDecision(driver))?.profile : undefined,
+				!owned
+					? undefined
+					: usage
+						? (await this.appArmorDecision(driver))?.profile
+						: this.settledAppArmorDecision(driver)?.profile,
 			),
 			homeVolume: `${name}-home`,
 			limits: bot.limits ?? defaults,
@@ -926,7 +912,79 @@ export class BotEnvironmentService extends EventEmitter {
 			homeBytes,
 			sampledAt: now,
 			log,
+			usageRead: usage,
 		};
+	}
+	private async readStats(
+		driver: EngineDriver,
+		name: string,
+	): Promise<{ cpuPercent: number | null; memoryBytes: number | null }> {
+		try {
+			const raw = await driver.run([
+				'stats',
+				'--no-stream',
+				'--format',
+				'json',
+				name,
+			]);
+			const parsed = JSON.parse(raw) as
+				| Record<string, unknown>
+				| Record<string, unknown>[];
+			const usage = Array.isArray(parsed) ? parsed[0] : parsed;
+			return {
+				cpuPercent: parsePercent(
+					usage?.CPUPerc ?? usage?.cpu_percent ?? usage?.CPU,
+				),
+				memoryBytes: parseMemory(
+					String(
+						usage?.MemUsage ?? usage?.mem_usage ?? usage?.MemUsageBytes ?? '',
+					).split('/')[0] ?? '',
+				),
+			};
+		} catch {
+			return { cpuPercent: null, memoryBytes: null };
+		}
+	}
+	/** Read on demand: the Overview asks only after it opens and on Refresh. */
+	private async readHomeBytes(
+		driver: EngineDriver,
+		name: string,
+		id: string,
+	): Promise<number | null> {
+		// A home volume owned by someone else fails the overview, as before.
+		if (!(await this.owned(driver, 'volume', `${name}-home`, id))) return null;
+		try {
+			const size = await driver.run([
+				'run',
+				'--rm',
+				'--pull',
+				'never',
+				'--network',
+				'none',
+				...this.labels(id),
+				'--label',
+				'terminay.role=helper',
+				'--cpus',
+				'0.25',
+				'--memory',
+				'134217728',
+				'--pids-limit',
+				'64',
+				'--user',
+				'bot',
+				'--mount',
+				`type=volume,source=${name}-home,target=/home/bot,readonly`,
+				'--entrypoint',
+				'du',
+				BOT_IMAGE,
+				'-sk',
+				'/home/bot',
+			]);
+			const kib = Number(size.trim().split(/\s+/)[0]);
+			return Number.isFinite(kib) && kib >= 0 ? kib * 1024 : null;
+		} catch {
+			return null;
+		}
 	}
 	private async readLogs(
 		driver: EngineDriver,

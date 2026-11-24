@@ -34,7 +34,10 @@ test('4.10 socket TTY resize, supervision, activity and revocation', async () =>
 	};
 	const service = new BotShellService({
 		engine: async () => driver,
-		start: async () => {},
+		start: async () => {
+			throw new Error('a shell must not start the machine');
+		},
+		running: () => true,
 		activity: (_id, delta) => activity.push(delta),
 	});
 	const controller = new AbortController();
@@ -115,6 +118,7 @@ test('4.10 opt-in real PTY whoami, resize and shell process teardown', {
 	const service = new BotShellService({
 		engine: async () => engine.driver,
 		start: async () => {},
+		running: () => true,
 		pty: createNodePtyFactory(nodePty),
 		cwd: process.cwd(),
 		environment: process.env,
@@ -145,7 +149,7 @@ test('4.10 opt-in real PTY whoami, resize and shell process teardown', {
 	assert.ok(!processes.includes('/bin/bash -i'));
 });
 
-test('shell opening reserves activity before start and releases it when start fails', async () => {
+test('sign-in reserves activity before start and releases it when start fails', async () => {
 	const activity = [];
 	let fail;
 	const service = new BotShellService({
@@ -156,7 +160,9 @@ test('shell opening reserves activity before start and releases it when start fa
 			new Promise((_resolve, reject) => {
 				fail = reject;
 			}),
+		running: () => false,
 		activity: (_id, delta) => activity.push(delta),
+		signIn: { command: () => ['agent', 'login'], succeeded: async () => {} },
 	});
 	const pending = service.open(
 		authority(),
@@ -165,10 +171,83 @@ test('shell opening reserves activity before start and releases it when start fa
 		{ cols: 80, rows: 24 },
 		() => {},
 		() => {},
+		'sign-in',
 	);
 	assert.deepEqual(activity, [1]);
 	await new Promise((resolve) => setImmediate(resolve));
 	fail(new Error('start failed'));
 	await assert.rejects(pending, /start failed/);
 	assert.deepEqual(activity, [1, -1]);
+});
+
+test('a shell on a stopped machine is refused without starting it or reserving activity', async () => {
+	const activity = [];
+	let starts = 0;
+	const service = new BotShellService({
+		engine: async () => {
+			throw new Error('unexpected engine');
+		},
+		start: async () => {
+			starts++;
+		},
+		running: () => false,
+		activity: (_id, delta) => activity.push(delta),
+	});
+	await assert.rejects(
+		service.open(
+			authority(),
+			id,
+			1,
+			{ cols: 80, rows: 24 },
+			() => {},
+			() => {},
+		),
+		(error) => error.code === 'conflict' && /not started/.test(error.message),
+	);
+	assert.equal(starts, 0);
+	assert.deepEqual(activity, []);
+});
+
+test('a shell rechecks machine state and authority after acquiring the engine', async () => {
+	for (const reason of ['stopped', 'revoked']) {
+		const controller = new AbortController();
+		let running = true;
+		let acquire;
+		const activity = [];
+		const service = new BotShellService({
+			engine: () =>
+				new Promise((resolve) => {
+					acquire = resolve;
+				}),
+			start: async () => {
+				assert.fail('must not start');
+			},
+			running: () => running,
+			activity: (_id, delta) => activity.push(delta),
+		});
+		const pending = service.open(
+			authority(controller),
+			id,
+			1,
+			{ cols: 80, rows: 24 },
+			() => {},
+			() => {},
+		);
+		await new Promise((resolve) => setImmediate(resolve));
+		if (reason === 'stopped') running = false;
+		else controller.abort();
+		acquire({
+			execStream: () => {
+				assert.fail('must not open stream');
+			},
+		});
+		await assert.rejects(
+			pending,
+			reason === 'stopped'
+				? { code: 'conflict', message: 'The machine is not started.' }
+				: { name: 'AbortError' },
+		);
+		assert.deepEqual(activity, [1, -1]);
+		await service.close();
+	}
 });

@@ -134,6 +134,11 @@ export interface BotEnvironmentOverview {
 	readonly homeBytes: number | null;
 	readonly sampledAt: number;
 	readonly log: string;
+	/**
+	 * False when CPU, memory, home size, and the log were not read: the
+	 * Overview asked for state only. Absent means they were read.
+	 */
+	readonly usageRead?: boolean;
 }
 export function botEnvironmentId(value: unknown): string {
 	if (typeof value !== 'string' || !/^[a-z0-9]{12}$/.test(value))
@@ -181,6 +186,8 @@ export function parseBotEnvironmentOverview(
 	for (const key of ['image', 'fingerprint', 'homeVolume'])
 		boundedText(record[key], 2048);
 	boundedText(record.log, 256 * 1024);
+	if (record.usageRead !== undefined && typeof record.usageRead !== 'boolean')
+		throw new TypeError('invalid bot environment flag');
 	if (
 		!['proxy', 'recreate-required', 'not-created'].includes(
 			String(record.engineSocket),

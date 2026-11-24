@@ -142,3 +142,32 @@ test('state reads use only the cheap typed query and reject invalid responses', 
  assert.deepEqual(calls,[['bots.environment.state',{botId}]]);
  state={state:'stopped'};await assert.rejects(c.state(botId),/invalid bot environment state/);
 });
+
+test('state-only overview forwards usage false through both transports, accepting older servers', async () => {
+	for (const body of [false, true]) {
+		const calls = [];
+		const transport = {
+			query: async (...args) => {
+				calls.push(args);
+				return overview;
+			},
+			command: async () => null,
+			...(body
+				? {
+						queryWithBody: async (...args) => {
+							calls.push(args);
+							return {
+								body: new TextEncoder().encode(JSON.stringify(overview)),
+							};
+						},
+					}
+				: {}),
+		};
+		const client = new BotEnvironmentClient(transport);
+		const options = { signal: new AbortController().signal };
+		const result = await client.overview(botId, options, { usage: false });
+		assert.equal(result.usageRead, undefined);
+		assert.equal(calls[0][1].usage, false);
+		assert.equal(calls[0][2], options);
+	}
+});
