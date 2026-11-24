@@ -25,6 +25,7 @@ import {
 	X,
 } from 'lucide-react';
 import {
+	type CSSProperties,
 	Fragment,
 	type MouseEvent,
 	memo,
@@ -201,7 +202,8 @@ function VideoPlayer({
 		near = useRef(false);
 	const [wanted, setWanted] = useState(false),
 		[url, setUrl] = useState<string>(),
-		[failed, setFailed] = useState(false);
+		[failed, setFailed] = useState(false),
+		[ratio, setRatio] = useState<number>();
 	useEffect(() => {
 		const element = frame.current;
 		if (!element || typeof IntersectionObserver === 'undefined') {
@@ -251,6 +253,9 @@ function VideoPlayer({
 			ref={frame}
 			className="bots-video"
 			data-terminay-bot-video={attachment.name}
+			style={
+				ratio ? ({ '--bots-video-ratio': ratio } as CSSProperties) : undefined
+			}
 		>
 			{url ? (
 				<video
@@ -263,6 +268,12 @@ function VideoPlayer({
 					preload="metadata"
 					aria-label={attachment.name}
 					onError={() => setFailed(true)}
+					onLoadedMetadata={({
+						currentTarget: { videoWidth, videoHeight },
+					}) => {
+						if (videoWidth > 0 && videoHeight > 0)
+							setRatio(videoWidth / videoHeight);
+					}}
 					onPause={() => {
 						if (!near.current) setWanted(false);
 					}}
