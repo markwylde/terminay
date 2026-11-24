@@ -1,6 +1,6 @@
 # Verification
 
-Implementation verification completed on 2026-11-24. Delivery/CI task 3.4 remains tracked until the PR head is green.
+Implementation verification completed on 2026-11-24. PR #660 is open with its screenshot attached. All 30 Gitea checks passed on implementation commit `52005c3453998af4476a88fb6b765b66cb939f5d`; the final documentation commit is checked again before workflow completion.
 
 ## Completeness and correctness
 
@@ -25,4 +25,39 @@ Implementation verification completed on 2026-11-24. Delivery/CI task 3.4 remain
 
 ## Coherence
 
-Canonical dictation requirements are synced with the reviewed delta. The implementation preserves server-owned inference/vault access, immutable terminal targeting and normal PTY insertion. ADR-0142 records request-local custom TLS policy. Capture lifecycle coverage runs in the existing smoke job; provider, settings and UI tests use existing suites and CI jobs. No implementation gaps remain; PR delivery and final head CI are the remaining workflow work.
+Canonical dictation requirements are synced with the reviewed delta. The implementation preserves server-owned inference/vault access, immutable terminal targeting and normal PTY insertion. ADR-0142 records request-local custom TLS policy. Capture lifecycle coverage runs in the existing smoke job; provider, settings and UI tests use existing suites and CI jobs. No implementation gaps remain. The final PR-head status list is recorded in the PR description after the documentation commit is checked.
+
+## Implementation commit CI
+
+| Check | Status |
+| --- | --- |
+| CI / Bot MCP real-container ownership (pull_request) | success |
+| CI / Build E2E image (pull_request) | success |
+| CI / Build Linux floor artifacts (linux-x64) (pull_request) | success |
+| CI / Build, lint, and unit tests (pull_request) | success |
+| CI / Container image smoke (pull_request) | success |
+| CI / E2E (1/18) (pull_request) | success |
+| CI / E2E (10/18) (pull_request) | success |
+| CI / E2E (11/18) (pull_request) | success |
+| CI / E2E (12/18) (pull_request) | success |
+| CI / E2E (13/18) (pull_request) | success |
+| CI / E2E (14/18) (pull_request) | success |
+| CI / E2E (15/18) (pull_request) | success |
+| CI / E2E (16/18) (pull_request) | success |
+| CI / E2E (17/18) (pull_request) | success |
+| CI / E2E (18/18) (pull_request) | success |
+| CI / E2E (2/18) (pull_request) | success |
+| CI / E2E (3/18) (pull_request) | success |
+| CI / E2E (4/18) (pull_request) | success |
+| CI / E2E (5/18) (pull_request) | success |
+| CI / E2E (6/18) (pull_request) | success |
+| CI / E2E (7/18) (pull_request) | success |
+| CI / E2E (8/18) (pull_request) | success |
+| CI / E2E (9/18) (pull_request) | success |
+| CI / Linux glibc floor (linux-x64) (pull_request) | success |
+| CI / Packaged Linux built-in lifecycle (linux-x64) (pull_request) | success |
+| CI / Packaged macOS startup smoke (pull_request) | success |
+| CI / Real MCP CLI compatibility (pull_request) | success |
+| CI / Real WebRTC pairing (pull_request) | success |
+| CI / Standalone systemd restart (linux-x64) (pull_request) | success |
+| CI / Workspace tests (pull_request) | success |
