@@ -87,7 +87,7 @@ import {
 	type GitWatchDirectoryFilter,
 	type GitWatchHandle,
 } from './types.js';
-import { NodeGitStateWatcher } from './watcher.js';
+import { isWatchedRootGone, NodeGitStateWatcher } from './watcher.js';
 
 export class NodeGitPathAdapter implements GitPathAdapter {
 	realpath(path: string): Promise<string> {
@@ -127,6 +127,20 @@ interface RepositoryObservation {
 	layout: ObservedRepositoryLayout;
 	/** Null until the Git directory watch is established. */
 	commonDir: string | null;
+	/** True while the Git directory is being resolved and its watch opened. */
+	gitDirectoryPending: boolean;
+	/** Bumped on each attempt to watch the Git directory, so an attempt
+	 *  overtaken by a re-arm does nothing when it resolves. */
+	gitDirectoryAttempt: number;
+	/** Watched paths whose watch covers its whole scope (ADR-0141). */
+	readonly readyWatches: Set<string>;
+	/** Woken when every watch is ready, or observation is unavailable or
+	 *  closed: see `watchesSettled`. */
+	readonly readyWaiters: Set<() => void>;
+	/** The attempt to re-establish an unavailable observation, while one runs. */
+	rearming: Promise<void> | undefined;
+	/** `dirtyAll` as it was before the re-arm in progress, to restore if it fails. */
+	dirtyAllBeforeRearm: boolean;
 	listing: GitWorktreeListResult | undefined;
 	dirtyAll: boolean;
 	unavailable: boolean;
@@ -259,6 +273,9 @@ export class GitService {
 	private generationCounter = 0;
 	private revisionValue = 0;
 	private readonly statusFingerprints = new Map<string, string>();
+	/** What each worktree's listing last showed, by the same key as
+	 *  `statusFingerprints`: an event is due when either changes. */
+	private readonly summaryFingerprints = new Map<string, string>();
 	/** Last measured summary per worktree, by repository. Lets a listing that
 	 *  names one worktree carry the others forward instead of re-running their
 	 *  Git commands. */
@@ -353,9 +370,7 @@ export class GitService {
 		this.bindings.delete(projectId);
 		this.projectGenerations.delete(projectId);
 		this.stopObserving(projectId, binding);
-		const prefix = `${projectId}\0`;
-		for (const key of [...this.statusFingerprints.keys()])
-			if (key.startsWith(prefix)) this.statusFingerprints.delete(key);
+		this.forgetPublished(projectId);
 		return true;
 	}
 
@@ -580,7 +595,25 @@ export class GitService {
 		target: GitTargetRequest,
 		origin: MeasurementOrigin,
 	): Promise<GitWorktreeListResult> {
+		const observing = this.observationFor(target.projectId);
+		if (observing !== undefined && origin.raisedBy !== 'watch')
+			this.rearm(observing);
 		for (;;) {
+			// A listing is measured, and cached, only under watches that cover it.
+			// Ready watches are the usual case; only a pending one costs a turn.
+			// A rebind while waiting swaps the observation, so look again after
+			// waking rather than measuring under watches nobody waited for.
+			for (;;) {
+				const awaited = this.observationFor(target.projectId);
+				if (
+					awaited === undefined ||
+					awaited.closed ||
+					awaited.unavailable ||
+					this.watchesReady(awaited)
+				)
+					break;
+				await this.watchesSettled(awaited, target.signal);
+			}
 			if (!origin.fresh) {
 				const cached = this.cachedListing(target);
 				if (cached !== undefined) {
@@ -771,7 +804,11 @@ export class GitService {
 				selected,
 			);
 			// A worktree newly watched has never been measured under its watch.
-			if (this.syncWorkingTreeWatches(observed).length > 0) newlyWatched = true;
+			if (this.syncWorkingTreeWatches(observed).length > 0) {
+				newlyWatched = true;
+				// Measure it once its watch covers it, so the listing can be cached.
+				await this.watchesSettled(observed, target.signal);
+			}
 		}
 		// A status change names the worktree it came from, so a listing raised by
 		// one worktree's change need not re-run four Git commands against every
@@ -969,19 +1006,22 @@ export class GitService {
 				let publishedAny = false;
 				for (const projectId of publishTo)
 					publishedAny =
-						this.publishStatusChange({
-						projectId,
-						repositoryId: discovery.repositoryId,
-						repositoryRoot: discovery.repositoryRoot,
-						worktreeId: id,
-						worktreeRoot: canonicalPath,
-						state: discoveryState,
-						branch,
-						entries,
-						head: record.head,
-						bounded: statusBounded,
-						...(error === undefined ? {} : { error }),
-					}) || publishedAny;
+						this.publishStatusChange(
+							{
+								projectId,
+								repositoryId: discovery.repositoryId,
+								repositoryRoot: discovery.repositoryRoot,
+								worktreeId: id,
+								worktreeRoot: canonicalPath,
+								state: discoveryState,
+								branch,
+								entries,
+								head: record.head,
+								bounded: statusBounded,
+								...(error === undefined ? {} : { error }),
+							},
+							summary,
+						) || publishedAny;
 				if (publishedAny) published += 1;
 				else suppressed += 1;
 			}
@@ -2978,8 +3018,14 @@ export class GitService {
 	}
 
 	/** Returns whether an event was published rather than suppressed as a
-	 *  repeat of the last one for this worktree. */
-	private publishStatusChange(status: GitStatusResult): boolean {
+	 *  repeat of the last one for this worktree. A listing passes the
+	 *  worktree's summary too: anything it shows that changed is news, even
+	 *  when the status itself did not (an ahead count after a default-branch
+	 *  move, unpushed work after a push). */
+	private publishStatusChange(
+		status: GitStatusResult,
+		summary?: GitWorktreeSummary,
+	): boolean {
 		const key = `${status.projectId}\0${status.repositoryId ?? ''}\0${status.worktreeId ?? ''}`;
 		const fingerprint = JSON.stringify({
 			state: status.state,
@@ -2988,8 +3034,19 @@ export class GitService {
 			entries: status.entries,
 			bounded: status.bounded,
 		});
-		if (this.statusFingerprints.get(key) === fingerprint) return false;
-		this.statusFingerprints.set(key, fingerprint);
+		const listed =
+			summary === undefined ? undefined : listedSummaryFingerprint(summary);
+		// `status()` and a listing describe the same worktree in different
+		// shapes (a short head against a full one), so each is compared with
+		// what it published itself; interleaving them must not read as change.
+		const statusKey = `${key}\0${summary === undefined ? 'status' : 'listing'}`;
+		const statusChanged =
+			this.statusFingerprints.get(statusKey) !== fingerprint;
+		const listedChanged =
+			listed !== undefined && this.summaryFingerprints.get(key) !== listed;
+		this.statusFingerprints.set(statusKey, fingerprint);
+		if (listed !== undefined) this.summaryFingerprints.set(key, listed);
+		if (!statusChanged && !listedChanged) return false;
 		const event: GitStatusChangeEvent = Object.freeze({
 			revision: this.nextRevision(),
 			cursor: String(this.revisionValue),
@@ -3098,6 +3155,12 @@ export class GitService {
 							],
 			},
 			commonDir: null,
+			gitDirectoryPending: true,
+			gitDirectoryAttempt: 0,
+			readyWatches: new Set(),
+			readyWaiters: new Set(),
+			rearming: undefined,
+			dirtyAllBeforeRearm: false,
 			listing: undefined,
 			dirtyAll: true,
 			unavailable: false,
@@ -3128,6 +3191,7 @@ export class GitService {
 		for (const path of [...observation.watches.keys()])
 			this.closeWatch(observation, path);
 		observation.listing = undefined;
+		this.settleReadiness(observation);
 		if (this.observations.get(observation.repositoryId) === observation) {
 			this.observations.delete(observation.repositoryId);
 			this.lastWorktreeSummaries.delete(observation.repositoryId);
@@ -3201,6 +3265,15 @@ export class GitService {
 	private async watchGitDirectory(
 		observation: RepositoryObservation,
 	): Promise<void> {
+		const attempt = ++observation.gitDirectoryAttempt;
+		observation.gitDirectoryPending = true;
+		const current = () =>
+			observation.gitDirectoryAttempt === attempt && !observation.closed;
+		const settled = () => {
+			if (!current()) return;
+			observation.gitDirectoryPending = false;
+			this.settleReadiness(observation);
+		};
 		let commonDir: string;
 		try {
 			const result = await this.runGit(
@@ -3214,10 +3287,16 @@ export class GitService {
 				resolve(observation.repositoryRoot, reported),
 			);
 		} catch (error) {
+			if (!current()) return;
 			this.observationFailed(observation, error, 'git-directory', true);
+			settled();
 			return;
 		}
-		if (observation.closed || observation.unavailable) return;
+		if (!current()) return;
+		if (observation.unavailable) {
+			settled();
+			return;
+		}
 		this.addWatch(
 			observation,
 			commonDir,
@@ -3236,6 +3315,7 @@ export class GitService {
 			},
 		);
 		observation.commonDir = commonDir;
+		settled();
 	}
 
 	/** Ignore inputs changed: built-up working-tree watches re-ask what they exclude. */
@@ -3326,7 +3406,16 @@ export class GitService {
 			},
 			onError: (error) => {
 				if (observation.watches.get(path) !== handle) return;
+				if (kind === 'working-tree' && isWatchedRootGone(error)) {
+					this.workingTreeRootGone(observation, path);
+					return;
+				}
 				this.observationFailed(observation, error, kind, recursive);
+			},
+			onReady: () => {
+				if (observation.watches.get(path) !== handle) return;
+				observation.readyWatches.add(path);
+				this.settleReadiness(observation);
 			},
 		});
 		observation.watches.set(path, handle);
@@ -3346,6 +3435,8 @@ export class GitService {
 		handle.close();
 		observation.watches.delete(path);
 		observation.watchKinds.delete(path);
+		observation.readyWatches.delete(path);
+		this.settleReadiness(observation);
 		this.report({
 			kind: 'watch.closed',
 			repository: this.diagnosticRepositoryId(observation.repositoryId),
@@ -3461,11 +3552,124 @@ export class GitService {
 		for (const path of [...observation.watches.keys()])
 			this.closeWatch(observation, path);
 		observation.listing = undefined;
-		observation.dirtyAll = true;
+		// Changes may have been missed while watches were lost. A re-arm that
+		// fails again lost nothing new, and leaves what is owed as it was.
+		if (observation.rearming === undefined) observation.dirtyAll = true;
+		else observation.dirtyAll = observation.dirtyAllBeforeRearm;
+		this.settleReadiness(observation);
+		// Clients were told once when observation was lost; a re-arm that fails
+		// again leaves nothing new for them to re-query.
+		if (observation.rearming !== undefined) return;
 		for (const projectId of observation.projects) {
 			const binding = this.bindings.get(projectId);
 			if (binding !== undefined) this.publishUnattributedChange(binding);
 		}
+	}
+
+	/**
+	 * A working tree's root went away: the worktree was removed (or is about
+	 * to be pruned). Only its own watch goes; the repository is re-listed so
+	 * the registry decides what remains, and every other watch stays live
+	 * (ADR-0141).
+	 */
+	private workingTreeRootGone(
+		observation: RepositoryObservation,
+		path: string,
+	): void {
+		if (observation.closed || observation.unavailable) return;
+		this.closeWatch(observation, path);
+		this.observedChange(
+			observation,
+			{ kind: 'all', registry: true },
+			'working-tree',
+		);
+	}
+
+	/** Every open watch covers its whole scope, and the Git directory's is open. */
+	private watchesReady(observation: RepositoryObservation): boolean {
+		if (observation.gitDirectoryPending) return false;
+		for (const path of observation.watches.keys())
+			if (!observation.readyWatches.has(path)) return false;
+		return true;
+	}
+
+	/** Wake whatever waits for readiness, once there is nothing left to wait for. */
+	private settleReadiness(observation: RepositoryObservation): void {
+		if (
+			!observation.closed &&
+			!observation.unavailable &&
+			!this.watchesReady(observation)
+		)
+			return;
+		const waiters = [...observation.readyWaiters];
+		observation.readyWaiters.clear();
+		for (const wake of waiters) wake();
+	}
+
+	/**
+	 * Resolves once every watch is ready, or observation is unavailable or
+	 * closed. Each pending watch either becomes ready, fails, or is closed, and
+	 * each of those settles it, so this cannot wait forever.
+	 */
+	private watchesSettled(
+		observation: RepositoryObservation,
+		signal?: AbortSignal,
+	): Promise<void> {
+		if (
+			observation.closed ||
+			observation.unavailable ||
+			this.watchesReady(observation)
+		)
+			return Promise.resolve();
+		return new Promise<void>((resolvePromise, reject) => {
+			const wake = () => {
+				signal?.removeEventListener('abort', aborted);
+				resolvePromise();
+			};
+			const aborted = () => {
+				observation.readyWaiters.delete(wake);
+				reject(signal?.reason ?? new Error('aborted'));
+			};
+			if (signal?.aborted) {
+				aborted();
+				return;
+			}
+			signal?.addEventListener('abort', aborted, { once: true });
+			observation.readyWaiters.add(wake);
+		});
+	}
+
+	/**
+	 * Try once to re-establish an unavailable observation's watches. Only a
+	 * client's request starts this; nothing runs it on a timer (ADR-0028,
+	 * ADR-0141). It succeeds when every watch is ready; any failure returns
+	 * the observation to unavailable.
+	 */
+	private rearm(observation: RepositoryObservation): void {
+		if (
+			observation.closed ||
+			!observation.unavailable ||
+			observation.rearming !== undefined
+		)
+			return;
+		observation.unavailable = false;
+		observation.commonDir = null;
+		// Changes made while nothing watched are unknown, so the first
+		// measurement under the new watches covers every worktree.
+		observation.dirtyAllBeforeRearm = observation.dirtyAll;
+		observation.dirtyAll = true;
+		const attempt: Promise<void> = (async () => {
+			this.syncWorkingTreeWatches(observation);
+			await this.watchGitDirectory(observation);
+			await this.watchesSettled(observation);
+		})()
+			.catch((error: unknown) => {
+				this.observationFailed(observation, error, 'git-directory', true);
+			})
+			.finally(() => {
+				if (observation.rearming === attempt) observation.rearming = undefined;
+			});
+		observation.rearming = attempt;
 	}
 
 	// ---- Observation reports ----------------------------------------------
@@ -3631,7 +3835,8 @@ export class GitService {
 		return (
 			!observation.closed &&
 			!observation.unavailable &&
-			observation.commonDir !== null
+			observation.commonDir !== null &&
+			this.watchesReady(observation)
 		);
 	}
 
@@ -3742,10 +3947,17 @@ export class GitService {
 		);
 	}
 
+	/** Forget what was last published for a project's worktrees, so the next
+	 *  measurement of each announces itself. */
+	private forgetPublished(projectId: string): void {
+		const prefix = `${projectId}\0`;
+		for (const published of [this.statusFingerprints, this.summaryFingerprints])
+			for (const key of [...published.keys()])
+				if (key.startsWith(prefix)) published.delete(key);
+	}
+
 	private publishUnattributedChange(binding: GitProjectBinding): void {
-		const prefix = `${binding.projectId}\0`;
-		for (const key of [...this.statusFingerprints.keys()])
-			if (key.startsWith(prefix)) this.statusFingerprints.delete(key);
+		this.forgetPublished(binding.projectId);
 		this.record(
 			Object.freeze({
 				revision: this.nextRevision(),
@@ -3765,6 +3977,32 @@ export class GitService {
 }
 
 export { GitService as ServerGitService, GitService as GitRepositoryService };
+
+/**
+ * Summary fields that change on every measurement without a change in the
+ * repository. Comparing them would publish an event for every re-measure.
+ * Every field not named here is compared, so a field added to the summary is
+ * announced by default.
+ */
+const UNLISTED_SUMMARY_FIELDS: ReadonlySet<keyof GitWorktreeSummary> = new Set(
+	[],
+);
+
+/** What a worktree's listing shows, as a comparable string. */
+export function listedSummaryFingerprint(summary: GitWorktreeSummary): string {
+	return JSON.stringify(
+		Object.keys(summary)
+			.filter(
+				(field) =>
+					!UNLISTED_SUMMARY_FIELDS.has(field as keyof GitWorktreeSummary),
+			)
+			.sort()
+			.map((field) => [
+				field,
+				summary[field as keyof GitWorktreeSummary] ?? null,
+			]),
+	);
+}
 
 export function createGitService(options: GitServiceOptions = {}): GitService {
 	return new GitService(options);

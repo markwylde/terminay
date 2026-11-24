@@ -195,6 +195,9 @@ test("a failed watch leaves the repository measured on demand, never on a timer"
   await bindAndList(context);
   const before = context.events.length;
 
+  // The host is out of watches: the failure, and every re-arm a request
+  // attempts, fails the same way.
+  context.watcher.refuse();
   context.watcher.fail(context.fixture.main);
   assert.deepEqual(context.watcher.openPaths(), [], "every watch of the repository is closed");
   const published = context.events.slice(before);
@@ -208,8 +211,36 @@ test("a failed watch leaves the repository measured on demand, never on a timer"
   await context.service.worktrees({ projectId: "project-a" });
   const firstRequest = context.runner.calls.length;
   assert.ok(firstRequest > 0, "a request is measured");
+  const afterFirst = context.events.length;
   await context.service.worktrees({ projectId: "project-a" });
   assert.ok(context.runner.calls.length > firstRequest, "every request is measured, none cached");
+  assert.equal(context.events.length, afterFirst, "a re-arm that fails again publishes nothing more");
+  assert.deepEqual(context.timers.pending(), [], "a failed re-arm arms nothing either");
+});
+
+test("a request re-arms a lost observation once the host can watch again", async (t) => {
+  const context = await observedService(t);
+  await bindAndList(context);
+  context.watcher.refuse();
+  context.watcher.fail(context.fixture.main);
+  await context.service.worktrees({ projectId: "project-a" });
+  assert.deepEqual(context.watcher.openPaths(), [], "still refused, nothing is watched");
+
+  context.watcher.refuse(null);
+  // Capacity came back, but nothing re-arms until a client asks.
+  assert.deepEqual(context.watcher.openPaths(), []);
+  assert.deepEqual(context.timers.pending(), []);
+  await context.service.worktrees({ projectId: "project-a" });
+  assert.ok(context.watcher.isWatching(context.fixture.gitDir), "the Git directory is watched again");
+  assert.ok(context.watcher.isWatching(context.fixture.main), "the working tree is watched again");
+
+  // A later edit is observed and announced without anyone asking.
+  const before = context.events.length;
+  const measured = watchMeasurement(context);
+  await writeFile(join(context.fixture.main, "a.txt"), "edited\n");
+  context.watcher.emit(context.fixture.main, "a.txt");
+  await measured;
+  assert.ok(context.events.length > before, "the edit published a status change");
 });
 
 test("a listing in flight when its project is released publishes and keeps nothing", async (t) => {

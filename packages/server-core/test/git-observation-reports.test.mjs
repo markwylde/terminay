@@ -89,7 +89,7 @@ test("every watch reports when it opens and when it closes", async (t) => {
   assert.deepEqual(context.watcher.openPaths(), []);
 });
 
-test("a failed watch reports the error it was given, and the repository is then measured on demand", async (t) => {
+test("a failed watch reports the error it was given, and the next request measures and re-arms it", async (t) => {
   const context = await reportingService(t);
   await bindAndList(context);
 
@@ -102,9 +102,12 @@ test("a failed watch reports the error it was given, and the repository is then 
   assert.equal(of(context.reports, "watch.closed").length, of(context.reports, "watch.opened").length);
 
   context.runner.calls.length = 0;
+  const opened = of(context.reports, "watch.opened").length;
   await context.service.worktrees({ projectId: "project-a" });
   assert.ok(context.runner.statusAgainst(context.fixture.main) > 0, "an unwatched repository is measured when asked");
-  assert.equal(last(context.reports, "measurement.completed").cached, false);
+  // The request, and only a request, re-establishes the watches (ADR-0141).
+  assert.ok(of(context.reports, "watch.opened").length > opened, "the request re-armed the watches");
+  assert.equal(last(context.reports, "measurement.completed").cached, true, "measured under the re-armed watches");
 });
 
 test("an observer that throws changes no result", async (t) => {
@@ -200,10 +203,10 @@ test("a default-branch move reports its class, its scope, and every worktree re-
   assert.equal(linkedAfter.id, linkedDiagnostic.id, "a worktree keeps its diagnostic id");
   assert.deepEqual({ additions: linkedAfter.additions, ahead: linkedAfter.ahead }, { additions: 0, ahead: 0 });
 
-  // The main worktree's head moved, so its event is published. The linked
-  // worktree's delta changed but its status did not, so its event is not.
-  assert.equal(moved.published, 1);
-  assert.equal(moved.suppressed, 1);
+  // The main worktree's head moved, and the linked worktree's delta against
+  // it changed although its status did not: both are news to a client.
+  assert.equal(moved.published, 2);
+  assert.equal(moved.suppressed, 0);
 });
 
 test("an edit in one worktree reports the others carried forward", async (t) => {

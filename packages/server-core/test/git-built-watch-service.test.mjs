@@ -156,12 +156,14 @@ test("force-adding an ignored directory's file takes the directory up", linuxOnl
   await context.log.until(() => workingTreeChanges(context.log, from) > 0);
 });
 
-test("a host watch refusal makes observation unavailable and listings measured on demand", async (t) => {
+test("a host watch refusal makes listings measured on demand, until a request re-arms the watch", async (t) => {
   const fixture = await repositoryWith({ "src/a.txt": "a" });
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  // The host is out of inotify watches for `src` until the test frees one.
+  let refusing = true;
   const fs = {
     watch(path, options, listener) {
-      if (path.endsWith(`${"/"}src`)) throw Object.assign(new Error("inotify watch limit reached"), { code: "ENOSPC" });
+      if (refusing && path.endsWith(`${"/"}src`)) throw Object.assign(new Error("inotify watch limit reached"), { code: "ENOSPC" });
       return nodeWatch(path, options, listener);
     },
     lstat: (path) => lstat(path),
@@ -169,9 +171,18 @@ test("a host watch refusal makes observation unavailable and listings measured o
   };
   const { GitService, NodeGitStateWatcher } = await import("../dist/gitService/index.js");
   const log = createReportLog();
+  const calls = [];
+  const { NodeGitCommandRunner } = await import("../dist/gitService/index.js");
+  const inner = new NodeGitCommandRunner();
   const service = new GitService({
     watcher: new NodeGitStateWatcher({ platform: "linux", treeWatch: { fs } }),
     onObservation: (report) => log.onObservation(report),
+    runner: {
+      run(args, cwd, options) {
+        calls.push(args);
+        return inner.run(args, cwd, options);
+      },
+    },
   });
   t.after(() => service.close());
   const events = [];
@@ -181,11 +192,30 @@ test("a host watch refusal makes observation unavailable and listings measured o
   assert.equal(failed.watch, "working-tree");
   assert.equal(failed.error.code, "ENOSPC");
   await eventually(() => events.length > 0, "no status-change event was published");
-  const before = log.reports.filter((report) => report.kind === "measurement.completed").length;
+  const measured = () => log.reports.filter((report) => report.kind === "measurement.completed");
+  const before = measured().length;
   await service.worktrees({ projectId: "project-a" });
   await service.worktrees({ projectId: "project-a" });
-  const after = log.reports.filter((report) => report.kind === "measurement.completed").length;
-  assert.ok(after - before >= 2, "listings were not measured on demand");
+  assert.ok(measured().length - before >= 2, "listings were not measured on demand");
+  assert.ok(measured().slice(before).every((report) => report.cached === false), "nothing is cached without a watch");
+
+  // Nothing runs Git between requests while the watch is lost.
+  const idle = calls.length;
+  await settle(300);
+  assert.equal(calls.length, idle, "no Git runs between client requests");
+
+  // Capacity comes back. Only the next request re-arms the watch.
+  refusing = false;
+  await settle(100);
+  assert.equal(calls.length, idle, "freeing capacity alone re-arms nothing");
+  await service.worktrees({ projectId: "project-a" });
+  await service.worktrees({ projectId: "project-a" });
+  assert.equal(measured().at(-1).cached, true, "measured under the re-armed watch, then served from the cache");
+
+  // A new file in the once-refused directory is observed without a request.
+  const announced = events.length;
+  await writeFile(join(fixture.main, "src", "b.txt"), "b");
+  await eventually(() => events.length > announced, "the edit was not announced");
 });
 
 for (const [name, answer] of [
