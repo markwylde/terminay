@@ -109,7 +109,7 @@ test('MCP install commands name an extension install target, not a hardcoded cli
 		'claudeCode',
 		'codex',
 		'cursor',
-		'gemini',
+		'antigravity',
 		'grok',
 		'openCode',
 	])

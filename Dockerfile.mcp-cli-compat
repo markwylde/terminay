@@ -21,7 +21,6 @@ RUN echo "Installing current MCP clients for ${CLI_COMPAT_CACHE_BUST}" \
         esbuild@latest \
         @anthropic-ai/claude-code@latest \
         @openai/codex@latest \
-        @google/gemini-cli@latest \
         opencode-ai@latest
 
 RUN mkdir -p /home/node/.local/bin /home/node/.local/share \
@@ -29,6 +28,7 @@ RUN mkdir -p /home/node/.local/bin /home/node/.local/share \
 
 USER node
 RUN curl https://cursor.com/install -fsS | bash
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash
 
 WORKDIR /workspace
 COPY --chown=node:node extensions/builtin-agents/src/mcp extensions/builtin-agents/src/mcp

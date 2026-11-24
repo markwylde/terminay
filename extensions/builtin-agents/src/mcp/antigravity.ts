@@ -12,25 +12,28 @@ import type {
 
 const SERVER_KEY = 'terminay';
 
-/** Absolute path to Gemini CLI's user-wide settings (`~/.gemini/settings.json`). */
-export function getGeminiConfigPath(homeDirectory = homedir()): string {
-	return join(homeDirectory, '.gemini', 'settings.json');
+/**
+ * Absolute path to Antigravity CLI's user-level MCP configuration
+ * (`~/.gemini/config/mcp_config.json`), the file `agy mcp` manages.
+ */
+export function getAntigravityConfigPath(homeDirectory = homedir()): string {
+	return join(homeDirectory, '.gemini', 'config', 'mcp_config.json');
 }
 
-interface GeminiServerEntry {
+interface AntigravityServerEntry {
 	command: string;
 	args: string[];
 	env?: Record<string, string>;
 }
 
-interface GeminiConfig {
+interface AntigravityConfig {
 	mcpServers?: Record<string, unknown>;
 	[key: string]: unknown;
 }
 
 async function readConfig(
 	path: string,
-): Promise<{ config: GeminiConfig } | { error: string }> {
+): Promise<{ config: AntigravityConfig } | { error: string }> {
 	let raw: string;
 	try {
 		raw = await readFile(path, 'utf8');
@@ -53,7 +56,7 @@ async function readConfig(
 				error: `${path} does not contain a JSON object; refusing to overwrite it.`,
 			};
 		}
-		const config = parsed as GeminiConfig;
+		const config = parsed as AntigravityConfig;
 		if (
 			config.mcpServers !== undefined &&
 			(config.mcpServers === null ||
@@ -65,15 +68,20 @@ async function readConfig(
 			};
 		}
 		return { config };
-	} catch (cause) {
+	} catch {
 		return {
-			error: `Could not parse ${path} as JSON: ${describeError(cause)}`,
+			// JSON.parse errors can quote configuration containing credentials.
+			error: `Could not parse ${path} as JSON; refusing to overwrite it.`,
 		};
 	}
 }
 
-function expectedEntry(server: McpServerCommand): GeminiServerEntry {
-	const entry: GeminiServerEntry = {
+/**
+ * agy lists an entry without `disabled` as enabled, so Terminay never writes
+ * the key. An entry that carries it still differs from what Terminay writes.
+ */
+function expectedEntry(server: McpServerCommand): AntigravityServerEntry {
+	const entry: AntigravityServerEntry = {
 		command: server.command,
 		args: server.args,
 	};
@@ -81,11 +89,11 @@ function expectedEntry(server: McpServerCommand): GeminiServerEntry {
 	return entry;
 }
 
-/** True when a `terminay` MCP server entry already exists in Gemini CLI's user settings. */
-export async function isGeminiInstalled(
+/** True when a `terminay` MCP server entry already exists in Antigravity CLI's MCP configuration. */
+export async function isAntigravityInstalled(
 	homeDirectory?: string,
 ): Promise<boolean> {
-	const result = await readConfig(getGeminiConfigPath(homeDirectory));
+	const result = await readConfig(getAntigravityConfigPath(homeDirectory));
 	return (
 		!('error' in result) &&
 		result.config.mcpServers !== undefined &&
@@ -93,11 +101,11 @@ export async function isGeminiInstalled(
 	);
 }
 
-export async function inspectGeminiRegistration(
+export async function inspectAntigravityRegistration(
 	server: McpServerCommand,
 	homeDirectory?: string,
 ): Promise<{ state: McpAgentRegistrationState; message?: string }> {
-	const result = await readConfig(getGeminiConfigPath(homeDirectory));
+	const result = await readConfig(getAntigravityConfigPath(homeDirectory));
 	if ('error' in result) return { state: 'unavailable', message: result.error };
 	const existing = result.config.mcpServers?.[SERVER_KEY];
 	if (existing === undefined) return { state: 'not-installed' };
@@ -110,14 +118,14 @@ export async function inspectGeminiRegistration(
 			};
 }
 
-/** Register the Terminay stdio server without changing Gemini's confirmation policy. */
-export async function installGemini(
+/** Register the Terminay stdio server without changing agy's tool permission policy. */
+export async function installAntigravity(
 	server: McpServerCommand,
 	homeDirectory?: string,
 	/** `replace` writes over a changed `terminay` entry; set only on an explicit user request. */
 	options: McpInstallWriteOptions = {},
 ): Promise<McpInstallActionResult> {
-	const path = getGeminiConfigPath(homeDirectory);
+	const path = getAntigravityConfigPath(homeDirectory);
 	try {
 		const result = await readConfig(path);
 		if ('error' in result)
@@ -131,9 +139,11 @@ export async function installGemini(
 		const servers = config.mcpServers ?? {};
 		const entry = expectedEntry(server);
 		const existing = servers[SERVER_KEY];
-		if (existing !== undefined &&
+		if (
+			existing !== undefined &&
 			!options.replace &&
-			!isDeepStrictEqual(existing, entry))
+			!isDeepStrictEqual(existing, entry)
+		)
 			return changedEntryResult(path);
 		if (isDeepStrictEqual(existing, entry)) {
 			return {
@@ -160,12 +170,15 @@ export async function installGemini(
 	}
 }
 
-/** Remove only Terminay's exact MCP entry from Gemini CLI's user settings. */
-export async function uninstallGemini(
+/**
+ * Remove only Terminay's MCP entry from Antigravity CLI's MCP configuration.
+ * A `disabled` flag set through `agy mcp disable` does not stop removal.
+ */
+export async function uninstallAntigravity(
 	server?: McpServerCommand,
 	homeDirectory?: string,
 ): Promise<McpInstallActionResult> {
-	const path = getGeminiConfigPath(homeDirectory);
+	const path = getAntigravityConfigPath(homeDirectory);
 	try {
 		const result = await readConfig(path);
 		if ('error' in result)
@@ -185,7 +198,10 @@ export async function uninstallGemini(
 		}
 		if (
 			server !== undefined &&
-			!isDeepStrictEqual(config.mcpServers[SERVER_KEY], expectedEntry(server))
+			!isDeepStrictEqual(
+				withoutDisabledFlag(config.mcpServers[SERVER_KEY]),
+				expectedEntry(server),
+			)
 		) {
 			return changedEntryResult(path);
 		}
@@ -206,6 +222,13 @@ export async function uninstallGemini(
 	}
 }
 
+function withoutDisabledFlag(entry: unknown): unknown {
+	if (entry === null || typeof entry !== 'object' || Array.isArray(entry))
+		return entry;
+	const { disabled: _disabled, ...rest } = entry as Record<string, unknown>;
+	return rest;
+}
+
 function changedEntryResult(path: string): McpInstallActionResult {
 	return {
 		ok: false,
@@ -216,7 +239,7 @@ function changedEntryResult(path: string): McpInstallActionResult {
 
 async function safeIsInstalled(homeDirectory?: string): Promise<boolean> {
 	try {
-		return await isGeminiInstalled(homeDirectory);
+		return await isAntigravityInstalled(homeDirectory);
 	} catch {
 		return false;
 	}

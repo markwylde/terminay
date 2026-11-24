@@ -54,7 +54,7 @@ test('rows are keyed by extension target id in declaration order and show every 
 			target('claude-code', 'Claude Code', 'installed'),
 			target('codex', 'Codex', 'not-installed'),
 			target('cursor', 'Cursor CLI', 'changed'),
-			target('gemini', 'Gemini CLI', 'unavailable'),
+			target('antigravity', 'Antigravity CLI', 'unavailable'),
 			target('grok', 'Grok', 'error', { message: 'config is not valid TOML' }),
 		],
 	});
@@ -65,7 +65,7 @@ test('rows are keyed by extension target id in declaration order and show every 
 		'com.terminay.builtin-agents/claude-code',
 		'com.terminay.builtin-agents/codex',
 		'com.terminay.builtin-agents/cursor',
-		'com.terminay.builtin-agents/gemini',
+		'com.terminay.builtin-agents/antigravity',
 		'com.terminay.builtin-agents/grok',
 	]);
 	for (const label of [
@@ -86,7 +86,7 @@ test('a changed row offers Replace; unavailable and error rows offer nothing', (
 		target('claude-code', 'Claude Code', 'installed'),
 		target('codex', 'Codex', 'not-installed'),
 		target('cursor', 'Cursor CLI', 'changed', { installed: true }),
-		target('gemini', 'Gemini CLI', 'unavailable'),
+		target('antigravity', 'Antigravity CLI', 'unavailable'),
 		target('grok', 'Grok', 'error'),
 	];
 	const buttons = rows.map((row) => {

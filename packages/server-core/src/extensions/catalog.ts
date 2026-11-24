@@ -15,7 +15,7 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
 			packageName: 'terminay-builtin-agents',
 			displayName: 'Built-in Agents',
 			description:
-				'Show Claude Code, Codex, Grok, and oh-my-pi sessions in the Agents sidebar, and register the Terminay MCP server with coding-agent CLIs.',
+				'Show Claude Code, Codex, Grok, oh-my-pi, and Antigravity sessions in the Agents sidebar, and register the Terminay MCP server with coding-agent CLIs.',
 			publisher: 'Terminay',
 			official: true,
 		}),

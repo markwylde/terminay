@@ -3,10 +3,10 @@
 `terminay-builtin-agents` (`com.terminay.builtin-agents`) is Terminay's official
 extension for coding agents. It does three things:
 
-- It reports every live Claude Code, Codex, Grok, and oh-my-pi session on the
-  server's machine to Terminay's **Agents** panel.
+- It reports every live Claude Code, Codex, Grok, oh-my-pi, and Antigravity
+  session on the server's machine to Terminay's **Agents** panel.
 - It registers the Terminay MCP server with Claude Code, Codex, Cursor CLI,
-  Gemini CLI, Grok, and OpenCode from **Install Terminay MCP**.
+  Antigravity CLI, Grok, and OpenCode from **Install Terminay MCP**.
 - It runs agent chats, such as Pixel's, with the user's installed Claude Code
   or Codex.
 
@@ -43,7 +43,7 @@ usual per-user install directories, including nvm's. A missing CLI reports
 ## Detection
 
 All detection is done by [`@markwylde/all-your-agents`](https://github.com/markwylde/all-your-agents),
-pinned to exactly **1.6.1**. The extension runs one library instance with the
+pinned to exactly **1.7.0**. The extension runs one library instance with the
 providers of the switched-on harnesses. It has no journal parser, process
 matcher, status inference, or timer of its own, and it never polls.
 
@@ -53,10 +53,11 @@ matcher, status inference, or timer of its own, and it never polls.
 | `codex` | Codex | `codex-cli` |
 | `grok` | Grok | `grok-build` |
 | `oh-my-pi` | oh-my-pi | `oh-my-pi` |
+| `antigravity` | Antigravity | `antigravity-cli` |
 
 OpenCode sessions are not reported until the library has an OpenCode provider.
 
-### Capability matrix (all-your-agents 1.6.1)
+### Capability matrix (all-your-agents 1.7.0)
 
 
 | Agent | Live detection | Status | Waiting for | Titles | Model | Tools | Turn outcome | Subagents | Transcript | History | Print mode |
@@ -65,6 +66,7 @@ OpenCode sessions are not reported until the library has an OpenCode provider.
 | Grok Build | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟠 ² | 🟠 ³ | 🟢 | 🟢 | 🟢 | 🟠 ⁴ |
 | Codex CLI | 🟢 | 🟢 | 🔴 ⁵ | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | oh-my-pi | 🟢 | 🟢 ⁶ | 🟠 ⁷ | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟠 ⁸ |
+| AntiGravity CLI | 🟢 ⁹ | 🟢 ⁹ | 🟢 ⁹ | 🟢 ⁹ | 🟢 ⁹ | 🟢 ⁹ | 🟢 ⁹ | 🟢 ⁹ | 🟢 ⁹ | 🟠 ⁹ | 🟢 ⁹ |
 
 🟢 full · 🟠 partial · 🔴 none. Subagents covers start, end, background and nested.
 
@@ -76,11 +78,12 @@ OpenCode sessions are not reported until the library has an OpenCode provider.
 6. omp writes no transcript until the first reply of a new session ends. That first turn is read from omp's prompt history, which needs SQLite: Node ≥ 22.13, or your own `sqlite` reader. Without it a new session reads `idle` until its transcript appears.
 7. A pending `ask` tool reads `waiting`. Permission approvals never reach disk, so a session blocked on one reads `running` (omp's default approval mode asks for none).
 8. omp names a run after the terminal on its stdin, in print mode too: `omp -p` typed in a terminal is live and reads `interactive`. Piped or detached, it has no terminal and appears in history only. Nothing on disk marks a run `headless`.
+9. AntiGravity CLI supports agy 1.5.5 SQLite sessions, including live print runs, approvals/questions, models, tools, turn outcomes and nested/background subagents. SQLite and holder probes are required for live detection. Older binary `.pb` history uses generated text logs when present, with reduced metadata. `kind` remains unset because the persisted state does not identify interactive versus print mode.
 
 The library reports `waiting` both for a session blocked on the user and for one
-whose turn has ended while a background shell or monitor it started will wake
-it (`waitingFor` `shell` or `monitor`). Terminay's `waiting` means the user is
-needed, so the extension reports the second kind as `running`.
+whose turn has ended while background work it started is still running
+(`waitingFor` `shell`, `monitor`, `task`, or `subagent`). Terminay's `waiting`
+means the user is needed, so the extension reports the second kind as `running`.
 
 Terminay shows what the library knows and nothing more. Gaps are fixed in the
 library, not here.
@@ -128,7 +131,7 @@ switched on.
 | `com.terminay.builtin-agents/claude-code` | Claude Code | `~/.claude.json` |
 | `com.terminay.builtin-agents/codex` | Codex | `~/.codex/config.toml` |
 | `com.terminay.builtin-agents/cursor` | Cursor CLI | `~/.cursor/mcp.json` |
-| `com.terminay.builtin-agents/gemini` | Gemini CLI | `~/.gemini/settings.json` |
+| `com.terminay.builtin-agents/antigravity` | Antigravity CLI | `~/.gemini/config/mcp_config.json`, the file `agy mcp` manages; no other file under `~/.gemini/` is read or written |
 | `com.terminay.builtin-agents/grok` | Grok | `$GROK_HOME/config.toml`, else `~/.grok/config.toml` |
 | `com.terminay.builtin-agents/opencode` | OpenCode | `~/.config/opencode/opencode.json` or `opencode.jsonc`, whichever exists |
 

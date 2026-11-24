@@ -223,6 +223,14 @@ export function agentFixtureClaudeHome(tempDir: string): string {
 	return path.join(tempDir, 'agent-fixture-claude-home');
 }
 
+/**
+ * Antigravity CLI home the agent runtime spec's fixture driver writes into.
+ * agy has no home override, so that spec runs the app with HOME at tempDir.
+ */
+export function agentFixtureAntigravityHome(tempDir: string): string {
+	return path.join(tempDir, '.gemini', 'antigravity-cli');
+}
+
 const contentTypes: Record<string, string> = {
 	'.css': 'text/css',
 	'.html': 'text/html',
@@ -398,7 +406,11 @@ export async function launchDesktopApp(options: {
 		// fixture drivers, not the host account, decide what is live.
 		const agentHomes: Record<string, string> =
 			path.basename(testInfo.file) === 'extension-agent-runtime.spec.ts'
-				? { CLAUDE_CONFIG_DIR: agentFixtureClaudeHome(tempDir) }
+				? {
+						CLAUDE_CONFIG_DIR: agentFixtureClaudeHome(tempDir),
+						// agy reads ~/.gemini/antigravity-cli with no override.
+						HOME: tempDir,
+					}
 				: {};
 		const rendererArtifactParent = workerRendererArtifact ? undefined : await mkdtemp(
 			path.join(os.tmpdir(), 'terminay-e2e-renderer-'),

@@ -2,9 +2,17 @@ import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { createClaudeFixtureDriver } from '@markwylde/all-your-agents/testing';
+import {
+	createAntigravityFixtureDriver,
+	createClaudeFixtureDriver,
+} from '@markwylde/all-your-agents/testing';
 import type { Page } from '@playwright/test';
-import { agentFixtureClaudeHome, expect, test } from './fixtures';
+import {
+	agentFixtureAntigravityHome,
+	agentFixtureClaudeHome,
+	expect,
+	test,
+} from './fixtures';
 import { sendAppCommand } from './support/app';
 import { typeInVisibleTerminal } from './support/terminal-input';
 import { settledTerminalSessionId } from './support/terminal-session';
@@ -60,6 +68,30 @@ async function runAgentProcessInTerminal(
 		})
 		.toBeGreaterThan(0);
 	return { pid, startedAt: Date.now() };
+}
+
+/**
+ * Start a real process inside the focused terminal that holds an Antigravity
+ * presence lock open, as agy does, and return its pid. agy binds a
+ * conversation to the one live process holding its lock.
+ */
+async function holdAntigravityLockInTerminal(
+	page: Page,
+	lockPath: string,
+	pidFile: string,
+): Promise<number> {
+	await typeInVisibleTerminal(
+		page,
+		`sh -c 'echo $$ > ${pidFile}; exec 3>>"${lockPath}"; exec sleep 600'\n`,
+	);
+	let pid = 0;
+	await expect
+		.poll(async () => {
+			pid = Number((await readFile(pidFile, 'utf8').catch(() => '')).trim());
+			return pid;
+		})
+		.toBeGreaterThan(0);
+	return pid;
 }
 
 /** A real process Terminay did not start: an agent in another terminal app. */
@@ -235,5 +267,181 @@ test('the built-in agents extension scopes live Claude Code sessions to the proj
 		await expect(rows).toHaveCount(3);
 	} finally {
 		for (const child of processes) child.kill('SIGKILL');
+	}
+});
+
+test('the built-in agents extension scopes live Antigravity sessions to the project and its worktrees', async ({
+	mainWindow,
+	tempDir,
+	createWorkspace,
+}, testInfo) => {
+	const agy = createAntigravityFixtureDriver(
+		agentFixtureAntigravityHome(tempDir),
+	);
+	try {
+		const workspace = await createWorkspace({
+			name: 'antigravity-project',
+			seed: { directories: ['src'] },
+		});
+		const projectRoot = await realpath(workspace.rootDir);
+		const worktree = path.join(
+			await realpath(tempDir),
+			'antigravity-linked-worktree',
+		);
+		const unrelated = path.join(
+			await realpath(tempDir),
+			'antigravity-unrelated',
+		);
+		await mkdir(unrelated, { recursive: true });
+		const git = (...args: string[]) =>
+			execFileAsync('git', args, { cwd: projectRoot });
+		await git('init', '-q');
+		await git(
+			'-c',
+			'user.email=e2e@terminay.test',
+			'-c',
+			'user.name=E2E',
+			'commit',
+			'-q',
+			'--allow-empty',
+			'-m',
+			'root',
+		);
+		await git('worktree', 'add', '-q', '-b', 'antigravity-worktree', worktree);
+		await setProjectRoot(mainWindow, projectRoot);
+
+		await selectSidebarGroup(mainWindow, 'agents');
+		const rows = mainWindow.locator('.agents-sidebar__tree-item');
+		const row = (title: string) => rows.filter({ hasText: title });
+
+		// Leave an earlier conversation in the provider home before either
+		// terminal starts, then resume it beside a separate live conversation.
+		const earlier = await agy.spawnHolder(resumedId);
+		await agy.createLiveSession({
+			id: resumedId,
+			pid: earlier.pid,
+			cwd: projectRoot,
+			status: 'idle',
+			title: 'Earlier Antigravity conversation',
+		});
+		await earlier.stop();
+		await agy.remove(resumedId);
+		await expect(row('Earlier Antigravity conversation')).toHaveCount(0);
+
+		// A session owned by a process inside a Terminay terminal binds to it.
+		const terminal = await activeSessionId(mainWindow);
+		const boundPid = await holdAntigravityLockInTerminal(
+			mainWindow,
+			await agy.prepareLock(freshId),
+			path.join(tempDir, 'antigravity-bound.pid'),
+		);
+		await agy.createLiveSession({
+			id: freshId,
+			pid: boundPid,
+			cwd: projectRoot,
+			status: 'busy',
+			title: 'Bound Antigravity agent',
+		});
+		await expect(row('Bound Antigravity agent')).toBeVisible({
+			timeout: 15_000,
+		});
+		await expect(row('Bound Antigravity agent')).not.toHaveAttribute(
+			'data-agent-external',
+			'true',
+		);
+		await expect(
+			row('Bound Antigravity agent').locator(
+				'.agent-status-indicator[data-agent-state="working"]',
+			),
+		).toBeVisible();
+
+		const secondTerminal = await newTerminal(mainWindow);
+		const resumedPid = await holdAntigravityLockInTerminal(
+			mainWindow,
+			await agy.prepareLock(resumedId),
+			path.join(tempDir, 'antigravity-resumed.pid'),
+		);
+		await agy.createLiveSession({
+			id: resumedId,
+			pid: resumedPid,
+			cwd: projectRoot,
+			status: 'idle',
+			title: 'Resumed Antigravity agent',
+		});
+		await expect(row('Resumed Antigravity agent')).toBeVisible({
+			timeout: 15_000,
+		});
+		await expect(row('Resumed Antigravity agent')).not.toHaveAttribute(
+			'data-agent-external',
+			'true',
+		);
+		await expect(row('Bound Antigravity agent')).toBeVisible();
+		await expect(row('Earlier Antigravity conversation')).toHaveCount(0);
+		await row('Bound Antigravity agent')
+			.locator('.agents-sidebar__row')
+			.first()
+			.click();
+		await expect.poll(() => activeSessionId(mainWindow)).toBe(terminal);
+		await row('Resumed Antigravity agent')
+			.locator('.agents-sidebar__row')
+			.first()
+			.click();
+		await expect.poll(() => activeSessionId(mainWindow)).toBe(secondTerminal);
+
+		// Outside Terminay: a project subdirectory and a linked worktree belong
+		// to the project and read External; an unrelated directory does not.
+		const external = async (id: string, cwd: string, title: string) => {
+			const holder = await agy.spawnHolder(id);
+			await agy.createLiveSession({
+				id,
+				pid: holder.pid,
+				cwd,
+				status: 'busy',
+				title,
+			});
+			return holder;
+		};
+		await external(
+			subdirectoryId,
+			path.join(projectRoot, 'src'),
+			'Subdirectory Antigravity agent',
+		);
+		const linked = await external(
+			worktreeId,
+			worktree,
+			'Worktree Antigravity agent',
+		);
+		await external(unrelatedId, unrelated, 'Unrelated Antigravity agent');
+
+		for (const title of [
+			'Subdirectory Antigravity agent',
+			'Worktree Antigravity agent',
+		]) {
+			await expect(row(title)).toBeVisible({ timeout: 15_000 });
+			await expect(row(title).locator('.agents-sidebar__external')).toHaveText(
+				'External',
+			);
+		}
+		await expect(row('Unrelated Antigravity agent')).toHaveCount(0);
+		await expect(rows).toHaveCount(4);
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('screenshots', 'agents-pane-antigravity.png'),
+		});
+
+		// Clicking the bound row focuses the terminal that owns the agent.
+		await row('Bound Antigravity agent')
+			.locator('.agents-sidebar__row')
+			.first()
+			.click();
+		await expect.poll(() => activeSessionId(mainWindow)).toBe(terminal);
+
+		// When the process holding the lock exits, the row goes with it.
+		await linked.stop();
+		await expect(row('Worktree Antigravity agent')).toHaveCount(0, {
+			timeout: 15_000,
+		});
+		await expect(rows).toHaveCount(3);
+	} finally {
+		await agy.dispose();
 	}
 });

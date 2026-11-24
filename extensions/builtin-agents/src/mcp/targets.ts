@@ -13,7 +13,7 @@ export const MCP_TARGET_LOCAL_IDS: Readonly<Record<McpAgentId, string>> = {
 	claudeCode: 'claude-code',
 	codex: 'codex',
 	cursor: 'cursor',
-	gemini: 'gemini',
+	antigravity: 'antigravity',
 	grok: 'grok',
 	openCode: 'opencode',
 };

@@ -84,7 +84,7 @@ test('the packed tarball ships compiled code only and a valid manifest', async (
 	assert.equal(validateExtensionManifest(packageJson.terminay).ok, true);
 	assert.equal(
 		packageJson.dependencies['@markwylde/all-your-agents'],
-		'1.6.1',
+		'1.7.0',
 		'the library is pinned exactly',
 	);
 	const { stdout } = await execFileAsync(process.execPath, [
@@ -133,7 +133,10 @@ test('the packed extension activates and reports a real process until it exits',
 		manifest,
 	});
 	t.after(() => harness.dispose());
-	await harness.start();
+	// Exercise the packed default export without observing personal agent homes.
+	await harness.start('com.terminay.builtin-agents/agents', {
+		enabledHarnesses: ['claude-code'],
+	});
 	await harness.waitFor((h) =>
 		h.sessions().some((session) => session.id === id),
 	);

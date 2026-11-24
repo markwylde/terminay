@@ -31,7 +31,7 @@ test('each target installs, detects, and removes exactly the host-supplied comma
 		'claude-code': join(home, '.claude.json'),
 		codex: join(home, '.codex', 'config.toml'),
 		cursor: join(home, '.cursor', 'mcp.json'),
-		gemini: join(home, '.gemini', 'settings.json'),
+		antigravity: join(home, '.gemini', 'config', 'mcp_config.json'),
 		grok: join(home, '.grok', 'config.toml'),
 		opencode: join(home, '.config', 'opencode', 'opencode.json'),
 	};
@@ -76,8 +76,11 @@ test('the Claude Code target writes the host command and nothing else', async (t
 test('targets work while every harness is switched off', async (t) => {
 	const { harness } = await harnessIn(t);
 	await harness.start(undefined, { enabledHarnesses: [] });
-	assert.equal((await harness.mcpInstall(target('codex'))).installed, true);
-	assert.equal((await harness.mcpStatus(target('codex'))).state, 'installed');
+	for (const id of ['codex', 'antigravity']) {
+		assert.equal((await harness.mcpInstall(target(id))).installed, true, id);
+		assert.equal((await harness.mcpStatus(target(id))).state, 'installed', id);
+		assert.equal((await harness.mcpUninstall(target(id))).installed, false, id);
+	}
 });
 
 test('replace writes the host command over a changed entry; install still refuses', async (t) => {
@@ -87,7 +90,7 @@ test('replace writes the host command over a changed entry; install still refuse
 		command: '/opt/terminay/versions/canary-old/bin/node',
 		args: ['/opt/terminay/versions/canary-old/server/dist/mcpEntry.js'],
 	};
-	for (const id of ['claude-code', 'codex', 'cursor', 'gemini', 'grok', 'opencode']) {
+	for (const id of ['claude-code', 'codex', 'cursor', 'antigravity', 'grok', 'opencode']) {
 		assert.equal((await harness.mcpInstall(target(id), stale)).ok, true, id);
 		assert.equal((await harness.mcpStatus(target(id))).state, 'changed', id);
 		assert.equal((await harness.mcpInstall(target(id))).ok, false, id);

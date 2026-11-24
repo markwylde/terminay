@@ -18,7 +18,6 @@ test('real MCP client compatibility installs latest CLIs inside an isolated imag
   for (const packageName of [
     '@anthropic-ai/claude-code',
     '@openai/codex',
-    '@google/gemini-cli',
     'opencode-ai',
   ]) {
     assert.match(dockerfile, new RegExp(`${escapeRegex(packageName)}@latest`, 'u'))
@@ -28,6 +27,8 @@ test('real MCP client compatibility installs latest CLIs inside an isolated imag
     /--allow-scripts=@anthropic-ai\/claude-code,esbuild,opencode-ai,@github\/keytar,node-pty/u,
   )
   assert.match(dockerfile, /curl https:\/\/cursor\.com\/install -fsS \| bash/u)
+  assert.match(dockerfile, /curl -fsSL https:\/\/antigravity\.google\/cli\/install\.sh \| bash/u)
+  assert.doesNotMatch(dockerfile, /gemini-cli/u)
   assert.match(runner, /--build-arg "CLI_COMPAT_CACHE_BUST=\$cache_bust"/u)
   assert.match(runner, /arm64\|aarch64\) platform=linux\/arm64/u)
   assert.match(runner, /x86_64\|amd64\) platform=linux\/amd64/u)
@@ -39,7 +40,7 @@ test('real MCP client compatibility installs latest CLIs inside an isolated imag
     "binary: 'claude', listArgs: ['mcp', 'list']",
     "binary: 'codex', listArgs: ['mcp', 'list']",
     "binary: 'cursor-agent', listArgs: ['mcp', 'list']",
-    "binary: 'gemini', listArgs: ['mcp', 'list']",
+    "binary: 'agy',",
     "binary: 'opencode', listArgs: ['mcp', 'list']",
   ]) {
     assert.match(probe, new RegExp(escapeRegex(command), 'u'))

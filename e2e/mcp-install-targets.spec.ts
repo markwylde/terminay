@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 
-const TARGETS = ['claude-code', 'codex', 'cursor', 'gemini', 'grok', 'opencode']
+const TARGETS = ['claude-code', 'codex', 'cursor', 'antigravity', 'grok', 'opencode']
 
 async function openMcpInstallModal(appHarness: { openMacroLauncher(page: Page): Promise<void> }, page: Page) {
   await appHarness.openMacroLauncher(page)
@@ -16,13 +16,16 @@ async function openMcpInstallModal(appHarness: { openMacroLauncher(page: Page): 
   return dialog
 }
 
-test('lists the built-in agents extension install targets and explains when it is disabled', async ({ appHarness, mainWindow }) => {
+test('lists the built-in agents extension install targets and explains when it is disabled', async ({ appHarness, mainWindow }, testInfo) => {
   let dialog = await openMcpInstallModal(appHarness, mainWindow)
   const rows = dialog.locator('[data-mcp-install-target]')
   await expect(rows).toHaveCount(TARGETS.length, { timeout: 30_000 })
   expect(await rows.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-mcp-install-target')))).toEqual(
     TARGETS.map((target) => `com.terminay.builtin-agents/${target}`),
   )
+  await expect(dialog.getByText('Antigravity CLI', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('Gemini CLI')).toHaveCount(0)
+  await dialog.screenshot({ path: testInfo.outputPath('screenshots', 'mcp-install-modal.png') })
   await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(dialog).toHaveCount(0)
 

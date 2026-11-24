@@ -27,7 +27,7 @@ const processes = {
 	},
 };
 
-/** The four declared harnesses, with Claude Code backed by the library's memory provider. */
+/** The declared harnesses, with Claude Code backed by the library's memory provider. */
 function memoryHarnesses() {
 	const memory = createMemoryHarness();
 	const harnesses = HARNESSES.map((harness) =>
@@ -74,10 +74,69 @@ test('registers one session source and six MCP install targets', async (t) => {
 	assert.deepEqual(harness.registeredSourceIds(), [SOURCE]);
 	assert.deepEqual(
 		harness.registeredTargetIds(),
-		['claude-code', 'codex', 'cursor', 'gemini', 'grok', 'opencode'].map(
+		['claude-code', 'codex', 'cursor', 'antigravity', 'grok', 'opencode'].map(
 			(id) => `com.terminay.builtin-agents/${id}`,
 		),
 	);
+});
+
+test('the manifest declares exactly the runtime harnesses, and the MCP targets match the manifest', async (t) => {
+	const declared = manifest.contributes.agentSessionSources[0].harnesses;
+	assert.deepEqual(
+		declared.map(({ id, displayName }) => ({ id, displayName })),
+		HARNESSES.map(({ id, displayName }) => ({ id, displayName })),
+	);
+	const harness = await createAgentExtensionHarness(
+		createBuiltInAgentsExtension(),
+		{ manifest },
+	);
+	t.after(() => harness.dispose());
+	assert.deepEqual(
+		harness.registeredTargetIds(),
+		manifest.contributes.mcpInstallTargets.map(({ id }) => id),
+	);
+});
+
+test('each harness is backed by its own library provider', () => {
+	assert.deepEqual(
+		Object.fromEntries(
+			HARNESSES.map((harness) => [harness.id, harness.createProvider().id]),
+		),
+		{
+			'claude-code': 'claude-code',
+			codex: 'codex-cli',
+			grok: 'grok-build',
+			'oh-my-pi': 'oh-my-pi',
+			antigravity: 'antigravity-cli',
+		},
+	);
+});
+
+test('the library runs only the providers whose harness is switched on', async (t) => {
+	const started = [];
+	const recording = HARNESSES.map((harness) => ({
+		...harness,
+		createProvider: () => {
+			started.push(harness.id);
+			return {
+				id: harness.id,
+				harness: harness.displayName,
+				watch: () => () => {},
+				async *list() {},
+				async *inspect() {},
+			};
+		},
+	}));
+	const harness = await start(t, {
+		harnesses: recording,
+		enabledHarnesses: ['claude-code'],
+	});
+	assert.deepEqual(started, ['claude-code']);
+
+	started.length = 0;
+	harness.setEnabledHarnesses(['claude-code', 'antigravity']);
+	await harness.waitFor(() => started.includes('antigravity'));
+	assert.deepEqual(started.sort(), ['antigravity', 'claude-code']);
 });
 
 test('catch-up is published as one reset when the library is ready', async (t) => {
@@ -207,6 +266,66 @@ test('a background shell wait is reported as running, not as waiting on the user
 
 	await driver.endBackgroundWait('live');
 	await harness.waitFor((h) => h.sessions()[0]?.status === 'idle');
+	harness.assertConformant();
+});
+
+/**
+ * The memory provider reports its background wait as `shell`; this wrapper
+ * rewrites that word, as the Antigravity provider reports `task`, `subagent`
+ * or a request for the user.
+ */
+function harnessesReportingWaitAs(waitingFor) {
+	const memory = createMemoryHarness();
+	const provider = {
+		...memory.provider,
+		watch(ctx) {
+			const relay = Object.create(ctx);
+			relay.emit = (event, payload) =>
+				ctx.emit(
+					event,
+					event === 'session:status' && payload?.waitingFor === 'shell'
+						? { ...payload, waitingFor }
+						: payload,
+				);
+			return memory.provider.watch(relay);
+		},
+	};
+	const harnesses = HARNESSES.map((harness) =>
+		harness.id === 'antigravity'
+			? { ...harness, createProvider: () => provider }
+			: harness,
+	);
+	return { driver: memory.driver, harnesses };
+}
+
+for (const waitingFor of ['task', 'subagent']) {
+	test(`a background ${waitingFor} wait is reported as running, not as waiting on the user`, async (t) => {
+		const { driver, harnesses } = harnessesReportingWaitAs(waitingFor);
+		const harness = await start(t, { harnesses, enabledHarnesses: ['antigravity'] });
+		await driver.createLiveSession({ id: 'live', pid: 261, cwd: '/work/app' });
+		await harness.waitFor((h) => h.sessions()[0]?.status === 'idle');
+
+		await driver.startBackgroundWait('live');
+		await harness.waitFor((h) => h.sessions()[0]?.status === 'running');
+		assert.equal(harness.sessions()[0].harness, 'antigravity');
+		assert.equal(harness.sessions()[0].waitingFor, undefined);
+
+		await driver.endBackgroundWait('live');
+		await harness.waitFor((h) => h.sessions()[0]?.status === 'idle');
+		harness.assertConformant();
+	});
+}
+
+test('a wait for the user to approve stays waiting with its reason', async (t) => {
+	const { driver, harnesses } = harnessesReportingWaitAs('approval');
+	const harness = await start(t, { harnesses, enabledHarnesses: ['antigravity'] });
+	await driver.createLiveSession({ id: 'live', pid: 271, cwd: '/work/app' });
+	await harness.waitFor((h) => h.sessions()[0]?.status === 'idle');
+
+	await driver.startBackgroundWait('live');
+	await harness.waitFor((h) => h.sessions()[0]?.status === 'waiting');
+	assert.equal(harness.sessions()[0].harness, 'antigravity');
+	assert.equal(harness.sessions()[0].waitingFor, 'approval');
 	harness.assertConformant();
 });
 

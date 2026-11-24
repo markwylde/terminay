@@ -213,8 +213,8 @@ async function exercisePackagedHostRuntime(label, artifactRoot) {
   const sessionSource = agentsArtifact.manifestMetadata.contributes.agentSessionSources?.find((contribution) => contribution.id === AGENTS_SOURCE_ID)
   assert.deepEqual(
     sessionSource?.harnesses.map((harness) => harness.id),
-    ['claude-code', 'codex', 'grok', 'oh-my-pi'],
-    `${label} must package the four library harnesses`,
+    ['claude-code', 'codex', 'grok', 'oh-my-pi', 'antigravity'],
+    `${label} must package the five library harnesses`,
   )
   assert.ok(sessionSource.environmentVariables.includes('CLAUDE_CONFIG_DIR'), `${label} must declare the harness home variables`)
   const registry = new OverrideRegistry(agentsArtifact.manifestMetadata)
