@@ -14,6 +14,6 @@
 - [x] 3.1 Extend existing focused dictation suites and Docker-isolated UI coverage; run affected tests and capture settings screenshots during verification.
 - [x] 3.2 Run typecheck, lint, OpenSpec validation and diff checks; record results and resolve new failures.
 - [x] 3.3 Complete independent Codex implementation review and OpenSpec verification; fix agreed findings and record evidence.
-- [ ] 3.4 Commit and push to origin, open Gitea PR with screenshots, and confirm no merge conflicts and all head statuses success or skipped.
+- [x] 3.4 Commit and push to origin, open Gitea PR with screenshots, and confirm no merge conflicts and all head statuses success or skipped.
 
 - [x] 3.5 Sync verified dictation deltas into the canonical spec in this worktree; verify semantic consistency and OpenSpec validation.
