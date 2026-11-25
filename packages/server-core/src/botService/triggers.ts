@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import {
 	BOT_STARTUP_RETRIES_DEFAULT,
-	botTriggerOrigin,
 	type BotSourceTest,
 	type BotTrigger,
 	type BotTriggerBlocker,
@@ -10,6 +9,7 @@ import {
 	type BotTriggerFiring,
 	type BotUpcomingCursor,
 	type BotUpcomingPage,
+	botTriggerOrigin,
 } from '@terminay/protocol';
 import {
 	type EventFanout,
@@ -18,6 +18,16 @@ import {
 	type TriggerEvent,
 } from '../scheduleEngine/index.js';
 import { botFailureCause } from './failure.js';
+import {
+	GATE_FAILED_NOTE,
+	GATE_REASON_BYTES,
+	GATE_STDERR_BYTES,
+	GATE_TIMEOUT_MS,
+	type GateFailure,
+	gateCommand,
+	utf8Head,
+	utf8Tail,
+} from './gate.js';
 import {
 	botProcessCount,
 	classifyProcessFailure,
@@ -39,8 +49,8 @@ import {
 } from './sourceValidation.js';
 import {
 	BotBlockedError,
-	BotSkippedError,
 	BotError,
+	BotSkippedError,
 	type BotStore,
 	object,
 	text,
@@ -75,6 +85,18 @@ export class BotTriggers {
 	private retries = new Map<string, ReturnType<typeof setTimeout>>();
 	private attempts = new Map<string, number>();
 	private draining = new Set<string>();
+	/** Running gates by trigger ID. */
+	private gates = new Map<string, AbortController>();
+	/** Bots whose drain is waiting on a gate, and those asked to drain again
+	 * meanwhile. A drain is repeated only for such a request. */
+	private gating = new Set<string>();
+	private redrain = new Set<string>();
+	/** Verdicts of firings still pending: null lets the firing through, a
+	 * failure lets it through with a note. Kept so a gate runs once. */
+	private gateVerdicts = new Map<
+		string,
+		{ botId: string; failure: GateFailure | null }
+	>();
 	/** Firings waiting for a previous execution's in-progress attempt. */
 	private finishing = new Map<string, string>();
 	private checks = new Map<string, Promise<void>>();
@@ -229,6 +251,7 @@ export class BotTriggers {
 		this.stopped = true;
 		for (const w of this.workers.values()) w.controller.abort();
 		for (const c of this.tests.values()) c.abort();
+		for (const g of this.gates.values()) g.abort();
 		for (const timer of this.retries.values()) clearTimeout(timer);
 		this.retries.clear();
 		for (const d of this.detach.splice(0)) d();
@@ -243,6 +266,7 @@ export class BotTriggers {
 	availability(botId: string, enabled: boolean): void {
 		for (const t of this.store.triggers(botId)) {
 			this.stopSource(t.id);
+			if (!enabled) this.gates.get(t.id)?.abort();
 			if (enabled) {
 				this.patch(t.id, {
 					evaluatedThrough: this.now(),
@@ -746,12 +770,12 @@ export class BotTriggers {
 		return task;
 	}
 	private async drain(botId: string): Promise<void> {
-		if (
-			this.draining.has(botId) ||
-			this.stopped ||
-			this.store.get(botId).enabled === false
-		)
+		if (this.draining.has(botId)) {
+			// A firing accepted while a gate runs is picked up when it ends.
+			if (this.gating.has(botId)) this.redrain.add(botId);
 			return;
+		}
+		if (this.stopped || this.store.get(botId).enabled === false) return;
 		this.draining.add(botId);
 		try {
 			const events = this.observations.pending(botId);
@@ -858,6 +882,36 @@ export class BotTriggers {
 							}
 						}
 					}
+					let gateFailure: GateFailure | null = null;
+					if (event.gate) {
+						let verdict = this.gateVerdicts.get(event.id);
+						if (!verdict) {
+							const result = await this.runGate(botId, id, event.gate);
+							// Fence: act only if nothing ended this firing meanwhile.
+							if (
+								this.stopped ||
+								!this.store.list().some((b) => b.id === botId)
+							)
+								return;
+							if (this.store.get(botId).enabled === false) return;
+							if (
+								!result ||
+								!this.find(id) ||
+								!this.observations.pending(botId).some((e) => e.id === event.id)
+							)
+								continue;
+							if (result.kind === 'skip') {
+								this.skipEvent(botId, trigger, event, result.reason);
+								continue;
+							}
+							verdict = {
+								botId,
+								failure: result.kind === 'broken' ? result.failure : null,
+							};
+							this.gateVerdicts.set(event.id, verdict);
+						}
+						gateFailure = verdict.failure;
+					}
 					const context = {
 						eventId: event.id,
 						source: trigger.condition.kind,
@@ -866,11 +920,12 @@ export class BotTriggers {
 						dueAt: event.dueAt,
 						recovery: event.recovery ?? null,
 						payload: event.payload,
+						...(gateFailure ? { gate: gateFailure } : {}),
 					};
 					try {
 						const result = await this.service.send(
 							botId,
-							`${event.prompt}\n\n<untrusted-source-context>\n${JSON.stringify(context).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}\n</untrusted-source-context>`,
+							`${event.prompt}${gateFailure ? `\n\n${GATE_FAILED_NOTE}` : ''}\n\n<untrusted-source-context>\n${JSON.stringify(context).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}\n</untrusted-source-context>`,
 							undefined,
 							{
 								kind: event.origin,
@@ -960,7 +1015,133 @@ export class BotTriggers {
 			}
 		} finally {
 			this.draining.delete(botId);
+			let pending: Set<string> | undefined;
+			for (const [eventId, verdict] of this.gateVerdicts) {
+				if (verdict.botId !== botId) continue;
+				try {
+					pending ??= new Set(
+						this.observations.pending(botId).map((e) => e.id),
+					);
+				} catch {
+					pending = new Set();
+				}
+				if (!pending.has(eventId)) this.gateVerdicts.delete(eventId);
+			}
 			this.syncFirings(botId);
+			if (this.redrain.delete(botId)) void this.drain(botId);
+		}
+	}
+	/**
+	 * Runs a firing's gate in the bot's container (ADR-0096), through the
+	 * command path of the source worker. Any text on stdout skips the firing;
+	 * empty stdout with exit 0 opens it; anything else is a broken gate, which
+	 * fails open. A cancelled run gives no verdict.
+	 */
+	private async runGate(
+		botId: string,
+		triggerId: string,
+		gate: string,
+	): Promise<
+		| { kind: 'open' }
+		| { kind: 'skip'; reason: string }
+		| { kind: 'broken'; failure: GateFailure }
+		| undefined
+	> {
+		const broken = (
+			error: string,
+			exitCode: number | null = null,
+			stderr?: string,
+		) => ({
+			kind: 'broken' as const,
+			failure: {
+				path: gate,
+				status: 'failed' as const,
+				exitCode,
+				error,
+				...(stderr ? { stderr } : {}),
+			},
+		});
+		const redact = async (value: string): Promise<string | undefined> => {
+			try {
+				return await this.service.redactMessage(botId, value);
+			} catch {
+				return undefined;
+			}
+		};
+		const runner = this.service.sourceRunner;
+		if (!runner) return broken('The gate could not be run.');
+		const controller = new AbortController();
+		this.gates.get(triggerId)?.abort();
+		this.gates.set(triggerId, controller);
+		this.gating.add(botId);
+		const evaluate = async (): Promise<
+			| { kind: 'open' }
+			| { kind: 'skip'; reason: string }
+			| { kind: 'broken'; failure: GateFailure }
+			| undefined
+		> => {
+			let seen: Observation | undefined;
+			let failed: unknown;
+			try {
+				await runner.run(
+					botId,
+					{
+						kind: 'command',
+						command: gateCommand(gate),
+						cwd: '/home/bot',
+						intervalMs: 60000,
+						timeoutMs: GATE_TIMEOUT_MS,
+						match: { kind: 'changed' },
+					},
+					{ signal: controller.signal },
+					async (value) => {
+						seen = value;
+					},
+				);
+			} catch (error) {
+				failed = error ?? new Error('Gate run failed');
+			}
+			if (controller.signal.aborted) return undefined;
+			const result = seen as Observation | undefined;
+			if (failed !== undefined || !result) {
+				const limit = `${GATE_TIMEOUT_MS / 1000}-second limit`;
+				if (
+					(failed instanceof SourceRunError && failed.outcome === 'deadline') ||
+					(failed instanceof Error && failed.message === 'Command timed out')
+				)
+					return broken(`The gate exceeded its ${limit}.`);
+				const detail =
+					failed instanceof Error ? await redact(failed.message) : undefined;
+				return broken(
+					detail
+						? `The gate could not be run: ${utf8Head(detail, 512)}`
+						: 'The gate could not be run.',
+				);
+			}
+			const output = result.stdout ?? '';
+			if (output.trim()) {
+				const safe = await redact(output);
+				const text = utf8Head(
+					(safe ?? '').replace(/\s+/g, ' ').trim(),
+					GATE_REASON_BYTES,
+				);
+				return { kind: 'skip', reason: text ? `gate: ${text}` : 'gate' };
+			}
+			if (result.exitCode === 0) return { kind: 'open' };
+			const stderr = result.stderr ? await redact(result.stderr) : undefined;
+			return broken(
+				`The gate exited with status ${result.exitCode ?? 'unknown'} and printed nothing to standard output.`,
+				result.exitCode ?? null,
+				stderr ? utf8Tail(stderr, GATE_STDERR_BYTES).trim() : undefined,
+			);
+		};
+		try {
+			const verdict = await evaluate();
+			return controller.signal.aborted ? undefined : verdict;
+		} finally {
+			if (this.gates.get(triggerId) === controller)
+				this.gates.delete(triggerId);
+			this.gating.delete(botId);
 		}
 	}
 	/** Records a firing as skipped and removes it from the pending events. */
@@ -1206,6 +1387,7 @@ export class BotTriggers {
 			'recovery',
 			'startupRetries',
 			'onNeedsHuman',
+			'gate',
 		]);
 		const settings = failureSettings(d);
 		if (typeof d.enabled !== 'boolean')
@@ -1247,6 +1429,7 @@ export class BotTriggers {
 			missedCount: previous?.missedCount ?? 0,
 			missedLatest: previous?.missedLatest ?? null,
 			...settings,
+			gate: d.gate,
 			...(previous?.blocker ? { blocker: previous.blocker } : {}),
 		});
 		const schedule = asSchedule(t.condition);
@@ -1303,6 +1486,7 @@ export class BotTriggers {
 	}
 	private cancelPending(t: BotTrigger): void {
 		this.stopSource(t.id);
+		this.gates.get(t.id)?.abort();
 		for (const e of this.observations
 			.pending(t.botId)
 			.filter((e) => e.triggerId === t.id))

@@ -40,6 +40,8 @@ export interface PendingSourceEvent {
 	dueAt: number;
 	origin: 'trigger' | 'run-now';
 	recovery?: { after: number; through: number };
+	/** The trigger's gate when this firing occurred. Run now never has one. */
+	gate?: string;
 }
 export interface SourceCheckpoint {
 	generation: string;
@@ -372,7 +374,8 @@ export class BotSourceStore {
 					if (
 						typeof e.prompt !== 'string' ||
 						!Number.isSafeInteger(e.dueAt) ||
-						!Number.isSafeInteger(e.observedAt)
+						!Number.isSafeInteger(e.observedAt) ||
+						(e.gate !== undefined && typeof e.gate !== 'string')
 					)
 						throw new Error('Invalid pending context');
 				}
@@ -433,6 +436,7 @@ export class BotSourceStore {
 				dueAt: due,
 				origin,
 				...(recovery ? { recovery } : {}),
+				...(origin === 'trigger' && t.gate ? { gate: t.gate } : {}),
 			};
 		});
 		cp.health = {

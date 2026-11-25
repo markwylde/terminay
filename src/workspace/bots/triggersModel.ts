@@ -93,6 +93,8 @@ export type TriggerForm = Readonly<{
 	/** 0–3 retries of a temporary startup failure. */
 	startupRetries: number;
 	onNeedsHuman: import('@terminay/protocol').BotNeedsHumanPolicy;
+	/** Path of the trigger's gate script; empty means no gate. */
+	gate: string;
 	command: string;
 	cwd: string;
 	url: string;
@@ -137,6 +139,7 @@ export function emptyTriggerForm(now: number): TriggerForm {
 		recovery: 'skip',
 		startupRetries: 3,
 		onNeedsHuman: 'pause',
+		gate: '',
 		command: '',
 		cwd: '/home/bot',
 		url: '',
@@ -180,6 +183,7 @@ export function formFromTrigger(trigger: BotTrigger, now: number): TriggerForm {
 		recovery: trigger.recovery ?? 'skip',
 		startupRetries: trigger.startupRetries ?? 3,
 		onNeedsHuman: trigger.onNeedsHuman ?? 'pause',
+		gate: trigger.gate ?? '',
 	};
 	switch (condition.kind) {
 		case 'cron':
@@ -404,6 +408,7 @@ export function formToDraft(
 			condition: condition.condition,
 			startupRetries: form.startupRetries,
 			onNeedsHuman: form.onNeedsHuman,
+			...(form.gate.trim() ? { gate: form.gate.trim() } : {}),
 		},
 	};
 }

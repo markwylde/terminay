@@ -1,5 +1,6 @@
 import {
 	BOT_STARTUP_RETRIES_MAX,
+	BOT_TRIGGER_GATE_MAX_BYTES,
 	type BotNeedsHumanPolicy,
 	type BotTrigger,
 	type BotTriggerBlocker,
@@ -7,9 +8,9 @@ import {
 	type BotTriggerFiring,
 } from '@terminay/protocol';
 import { previewSchedule } from '../scheduleEngine/scheduler.js';
-import { isObservation, observationSource, exact } from './sourceValidation.js';
 import { TRIGGER_EVENT_KINDS } from '../scheduleEngine/types.js';
 import { failureCause } from './sessions.js';
+import { exact, isObservation, observationSource } from './sourceValidation.js';
 import { BotError, object, text } from './store.js';
 
 export function triggerTime(value: unknown): number {
@@ -125,10 +126,31 @@ export function storedTrigger(value: unknown): BotTrigger {
 		missedCount: d.missedCount as number,
 		missedLatest: d.missedLatest === null ? null : triggerTime(d.missedLatest),
 		...failureSettings(d),
+		...triggerGate(d.gate),
 		...(d.blocker === undefined || d.blocker === null
 			? {}
 			: { blocker: triggerBlocker(d.blocker) }),
 	};
+}
+/** A gate is a container path: trimmed, omitted when empty, bounded, and free
+ * of line breaks and NUL so it stays one shell word. */
+export function triggerGate(value: unknown): { gate?: string } {
+	if (value === undefined || value === null) return {};
+	if (typeof value !== 'string')
+		throw new BotError('validation', 'Gate must be a path');
+	if (/[\n\r\0]/.test(value))
+		throw new BotError(
+			'validation',
+			'Gate must be a single path without line breaks',
+		);
+	const gate = value.trim();
+	if (!gate) return {};
+	if (Buffer.byteLength(gate) > BOT_TRIGGER_GATE_MAX_BYTES)
+		throw new BotError(
+			'validation',
+			`Gate must be at most ${BOT_TRIGGER_GATE_MAX_BYTES} bytes`,
+		);
+	return { gate };
 }
 /** Startup retries (0–3) and the needs-human policy; absent values are omitted
  * and read as the defaults. */

@@ -40,6 +40,7 @@ type Scenario = {
 	limitsChangePending?: boolean;
 	/** Triggers listed after the fixed `tr1`. */
 	extraTriggers?: unknown[];
+	extraFirings?: unknown[];
 	settingsRefusal?: string;
 	deleteWarning?: string;
 	sendRefusal?: string;
@@ -564,7 +565,7 @@ const client = {
 			...(scenario.extraTriggers ?? []),
 		],
 	})),
-	triggerFirings: record('triggerFirings', () => []),
+	triggerFirings: record('triggerFirings', () => scenario.extraFirings ?? []),
 	upcomingTriggers: record('upcomingTriggers', () => ({
 		firings: [
 			{
