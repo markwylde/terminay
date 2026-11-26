@@ -24,6 +24,7 @@ import {
 	botAttachmentType,
 	botEnvironmentId,
 	botMessageActivity,
+	isBotAudioMime,
 	isBotImageMime,
 	isBotVideoMime,
 } from '@terminay/protocol';
@@ -76,14 +77,17 @@ export interface BotUnacknowledgedPosts {
 /** What a notification says of a post with images and no text. */
 export const BOT_IMAGE_ONLY_EXCERPT = 'Sent an image';
 export const BOT_VIDEO_ONLY_EXCERPT = 'Sent a video';
+export const BOT_AUDIO_ONLY_EXCERPT = 'Sent an audio file';
 export const BOT_FILE_ONLY_EXCERPT = 'Sent a file';
 function attachmentOnlyExcerpt(
 	attachments: readonly BotMessageAttachment[],
 ): string {
 	if (attachments.every((a) => isBotImageMime(a.mime)))
 		return BOT_IMAGE_ONLY_EXCERPT;
-	return attachments.every((a) => isBotVideoMime(a.mime))
-		? BOT_VIDEO_ONLY_EXCERPT
+	if (attachments.every((a) => isBotVideoMime(a.mime)))
+		return BOT_VIDEO_ONLY_EXCERPT;
+	return attachments.every((a) => isBotAudioMime(a.mime))
+		? BOT_AUDIO_ONLY_EXCERPT
 		: BOT_FILE_ONLY_EXCERPT;
 }
 const EXCERPT_CHARS = 280;

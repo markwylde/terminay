@@ -172,6 +172,16 @@ test('opaque file uploads and attachment reads are accepted within their bound',
  mime='image/png';size=3*1024*1024;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
  mime='text/html';size=10;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
 });
+test('audio uploads and attachment reads are accepted within the file bound',async()=>{
+ const {BotMessagesClient}=await import('../dist/index.js');const token='d'.repeat(24);let mime='audio/wav',size=4*1024*1024;
+ const wire={query:async()=>null,command:async()=>null,commandWithBody:async(_op,payload,body)=>({token,attachment:{name:payload.name,mime,size:body.length}}),queryWithBody:async()=>({result:{mime},body:new Uint8Array(size)}),subscribe:()=>()=>{}};
+ const client=new BotMessagesClient(wire);
+ for(const type of ['audio/mpeg','audio/wav','audio/ogg','audio/flac','audio/mp4']){mime=type;
+  assert.equal((await client.upload(profile.id,'song',new Uint8Array([1]))).attachment.mime,type);
+  assert.equal((await client.attachment(profile.id,'a'.repeat(24))).mime,type);}
+ size=5*1024*1024+1;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
+ mime='audio/x-unknown';size=10;await assert.rejects(client.attachment(profile.id,'a'.repeat(24)),/Invalid attachment/);
+});
 
 test('upload responses enforce positive integer sizes and per-kind limits', async () => {
 	const { BotMessagesClient } = await import('../dist/index.js');
