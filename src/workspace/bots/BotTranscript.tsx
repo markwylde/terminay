@@ -327,7 +327,11 @@ import {
 	handleBotMarkdownClick,
 	renderBotMarkdown,
 } from './botMarkdown';
-import type { PlanStep, TranscriptItem } from './transcriptModel';
+import {
+	type PlanStep,
+	type TranscriptItem,
+	transcriptTime,
+} from './transcriptModel';
 
 /** A request to open a chat message's menu. */
 export type MessageMenuRequest = Readonly<{
@@ -490,7 +494,9 @@ export const BotTranscript = memo(function BotTranscript({
 					onReveal={onRevealAction}
 				/>
 			);
-		const at = messageTimes?.get(blockKey(block));
+		// Chat shows message-log times; Sessions shows each entry's recorded time.
+		const at = separate ? messageTimes?.get(blockKey(block)) : blockTime(block);
+		const entryTimes = !separate;
 		if (block.kind === 'user') {
 			const menuHandlers = messageMenuHandlers(
 				block.item.key,
@@ -548,7 +554,13 @@ export const BotTranscript = memo(function BotTranscript({
 		if (block.kind === 'other') {
 			const item = block.item;
 			if (item.kind === 'plan')
-				return <PlanList key={item.key} steps={item.steps} />;
+				return (
+					<PlanList
+						key={item.key}
+						steps={item.steps}
+						at={entryTimes ? item.at : undefined}
+					/>
+				);
 			if (item.kind === 'truncated')
 				return (
 					<div
@@ -557,6 +569,9 @@ export const BotTranscript = memo(function BotTranscript({
 						data-terminay-bot-truncated="true"
 					>
 						This transcript reached its size limit. Later updates were not kept.
+						{entryTimes ? (
+							<EntryTime at={item.at} className="bots-entry-time" />
+						) : null}
 					</div>
 				);
 			return null;
@@ -571,25 +586,32 @@ export const BotTranscript = memo(function BotTranscript({
 				<BotAvatar bot={bot} size="sm" />
 				<div className="bots-msg__main bots-msg__turn">
 					<MessageHead who={bot.name} at={at} />
-					{block.parts.map((part) => {
+					{block.parts.map((part, index) => {
 						if (Array.isArray(part))
 							return part.length === 1 ? (
 								<ToolEntry
 									key={part[0]!.key}
 									item={part[0]!}
 									active={active && block === activeBlock}
+									showTime={entryTimes}
 								/>
 							) : (
 								<ToolGroup
 									key={part[0]!.key}
 									tools={part}
 									active={active && block === activeBlock}
+									showTime={entryTimes}
 								/>
 							);
 						if (part.kind === 'thought')
 							return (
 								<details className="bots-thought" key={part.key}>
-									<summary>Thinking</summary>
+									<summary>
+										Thinking
+										{entryTimes ? (
+											<EntryTime at={part.at} className="bots-entry-time" />
+										) : null}
+									</summary>
 									<div>{part.text}</div>
 								</details>
 							);
@@ -604,6 +626,14 @@ export const BotTranscript = memo(function BotTranscript({
 									);
 							return (
 								<Fragment key={part.key}>
+									{/* The turn's head already shows its first message's time. */}
+									{entryTimes &&
+									index > 0 &&
+									transcriptTime(part.at) !== undefined ? (
+										<div className="bots-entry-time-row">
+											<EntryTime at={part.at} className="bots-entry-time" />
+										</div>
+									) : null}
 									{part.text ? (
 										<AgentText
 											text={part.text}
@@ -651,22 +681,46 @@ export const BotTranscript = memo(function BotTranscript({
 });
 
 function MessageHead({ who, at }: Readonly<{ who: string; at?: number }>) {
-	if (at === undefined) return <div className="bots-msg__who">{who}</div>;
+	if (transcriptTime(at) === undefined)
+		return <div className="bots-msg__who">{who}</div>;
 	return (
 		<div className="bots-msg__head">
 			<span className="bots-msg__who">{who}</span>
-			<time
-				className="bots-msg__time"
-				dateTime={new Date(at).toISOString()}
-				title={new Date(at).toLocaleString(undefined, {
-					dateStyle: 'full',
-					timeStyle: 'medium',
-				})}
-			>
-				{messageTime(at)}
-			</time>
+			<EntryTime at={at} />
 		</div>
 	);
+}
+
+/** When an entry happened, in the chat time format; the full date and time
+ * on hover. Nothing for an entry with no valid recorded time. */
+function EntryTime({
+	at,
+	className = 'bots-msg__time',
+}: Readonly<{ at: number | undefined; className?: string }>) {
+	const time = transcriptTime(at);
+	if (time === undefined) return null;
+	const date = new Date(time);
+	return (
+		<time
+			className={className}
+			dateTime={date.toISOString()}
+			title={date.toLocaleString(undefined, {
+				dateStyle: 'full',
+				timeStyle: 'medium',
+			})}
+			data-terminay-bot-entry-time={time}
+		>
+			{messageTime(time)}
+		</time>
+	);
+}
+
+/** When a turn block started: its first entry's recorded time. */
+function blockTime(block: TurnBlock): number | undefined {
+	if (block.kind === 'user' || block.kind === 'other') return block.item.at;
+	if (block.kind !== 'agent') return undefined;
+	const first = block.parts[0];
+	return Array.isArray(first) ? first[0]?.at : first?.at;
 }
 
 /** Today's messages by clock time; older ones with a day, then a date. */
@@ -834,7 +888,13 @@ type ToolItem = TranscriptItem & { kind: 'tool' };
 function ToolGroup({
 	tools,
 	active,
-}: Readonly<{ tools: readonly ToolItem[]; active: boolean }>) {
+	showTime = false,
+}: Readonly<{
+	tools: readonly ToolItem[];
+	active: boolean;
+	/** Sessions: show each call's recorded time. */
+	showTime?: boolean;
+}>) {
 	const [open, setOpen] = useState(false);
 	const running =
 		active &&
@@ -878,11 +938,19 @@ function ToolGroup({
 						: ''}
 					{!running && failed ? ` · ${failed} failed` : ''}
 				</span>
+				{showTime ? (
+					<EntryTime at={tools[0]?.at} className="bots-tool__time" />
+				) : null}
 			</button>
 			{open ? (
 				<div className="bots-tool__group">
 					{tools.map((tool) => (
-						<ToolEntry key={tool.key} item={tool} active={active} />
+						<ToolEntry
+							key={tool.key}
+							item={tool}
+							active={active}
+							showTime={showTime}
+						/>
 					))}
 				</div>
 			) : null}
@@ -893,7 +961,13 @@ function ToolGroup({
 function ToolEntry({
 	item,
 	active,
-}: Readonly<{ item: TranscriptItem & { kind: 'tool' }; active: boolean }>) {
+	showTime = false,
+}: Readonly<{
+	item: TranscriptItem & { kind: 'tool' };
+	active: boolean;
+	/** Sessions: show the call's recorded time. */
+	showTime?: boolean;
+}>) {
 	const [open, setOpen] = useState(false);
 	const icon =
 		item.status === 'completed' ? (
@@ -932,6 +1006,9 @@ function ToolEntry({
 						? ' · No final status reported'
 						: ''}
 				</span>
+				{showTime ? (
+					<EntryTime at={item.at} className="bots-tool__time" />
+				) : null}
 			</button>
 			{open ? (
 				<div className="bots-tool__body">
@@ -947,13 +1024,17 @@ function ToolEntry({
 	);
 }
 
-export function PlanList({ steps }: Readonly<{ steps: readonly PlanStep[] }>) {
+export function PlanList({
+	steps,
+	at,
+}: Readonly<{ steps: readonly PlanStep[]; at?: number }>) {
 	if (steps.length === 0) return null;
 	const done = steps.filter((step) => step.status === 'completed').length;
 	return (
 		<div className="bots-card bots-plan" data-terminay-bot-plan={done}>
 			<div className="bots-lab">
 				Plan · {done} of {steps.length}
+				<EntryTime at={at} className="bots-entry-time" />
 			</div>
 			<ul>
 				{steps.map((step, index) => (

@@ -1676,6 +1676,72 @@ test.describe('Home: Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('a session transcript shows when its prompt, replies and tool calls happened', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Kestrel'));
+		const before = Date.now();
+		await send(tab, 'hello');
+		await expect(tab.locator('[data-terminay-bot-transcript]')).toContainText(
+			'secret',
+			{ timeout: 30_000 },
+		);
+		const after = Date.now();
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await tab.locator('[data-terminay-bot-session-row]').first().click();
+		const detail = tab.locator('[data-terminay-bot-session]');
+		const transcript = detail.locator('[data-terminay-bot-transcript]');
+		await expect(transcript).toContainText('secret');
+		// The prompt and the reply each carry the server's recorded time.
+		await expect(
+			transcript.locator('.bots-msg--user .bots-msg__time'),
+		).toHaveCount(1);
+		await expect(
+			transcript
+				.locator('.bots-msg:not(.bots-msg--user)')
+				.first()
+				.locator('.bots-msg__head .bots-msg__time'),
+		).toHaveCount(1);
+		const stamps = await transcript
+			.locator('[data-terminay-bot-entry-time]')
+			.evaluateAll((nodes) =>
+				nodes.map((n) => ({
+					at: Number(n.getAttribute('data-terminay-bot-entry-time')),
+					iso: n.getAttribute('datetime'),
+					title: n.getAttribute('title') ?? '',
+					text: n.textContent ?? '',
+				})),
+			);
+		expect(stamps.length).toBeGreaterThanOrEqual(2);
+		for (const stamp of stamps) {
+			expect(stamp.at).toBeGreaterThanOrEqual(before - 1000);
+			expect(stamp.at).toBeLessThanOrEqual(after + 1000);
+			expect(stamp.iso).toBe(new Date(stamp.at).toISOString());
+			expect(stamp.title).toContain(String(new Date(stamp.at).getFullYear()));
+			expect(stamp.title).toMatch(/\d{1,2}:\d{2}:\d{2}/);
+			expect(stamp.text).toMatch(/\d{1,2}:\d{2}/);
+		}
+		// Every tool call the agent made shows its own time.
+		for (const tool of await transcript
+			.locator('[data-terminay-bot-tool], [data-terminay-bot-tool-group]')
+			.all())
+			await expect(
+				tool.locator('.bots-tool__head').first().locator('.bots-tool__time'),
+			).toHaveCount(1);
+		await detail.screenshot({
+			path: testInfo.outputPath('session-transcript-times.png'),
+		});
+		// Chat keeps its message-log times.
+		await chat(tab);
+		await expect(
+			tab.locator('[data-terminay-bot-transcript] .bots-msg time'),
+		).toHaveCount(2);
+	});
+
 	test('any message can grow a thread: reply action, reply bar, panel, drafts and deletion', async ({
 		mainWindow,
 		electronApp,

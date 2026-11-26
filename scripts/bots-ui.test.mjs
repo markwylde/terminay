@@ -1692,6 +1692,209 @@ test('Sessions filters and reads diagnostics without conversation continuation',
 	}
 });
 
+test('Sessions shows when each transcript entry happened, with the full time on hover', async () => {
+	const day = new Date(NOW);
+	const at = (h, m, sec) =>
+		new Date(
+			day.getFullYear(),
+			day.getMonth(),
+			day.getDate(),
+			h,
+			m,
+			sec,
+		).getTime();
+	const tool = (id, title, receivedAt, status = 'completed') => [
+		{
+			sessionUpdate: 'tool_call',
+			toolCallId: id,
+			title,
+			status: 'in_progress',
+			rawInput: { command: `${title} --run` },
+			receivedAt,
+		},
+		{
+			sessionUpdate: 'tool_call_update',
+			toolCallId: id,
+			status,
+			content: [{ type: 'content', content: { type: 'text', text: 'ok' } }],
+			receivedAt: receivedAt + 40_000,
+		},
+	];
+	const text = (sessionUpdate, value, receivedAt) => ({
+		sessionUpdate,
+		content: { type: 'text', text: value },
+		receivedAt,
+	});
+	const page = await configure('sessions', {
+		sessions: {
+			[BIRD]: [
+				session('s2', BIRD, { state: 'completed', open: false }),
+				session('s3', BIRD, {
+					state: 'completed',
+					open: false,
+					truncated: true,
+					startedAt: NOW - 86_400_000 * 20,
+				}),
+				session('s1', BIRD, {
+					state: 'completed',
+					open: false,
+					startedAt: NOW - 86_400_000 * 30,
+				}),
+			],
+		},
+		transcripts: {
+			s2: [
+				{ kind: 'user', text: 'Check the deploy', receivedAt: at(14, 2, 5) },
+				text('agent_thought_chunk', 'Looking at the logs', at(14, 2, 7)),
+				text('agent_message_chunk', 'Checking ', at(14, 2, 9)),
+				text('agent_message_chunk', 'now.', at(14, 2, 30)),
+				{
+					sessionUpdate: 'plan',
+					entries: [{ content: 'Read logs', status: 'completed' }],
+					receivedAt: at(14, 2, 10),
+				},
+				...tool('bash', 'Bash', at(14, 2, 11)),
+				...tool('read', 'Read', at(14, 3, 0)),
+				...tool('grep', 'Grep', at(14, 5, 0)),
+				text('agent_message_chunk', 'All green.', at(14, 9, 30)),
+			],
+			s3: [
+				{ kind: 'user', text: 'Weeks ago', receivedAt: NOW - 86_400_000 * 20 },
+				{ kind: 'truncated', receivedAt: NOW - 86_400_000 * 20 + 5000 },
+			],
+			s1: [
+				{ kind: 'user', text: 'Old prompt' },
+				text('agent_message_chunk', 'Old reply', undefined),
+			],
+		},
+	});
+	try {
+		const detail = page.locator('[data-terminay-bot-session="s2"]');
+		await detail.locator('[data-terminay-bot-tool-group="3"]').waitFor();
+		const times = detail.locator('[data-terminay-bot-entry-time]');
+		const stamps = await times.evaluateAll((nodes) =>
+			nodes.map((n) => Number(n.getAttribute('data-terminay-bot-entry-time'))),
+		);
+		// Prompt; first turn head, thought, second message; plan; second turn
+		// head, its tool group and its closing message.
+		assert.deepEqual(stamps, [
+			at(14, 2, 5),
+			at(14, 2, 7),
+			at(14, 2, 7),
+			at(14, 2, 9),
+			at(14, 2, 10),
+			at(14, 2, 11),
+			at(14, 2, 11),
+			at(14, 9, 30),
+		]);
+		const first = times.first();
+		assert.equal(
+			await first.getAttribute('datetime'),
+			new Date(at(14, 2, 5)).toISOString(),
+		);
+		assert.match(await first.innerText(), /^\d{1,2}:02(\s?[AP]M)?$/);
+		const title = await first.getAttribute('title');
+		assert.match(title, /2:02:05/);
+		assert.ok(title.includes(String(day.getFullYear())), title);
+		const group = detail.locator('[data-terminay-bot-tool-group="3"]');
+		await group.locator('.bots-tool__time').waitFor();
+		await shot(page, 'session-times');
+		await group.locator('.bots-tool__head').first().click();
+		const inner = group.locator('[data-terminay-bot-tool] .bots-tool__time');
+		assert.deepEqual(
+			await inner.evaluateAll((nodes) =>
+				nodes.map((n) =>
+					Number(n.getAttribute('data-terminay-bot-entry-time')),
+				),
+			),
+			[at(14, 2, 11), at(14, 3, 0), at(14, 5, 0)],
+		);
+		await group
+			.locator('[data-terminay-bot-tool="bash"] .bots-tool__head')
+			.click();
+		await group
+			.locator('[data-terminay-bot-tool="bash"] .bots-tool__body')
+			.waitFor();
+		await shot(page, 'session-times-expanded');
+		await page.locator('[data-terminay-bot-session-row="s1"]').click();
+		const old = page.locator('[data-terminay-bot-session="s1"]');
+		await old.getByText('Old reply').waitFor();
+		assert.equal(
+			await old.locator('[data-terminay-bot-entry-time]').count(),
+			0,
+		);
+		await old.getByText('Old prompt').waitFor();
+		// An entry from an earlier day more than a week ago shows its date, and
+		// the truncation notice shows when the limit was reached.
+		await page.locator('[data-terminay-bot-session-row="s3"]').click();
+		const weeks = page.locator('[data-terminay-bot-session="s3"]');
+		const promptTime = weeks.locator('.bots-msg--user .bots-msg__time');
+		await promptTime.waitFor();
+		const date = await page.evaluate(
+			(t) =>
+				new Date(t).toLocaleDateString(undefined, {
+					day: 'numeric',
+					month: 'short',
+				}),
+			NOW - 86_400_000 * 20,
+		);
+		assert.ok((await promptTime.innerText()).startsWith(date));
+		assert.equal(
+			Number(
+				await weeks
+					.locator(
+						'[data-terminay-bot-truncated] [data-terminay-bot-entry-time]',
+					)
+					.getAttribute('data-terminay-bot-entry-time'),
+			),
+			NOW - 86_400_000 * 20 + 5000,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
+test('Chat times come from the message log, never from transcript times', async () => {
+	const posted = [NOW - 3_600_000, NOW - 3_000_000];
+	const page = await open(
+		TAB({
+			sessions: { [BIRD]: [session('s1', BIRD, { state: 'completed' })] },
+			transcripts: {
+				s1: [
+					{ kind: 'user', text: 'Ping', receivedAt: NOW - 60_000 },
+					{
+						sessionUpdate: 'agent_message_chunk',
+						content: { type: 'text', text: 'Pong' },
+						receivedAt: NOW - 30_000,
+					},
+				],
+			},
+			messages: {
+				[BIRD]: [
+					{ author: 'user', text: 'Ping', createdAt: posted[0] },
+					{ author: 'bot', text: 'Pong', createdAt: posted[1] },
+				],
+			},
+		}),
+	);
+	try {
+		const transcript = page.locator('[data-terminay-bot-transcript]');
+		await transcript.getByText('Pong').waitFor();
+		assert.deepEqual(
+			await transcript
+				.locator('[data-terminay-bot-entry-time]')
+				.evaluateAll((nodes) =>
+					nodes.map((n) =>
+						Number(n.getAttribute('data-terminay-bot-entry-time')),
+					),
+				),
+			posted,
+		);
+	} finally {
+		await page.close();
+	}
+});
+
 test('a session whose background work was stopped shows failed with the reason', async () => {
 	const reason =
 		'The agent stopped its background work at a time limit before it finished, so this task may be incomplete.';

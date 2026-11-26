@@ -24,6 +24,7 @@ export const snapshot = {
 	instructions: '',
 	context: '',
 };
+const unstamped = ({ receivedAt: _, ...rest }) => rest;
 function setup(t, now) {
 	const root = mkdtempSync(join(tmpdir(), 'bots-sessions-'));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -52,7 +53,9 @@ test('5.5 uncounted segment from a crash is preserved; only committed updates re
 		JSON.stringify([{ text: 'crashed before metadata' }]),
 	);
 	const recovered = new BotSessionStore(root);
-	assert.deepEqual(recovered.get(s.id).updates, [{ text: 'committed' }]);
+	assert.deepEqual(recovered.get(s.id).updates.map(unstamped), [
+		{ text: 'committed' },
+	]);
 	assert.equal(recovered.get(s.id).recoveryMayHaveLostUpdates, true);
 	assert.ok(
 		readdirSync(join(root, s.id)).some((n) =>
@@ -99,7 +102,8 @@ test('5.5 transcript never exceeds 8 MiB and runner retains at most its last 256
 	const r = store.get(s.id);
 	assert.ok(r.transcriptBytes <= BOT_TRANSCRIPT_LIMIT);
 	assert.equal(r.truncated, true);
-	assert.deepEqual(r.updates.at(-1), { kind: 'truncated' });
+	assert.deepEqual(unstamped(r.updates.at(-1)), { kind: 'truncated' });
+	assert.equal(typeof r.updates.at(-1).receivedAt, 'number');
 	assert.equal(Buffer.byteLength(r.runnerOutput), BOT_RUNNER_LIMIT);
 	assert.ok(!r.runnerOutput.includes('prefix'));
 });
@@ -166,4 +170,75 @@ test('opaque trigger attachment metadata survives session persistence', (t) => {
 		new BotSessionStore(root).get(session.id).runtime.triggerAttachments,
 		attachments,
 	);
+});
+
+test('every stored object update carries the server admission time, overriding the agent', (t) => {
+	let time = 1_764_000_000_000;
+	const { root, store } = setup(t, () => time);
+	const s = store.create(botId, { kind: 'chat' }, snapshot);
+	time += 1000;
+	store.append(s.id, { kind: 'user', text: 'hi' });
+	time += 1000;
+	store.append(s.id, {
+		sessionUpdate: 'agent_message_chunk',
+		receivedAt: 1,
+		content: { type: 'text', text: 'hello' },
+	});
+	time += 1000;
+	store.append(s.id, { kind: 'permission-request', permission: {} });
+	store.append(s.id, 'not an object');
+	store.commit(s.id);
+	const times = [1_764_000_001_000, 1_764_000_002_000, 1_764_000_003_000];
+	const updates = store.get(s.id).updates;
+	assert.deepEqual(
+		updates.slice(0, 3).map((u) => u.receivedAt),
+		times,
+	);
+	assert.equal(updates[3], 'not an object');
+	const segment = JSON.parse(
+		readFileSync(join(root, s.id, 'segment-0.json'), 'utf8'),
+	);
+	assert.deepEqual(
+		segment.slice(0, 3).map((u) => u.receivedAt),
+		times,
+	);
+	time += 60_000;
+	const reopened = new BotSessionStore(root, undefined, () => time);
+	assert.deepEqual(
+		reopened
+			.get(s.id)
+			.updates.slice(0, 3)
+			.map((u) => u.receivedAt),
+		times,
+	);
+});
+test('the truncation marker is stamped and the stamped transcript stays within its cap', (t) => {
+	const { store } = setup(t, () => 1_764_000_000_000);
+	const s = store.create(botId, { kind: 'chat' }, snapshot);
+	for (let n = 0; n < 300; n++) store.append(s.id, { text: 'x'.repeat(32768) });
+	store.commit(s.id);
+	const r = store.get(s.id);
+	const stored = r.updates.reduce(
+		(sum, u) => sum + Buffer.byteLength(JSON.stringify(u)) + 2,
+		0,
+	);
+	assert.equal(stored, r.transcriptBytes);
+	assert.ok(r.transcriptBytes <= BOT_TRANSCRIPT_LIMIT);
+	assert.deepEqual(r.updates.at(-1), {
+		kind: 'truncated',
+		receivedAt: 1_764_000_000_000,
+	});
+});
+test('transcript search ignores the top-level admission time only', (t) => {
+	const { store } = setup(t, () => 1_764_000_123_456);
+	const s = store.create(botId, { kind: 'chat' }, snapshot);
+	store.append(s.id, { kind: 'user', text: 'deploy the docs' });
+	store.append(s.id, {
+		sessionUpdate: 'tool_call',
+		toolCallId: 't1',
+		rawInput: { receivedAt: 'nested-987654' },
+	});
+	assert.deepEqual(store.list(botId, { search: '123456' }), []);
+	assert.equal(store.list(botId, { search: 'deploy the' }).length, 1);
+	assert.equal(store.list(botId, { search: 'nested-987654' }).length, 1);
 });

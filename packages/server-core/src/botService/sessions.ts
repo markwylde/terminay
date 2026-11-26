@@ -32,6 +32,21 @@ export const sessionId = (id: unknown): string => {
 		throw new BotError('validation', 'invalid session id');
 	return id;
 };
+/** Sets the server's admission time on an object update (ADR-0143),
+ * replacing any value the update carried. Other values are stored as given. */
+function stamp(update: JsonValue, receivedAt: number): JsonValue {
+	if (typeof update !== 'object' || update === null || Array.isArray(update))
+		return update;
+	return { ...update, receivedAt };
+}
+/** An update as transcript search sees it: without the server's top-level
+ * admission time, so a numeric search never matches every stamped session. */
+function searchable(update: JsonValue): JsonValue {
+	if (typeof update !== 'object' || update === null || Array.isArray(update))
+		return update;
+	const { receivedAt: _, ...rest } = update;
+	return rest;
+}
 const timers: BotDeadlineClock = {
 	setTimeout(fn, ms) {
 		const t = setTimeout(fn, ms);
@@ -462,7 +477,7 @@ export class BotSessionStore extends EventEmitter {
 						botTriggerOrigin(e.record.origin)?.triggerId ===
 							filter.triggerId) &&
 					(!filter.search ||
-						JSON.stringify([...e.updates, ...e.pending])
+						JSON.stringify([...e.updates, ...e.pending].map(searchable))
 							.toLocaleLowerCase()
 							.includes(filter.search.toLocaleLowerCase())),
 			)
@@ -473,15 +488,14 @@ export class BotSessionStore extends EventEmitter {
 		assertJsonValue(update);
 		const e = this.entry(id);
 		if (e.record.truncated) return;
-		const bytes = Buffer.byteLength(JSON.stringify(update)) + 2;
+		const receivedAt = this.now();
+		const stored = stamp(structuredClone(update), receivedAt);
+		const bytes = Buffer.byteLength(JSON.stringify(stored)) + 2;
 		if (e.record.transcriptBytes + bytes > BOT_TRANSCRIPT_LIMIT - 128) {
 			e.record = { ...e.record, truncated: true };
-			this.push(
-				e,
-				{ kind: 'truncated' },
-				Buffer.byteLength(JSON.stringify({ kind: 'truncated' })) + 2,
-			);
-		} else this.push(e, structuredClone(update), bytes);
+			const marker = stamp({ kind: 'truncated' }, receivedAt);
+			this.push(e, marker, Buffer.byteLength(JSON.stringify(marker)) + 2);
+		} else this.push(e, stored, bytes);
 		this.emit('changed', { botId: e.record.botId });
 		if (e.pending.length >= 256) this.commit(id);
 		else this.damp(id, e);

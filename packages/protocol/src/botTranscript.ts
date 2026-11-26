@@ -20,6 +20,8 @@ export type TranscriptItem =
 	| Readonly<{
 			kind: 'user';
 			key: string;
+			/** When the entry started: its first update's server admission time. */
+			at?: number;
 			text: string;
 			/** Durable message attachments, shown after the plain text: images
 			 * inline, every other type as a download-only file chip. */
@@ -33,6 +35,8 @@ export type TranscriptItem =
 	| Readonly<{
 			kind: 'agent';
 			key: string;
+			/** When the entry started: its first update's server admission time. */
+			at?: number;
 			text: string;
 			/** A post's non-image attachments; its images are in the Markdown. */
 			attachments?: readonly Readonly<{
@@ -42,10 +46,18 @@ export type TranscriptItem =
 				size: number;
 			}>[];
 	  }>
-	| Readonly<{ kind: 'thought'; key: string; text: string }>
+	| Readonly<{
+			kind: 'thought';
+			key: string;
+			/** When the entry started: its first update's server admission time. */
+			at?: number;
+			text: string;
+	  }>
 	| Readonly<{
 			kind: 'tool';
 			key: string;
+			/** When the entry started: its first update's server admission time. */
+			at?: number;
 			toolCallId: string;
 			title: string;
 			toolKind: string;
@@ -53,15 +65,36 @@ export type TranscriptItem =
 			input: string;
 			output: string;
 	  }>
-	| Readonly<{ kind: 'plan'; key: string; steps: readonly PlanStep[] }>
-	| Readonly<{ kind: 'permission'; key: string; title: string }>
-	| Readonly<{ kind: 'truncated'; key: string }>;
+	| Readonly<{
+			kind: 'plan';
+			key: string;
+			/** When the entry started: its first update's server admission time. */
+			at?: number;
+			steps: readonly PlanStep[];
+	  }>
+	| Readonly<{
+			kind: 'permission';
+			key: string;
+			/** When the entry started: its first update's server admission time. */
+			at?: number;
+			title: string;
+	  }>
+	| Readonly<{ kind: 'truncated'; key: string; at?: number }>;
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 function record(value: unknown): Record<string, unknown> | undefined {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
 		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+/** A time in epoch milliseconds that a Date can represent, else undefined. */
+export function transcriptTime(value: unknown): number | undefined {
+	return typeof value === 'number' &&
+		Number.isSafeInteger(value) &&
+		Math.abs(value) <= 8.64e15
+		? value
 		: undefined;
 }
 
@@ -115,6 +148,9 @@ export function foldTranscript(
 	const items: Mutable<TranscriptItem>[] = [];
 	const tools = new Map<string, Mutable<TranscriptItem & { kind: 'tool' }>>();
 	let plan: Mutable<TranscriptItem & { kind: 'plan' }> | undefined;
+	let at: number | undefined;
+	const timed = <T extends object>(item: T): T =>
+		at === undefined ? item : { ...item, at };
 	const appendText = (kind: 'agent' | 'thought' | 'user', chunk: string) => {
 		if (chunk.length === 0) return;
 		const last = items.at(-1);
@@ -122,11 +158,12 @@ export function foldTranscript(
 			(last as { text: string }).text += chunk;
 			return;
 		}
-		items.push({ kind, key: `${kind}:${items.length}`, text: chunk });
+		items.push(timed({ kind, key: `${kind}:${items.length}`, text: chunk }));
 	};
 	for (const raw of updates) {
 		const update = record(raw);
 		if (update === undefined) continue;
+		at = transcriptTime(update.receivedAt);
 		if (update.kind === 'transcript-item') {
 			const item = record(update.item);
 			if (
@@ -141,31 +178,44 @@ export function foldTranscript(
 					'permission',
 					'truncated',
 				].includes(String(item.kind))
-			)
-				items.push(item as unknown as Mutable<TranscriptItem>);
+			) {
+				// The server's admission time wins over one inside the record.
+				const { at: inner, ...rest } = item;
+				const time = at ?? transcriptTime(inner);
+				items.push({
+					...rest,
+					...(time === undefined ? {} : { at: time }),
+				} as unknown as Mutable<TranscriptItem>);
+			}
 			continue;
 		}
 		if (update.kind === 'user') {
 			// A user message always starts its own entry.
-			items.push({
-				kind: 'user',
-				key: `user:${items.length}`,
-				text: text(update.text),
-			});
+			items.push(
+				timed({
+					kind: 'user',
+					key: `user:${items.length}`,
+					text: text(update.text),
+				}),
+			);
 			continue;
 		}
 		if (update.kind === 'truncated') {
-			items.push({ kind: 'truncated', key: `truncated:${items.length}` });
+			items.push(
+				timed({ kind: 'truncated', key: `truncated:${items.length}` }),
+			);
 			continue;
 		}
 		if (update.kind === 'permission-request') {
 			const permission = record(update.permission);
 			const title = text(record(permission?.toolCall)?.title);
-			items.push({
-				kind: 'permission',
-				key: `permission:${items.length}`,
-				title: title.length > 0 ? title : 'A tool',
-			});
+			items.push(
+				timed({
+					kind: 'permission',
+					key: `permission:${items.length}`,
+					title: title.length > 0 ? title : 'A tool',
+				}),
+			);
 			continue;
 		}
 		switch (update.sessionUpdate) {
@@ -185,7 +235,7 @@ export function foldTranscript(
 				if (id.length === 0) break;
 				let tool = tools.get(id);
 				if (tool === undefined) {
-					tool = {
+					tool = timed<Mutable<TranscriptItem & { kind: 'tool' }>>({
 						kind: 'tool',
 						key: `tool:${id}`,
 						toolCallId: id,
@@ -194,7 +244,7 @@ export function foldTranscript(
 						status: 'pending',
 						input: '',
 						output: '',
-					};
+					});
 					tools.set(id, tool);
 					items.push(tool);
 				}
@@ -223,7 +273,11 @@ export function foldTranscript(
 					return [{ content: text(r.content), status } as PlanStep];
 				});
 				if (plan === undefined) {
-					plan = { kind: 'plan', key: 'plan', steps };
+					plan = timed<Mutable<TranscriptItem & { kind: 'plan' }>>({
+						kind: 'plan',
+						key: 'plan',
+						steps,
+					});
 					items.push(plan);
 				} else plan.steps = steps;
 				break;
