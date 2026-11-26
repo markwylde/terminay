@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { BOT_FILE_ONLY_EXCERPT, BOT_IMAGE_ONLY_EXCERPT, BOT_VIDEO_ONLY_EXCERPT, BotMessageStore } from "../dist/botService/messages.js";
+import { BOT_AUDIO_ONLY_EXCERPT, BOT_FILE_ONLY_EXCERPT, BOT_IMAGE_ONLY_EXCERPT, BOT_VIDEO_ONLY_EXCERPT, BotMessageStore } from "../dist/botService/messages.js";
 import { BotNotificationFeed } from "../dist/botService/notificationFeed.js";
 
 const bot = "abc123def456";
@@ -127,6 +127,20 @@ test("a post of only videos or files names what it sent", (t) => {
   say(store, "bot", "", [zip]);
   assert.equal(held.get(bot).body, BOT_FILE_ONLY_EXCERPT);
   say(store, "bot", "", [image, video]);
+  assert.equal(held.get(bot).body, BOT_FILE_ONLY_EXCERPT);
+});
+
+test("a post of only audio says it sent an audio file", (t) => {
+  const { store } = setup(t);
+  const { held } = fed(store);
+  const mp3 = Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0, 0xff, 0xfb, 0x90, 0x64]);
+  const wav = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WAVEfmt ")]);
+  const one = store.putAttachment(bot, "a.mp3", mp3);
+  const two = store.putAttachment(bot, "b.wav", wav);
+  assert.equal(one.mime, "audio/mpeg");
+  say(store, "bot", "", [one, two]);
+  assert.equal(held.get(bot).body, BOT_AUDIO_ONLY_EXCERPT);
+  say(store, "bot", "", [one, store.putAttachment(bot, "screen.png", png)]);
   assert.equal(held.get(bot).body, BOT_FILE_ONLY_EXCERPT);
 });
 

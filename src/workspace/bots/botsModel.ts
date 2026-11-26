@@ -17,6 +17,7 @@ import type {
 import {
 	BOT_MESSAGE_UPLOAD_LIMITS,
 	botAttachmentType,
+	isBotAudioMime,
 	isBotImageMime,
 	isBotVideoMime,
 } from '@terminay/protocol';
@@ -475,11 +476,25 @@ export function formatFileSize(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** How a message attachment shows: raster images and playable video are
- * rendered; every other type, known or not, is a download-only chip. */
-export function attachmentView(mime: string): 'image' | 'video' | 'file' {
+/** How a message attachment shows: raster images, playable video and audio
+ * are rendered; every other type, known or not, is a download-only chip. */
+export function attachmentView(
+	mime: string,
+): 'image' | 'video' | 'audio' | 'file' {
 	if (isBotImageMime(mime)) return 'image';
-	return isBotVideoMime(mime) ? 'video' : 'file';
+	if (isBotVideoMime(mime)) return 'video';
+	return isBotAudioMime(mime) ? 'audio' : 'file';
+}
+
+/** "0:07", "3:04", "1:02:03": a player's time; "--:--" while unknown. */
+export function formatPlaybackTime(seconds: number | undefined): string {
+	if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0)
+		return '--:--';
+	const whole = Math.floor(seconds),
+		s = String(whole % 60).padStart(2, '0'),
+		m = Math.floor(whole / 60) % 60,
+		h = Math.floor(whole / 3600);
+	return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
 /** A send attempt's idempotency key. A retry of the same content reuses it, so

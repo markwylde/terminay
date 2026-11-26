@@ -375,4 +375,121 @@ test.describe('Home tabs', () => {
 		await expect(commandBar).toHaveCount(0);
 		expect(await frontHomeTabId(mainWindow)).toMatch(/^automation-new:/);
 	});
+
+	test("Home's tab strip has no terminal controls, and a project's has both", async ({
+		mainWindow,
+	}, testInfo) => {
+		// A project in front adds terminal-creation buttons to Dockview headers
+		// on a 500 ms reconciliation, and Home stays mounted behind it once
+		// shown. So an absence on Home is only meaningful after Home has been
+		// mounted, a project has been in front past a reconciliation, and Home
+		// is shown again.
+		const pastReconciliation = () => mainWindow.waitForTimeout(1_200);
+		const projectThenHome = async () => {
+			await mainWindow.locator('.project-tab').first().click();
+			await expect(activeHome(mainWindow)).toHaveCount(0);
+			await pastReconciliation();
+			await homeControl(mainWindow).click();
+			await expect(activeHome(mainWindow)).toBeVisible();
+		};
+		const projectTabs = mainWindow.locator('.project-workspace--active .dv-tab');
+		const homeStrips = mainWindow.locator(
+			'[data-terminay-home-tabs] .dv-tabs-and-actions-container',
+		);
+		const homeTerminalControls = mainWindow.locator(
+			'[data-terminay-home-tabs] .terminay-add-tab-button',
+		);
+		const profileChooser = mainWindow.getByRole('dialog', {
+			name: 'New Terminal with Profile',
+		});
+		const shot = (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath('screenshots', name) });
+
+		// Home is mounted first, then the project comes to the front.
+		await homeControl(mainWindow).click();
+		await expect(activeHome(mainWindow)).toBeVisible();
+		await mainWindow.locator('.project-tab').first().click();
+		await expect(activeHome(mainWindow)).toHaveCount(0);
+
+		// A project's panel tab strip offers both, and + creates a terminal.
+		await expect(mainWindow.locator('.project-workspace--active .terminal-panel')).not.toHaveCount(0);
+		const projectStrip = mainWindow.locator(
+			'.project-workspace--active .dv-tabs-and-actions-container',
+		);
+		await expect(projectStrip.getByLabel('New terminal tab')).toBeVisible();
+		await expect(projectStrip.getByLabel('New terminal with profile')).toBeVisible();
+		await shot('project-tab-strip.png');
+		const before = await projectTabs.count();
+		await projectStrip.getByLabel('New terminal tab').click();
+		await expect(projectTabs).toHaveCount(before + 1);
+		const afterAdd = before + 1;
+		await pastReconciliation();
+
+		// Home's tab strip offers neither.
+		await homeControl(mainWindow).click();
+		await expect(activeHome(mainWindow)).toBeVisible();
+		await expect(homeStrips.first()).toBeVisible();
+		await expect(homeTerminalControls).toHaveCount(0);
+		await shot('home-tab-strip.png');
+
+		// Its empty space creates no terminal, and opens no profile chooser.
+		const homeVoid = homeStrips.first().locator('.dv-void-container');
+		await homeVoid.dblclick();
+		await homeVoid.click({ button: 'right' });
+		await pastReconciliation();
+		await expect(profileChooser).toHaveCount(0);
+		await expect(activeHome(mainWindow)).toBeVisible();
+		await expect(homeTerminalControls).toHaveCount(0);
+
+		// Arranged side by side, neither Home strip has them either.
+		await mainWindow.evaluate(() => {
+			window.addEventListener('pagehide', () => {
+				window.localStorage.setItem(
+					'terminay.view.home-layout.v1',
+					JSON.stringify({
+						grid: {
+							root: {
+								type: 'branch',
+								data: [
+									{
+										type: 'leaf',
+										data: { views: ['section:home'], activeView: 'section:home', id: '1' },
+										size: 500,
+									},
+									{
+										type: 'leaf',
+										data: {
+											views: ['section:automations'],
+											activeView: 'section:automations',
+											id: '2',
+										},
+										size: 500,
+									},
+								],
+								size: 600,
+							},
+							width: 1000,
+							height: 600,
+							orientation: 'HORIZONTAL',
+						},
+						panels: {},
+						activeGroup: '2',
+					}),
+				);
+			});
+		});
+		await mainWindow.reload({ waitUntil: 'domcontentloaded' });
+		await expect(homeStrips).toHaveCount(2);
+		await projectThenHome();
+		await expect(homeStrips).toHaveCount(2);
+		await expect(homeTerminalControls).toHaveCount(0);
+		await shot('home-tab-strip-side-by-side.png');
+
+		// Back on the project: Home made no terminal, and the controls remain.
+		await mainWindow.locator('.project-tab').first().click();
+		await expect(activeHome(mainWindow)).toHaveCount(0);
+		await expect(projectTabs).toHaveCount(afterAdd);
+		await expect(projectStrip.getByLabel('New terminal tab')).toBeVisible();
+		await expect(projectStrip.getByLabel('New terminal with profile')).toBeVisible();
+	});
 });

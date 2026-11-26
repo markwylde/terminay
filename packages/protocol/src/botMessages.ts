@@ -29,6 +29,14 @@ export const BOT_VIDEO_MIMES = Object.freeze([
 	'video/mp4',
 	'video/webm',
 ] as const);
+/** Audio types Chat can play inline. They are limited and stored as files. */
+export const BOT_AUDIO_MIMES = Object.freeze([
+	'audio/mpeg',
+	'audio/wav',
+	'audio/ogg',
+	'audio/flac',
+	'audio/mp4',
+] as const);
 /** Only this many leading bytes decide a type, so a refused file and an
  * accepted one with the same start always get the same type. */
 export const BOT_ATTACHMENT_TYPE_BYTES = 64;
@@ -95,26 +103,113 @@ function isWebm(bytes: Uint8Array): boolean {
 	}
 	return webm;
 }
-function videoType(bytes: Uint8Array): string | undefined {
-	if (bytes.length >= 16) {
-		const box =
-			(bytes[0]! * 0x1000000 +
-				(bytes[1]! << 16) +
-				(bytes[2]! << 8) +
-				bytes[3]!) >>>
-			0;
-		if (
-			box >= 16 &&
-			Math.min(box, BOT_ATTACHMENT_TYPE_BYTES) <= bytes.length &&
-			box % 4 === 0 &&
-			String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp' &&
-			MP4_BRANDS.has(String.fromCharCode(...bytes.subarray(8, 12)))
-		)
-			return 'video/mp4';
+/** True for an `ftyp` box whose header fits the window and whose major brand
+ * passes `brand`. */
+function ftypBrand(bytes: Uint8Array, brand: (b: string) => boolean): boolean {
+	if (bytes.length < 16) return false;
+	const box =
+		(bytes[0]! * 0x1000000 +
+			(bytes[1]! << 16) +
+			(bytes[2]! << 8) +
+			bytes[3]!) >>>
+		0;
+	return (
+		box >= 16 &&
+		Math.min(box, BOT_ATTACHMENT_TYPE_BYTES) <= bytes.length &&
+		box % 4 === 0 &&
+		String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp' &&
+		brand(String.fromCharCode(...bytes.subarray(8, 12)))
+	);
+}
+/** A complete MPEG-1/2/2.5 Layer III frame header at the start. */
+function isMp3Frame(bytes: Uint8Array): boolean {
+	if (bytes.length < 4) return false;
+	const [b0, b1, b2] = [bytes[0]!, bytes[1]!, bytes[2]!];
+	if (b0 !== 0xff || (b1 & 0xe0) !== 0xe0) return false;
+	const version = (b1 >> 3) & 0b11,
+		layer = (b1 >> 1) & 0b11,
+		bitrate = b2 >> 4,
+		rate = (b2 >> 2) & 0b11;
+	return (
+		version !== 0b01 &&
+		layer === 0b01 &&
+		bitrate !== 0 &&
+		bitrate !== 0xf &&
+		rate !== 0b11
+	);
+}
+/** A complete ID3v2 tag header of a known major version. */
+/** Flag bits an ID3v2 header of each major version leaves reserved. */
+const ID3_RESERVED_FLAGS: Readonly<Record<number, number>> = {
+	2: 0x3f,
+	3: 0x1f,
+	4: 0x0f,
+};
+/** A complete ID3v2 tag header of a known major version with no reserved
+ * flag set. */
+function isId3(bytes: Uint8Array): boolean {
+	const reserved = ID3_RESERVED_FLAGS[bytes[3] ?? -1];
+	return (
+		bytes.length >= 10 &&
+		bytes[0] === 0x49 &&
+		bytes[1] === 0x44 &&
+		bytes[2] === 0x33 &&
+		reserved !== undefined &&
+		bytes[4] !== 0xff &&
+		(bytes[5]! & reserved) === 0 &&
+		[6, 7, 8, 9].every((i) => bytes[i]! < 0x80)
+	);
+}
+/** Each codec's identification header: its signature and shortest length. */
+const OGG_AUDIO_HEADERS: readonly {
+	signature: readonly number[];
+	minLength: number;
+}[] = [
+	{
+		signature: [0x01, ...[...'vorbis'].map((c) => c.charCodeAt(0))],
+		minLength: 30,
+	},
+	{ signature: [...'OpusHead'].map((c) => c.charCodeAt(0)), minLength: 19 },
+];
+/** The first page of an Ogg stream whose first packet, of the length its
+ * lacing values declare, is a Vorbis or Opus identification header. */
+function isOggAudio(bytes: Uint8Array): boolean {
+	if (bytes.length < 27) return false;
+	if (String.fromCharCode(...bytes.subarray(0, 4)) !== 'OggS') return false;
+	if (bytes[4] !== 0 || (bytes[5]! & 0x02) === 0) return false;
+	const segments = bytes[26]!;
+	const packet = 27 + segments;
+	if (segments === 0 || packet > bytes.length) return false;
+	// Lacing values of 255 continue the first packet; a smaller one ends it.
+	let length = 0;
+	for (let i = 27; i < packet; i++) {
+		length += bytes[i]!;
+		if (bytes[i]! < 255) break;
 	}
+	return OGG_AUDIO_HEADERS.some(
+		({ signature, minLength }) =>
+			length >= minLength &&
+			packet + signature.length <= bytes.length &&
+			signature.every((b, i) => bytes[packet + i] === b),
+	);
+}
+function audioType(bytes: Uint8Array): string | undefined {
+	const ascii = (from: number, to: number) =>
+		String.fromCharCode(...bytes.subarray(from, to));
+	if (isId3(bytes) || isMp3Frame(bytes)) return 'audio/mpeg';
+	if (bytes.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WAVE')
+		return 'audio/wav';
+	if (isOggAudio(bytes)) return 'audio/ogg';
+	if (bytes.length >= 4 && ascii(0, 4) === 'fLaC') return 'audio/flac';
+	if (ftypBrand(bytes, (b) => b === 'M4A ')) return 'audio/mp4';
+	return undefined;
+}
+function videoType(bytes: Uint8Array): string | undefined {
+	if (ftypBrand(bytes, (b) => MP4_BRANDS.has(b))) return 'video/mp4';
 	return isWebm(bytes) ? 'video/webm' : undefined;
 }
-/** Image or video type from magic bytes, or the opaque type. Never trusts names. */
+/** Image, audio or video type from magic bytes, or the opaque type. Never
+ * trusts names. */
 export function botAttachmentType(content: Uint8Array): string {
 	const head = content.subarray(0, BOT_ATTACHMENT_TYPE_BYTES);
 	const at = (i: number) => head[i] ?? -1;
@@ -129,7 +224,7 @@ export function botAttachmentType(content: Uint8Array): string {
 	if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return 'image/jpeg';
 	if (/^GIF8[79]a$/.test(ascii(0, 6))) return 'image/gif';
 	if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
-	return videoType(head) ?? BOT_OPAQUE_ATTACHMENT_MIME;
+	return audioType(head) ?? videoType(head) ?? BOT_OPAQUE_ATTACHMENT_MIME;
 }
 export function isBotImageMime(mime: string): boolean {
 	return (BOT_MESSAGE_UPLOAD_LIMITS.imageMimes as readonly string[]).includes(
@@ -138,6 +233,9 @@ export function isBotImageMime(mime: string): boolean {
 }
 export function isBotVideoMime(mime: string): boolean {
 	return (BOT_VIDEO_MIMES as readonly string[]).includes(mime);
+}
+export function isBotAudioMime(mime: string): boolean {
+	return (BOT_AUDIO_MIMES as readonly string[]).includes(mime);
 }
 /** The size limit for content of this type. */
 export function botAttachmentLimit(mime: string): number {

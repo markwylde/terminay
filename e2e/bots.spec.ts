@@ -3415,6 +3415,177 @@ test.describe('Home: Bots', () => {
 		});
 	});
 
+	test('audio plays in a mini player in bot and user messages, with its download', async ({
+		electronApp,
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(180_000);
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Nightingale'));
+		const transcript = tab.locator('[data-terminay-bot-transcript]').first();
+		const input = tab.locator('[data-terminay-bot-attach-input]').first();
+		const composer = tab.locator('[data-terminay-bot-composer]').first();
+		const card = (name: string) =>
+			transcript.locator(`[data-terminay-bot-audio="${name}"]`).first();
+		const element = (name: string) => card(name).locator('audio');
+		const time = (name: string) => card(name).locator('.bots-audio__time');
+
+		// Three seconds of 8 kHz mono 16-bit PCM, which every build decodes.
+		const rate = 8000;
+		const samples = rate * 3;
+		const wav = Buffer.alloc(44 + samples * 2);
+		wav.write('RIFF', 0, 'latin1');
+		wav.writeUInt32LE(36 + samples * 2, 4);
+		wav.write('WAVEfmt ', 8, 'latin1');
+		wav.writeUInt32LE(16, 16);
+		wav.writeUInt16LE(1, 20);
+		wav.writeUInt16LE(1, 22);
+		wav.writeUInt32LE(rate, 24);
+		wav.writeUInt32LE(rate * 2, 28);
+		wav.writeUInt16LE(2, 32);
+		wav.writeUInt16LE(16, 34);
+		wav.write('data', 36, 'latin1');
+		wav.writeUInt32LE(samples * 2, 40);
+		for (let i = 0; i < samples; i++)
+			wav.writeInt16LE(
+				Math.round(Math.sin((2 * Math.PI * 440 * i) / rate) * 6000),
+				44 + i * 2,
+			);
+		const files = path.join(fakeRoot(tempDir), 'attachments');
+		await mkdir(files, { recursive: true });
+		await writeFile(path.join(files, 'take.wav'), wav);
+
+		// A bot posts a WAV: a compact player that waits to be started.
+		await send(tab, 'post-file:take.wav');
+		await expect(card('take.wav')).toBeVisible({ timeout: 30_000 });
+		await expect(time('take.wav')).toHaveText('0:00 / 0:03', {
+			timeout: 30_000,
+		});
+		expect(
+			await element('take.wav').evaluate((el: HTMLAudioElement) => ({
+				autoplay: el.autoplay,
+				loop: el.loop,
+				muted: el.muted,
+				paused: el.paused,
+				blob: el.currentSrc.startsWith('blob:'),
+			})),
+		).toEqual({
+			autoplay: false,
+			loop: false,
+			muted: false,
+			paused: true,
+			blob: true,
+		});
+		await card('take.wav').scrollIntoViewIfNeeded();
+		await card('take.wav').screenshot({
+			path: testInfo.outputPath('bot-audio-idle.png'),
+		});
+
+		// Play, then seek to the middle with the seek bar.
+		await card('take.wav')
+			.getByRole('button', { name: 'Play take.wav' })
+			.click();
+		await expect(
+			card('take.wav').getByRole('button', { name: 'Pause take.wav' }),
+		).toBeVisible();
+		await expect
+			.poll(() =>
+				element('take.wav').evaluate((el: HTMLAudioElement) => el.currentTime),
+			)
+			.toBeGreaterThan(0.3);
+		await card('take.wav')
+			.getByRole('slider', { name: 'Seek take.wav' })
+			.fill('1.5');
+		await expect
+			.poll(() =>
+				element('take.wav').evaluate((el: HTMLAudioElement) => el.currentTime),
+			)
+			.toBeGreaterThanOrEqual(1.5);
+		await expect(time('take.wav')).toContainText('/ 0:03');
+		await card('take.wav').screenshot({
+			path: testInfo.outputPath('bot-audio-playing.png'),
+		});
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-audio-chat.png'),
+		});
+
+		// Leaving Chat stops the sound.
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await chat(tab);
+		await expect(card('take.wav')).toBeVisible({ timeout: 30_000 });
+		await expect(
+			card('take.wav').getByRole('button', { name: 'Play take.wav' }),
+		).toBeVisible({ timeout: 30_000 });
+
+		// Its download saves the exact bytes.
+		const target = path.join(tempDir, 'saved-take.wav');
+		await electronApp.evaluate(({ dialog }, filePath) => {
+			dialog.showSaveDialog = (async () => ({
+				canceled: false,
+				filePath,
+			})) as typeof dialog.showSaveDialog;
+		}, target);
+		await card('take.wav')
+			.getByRole('button', { name: 'Download take.wav' })
+			.click();
+		await expect
+			.poll(async () =>
+				existsSync(target) ? (await readFile(target)).length : 0,
+			)
+			.toBe(wav.length);
+		expect((await readFile(target)).equals(wav)).toBe(true);
+
+		// A user's audio plays too; its type comes from content, not its name.
+		await input.setInputFiles({
+			name: 'voice.bin',
+			mimeType: 'application/zip',
+			buffer: wav,
+		});
+		await composer.fill('My voice note');
+		await composer.press('Enter');
+		await expect(card('voice.bin')).toBeVisible({ timeout: 30_000 });
+		await expect(time('voice.bin')).toHaveText('0:00 / 0:03', {
+			timeout: 30_000,
+		});
+
+		// Starting it pauses any other clip.
+		await card('take.wav')
+			.getByRole('button', { name: 'Play take.wav' })
+			.click();
+		await expect(
+			card('take.wav').getByRole('button', { name: 'Pause take.wav' }),
+		).toBeVisible();
+		await card('voice.bin')
+			.getByRole('button', { name: 'Play voice.bin' })
+			.click();
+		await expect(
+			card('take.wav').getByRole('button', { name: 'Play take.wav' }),
+		).toBeVisible();
+		expect(
+			await element('take.wav').evaluate((el: HTMLAudioElement) => el.paused),
+		).toBe(true);
+		await card('voice.bin')
+			.getByRole('button', { name: 'Pause voice.bin' })
+			.click();
+
+		// A text file named like a song is only a download.
+		await input.setInputFiles({
+			name: 'song.mp3',
+			mimeType: 'audio/mpeg',
+			buffer: Buffer.from('just some text'),
+		});
+		await composer.fill('Not a song');
+		await composer.press('Enter');
+		await expect(
+			transcript.locator('[data-terminay-bot-file-chip="song.mp3"]'),
+		).toBeVisible({ timeout: 30_000 });
+		await expect(
+			transcript.locator('[data-terminay-bot-audio="song.mp3"]'),
+		).toHaveCount(0);
+	});
+
 	test('a turn running when Terminay is killed comes back interrupted', async ({
 		electronApp,
 		mainWindow,
