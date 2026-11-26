@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
 	BotFailureFollowUps,
+	BotSessionStore,
 	FAILURE_HOURLY_LIMIT,
 	failurePrompt,
 } from '../dist/botService/index.js';
@@ -331,6 +332,33 @@ test('a failed execution wakes its bot once with a failure execution that names 
 	assert.equal(r.sessions.list(r.bot.id).length, 2);
 });
 
+test('a clean Claude exit after approval stream closure persists failure and wakes its bot', async (t) => {
+	const r = await service(t);
+	const { sessionId } = await r.service.send(
+		r.bot.id,
+		'closed-approval-stream',
+	);
+	await ended(r, sessionId);
+	await quiet(r);
+
+	const reloaded = new BotSessionStore(r.sessions.root);
+	const record = reloaded.get(sessionId);
+	assert.equal(record.state, 'failed');
+	assert.ok(record.dispatchedAt);
+	assert.equal(record.startupFailure, null);
+	assert.match(record.reason, /lost its approval channel/);
+	const transcript = JSON.stringify(record.updates);
+	assert.match(
+		transcript,
+		/Tool permission request failed: AbortError: Stream closed/,
+	);
+	assert.match(transcript, /fixture \[redacted\]/);
+	assert.doesNotMatch(transcript, /fixture secret/);
+	const [followUp] = failureRuns(r);
+	assert.equal(failureRuns(r).length, 1);
+	assert.equal(followUp.origin.failures[0].sessionId, sessionId);
+	assert.equal(followUp.origin.failures[0].reason, record.reason);
+});
 test('Investigate failures off records the failure and starts nothing', async (t) => {
 	const r = await service(t);
 	await r.service.save({ ...r.bots.get(r.bot.id), investigateFailures: false });
