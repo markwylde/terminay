@@ -237,6 +237,40 @@ lines.on('line', async (line) => {
 		const context = briefing ? JSON.parse(briefing) : undefined;
 		if (context) prompt = context.triggerMessage?.text ?? prompt;
 		ignoreCancel = prompt.includes('ignore-cancel');
+		if (prompt === 'closed-approval-stream') {
+			send({
+				type: 'assistant',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 'report',
+							name: 'mcp__terminay_bot__outcome_report',
+							input: { reason: 'fixture secret' },
+						},
+					],
+				},
+			});
+			send({
+				type: 'user',
+				tool_result_meta: [
+					{ id: 'report', non_execution_kind: 'permission-rule' },
+				],
+				message: {
+					content: [
+						{
+							type: 'tool_result',
+							tool_use_id: 'report',
+							content:
+								'Tool permission request failed: AbortError: Stream closed',
+							is_error: true,
+						},
+					],
+				},
+			});
+			result();
+			return;
+		}
 		if (prompt.includes('eagain')) {
 			// What Node prints when the container has no processes left.
 			process.stderr.write(
