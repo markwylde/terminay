@@ -14,6 +14,7 @@ import {
 	chatSendAttempt,
 	filterCounts,
 	formatFileSize,
+	formatPlaybackTime,
 	hasTerminayMcpAccess,
 	initials,
 	investigatesFailures,
@@ -286,12 +287,22 @@ test('file kind comes from content, never the claimed type or name', () => {
 	assert.equal(chatFileKind(new Uint8Array()), 'file');
 });
 
-test('only raster images and known video render; the rest are chips', () => {
+test('only raster images and known video and audio render; the rest are chips', () => {
 	for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 		assert.equal(attachmentView(mime), 'image');
 	for (const mime of ['video/mp4', 'video/webm'])
 		assert.equal(attachmentView(mime), 'video');
 	for (const mime of [
+		'audio/mpeg',
+		'audio/wav',
+		'audio/ogg',
+		'audio/flac',
+		'audio/mp4',
+	])
+		assert.equal(attachmentView(mime), 'audio');
+	for (const mime of [
+		'audio/aac',
+		'audio/x-wav',
 		'application/octet-stream',
 		'text/html',
 		'image/svg+xml',
@@ -568,4 +579,13 @@ test('an older server full response replaces previous measurements even on a sta
 		usageRead: undefined,
 	};
 	assert.equal(withPreviousUsage(previous, next), next);
+});
+
+test('playback time is m:ss, h:mm:ss past an hour, and --:-- while unknown', () => {
+	assert.equal(formatPlaybackTime(0), '0:00');
+	assert.equal(formatPlaybackTime(7.9), '0:07');
+	assert.equal(formatPlaybackTime(184), '3:04');
+	assert.equal(formatPlaybackTime(3723), '1:02:03');
+	for (const unknown of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -1])
+		assert.equal(formatPlaybackTime(unknown), '--:--');
 });

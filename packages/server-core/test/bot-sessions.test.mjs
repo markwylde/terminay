@@ -479,6 +479,37 @@ test('a video reaches the execution as a file and never as model image input', a
 		[['clip.mp4', 'video/mp4', `/tmp/terminay-attachments/${sent.sessionId}/1.mp4`]],
 	);
 });
+test('audio reaches the execution as a file by its offered extension and never as model input', async (t) => {
+	const execs = [];
+	let nativeImages;
+	const recordInput = join(mkdtempSync(join(tmpdir(), 'bot-input-')), 'in.jsonl');
+	const r = await setup(t, { execs, env: { FAKE_RECORD_INPUT: recordInput }, onProcess: (options) => { nativeImages = options.images; } });
+	const bytes = Buffer.alloc(2048, 7);
+	Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0]).copy(bytes);
+	const song = await r.service.uploadUserFile(r.bot.id, 'song.mp3', bytes);
+	const misnamed = await r.service.uploadUserFile(r.bot.id, 'song.dat', bytes);
+	assert.equal(song.attachment.mime, 'audio/mpeg');
+	assert.equal(misnamed.attachment.mime, 'audio/mpeg');
+	const sent = await r.service.postUserMessage(r.bot.id, 'listen', 'audio-post', [song.token, misnamed.token]);
+	await settled(r, sent.sessionId);
+	assert.equal(r.sessions.get(sent.sessionId).state, 'completed');
+	const writes = execs.filter((e) => e.args[2]?.includes('os.replace'));
+	assert.deepEqual(writes.map((e) => e.args[4]), ['1.mp3', '2.dat']);
+	assert.deepEqual(Buffer.from(writes[0].options.input), bytes);
+	assert.deepEqual(nativeImages ?? [], []);
+	const { readFileSync } = await import('node:fs');
+	const first = JSON.parse(readFileSync(recordInput, 'utf8').trim().split('\n')[0]).message.content;
+	const blocks = Array.isArray(first) ? first : [{ type: 'text', text: first }];
+	assert.equal(blocks.filter((x) => x.type !== 'text').length, 0);
+	const briefing = JSON.parse(blocks[0].text.split('\n').find((line) => line.startsWith('{"executionId":')));
+	assert.deepEqual(
+		briefing.triggerMessage.attachments.map((x) => [x.name, x.mime, x.path]),
+		[
+			['song.mp3', 'audio/mpeg', `/tmp/terminay-attachments/${sent.sessionId}/1.mp3`],
+			['song.dat', 'audio/mpeg', `/tmp/terminay-attachments/${sent.sessionId}/2.dat`],
+		],
+	);
+});
 test('a part-way copy failure fails the execution and removes the copies made', async (t) => {
 	const execs = [];
 	let writes = 0;
