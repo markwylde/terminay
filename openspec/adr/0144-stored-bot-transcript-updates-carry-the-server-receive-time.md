@@ -1,4 +1,4 @@
-# ADR-0143: Stored bot transcript updates carry the server receive time
+# ADR-0144: Stored bot transcript updates carry the server receive time
 
 Status: accepted
 Date: 2026-11-26

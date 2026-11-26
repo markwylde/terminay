@@ -13,8 +13,8 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0143-stored-bot-transcript-updates-carry-the-server-receive-time.md - the server stamps each stored transcript update with its own receive time in `receivedAt`, overwriting any agent value.
+- openspec/adr/0144-stored-bot-transcript-updates-carry-the-server-receive-time.md - the server stamps each stored transcript update with its own receive time in `receivedAt`, overwriting any agent value.
 
 ## Notes
 
-ADR-0143 is new in this change and has not landed on main; it was revised before merge after proposal review.
+ADR-0144 is new in this change and has not landed on main; it was revised before merge after proposal review.

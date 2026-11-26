@@ -32,7 +32,7 @@ export const sessionId = (id: unknown): string => {
 		throw new BotError('validation', 'invalid session id');
 	return id;
 };
-/** Sets the server's admission time on an object update (ADR-0143),
+/** Sets the server's admission time on an object update (ADR-0144),
  * replacing any value the update carried. Other values are stored as given. */
 function stamp(update: JsonValue, receivedAt: number): JsonValue {
 	if (typeof update !== 'object' || update === null || Array.isArray(update))
