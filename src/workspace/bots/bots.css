@@ -736,7 +736,9 @@ button.bots-chip.bots-chip--on {
 .bots-inline-image {
 	display: block;
 	max-width: 100%;
-	max-height: 70vh;
+	/* 40% of the transcript's visible content height (its size container);
+	   falls back to the small viewport height outside one. */
+	max-height: 40cqh;
 	width: auto;
 	height: auto;
 	border-radius: 6px;

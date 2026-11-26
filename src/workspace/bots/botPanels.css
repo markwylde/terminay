@@ -563,6 +563,8 @@
 	font-size: 12.5px;
 }
 .bots-msgs {
+	/* Inline images size against this box; see .bots-inline-image. */
+	container: bots-transcript / size;
 	scroll-behavior: auto;
 	flex: 1;
 	padding: 20px 28px;
@@ -3737,6 +3739,8 @@
 	white-space: nowrap;
 }
 .bots-thread__body {
+	/* Inline images size against this box; see .bots-inline-image. */
+	container: bots-transcript / size;
 	flex: 1;
 	min-height: 0;
 	display: flex;

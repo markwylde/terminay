@@ -2963,6 +2963,207 @@ test.describe('Home: Bots', () => {
 		await shot('chat-image-sent');
 	});
 
+	test('inline images are bounded by 40% of their transcript and keep their aspect ratio', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		test.setTimeout(180_000);
+		await mainWindow.setViewportSize({ width: 1280, height: 850 });
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Heron'));
+		const composer = tab.locator('[data-terminay-bot-composer]');
+		const input = tab.locator('[data-terminay-bot-attach-input]');
+		const transcript = tab.locator('[data-terminay-bot-transcript]').first();
+		const msgs = tab.locator('.bots-msgs');
+		const shot = (name: string) =>
+			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+		// Real PNGs drawn in the renderer, with an outline so cropping shows.
+		const png = async (width: number, height: number, fill: string) =>
+			Buffer.from(
+				await mainWindow.evaluate(
+					({ width, height, fill }) => {
+						const canvas = document.createElement('canvas');
+						canvas.width = width;
+						canvas.height = height;
+						const g = canvas.getContext('2d')!;
+						g.fillStyle = fill;
+						g.fillRect(0, 0, width, height);
+						g.strokeStyle = '#fff';
+						g.lineWidth = 8;
+						g.strokeRect(4, 4, width - 8, height - 8);
+						g.fillStyle = '#fff';
+						g.font = 'bold 28px sans-serif';
+						g.fillText(`${width}x${height}`, 16, 44);
+						return canvas.toDataURL('image/png').split(',')[1]!;
+					},
+					{ width, height, fill },
+				),
+				'base64',
+			);
+		/** The image's shown box against its transcript's content box. */
+		const measure = (image: Locator, area: string) =>
+			image.evaluate((el, selector) => {
+				const img = el as HTMLImageElement;
+				const box = img.closest(selector) as HTMLElement;
+				const style = getComputedStyle(box);
+				const content =
+					box.clientHeight -
+					Number.parseFloat(style.paddingTop) -
+					Number.parseFloat(style.paddingBottom);
+				const parent = img.parentElement as HTMLElement;
+				const parentStyle = getComputedStyle(parent);
+				const width =
+					parent.clientWidth -
+					Number.parseFloat(parentStyle.paddingLeft) -
+					Number.parseFloat(parentStyle.paddingRight);
+				const shown = img.getBoundingClientRect();
+				return {
+					loaded: img.complete && img.naturalWidth > 0,
+					height: shown.height,
+					width: shown.width,
+					limit: content * 0.4,
+					maxWidth: width,
+					content,
+					ratio:
+						shown.width / shown.height / (img.naturalWidth / img.naturalHeight),
+					natural: [img.naturalWidth, img.naturalHeight],
+				};
+			}, area);
+		const expectBounded = async (image: Locator, area: string) => {
+			await expect(image).toBeVisible({ timeout: 30_000 });
+			await expect
+				.poll(async () => (await measure(image, area)).loaded)
+				.toBe(true);
+			const m = await measure(image, area);
+			expect(m.content, 'transcript keeps a usable height').toBeGreaterThan(
+				100,
+			);
+			expect(m.height).toBeLessThanOrEqual(m.limit + 1);
+			expect(m.width).toBeLessThanOrEqual(m.maxWidth + 1);
+			expect(Math.abs(m.ratio - 1)).toBeLessThan(0.02);
+			return m;
+		};
+
+		// A user sends a tall, a wide and a small image in one message.
+		await input.setInputFiles({
+			name: 'tall.png',
+			mimeType: 'image/png',
+			buffer: await png(300, 1800, '#3b82f6'),
+		});
+		await input.setInputFiles({
+			name: 'wide.png',
+			mimeType: 'image/png',
+			buffer: await png(2400, 300, '#45c874'),
+		});
+		await input.setInputFiles({
+			name: 'small.png',
+			mimeType: 'image/png',
+			buffer: await png(120, 80, '#e8b931'),
+		});
+		await composer.fill('Three sizes');
+		await composer.press('Enter');
+		await expect(transcript).toContainText('secret', { timeout: 30_000 });
+		const tall = transcript.locator('img[alt="tall.png"]');
+		const wide = transcript.locator('img[alt="wide.png"]');
+		const small = transcript.locator('img[alt="small.png"]');
+		const tallShown = await expectBounded(tall, '.bots-msgs');
+		// The tall image is the one the height cap actually binds.
+		expect(tallShown.height).toBeGreaterThan(tallShown.limit - 2);
+		const wideShown = await expectBounded(wide, '.bots-msgs');
+		expect(wideShown.width).toBeGreaterThan(wideShown.maxWidth - 2);
+		const smallShown = await expectBounded(small, '.bots-msgs');
+		expect(smallShown.width).toBeCloseTo(120, 0);
+		expect(smallShown.height).toBeCloseTo(80, 0);
+
+		// A bot posts a tall image of its own.
+		const files = path.join(fakeRoot(tempDir), 'attachments');
+		await mkdir(files, { recursive: true });
+		await writeFile(
+			path.join(files, 'bot-tall.png'),
+			await png(400, 2000, '#a855f7'),
+		);
+		await send(tab, 'post-file:bot-tall.png');
+		const botTall = transcript.locator('img[alt="bot-tall.png"]');
+		await expectBounded(botTall, '.bots-msgs');
+
+		// The transcript still scrolls under size containment.
+		expect(
+			await msgs.evaluate((el) => {
+				el.scrollTop = 0;
+				const top = el.scrollTop;
+				el.scrollTop = el.scrollHeight;
+				return el.scrollHeight > el.clientHeight && el.scrollTop > top;
+			}),
+		).toBe(true);
+		await tall.scrollIntoViewIfNeeded();
+		await shot('image-bounds-default');
+
+		// A shorter window shrinks the cap with the transcript, and back again.
+		await mainWindow.setViewportSize({ width: 1280, height: 560 });
+		await expect
+			.poll(async () => (await measure(tall, '.bots-msgs')).content)
+			.toBeLessThan(tallShown.content - 100);
+		const shortShown = await expectBounded(tall, '.bots-msgs');
+		expect(shortShown.height).toBeLessThan(tallShown.height);
+		await tall.scrollIntoViewIfNeeded();
+		await shot('image-bounds-short-window');
+		await mainWindow.setViewportSize({ width: 1280, height: 850 });
+		await expect
+			.poll(async () => (await measure(tall, '.bots-msgs')).content)
+			.toBeCloseTo(tallShown.content, 0);
+		await expectBounded(tall, '.bots-msgs');
+
+		// With the window fixed, a long draft grows the composer and shortens
+		// the transcript; the cap follows.
+		await composer.fill(
+			Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join('\n'),
+		);
+		await expect
+			.poll(async () => (await measure(tall, '.bots-msgs')).content)
+			.toBeLessThan(tallShown.content - 60);
+		const grownShown = await expectBounded(tall, '.bots-msgs');
+		expect(grownShown.height).toBeLessThan(tallShown.height);
+		await tall.scrollIntoViewIfNeeded();
+		await shot('image-bounds-grown-composer');
+		await composer.fill('');
+
+		// The thread panel bounds its images by its own body.
+		const root = transcript.locator(':scope > .bots-msg').first();
+		await root.hover();
+		await root.locator('[data-terminay-bot-reply-in-thread]').click();
+		const panel = tab.locator('[data-terminay-bot-thread]');
+		await expect(panel).toBeVisible();
+		await expectBounded(
+			panel.locator('img[alt="tall.png"]'),
+			'.bots-thread__body',
+		);
+		await expectBounded(
+			panel.locator('img[alt="wide.png"]'),
+			'.bots-thread__body',
+		);
+		// A bot's image reply in the thread is bounded too, and the thread
+		// body still scrolls under size containment.
+		const panelComposer = panel.locator('[data-terminay-bot-composer]');
+		await panelComposer.fill('post-file:bot-tall.png');
+		await panelComposer.press('Enter');
+		const threadReply = panel.locator('img[alt="bot-tall.png"]').last();
+		await expectBounded(threadReply, '.bots-thread__body');
+		const body = panel.locator('.bots-thread__body');
+		await expect
+			.poll(() =>
+				body.evaluate((el) => {
+					el.scrollTop = 0;
+					const top = el.scrollTop;
+					el.scrollTop = el.scrollHeight;
+					return el.scrollHeight > el.clientHeight && el.scrollTop > top;
+				}),
+			)
+			.toBe(true);
+		await threadReply.scrollIntoViewIfNeeded();
+		await shot('image-bounds-thread');
+	});
+
 	test('any file is attached as a chip, sent beside an image and downloaded intact', async ({
 		electronApp,
 		mainWindow,
