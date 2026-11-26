@@ -7,7 +7,7 @@
 
 import MarkdownIt from 'markdown-it';
 import type { MouseEvent } from 'react';
-import { openExternalUrl } from '../../host/nativeActions';
+import { openExternalUrl } from '../../host/nativeActions.ts';
 
 const markdown = new MarkdownIt({
 	html: false,
