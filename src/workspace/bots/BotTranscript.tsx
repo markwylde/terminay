@@ -21,6 +21,9 @@ import {
 	FileText,
 	LoaderCircle,
 	MessageSquareReply,
+	Music,
+	Pause,
+	Play,
 	User,
 	X,
 } from 'lucide-react';
@@ -30,6 +33,7 @@ import {
 	type MouseEvent,
 	memo,
 	type Ref,
+	type RefObject,
 	useEffect,
 	useMemo,
 	useRef,
@@ -37,7 +41,11 @@ import {
 } from 'react';
 import { saveDownload } from '../../host/nativeActions';
 import { BotAvatar } from './BotAvatar';
-import { attachmentView, formatFileSize } from './botsModel';
+import {
+	attachmentView,
+	formatFileSize,
+	formatPlaybackTime,
+} from './botsModel';
 import { replyCountLabel } from './threadModel';
 
 /** A root's thread, as the reply bar under it shows it. */
@@ -115,6 +123,32 @@ function ReplyBar({
 	);
 }
 
+/** Saves an attachment's bytes through the host save (ADR-0130), tracking the
+ * in-flight save and its error. */
+function useSaveAttachment(
+	name: string,
+	download: (() => Promise<{ bytes: Uint8Array }>) | undefined,
+) {
+	const [busy, setBusy] = useState(false),
+		[error, setError] = useState<string>();
+	const save = () => {
+		if (!download || busy) return;
+		setBusy(true);
+		setError(undefined);
+		void saveDownload({
+			filename: name,
+			chunks: async function* () {
+				yield (await download()).bytes;
+			},
+		})
+			.catch((cause: unknown) =>
+				setError(cause instanceof Error ? cause.message : 'Download failed'),
+			)
+			.finally(() => setBusy(false));
+	};
+	return { busy, error, save };
+}
+
 /** A sent non-image attachment. It is never rendered: activating it saves
  * its bytes through the host save (ADR-0130). */
 function FileChip({
@@ -124,8 +158,7 @@ function FileChip({
 	attachment: Pick<BotMessageAttachment, 'name' | 'size'>;
 	download: (() => Promise<{ bytes: Uint8Array }>) | undefined;
 }>) {
-	const [busy, setBusy] = useState(false),
-		[error, setError] = useState<string>();
+	const { busy, error, save } = useSaveAttachment(attachment.name, download);
 	return (
 		<>
 			<button
@@ -135,23 +168,7 @@ function FileChip({
 				title={`Download ${attachment.name}`}
 				aria-label={`Download ${attachment.name}`}
 				data-terminay-bot-file-chip={attachment.name}
-				onClick={() => {
-					if (!download) return;
-					setBusy(true);
-					setError(undefined);
-					void saveDownload({
-						filename: attachment.name,
-						chunks: async function* () {
-							yield (await download()).bytes;
-						},
-					})
-						.catch((cause: unknown) =>
-							setError(
-								cause instanceof Error ? cause.message : 'Download failed',
-							),
-						)
-						.finally(() => setBusy(false));
-				}}
+				onClick={save}
 			>
 				<FileText size={18} aria-hidden="true" />
 				<span className="bots-file-chip__text">
@@ -187,23 +204,25 @@ function scrollParent(element: HTMLElement): HTMLElement | null {
 	return null;
 }
 
-/** Plays a video attachment from a blob URL. Bytes load near the viewport, a
- * paused player far away releases them, and any failure removes the player so
- * only the message's download chip remains. */
-function VideoPlayer({
-	attachment,
-	load,
-}: Readonly<{
-	attachment: Pick<BotMessageAttachment, 'id' | 'name'>;
-	load: AttachmentLoader;
-}>) {
+/**
+ * A playable attachment's `blob:` URL. Bytes load near the viewport, a paused
+ * player far away releases them, unmounting aborts the load and revokes the
+ * URL, and a late result is discarded. The server's content type must match
+ * `kind`, never the name or the recorded type (ADR-0143). With `pauseHidden`,
+ * a player that stops being displayed is paused.
+ */
+function useAttachmentMedia(
+	attachmentId: string,
+	load: AttachmentLoader,
+	kind: 'video' | 'audio',
+	media: RefObject<HTMLMediaElement | null>,
+	pauseHidden = false,
+) {
 	const frame = useRef<HTMLDivElement>(null),
-		video = useRef<HTMLVideoElement>(null),
 		near = useRef(false);
 	const [wanted, setWanted] = useState(false),
 		[url, setUrl] = useState<string>(),
-		[failed, setFailed] = useState(false),
-		[ratio, setRatio] = useState<number>();
+		[failed, setFailed] = useState(false);
 	useEffect(() => {
 		const element = frame.current;
 		if (!element || typeof IntersectionObserver === 'undefined') {
@@ -216,23 +235,37 @@ function VideoPlayer({
 				if (!entry) return;
 				near.current = entry.isIntersecting;
 				if (entry.isIntersecting) setWanted(true);
-				else if (video.current?.paused ?? true) setWanted(false);
+				else if (media.current?.paused ?? true) setWanted(false);
 			},
 			{ root: scrollParent(element), rootMargin: '200% 0px' },
 		);
 		observer.observe(element);
 		return () => observer.disconnect();
-	}, []);
+	}, [media]);
+	// A player that stops being displayed (Chat left, tab or panel hidden)
+	// collapses to no box wherever it is scrolled; intersection alone misses
+	// that once the player is already outside the observer's root.
+	useEffect(() => {
+		const element = frame.current;
+		if (!pauseHidden || !element || typeof ResizeObserver === 'undefined')
+			return;
+		const observer = new ResizeObserver((entries) => {
+			const box = entries[entries.length - 1]?.contentRect;
+			if (box && box.width === 0 && box.height === 0) media.current?.pause();
+		});
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [media, pauseHidden]);
 	useEffect(() => {
 		if (!wanted || failed) return;
 		const controller = new AbortController();
 		let created: string | undefined;
-		load(attachment.id, controller.signal)
+		load(attachmentId, controller.signal)
 			.then(({ mime, bytes }) => {
 				if (controller.signal.aborted) return;
 				// The server's content type decides, never the name or record.
-				if (attachmentView(mime) !== 'video')
-					throw new Error('The attachment is not a video');
+				if (attachmentView(mime) !== kind)
+					throw new Error(`The attachment is not ${kind}`);
 				created = URL.createObjectURL(
 					new Blob([bytes as BlobPart], { type: mime }),
 				);
@@ -246,7 +279,36 @@ function VideoPlayer({
 			if (created) URL.revokeObjectURL(created);
 			setUrl(undefined);
 		};
-	}, [wanted, failed, load, attachment.id]);
+	}, [wanted, failed, load, attachmentId, kind]);
+	return {
+		frame,
+		url,
+		failed,
+		fail: () => setFailed(true),
+		/** A paused player far from the viewport releases its bytes. */
+		paused: () => {
+			if (!near.current) setWanted(false);
+		},
+	};
+}
+
+/** Plays a video attachment from a blob URL. Any failure removes the player
+ * so only the message's download chip remains. */
+function VideoPlayer({
+	attachment,
+	load,
+}: Readonly<{
+	attachment: Pick<BotMessageAttachment, 'id' | 'name'>;
+	load: AttachmentLoader;
+}>) {
+	const video = useRef<HTMLVideoElement>(null);
+	const { frame, url, failed, fail, paused } = useAttachmentMedia(
+		attachment.id,
+		load,
+		'video',
+		video,
+	);
+	const [ratio, setRatio] = useState<number>();
 	if (failed) return null;
 	return (
 		<div
@@ -267,16 +329,14 @@ function VideoPlayer({
 					playsInline
 					preload="metadata"
 					aria-label={attachment.name}
-					onError={() => setFailed(true)}
+					onError={fail}
 					onLoadedMetadata={({
 						currentTarget: { videoWidth, videoHeight },
 					}) => {
 						if (videoWidth > 0 && videoHeight > 0)
 							setRatio(videoWidth / videoHeight);
 					}}
-					onPause={() => {
-						if (!near.current) setWanted(false);
-					}}
+					onPause={paused}
 				/>
 			) : (
 				<LoaderCircle size={18} className="bots-spin" aria-hidden="true" />
@@ -285,8 +345,175 @@ function VideoPlayer({
 	);
 }
 
-/** A message's non-image attachments: videos play inline, and every one keeps
- * its download chip. */
+/** The one audio element playing in this window: starting another pauses it. */
+let playingAudio: HTMLMediaElement | null = null;
+function claimAudio(element: HTMLMediaElement) {
+	if (playingAudio && playingAudio !== element) playingAudio.pause();
+	playingAudio = element;
+}
+function releaseAudio(element: HTMLMediaElement | null) {
+	if (element && playingAudio === element) playingAudio = null;
+}
+
+/** A compact player for an audio attachment: name, size and download, then
+ * play/pause, a seek bar and the time. Any load, type or decode failure
+ * replaces it with the plain download chip. */
+function AudioPlayer({
+	attachment,
+	load,
+}: Readonly<{
+	attachment: Pick<BotMessageAttachment, 'id' | 'name' | 'size'>;
+	load: AttachmentLoader;
+}>) {
+	const audio = useRef<HTMLAudioElement>(null);
+	const { frame, url, failed, fail, paused } = useAttachmentMedia(
+		attachment.id,
+		load,
+		'audio',
+		audio,
+		true,
+	);
+	const download = () => load(attachment.id);
+	const { busy, error, save } = useSaveAttachment(attachment.name, download);
+	const [playing, setPlaying] = useState(false),
+		[time, setTime] = useState(0),
+		[duration, setDuration] = useState<number>();
+	useEffect(() => {
+		if (url) return;
+		setPlaying(false);
+		setTime(0);
+		setDuration(undefined);
+	}, [url]);
+	useEffect(() => {
+		const element = audio.current;
+		return () => releaseAudio(element);
+	}, [url]);
+	if (failed) return <FileChip attachment={attachment} download={download} />;
+	const { name } = attachment;
+	const readDuration = (element: HTMLMediaElement) =>
+		setDuration(
+			Number.isFinite(element.duration) && element.duration > 0
+				? element.duration
+				: undefined,
+		);
+	return (
+		<div ref={frame} className="bots-audio" data-terminay-bot-audio={name}>
+			<div className="bots-audio__head">
+				<Music size={16} aria-hidden="true" />
+				<span className="bots-audio__name" title={name}>
+					{name}
+				</span>
+				<span className="bots-audio__size">
+					{formatFileSize(attachment.size)}
+				</span>
+				<button
+					type="button"
+					className="bots-audio__download"
+					disabled={busy}
+					title={`Download ${name}`}
+					aria-label={`Download ${name}`}
+					onClick={save}
+				>
+					{busy ? (
+						<LoaderCircle size={14} className="bots-spin" aria-hidden="true" />
+					) : (
+						<Download size={14} aria-hidden="true" />
+					)}
+				</button>
+			</div>
+			<div className="bots-audio__controls">
+				<button
+					type="button"
+					className="bots-audio__play"
+					disabled={!url}
+					aria-label={`${playing ? 'Pause' : 'Play'} ${name}`}
+					onClick={() => {
+						const element = audio.current;
+						if (!element) return;
+						if (!element.paused) {
+							element.pause();
+							return;
+						}
+						claimAudio(element);
+						element.play().catch(() => {
+							releaseAudio(element);
+							setPlaying(false);
+						});
+					}}
+				>
+					{!url ? (
+						<LoaderCircle size={14} className="bots-spin" aria-hidden="true" />
+					) : playing ? (
+						<Pause size={14} aria-hidden="true" />
+					) : (
+						<Play size={14} aria-hidden="true" />
+					)}
+				</button>
+				<input
+					type="range"
+					className="bots-audio__seek"
+					min={0}
+					max={duration ?? 0}
+					step={duration !== undefined && duration < 10 ? 0.1 : 1}
+					value={Math.min(time, duration ?? 0)}
+					disabled={!url || duration === undefined}
+					aria-label={`Seek ${name}`}
+					aria-valuetext={`${formatPlaybackTime(time)} of ${formatPlaybackTime(duration)}`}
+					style={
+						{
+							'--bots-audio-progress': `${duration ? (Math.min(time, duration) / duration) * 100 : 0}%`,
+						} as CSSProperties
+					}
+					onChange={(event) => {
+						const at = Number(event.currentTarget.value);
+						if (audio.current) audio.current.currentTime = at;
+						setTime(at);
+					}}
+				/>
+				<span className="bots-audio__time">
+					{formatPlaybackTime(time)} / {formatPlaybackTime(duration)}
+				</span>
+			</div>
+			{url ? (
+				// biome-ignore lint/a11y/useMediaCaption: user audio has no captions; the custom controls above are its accessible surface.
+				<audio
+					ref={audio}
+					src={url}
+					preload="metadata"
+					onError={fail}
+					onLoadedMetadata={(event) => readDuration(event.currentTarget)}
+					onDurationChange={(event) => readDuration(event.currentTarget)}
+					onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
+					onPlay={(event) => {
+						claimAudio(event.currentTarget);
+						setPlaying(true);
+					}}
+					onPause={(event) => {
+						releaseAudio(event.currentTarget);
+						setPlaying(false);
+						paused();
+					}}
+					onEnded={(event) => {
+						const element = event.currentTarget;
+						releaseAudio(element);
+						element.currentTime = 0;
+						setTime(0);
+						setPlaying(false);
+					}}
+				/>
+			) : null}
+			{error ? (
+				<span className="bots-file-chip__error" role="status">
+					{error}
+				</span>
+			) : null}
+		</div>
+	);
+}
+
+/** A message's non-image attachments: videos play inline with their download
+ * chip kept, audio plays in a mini player that carries its own download, and
+ * every other file is a download chip. */
 function MessageFiles({
 	attachments,
 	load,
@@ -298,24 +525,35 @@ function MessageFiles({
 	if (!files?.length) return null;
 	return (
 		<ul className="bots-msg__files" aria-label="Attached files">
-			{files.map((a) => (
-				<li
-					key={a.id}
-					className={
-						attachmentView(a.mime) === 'video'
-							? 'bots-msg__file--video'
-							: undefined
-					}
-				>
-					{load && attachmentView(a.mime) === 'video' ? (
-						<VideoPlayer attachment={a} load={load} />
-					) : null}
-					<FileChip
-						attachment={a}
-						download={load ? () => load(a.id) : undefined}
-					/>
-				</li>
-			))}
+			{files.map((a) => {
+				const view = attachmentView(a.mime);
+				return (
+					<li
+						key={a.id}
+						className={
+							view === 'video'
+								? 'bots-msg__file--video'
+								: view === 'audio'
+									? 'bots-msg__file--audio'
+									: undefined
+						}
+					>
+						{load && view === 'audio' ? (
+							<AudioPlayer attachment={a} load={load} />
+						) : (
+							<>
+								{load && view === 'video' ? (
+									<VideoPlayer attachment={a} load={load} />
+								) : null}
+								<FileChip
+									attachment={a}
+									download={load ? () => load(a.id) : undefined}
+								/>
+							</>
+						)}
+					</li>
+				);
+			})}
 		</ul>
 	);
 }

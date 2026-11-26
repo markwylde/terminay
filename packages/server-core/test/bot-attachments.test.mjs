@@ -14,6 +14,7 @@ import test from 'node:test';
 import {
 	BOT_ATTACHMENT_TYPE_BYTES,
 	botAttachmentType,
+	isBotAudioMime,
 	isBotVideoMime,
 } from '@terminay/protocol';
 import { readBotAttachment } from '../dist/botService/images.js';
@@ -46,6 +47,31 @@ const sized = (head, size) => {
 };
 const mp4 = ftyp('isom');
 const webm = ebml('webm');
+const id3 = Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0x02, 0x01]);
+// MPEG-1 Layer III, 128 kbps, 44.1 kHz.
+const mp3Frame = Buffer.from([0xff, 0xfb, 0x90, 0x64]);
+const wav = Buffer.concat([
+	Buffer.from('RIFF'),
+	Buffer.alloc(4),
+	Buffer.from('WAVEfmt '),
+]);
+const flac = Buffer.from('fLaC\0\0\0\x22', 'latin1');
+const ogg = (
+	packet,
+	{ segments = 1, version = 0, flags = 0x02, lacing } = {},
+) => {
+	const table = lacing ?? Array(segments).fill(30);
+	return Buffer.concat([
+		Buffer.from('OggS', 'latin1'),
+		Buffer.from([version, flags]),
+		Buffer.alloc(20),
+		Buffer.from([table.length]),
+		Buffer.from(table),
+		Buffer.from(packet, 'latin1'),
+	]);
+};
+const vorbis = ogg('\x01vorbis\0\0\0\0');
+const opus = ogg('OpusHead\x01\x02');
 
 function containerDriver(root, options = {}) {
 	const state = { owned: true, running: true, calls: 0 };
@@ -148,6 +174,94 @@ test('video types come from a bounded content check', () => {
 	assert.equal(isBotVideoMime('video/x-matroska'), false);
 });
 
+test('audio types come from a bounded content check', () => {
+	const opaque = 'application/octet-stream';
+	const cases = [
+		[id3, 'audio/mpeg'],
+		[Buffer.from([0x49, 0x44, 0x33, 2, 0, 0, 0, 0, 0, 0]), 'audio/mpeg'],
+		[Buffer.from([0x49, 0x44, 0x33, 3, 0, 0x80, 0, 0, 0, 0]), 'audio/mpeg'],
+		[mp3Frame, 'audio/mpeg'],
+		// MPEG-2 and MPEG-2.5 Layer III.
+		[Buffer.from([0xff, 0xf3, 0x90, 0x64]), 'audio/mpeg'],
+		[Buffer.from([0xff, 0xe3, 0x50, 0x64]), 'audio/mpeg'],
+		[wav, 'audio/wav'],
+		[vorbis, 'audio/ogg'],
+		[opus, 'audio/ogg'],
+		[ogg('OpusHead', { segments: 3 }), 'audio/ogg'],
+		[ogg('OpusHead', { lacing: [255, 10] }), 'audio/ogg'],
+		[ogg('OpusHead', { lacing: [19] }), 'audio/ogg'],
+		[Buffer.from([0x49, 0x44, 0x33, 4, 0, 0x80, 0, 0, 0, 0]), 'audio/mpeg'],
+		[flac, 'audio/flac'],
+		[ftyp('M4A '), 'audio/mp4'],
+	];
+	for (const [content, type] of cases) {
+		assert.equal(botAttachmentType(content), type, content.toString('hex'));
+		assert.equal(botAttachmentType(sized(content, 4096)), type);
+	}
+	for (const content of [
+		// Look-alikes.
+		ogg('\x80theora\0\0'),
+		ogg('OpusHead', { version: 1 }),
+		ogg('OpusHead', { flags: 0 }),
+		ogg('OpusHead', { segments: 0 }),
+		Buffer.concat([
+			Buffer.from('RIFF'),
+			Buffer.alloc(4),
+			Buffer.from('AVI LIST'),
+		]),
+		Buffer.from([0x49, 0x44, 0x33, 5, 0, 0, 0, 0, 0, 0]),
+		Buffer.from([0x49, 0x44, 0x33, 4, 0xff, 0, 0, 0, 0, 0]),
+		Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0x80, 0, 0, 0]),
+		// Reserved ID3 flags, per major version.
+		Buffer.from([0x49, 0x44, 0x33, 4, 0, 0xff, 0, 0, 0, 0]),
+		Buffer.from([0x49, 0x44, 0x33, 4, 0, 0x08, 0, 0, 0, 0]),
+		Buffer.from([0x49, 0x44, 0x33, 3, 0, 0x10, 0, 0, 0, 0]),
+		Buffer.from([0x49, 0x44, 0x33, 2, 0, 0x20, 0, 0, 0, 0]),
+		// A first packet too short for its header, or empty before the header.
+		ogg('OpusHead', { lacing: [0, 30] }),
+		ogg('OpusHead', { lacing: [10] }),
+		ogg('\x01vorbis', { lacing: [20] }),
+		Buffer.from([0xff, 0xeb, 0x90, 0x64]), // reserved version
+		Buffer.from([0xff, 0xfd, 0x90, 0x64]), // layer II
+		Buffer.from([0xff, 0xf9, 0x90, 0x64]), // reserved layer
+		Buffer.from([0xff, 0xfb, 0x00, 0x64]), // free bitrate
+		Buffer.from([0xff, 0xfb, 0xf0, 0x64]), // bad bitrate
+		Buffer.from([0xff, 0xfb, 0x9c, 0x64]), // reserved sample rate
+		ftyp('M4B '),
+		// Truncated headers.
+		Buffer.from([0x49, 0x44, 0x33, 4, 0]),
+		Buffer.from('RIFF'),
+		wav.subarray(0, 11),
+		ogg('OpusHead').subarray(0, 32),
+		ogg('OpusHead', { segments: 40 }).subarray(0, 60),
+		Buffer.from('fLa'),
+		mp3Frame.subarray(0, 2),
+		mp3Frame.subarray(0, 3),
+	])
+		assert.equal(botAttachmentType(content), opaque, content.toString('hex'));
+	// A long segment table pushes the first packet out of the window.
+	assert.equal(
+		botAttachmentType(sized(ogg('OpusHead', { segments: 40 }), 4096)),
+		opaque,
+	);
+	// The video brands are not audio.
+	assert.equal(botAttachmentType(ftyp('isom')), 'video/mp4');
+	assert.equal(isBotAudioMime('audio/flac'), true);
+	assert.equal(isBotAudioMime('audio/aac'), false);
+	assert.equal(isBotVideoMime('audio/mp4'), false);
+});
+
+test('a user upload records audio from its content', (t) => {
+	const dir = workspace(t);
+	const store = new BotMessageStore(join(dir, 'messages'));
+	const { attachment } = store.stage(bot, 'song.dat', sized(id3, 4 * MiB));
+	assert.deepEqual(attachment, {
+		name: 'song.dat',
+		mime: 'audio/mpeg',
+		size: 4 * MiB,
+	});
+});
+
 test('a bot can read any regular file under the upload limits', async (t) => {
 	const root = workspace(t);
 	const driver = containerDriver(root);
@@ -181,6 +295,11 @@ test('size refusals state the file, size, type and limit', async (t) => {
 		/anim\.gif is 3\.0 MiB \(image\/gif\); images are limited to 2 MiB\. Convert an animation to MP4 or WebM/,
 	);
 	await assert.rejects(read(driver, 'empty.bin'), /empty\.bin is empty/);
+	writeFileSync(join(root, 'take.flac'), sized(flac, 7 * MiB));
+	await assert.rejects(
+		read(driver, 'take.flac'),
+		/^Error: take\.flac is 7\.0 MiB \(audio\/flac\); non-image attachments are limited to 5 MiB$/,
+	);
 });
 
 test('reads refuse unsafe paths and report only the cause', async (t) => {
@@ -409,9 +528,17 @@ test('the tool and briefing state what bots can attach', async (t) => {
 		/images .* up to 2 MiB, any other file up to 5 MiB/,
 	);
 	assert.match(tool.description, /MP4 and WebM play inline/);
+	assert.match(
+		tool.description,
+		/MP3, WAV, Ogg, FLAC and M4A play inline as audio/,
+	);
 	const r = runtimeSetup(t, containerDriver('/unused'));
 	const briefing = r.runtime.briefing(r.create().id);
-	assert.match(briefing, /screenshots, videos and other files with chat_post/);
+	assert.match(
+		briefing,
+		/screenshots, videos, audio and other files with chat_post/,
+	);
+	assert.match(briefing, /MP3, WAV, Ogg, FLAC and M4A play inline as audio/);
 	assert.match(
 		briefing,
 		/up to 4 per message, images up to 2 MiB, any other file up to 5 MiB/,
@@ -434,4 +561,30 @@ test('a video reaches an execution as a file with an opaque snapshot', async (t)
 	const briefing = r.runtime.briefing(run.id);
 	assert.match(briefing, /"mime":"video\/mp4"/);
 	assert.match(briefing, /terminay-attachments\/[a-z0-9]{24}\/1\.mp4/);
+});
+
+test('audio reaches an execution as a file with an opaque snapshot', async (t) => {
+	const r = runtimeSetup(t, containerDriver('/unused'));
+	const song = r.messages.putAttachment(bot, 'song.mp3', sized(id3, 2048));
+	const misnamed = r.messages.putAttachment(
+		bot,
+		'song.dat',
+		sized(mp3Frame, 2048),
+	);
+	assert.equal(song.mime, 'audio/mpeg');
+	assert.equal(misnamed.mime, 'audio/mpeg');
+	const run = r.create([song, misnamed]);
+	const snapshots = r.sessions.get(run.id).runtime.triggerAttachments;
+	assert.deepEqual(
+		snapshots.map((a) => a.mime),
+		['application/octet-stream', 'application/octet-stream'],
+	);
+	const reloaded = new BotSessionStore(join(r.root, 'sessions'));
+	t.after(() => reloaded.close());
+	assert.equal(reloaded.get(run.id).runtime.triggerAttachments.length, 2);
+	const briefing = r.runtime.briefing(run.id);
+	assert.match(briefing, /"name":"song\.mp3","mime":"audio\/mpeg"/);
+	assert.match(briefing, /"name":"song\.dat","mime":"audio\/mpeg"/);
+	assert.match(briefing, /terminay-attachments\/[a-z0-9]{24}\/1\.mp3/);
+	assert.match(briefing, /terminay-attachments\/[a-z0-9]{24}\/2\.dat/);
 });

@@ -8,6 +8,7 @@ import {
 	type BotRuntimeEventPage,
 	botAttachmentLimit,
 	botMessageActivity,
+	isBotAudioMime,
 	isBotImageMime,
 	isBotVideoMime,
 	type JsonValue,
@@ -15,12 +16,14 @@ import {
 } from '@terminay/protocol';
 import type { BotTransport } from './bots.js';
 
-/** A raster image or video type, or the opaque type of every other file. */
+/** A raster image, video or audio type, or the opaque type of every other
+ * file. */
 function knownMime(value: unknown): boolean {
 	const mime = String(value);
 	return (
 		isBotImageMime(mime) ||
 		isBotVideoMime(mime) ||
+		isBotAudioMime(mime) ||
 		mime === BOT_OPAQUE_ATTACHMENT_MIME
 	);
 }

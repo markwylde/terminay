@@ -152,6 +152,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0135](./0135-bot-message-threads-live-in-the-message-log.md) | Bot message threads are one level deep and live in the message log | accepted | 2026-11-17 |
 | [0137](./0137-the-workspace-admits-terminay-com-as-its-only-hosted-content-origin.md) | The workspace admits terminay.com as its only hosted content origin, in a sandboxed frame with a closed message bridge | accepted | 2026-11-17 |
 | [0138](./0138-a-permitted-bot-reads-other-bots-through-allowlisted-runtime-tools.md) | A permitted bot reads other bots through allowlisted runtime tools | accepted, supersedes 0100 and 0093 in part | 2026-11-23 |
-| [0139](./0139-the-workspace-plays-media-only-from-its-own-origin-and-blob-urls.md) | The workspace plays media only from its own origin and blob URLs | accepted | 2026-11-23 |
+| [0139](./0139-the-workspace-plays-media-only-from-its-own-origin-and-blob-urls.md) | The workspace plays media only from its own origin and blob URLs | accepted (superseded by 0143 in part) | 2026-11-23 |
+| [0143](./0143-the-workspace-plays-server-typed-audio-as-well-as-video.md) | The workspace plays server-typed audio as well as video | accepted | 2026-11-26 |
 | [0140](./0140-bot-sessions-have-no-time-limit-and-are-watched-by-check-ins.md) | Bot sessions have no time limit and are watched by check-in sessions | accepted | 2026-11-23 |
 | [0141](./0141-a-watched-root-that-goes-away-is-a-removal-and-lost-git-observation-re-arms-on-request.md) | A Git watch whose root goes away is a removal, and lost Git observation re-arms on request | accepted | 2026-11-24 |
