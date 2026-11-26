@@ -14,6 +14,7 @@ import type {
 	NotificationSnapshot,
 	TerminalNotificationRecord,
 } from '@terminay/client-core';
+import type { BotAvatarStyle } from '@terminay/protocol';
 import type {
 	TerminalActivityOverviewItem,
 	TerminalActivityOverviewState,
@@ -23,6 +24,7 @@ import type {
 export type NotificationBotProfile = Readonly<{
 	name: string;
 	avatar: string;
+	avatarStyle?: BotAvatarStyle;
 	colour: string;
 }>;
 
@@ -81,6 +83,7 @@ function botItem(
 			botId: record.botId,
 			name: bot.name,
 			avatar: bot.avatar,
+			...(bot.avatarStyle === undefined ? {} : { avatarStyle: bot.avatarStyle }),
 			colour: bot.colour,
 			count: record.count,
 			throughSequence: record.throughSequence,

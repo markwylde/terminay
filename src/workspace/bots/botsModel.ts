@@ -7,6 +7,7 @@
  */
 
 import type {
+	BotAvatarStyle,
 	BotEnvironmentOverview,
 	BotEnvironmentState,
 	BotPermission,
@@ -412,6 +413,13 @@ export function retainRecentSessions(
 	return [...sessions]
 		.sort(newestFirst)
 		.filter((s, index) => index < limit || isActiveSession(s));
+}
+
+/** Bots default to Chara Critter unless explicitly set to a character badge. */
+export function botAvatarStyle(
+	bot: Pick<BotProfile, 'avatarStyle'>,
+): BotAvatarStyle {
+	return bot.avatarStyle === 'character' ? 'character' : 'critter';
 }
 
 /** Up to two initials for an avatar with no picture. */

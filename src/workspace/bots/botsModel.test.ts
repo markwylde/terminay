@@ -10,6 +10,7 @@ import {
 	attachmentView,
 	type BotEntry,
 	botActivity,
+	botAvatarStyle,
 	chatFileKind,
 	chatSendAttempt,
 	filterCounts,
@@ -588,4 +589,10 @@ test('playback time is m:ss, h:mm:ss past an hour, and --:-- while unknown', () 
 	assert.equal(formatPlaybackTime(3723), '1:02:03');
 	for (const unknown of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -1])
 		assert.equal(formatPlaybackTime(unknown), '--:--');
+});
+
+test('bot avatar style defaults to critter unless explicitly character', () => {
+	assert.equal(botAvatarStyle({}), 'critter');
+	assert.equal(botAvatarStyle({ avatarStyle: 'critter' }), 'critter');
+	assert.equal(botAvatarStyle({ avatarStyle: 'character' }), 'character');
 });

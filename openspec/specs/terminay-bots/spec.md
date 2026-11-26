@@ -30,7 +30,7 @@ A bot SHALL be a named, long-lived agent owned by one Terminay Server. It SHALL 
 A bot SHALL have:
 
 - a name, unique on its server, of at most 40 characters;
-- an avatar, which is an emoji or a single character, and a colour;
+- an avatar style: **Critter** (a deterministic SVG character generated from the bot's name using Chara's `critter` theme, the default) or **Character** (an emoji or a single character on a chosen colour);
 - a description of at most 200 characters;
 - instructions of at most 32 KiB of UTF-8;
 - one agent and one model;
@@ -39,6 +39,10 @@ A bot SHALL have:
 - an **Investigate failures** setting, on unless the user turns it off (see bot-failure-follow-up);
 - a **Terminay MCP access** setting, off unless the user turns it on;
 - an **Inspect other bots** setting, off unless the user turns it on (see bot-inspection).
+
+When a bot's avatar style is Critter, every surface showing the bot's avatar SHALL render the Chara `critter` SVG for the bot's name, filling the avatar frame while keeping any activity dot intact. When a bot's avatar style is Character, every surface showing the bot's avatar SHALL render the saved emoji or single character (or the bot's initials when blank) on the bot's chosen colour.
+
+The Profile SHALL let the user switch between Critter and Character and SHALL show a live avatar preview that reflects the current name and avatar settings. The character input and colour swatches SHALL be shown when Character is selected and hidden when Critter is selected. A bot whose saved profile has no explicit avatar style SHALL default to Critter.
 
 The agent SHALL be chosen only from the bot agents that installed extensions contribute. The model SHALL be chosen only from the models that agent lists, or **Default**, which leaves the choice to the agent. Terminay SHALL NOT keep a provider or model list of its own.
 
@@ -74,6 +78,21 @@ Saving a profile SHALL apply to sessions that start after the save, except that 
 
 - **WHEN** a user saves a bot with the name of another bot on the same server
 - **THEN** the save is refused, naming the conflict
+
+#### Scenario: Avatar defaults to Critter
+
+- **WHEN** a user creates a bot without choosing an avatar style, or opens a bot whose saved profile has no avatar style
+- **THEN** the bot's avatar renders as a Chara Critter generated from its name, and the Profile shows Critter selected with no character input or colour swatches
+
+#### Scenario: Switching to a character avatar
+
+- **WHEN** a user switches a bot's avatar style from Critter to Character in Profile, enters an emoji or single character, picks a colour, and saves
+- **THEN** the bot's avatar across the workspace renders that character on the chosen colour and persists across restarts
+
+#### Scenario: Renaming a Critter bot updates its avatar
+
+- **WHEN** a user edits the name of a Critter bot in Profile
+- **THEN** the live avatar preview updates immediately to the Critter for the new name, and saving updates the bot's avatar everywhere
 
 #### Scenario: Investigate failures defaults on
 

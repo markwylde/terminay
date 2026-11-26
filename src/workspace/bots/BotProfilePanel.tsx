@@ -6,14 +6,17 @@
 import { BotCredentialClient } from '@terminay/client-core';
 import type {
 	BotApprovalMode,
+	BotAvatarStyle,
 	BotProfile,
 	BotSignIn,
 } from '@terminay/protocol';
 import { useEffect, useMemo, useState } from 'react';
 import { useOptionalTerminalSettings } from '../../hooks/useTerminalSettings';
+import { BotAvatar } from './BotAvatar';
 import { BotSignInSection } from './BotSignInSection';
 import {
 	botActivity,
+	botAvatarStyle,
 	canInspectOtherBots,
 	ENVIRONMENT_LABELS,
 	hasTerminayMcpAccess,
@@ -60,6 +63,7 @@ const COLOURS = [
 type ProfileForm = Readonly<{
 	name: string;
 	avatar: string;
+	avatarStyle: BotAvatarStyle;
 	colour: string;
 	description: string;
 	instructions: string;
@@ -75,6 +79,7 @@ function formFromBot(bot: BotProfile): ProfileForm {
 	return {
 		name: bot.name,
 		avatar: bot.avatar,
+		avatarStyle: botAvatarStyle(bot),
 		colour: bot.colour,
 		description: bot.description,
 		instructions: bot.instructions,
@@ -109,6 +114,7 @@ export function profileProblem(form: ProfileForm): string | undefined {
 	if ([...form.name.trim()].length > MAX_NAME)
 		return `A name is at most ${MAX_NAME} characters.`;
 	if (
+		form.avatarStyle === 'character' &&
 		[...form.avatar].length > 2 &&
 		!/^\p{Extended_Pictographic}/u.test(form.avatar)
 	)
@@ -177,11 +183,17 @@ export function BotProfilePanel({
 		if (problem !== undefined || busy) return;
 		setBusy(true);
 		setError(undefined);
+		const trimmedName = form.name.trim();
+		const fallbackInitial = [...trimmedName][0]?.toUpperCase() ?? '?';
 		server.client
 			.save({
 				id: bot.id,
-				name: form.name.trim(),
-				avatar: form.avatar.trim(),
+				name: trimmedName,
+				avatarStyle: form.avatarStyle,
+				avatar:
+					form.avatarStyle === 'character'
+						? form.avatar.trim() || fallbackInitial
+						: base.avatar.trim() || fallbackInitial,
 				colour: form.colour,
 				description: form.description,
 				instructions: form.instructions,
@@ -225,32 +237,87 @@ export function BotProfilePanel({
 								data-terminay-bot-profile="name"
 							/>
 						</label>
-						<label className="bots-field bots-avatar-field">
-							<span>Avatar</span>
-							<input
-								value={form.avatar}
-								placeholder={[...form.name.trim()][0]?.toUpperCase() ?? 'B'}
-								maxLength={8}
-								onChange={(event) => update({ avatar: event.target.value })}
-								data-terminay-bot-profile="avatar"
+					</div>
+					<div className="bots-avatar-picker" data-terminay-bot-avatar-picker="true">
+						<div className="bots-avatar-picker__preview">
+							<BotAvatar
+								bot={{
+									name: form.name.trim() || bot.name,
+									avatar: form.avatar,
+									avatarStyle: form.avatarStyle,
+									colour: form.colour,
+								}}
+								size="lg"
 							/>
-						</label>
-						<fieldset className="bots-field">
-							<legend>Colour</legend>
-							<div className="bots-swatches">
-								{COLOURS.map((colour) => (
+						</div>
+						<div className="bots-avatar-picker__controls">
+							<div className="bots-field">
+								<span>Avatar</span>
+								<fieldset className="bots-seg" aria-label="Avatar style">
 									<button
-										key={colour}
 										type="button"
-										className={`bots-swatch${colour === form.colour ? ' bots-swatch--on' : ''}`}
-										style={{ background: colour }}
-										aria-label={`Colour ${colour}`}
-										aria-pressed={colour === form.colour}
-										onClick={() => update({ colour })}
-									/>
-								))}
+										className={
+											form.avatarStyle === 'critter' ? 'bots-seg--on' : ''
+										}
+										aria-pressed={form.avatarStyle === 'critter'}
+										onClick={() => update({ avatarStyle: 'critter' })}
+										data-terminay-bot-avatar-style-option="critter"
+									>
+										Critter
+									</button>
+									<button
+										type="button"
+										className={
+											form.avatarStyle === 'character' ? 'bots-seg--on' : ''
+										}
+										aria-pressed={form.avatarStyle === 'character'}
+										onClick={() => update({ avatarStyle: 'character' })}
+										data-terminay-bot-avatar-style-option="character"
+									>
+										Character
+									</button>
+								</fieldset>
+								{form.avatarStyle === 'critter' ? (
+									<small className="bots-faint">
+										Generated from the bot’s name using Chara’s Critter theme.
+									</small>
+								) : null}
 							</div>
-						</fieldset>
+							{form.avatarStyle === 'character' ? (
+								<div className="bots-avatar-picker__character">
+									<label className="bots-field bots-avatar-field">
+										<span>Character</span>
+										<input
+											value={form.avatar}
+											placeholder={
+												[...form.name.trim()][0]?.toUpperCase() ?? 'B'
+											}
+											maxLength={8}
+											onChange={(event) =>
+												update({ avatar: event.target.value })
+											}
+											data-terminay-bot-profile="avatar"
+										/>
+									</label>
+									<fieldset className="bots-field">
+										<legend>Colour</legend>
+										<div className="bots-swatches">
+											{COLOURS.map((colour) => (
+												<button
+													key={colour}
+													type="button"
+													className={`bots-swatch${colour === form.colour ? ' bots-swatch--on' : ''}`}
+													style={{ background: colour }}
+													aria-label={`Colour ${colour}`}
+													aria-pressed={colour === form.colour}
+													onClick={() => update({ colour })}
+												/>
+											))}
+										</div>
+									</fieldset>
+								</div>
+							) : null}
+						</div>
 					</div>
 					<label className="bots-field">
 						<span>Description</span>

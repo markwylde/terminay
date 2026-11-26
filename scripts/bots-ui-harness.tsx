@@ -16,6 +16,7 @@ import type {
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BotsSection } from '../src/workspace/bots/BotsSection';
+import { BotsSidebarList } from '../src/workspace/bots/BotsSidebarList';
 import { BotTab } from '../src/workspace/bots/BotTab';
 import type { BotTabHost } from '../src/workspace/bots/botTabHost';
 import type {
@@ -25,7 +26,7 @@ import type {
 
 type Call = { op: string; args: unknown[] };
 type Scenario = {
-	view: 'dashboard' | 'tab';
+	view: 'dashboard' | 'tab' | 'sidebar';
 	platform?: 'mac' | 'linux';
 	engine?: Record<string, unknown>;
 	bots: BotProfile[];
@@ -727,6 +728,15 @@ function Harness() {
 		<div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
 			{scenario.view === 'dashboard' ? (
 				<BotsSection servers={new Map([['local', server]])} host={host} />
+			) : scenario.view === 'sidebar' ? (
+				<aside className="home-sidebar" style={{ width: 240 }}>
+					<BotsSidebarList
+						servers={new Map([['local', server]])}
+						activeBot={{ serverId: 'local', botId: scenario.bots[0]?.id ?? '' }}
+						onOpenBot={(target) => window.__opened.push(target)}
+						onNewBot={() => window.__calls.push({ op: 'new-bot', args: [] })}
+					/>
+				</aside>
 			) : (
 				<BotTab
 					server={server}
