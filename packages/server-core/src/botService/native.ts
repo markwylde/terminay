@@ -182,6 +182,9 @@ export class BotNativeClient extends EventEmitter {
 	private closed = false;
 	private terminal = false;
 	private resultFailed = false;
+	private claudeHasBackgroundTasks = false;
+	private claudePendingWakeups = 0;
+	private claudeApprovalStreamClosed = false;
 	private textDelta = false;
 	private nextRequest = 0;
 	private initialization?: {
@@ -234,6 +237,7 @@ export class BotNativeClient extends EventEmitter {
 			if (
 				this.terminal &&
 				!this.resultFailed &&
+				!this.claudeApprovalStreamClosed &&
 				!this.backgroundStopped &&
 				code === 0
 			)
@@ -482,6 +486,21 @@ export class BotNativeClient extends EventEmitter {
 					} else if (typeof delta.thinking === 'string')
 						this.text(delta.thinking, true);
 				}
+			} else if (
+				e.type === 'system' &&
+				e.subtype === 'background_tasks_changed' &&
+				Array.isArray(e.tasks)
+			) {
+				this.claudeHasBackgroundTasks = e.tasks.length > 0;
+			} else if (
+				e.type === 'system' &&
+				e.subtype === 'task_notification' &&
+				(e.status === 'completed' || e.status === 'failed')
+			) {
+				// Claude queues a turn per completed or failed background task.
+				this.claudePendingWakeups++;
+			} else if (e.type === 'system' && e.subtype === 'init') {
+				if (this.claudePendingWakeups > 0) this.claudePendingWakeups--;
 			} else if (e.type === 'system' && e.subtype === 'task_progress') {
 				this.update({
 					sessionUpdate: 'plan',
@@ -523,20 +542,36 @@ export class BotNativeClient extends EventEmitter {
 					? message.content
 					: []) {
 					const part = object(raw);
-					if (part.type === 'tool_result')
-						this.update({
-							sessionUpdate: 'tool_call_update',
-							toolCallId: String(part.tool_use_id),
-							status: part.is_error ? 'failed' : 'completed',
-							rawOutput: diagnosticOutput(part.content ?? ''),
-						});
+					if (part.type !== 'tool_result') continue;
+					if (
+						part.is_error === true &&
+						part.content ===
+							'Tool permission request failed: AbortError: Stream closed' &&
+						Array.isArray(e.tool_result_meta) &&
+						e.tool_result_meta.some((raw) => {
+							const meta = object(raw);
+							return (
+								meta.id === part.tool_use_id &&
+								meta.non_execution_kind === 'permission-rule'
+							);
+						})
+					)
+						this.claudeApprovalStreamClosed = true;
+					this.update({
+						sessionUpdate: 'tool_call_update',
+						toolCallId: String(part.tool_use_id),
+						status: part.is_error ? 'failed' : 'completed',
+						rawOutput: diagnosticOutput(part.content ?? ''),
+					});
 				}
 			} else if (e.type === 'result') {
-				this.terminal = true;
+				this.terminal =
+					!this.claudeHasBackgroundTasks && this.claudePendingWakeups === 0;
 				this.resultFailed ||= e.is_error === true || e.subtype !== 'success';
 				if (!this.textDelta && typeof e.result === 'string')
 					this.text(e.result);
-				this.closeInput();
+				// A background notification can wake Claude for another turn.
+				if (this.terminal) this.closeInput();
 			}
 		} else {
 			if (e.type === 'turn.completed') this.terminal = true;
@@ -636,7 +671,9 @@ export class BotNativeClient extends EventEmitter {
 			? new BotBackgroundStoppedError()
 			: new BotError(
 					'unavailable',
-					'The native agent could not complete the request. See Runner output for details.',
+					this.claudeApprovalStreamClosed
+						? 'Claude Code lost its approval channel before a tool could run.'
+						: 'The native agent could not complete the request. See Runner output for details.',
 				);
 		const init = this.initialization;
 		this.initialization = undefined;

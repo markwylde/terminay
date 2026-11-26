@@ -1,32 +1,34 @@
 import { Reorder, useDragControls, useReducedMotion } from 'framer-motion';
-import { LiveTerminalTitle } from '../../shared/useWorkspaceProjection';
 import {
+	ArrowDownToLine,
+	ChevronDown,
+	ChevronRight,
 	CircleCheck,
 	CircleDashed,
 	CircleX,
-	ChevronDown,
-	ChevronRight,
 	EllipsisVertical,
 	File,
 	Folder,
 	GitBranch,
 	GitPullRequest,
-	LoaderCircle,
 	MinusCircle,
 	Plus,
+	Trash2,
 } from 'lucide-react';
 import {
 	type CSSProperties,
 	type DragEvent,
 	type KeyboardEvent,
 	type MouseEvent,
-	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
+	type PointerEvent as ReactPointerEvent,
 	useEffect,
 	useLayoutEffect,
 	useRef,
 	useState,
 } from 'react';
+import { LiveTerminalTitle } from '../../shared/useWorkspaceProjection';
+import type { TerminalLauncherView } from '../../types/terminalLaunchers';
 import type {
 	WorktreeCheckState,
 	WorktreeProperties,
@@ -39,7 +41,6 @@ import {
 	folderOrderAfterMove,
 	terminalRenameTitle,
 } from '../../workspace/folderTreeModel';
-import type { TerminalLauncherView } from '../../types/terminalLaunchers';
 import { TerminalWorkflowBadge } from '../../workspace/workflows/WorkflowTabBadge';
 import { AgentStatusIndicator } from '../AgentStatusIndicator';
 import {
@@ -47,6 +48,7 @@ import {
 	folderDetailsDescription,
 	useFolderDetailsTooltip,
 } from './FolderDetailsTooltip';
+import { LauncherIcon } from './launcherIcons';
 import {
 	checksAccessibleName,
 	checksChip,
@@ -54,11 +56,10 @@ import {
 	pullRequestAccessibleName,
 	pullRequestChip,
 	pullRequestTitle,
+	shownCheckItems,
 	showsNoPullRequest,
 	unmergedMark,
-	shownCheckItems,
 } from './worktreePropertyPresentation';
-import { LauncherIcon } from './launcherIcons';
 import './foldersTree.css';
 
 type WorktreeChecks = NonNullable<WorktreeProperties['checks']>;
@@ -419,113 +420,112 @@ export function FoldersTree({
 			{(onHandlePointerDown) => {
 				const collapsed = collapsedFolderIds?.has(folder.id) === true;
 				return (
-				<>
-					<FolderHeader
-						folder={folder}
-						collapsed={collapsed}
-						{...(onToggleFolderCollapsed === undefined
-							? {}
-							: {
-									onToggleCollapsed: () =>
-										onToggleFolderCollapsed(folder.id),
-								})}
-						onSelect={() => onSelectFolder(folder.id)}
-						onMenu={
-							onFolderMenu === undefined
-								? undefined
-								: (event) => openMenu(folder.id, event)
-						}
-						{...(onHandlePointerDown === undefined
-							? {}
-							: {
-									onHandlePointerDown,
-									onMoveKeyDown: (event: KeyboardEvent) =>
-										moveWithKey(folder.id, event),
-								})}
-						onOpenLink={onOpenLink}
-						checksOpen={openChecks.has(folder.id)}
-						onToggleChecks={() => toggleChecks(folder.id)}
-					/>
-					{!collapsed &&
-					openChecks.has(folder.id) &&
-					folder.checks !== undefined &&
-					onOpenLink !== undefined ? (
-						<FolderChecksList
+					<>
+						<FolderHeader
 							folder={folder}
+							collapsed={collapsed}
+							{...(onToggleFolderCollapsed === undefined
+								? {}
+								: {
+										onToggleCollapsed: () => onToggleFolderCollapsed(folder.id),
+									})}
+							onSelect={() => onSelectFolder(folder.id)}
+							onMenu={
+								onFolderMenu === undefined
+									? undefined
+									: (event) => openMenu(folder.id, event)
+							}
+							{...(onHandlePointerDown === undefined
+								? {}
+								: {
+										onHandlePointerDown,
+										onMoveKeyDown: (event: KeyboardEvent) =>
+											moveWithKey(folder.id, event),
+									})}
 							onOpenLink={onOpenLink}
-							onLoadChecks={onLoadChecks}
+							checksOpen={openChecks.has(folder.id)}
+							onToggleChecks={() => toggleChecks(folder.id)}
 						/>
-					) : null}
-					{(collapsed ? [] : folder.panels).map((panel) => (
-						<PanelRow
-							key={panel.panelId}
-							panel={panel}
-							serverId={serverId}
-							onSelect={() => onSelectPanel(folder.id, panel.panelId)}
-							// A row offers what its tab offers. A terminal's tab has a
-							// menu, a name to change, and a move to another folder; a
-							// file or folder tab has none of the three.
-							{...(onTerminalMenu === undefined || panel.kind !== 'terminal'
-								? {}
-								: {
-										onMenu: (anchor: { x: number; y: number }) =>
-											onTerminalMenu(folder.id, panel.panelId, anchor),
-									})}
-							{...(onRenameTerminal === undefined || panel.kind !== 'terminal'
-								? {}
-								: {
-										onRename: (title: string) =>
-											onRenameTerminal(folder.id, panel.panelId, title),
-									})}
-							{...(onTerminalDrag === undefined || panel.kind !== 'terminal'
-								? {}
-								: {
-										onDragStart: () =>
-											onTerminalDrag({
-												folderId: folder.id,
-												panelId: panel.panelId,
-											}),
-										onDragEnd: () => onTerminalDrag(null),
-									})}
-						/>
-					))}
-					{folder.offer !== undefined && onAnswerOffer !== undefined ? (
-						<div className="folders-tree__offer">
-							<span className="folders-tree__offer-text">
-								<strong>{folder.offer.title}</strong> created this worktree.
-							</span>
-							<span className="folders-tree__offer-actions">
-								<button
-									type="button"
-									className="folders-tree__offer-button folders-tree__offer-button--primary"
-									onClick={() => onAnswerOffer(folder.id, 'accept')}
-								>
-									Move it here
-								</button>
-								<button
-									type="button"
-									className="folders-tree__offer-button"
-									onClick={() => onAnswerOffer(folder.id, 'decline')}
-								>
-									Not now
-								</button>
-							</span>
-						</div>
-					) : null}
-					{onNewTerminal === undefined || collapsed ? null : (
-						<NewTerminalRow
-							folderName={folder.name}
-							launchers={launchers}
-							onNewTerminal={() => onNewTerminal(folder.id)}
-							{...(onLaunchTerminal === undefined
-								? {}
-								: {
-										onLaunch: (launcherId: string) =>
-											onLaunchTerminal(folder.id, launcherId),
-									})}
-						/>
-					)}
-				</>
+						{!collapsed &&
+						openChecks.has(folder.id) &&
+						folder.checks !== undefined &&
+						onOpenLink !== undefined ? (
+							<FolderChecksList
+								folder={folder}
+								onOpenLink={onOpenLink}
+								onLoadChecks={onLoadChecks}
+							/>
+						) : null}
+						{(collapsed ? [] : folder.panels).map((panel) => (
+							<PanelRow
+								key={panel.panelId}
+								panel={panel}
+								serverId={serverId}
+								onSelect={() => onSelectPanel(folder.id, panel.panelId)}
+								// A row offers what its tab offers. A terminal's tab has a
+								// menu, a name to change, and a move to another folder; a
+								// file or folder tab has none of the three.
+								{...(onTerminalMenu === undefined || panel.kind !== 'terminal'
+									? {}
+									: {
+											onMenu: (anchor: { x: number; y: number }) =>
+												onTerminalMenu(folder.id, panel.panelId, anchor),
+										})}
+								{...(onRenameTerminal === undefined || panel.kind !== 'terminal'
+									? {}
+									: {
+											onRename: (title: string) =>
+												onRenameTerminal(folder.id, panel.panelId, title),
+										})}
+								{...(onTerminalDrag === undefined || panel.kind !== 'terminal'
+									? {}
+									: {
+											onDragStart: () =>
+												onTerminalDrag({
+													folderId: folder.id,
+													panelId: panel.panelId,
+												}),
+											onDragEnd: () => onTerminalDrag(null),
+										})}
+							/>
+						))}
+						{folder.offer !== undefined && onAnswerOffer !== undefined ? (
+							<div className="folders-tree__offer">
+								<span className="folders-tree__offer-text">
+									<strong>{folder.offer.title}</strong> created this worktree.
+								</span>
+								<span className="folders-tree__offer-actions">
+									<button
+										type="button"
+										className="folders-tree__offer-button folders-tree__offer-button--primary"
+										onClick={() => onAnswerOffer(folder.id, 'accept')}
+									>
+										Move it here
+									</button>
+									<button
+										type="button"
+										className="folders-tree__offer-button"
+										onClick={() => onAnswerOffer(folder.id, 'decline')}
+									>
+										Not now
+									</button>
+								</span>
+							</div>
+						) : null}
+						{onNewTerminal === undefined || collapsed ? null : (
+							<NewTerminalRow
+								folderName={folder.name}
+								launchers={launchers}
+								onNewTerminal={() => onNewTerminal(folder.id)}
+								{...(onLaunchTerminal === undefined
+									? {}
+									: {
+											onLaunch: (launcherId: string) =>
+												onLaunchTerminal(folder.id, launcherId),
+										})}
+							/>
+						)}
+					</>
 				);
 			}}
 		</FolderCard>
@@ -741,18 +741,14 @@ function FolderHeader({
 	const noPullRequest = showsNoPullRequest(folder);
 	const unmerged =
 		folder.unmerged === undefined ? undefined : unmergedMark(folder.unmerged);
-	const { isDeleting } = folder;
-	// A removal outranks a pull; the card says only that it is going.
-	const isPulling = folder.isPulling && !isDeleting;
-	// A worktree on its way out, or being pulled, says so in place of what was
-	// measured of it.
+	// What git is doing to the folder's worktree, if anything. A removal
+	// outranks a pull; the card says only that it is going.
+	const activity = folderActivity(folder);
 	const hasFacts =
-		!isDeleting &&
-		!isPulling &&
-		(changeChip !== undefined ||
-			pullRequest !== undefined ||
-			noPullRequest ||
-			checkCount > 0);
+		changeChip !== undefined ||
+		pullRequest !== undefined ||
+		noPullRequest ||
+		checkCount > 0;
 	// What its hidden terminals are doing, as the one most urgent state.
 	const attention = collapsed ? folderAttentionState(folder.panels) : undefined;
 	// A press on a control in the header is that control's, never the header's.
@@ -792,7 +788,7 @@ function FolderHeader({
 			aria-expanded={!collapsed}
 			data-folder-header="true"
 			{...(collapsed ? { 'data-folder-collapsed': 'true' } : {})}
-			{...(isDeleting || isPulling ? { 'aria-busy': true } : {})}
+			{...(activity === undefined ? {} : { 'aria-busy': true })}
 			tabIndex={0}
 			{...(change === undefined ? {} : { 'data-change': change.kind })}
 			{...(details === undefined
@@ -837,8 +833,11 @@ function FolderHeader({
 				className={`folders-tree__title${label !== undefined && folder.isDirty ? ' folders-tree__title--dirty' : ''}`}
 				onPointerOver={(event) => {
 					if (event.pointerType !== 'mouse') return;
-					// A control on the line says what it does itself.
-					if ((event.target as Element).closest('button') === null)
+					// A control on the line, or what git is doing, says what it is
+					// itself.
+					if (
+						(event.target as Element).closest(FOLDER_TITLE_OWN_TOOLTIP) === null
+					)
 						tooltip.rest();
 					else tooltip.end();
 				}}
@@ -868,11 +867,15 @@ function FolderHeader({
 				)}
 				{label === undefined ? (
 					<>
-						<Folder
-							className="folders-tree__icon"
-							size={15}
-							aria-hidden="true"
-						/>
+						{activity === undefined ? (
+							<Folder
+								className="folders-tree__icon"
+								size={15}
+								aria-hidden="true"
+							/>
+						) : (
+							<FolderActivityIcon activity={activity} />
+						)}
 						<span className="folders-tree__text">
 							<span className="folders-tree__name" title={folder.name}>
 								{folder.name}
@@ -881,11 +884,15 @@ function FolderHeader({
 					</>
 				) : (
 					<>
-						<GitBranch
-							className="folders-tree__icon"
-							size={15}
-							aria-hidden="true"
-						/>
+						{activity === undefined ? (
+							<GitBranch
+								className="folders-tree__icon"
+								size={15}
+								aria-hidden="true"
+							/>
+						) : (
+							<FolderActivityIcon activity={activity} />
+						)}
 						<span className="folders-tree__text folders-tree__label">
 							<span className="folders-tree__name">
 								{label.text}
@@ -925,7 +932,9 @@ function FolderHeader({
 					</button>
 				)}
 			</span>
-			{collapsed || label !== undefined || folder.branch === undefined ? null : (
+			{collapsed ||
+			label !== undefined ||
+			folder.branch === undefined ? null : (
 				<span
 					className={`folders-tree__branch${folder.isDirty ? ' folders-tree__branch--dirty' : ''}`}
 				>
@@ -934,21 +943,6 @@ function FolderHeader({
 					{unmergedElement}
 				</span>
 			)}
-			{isDeleting ? (
-				<span className="folders-tree__deleting" role="status">
-					Deleting…
-				</span>
-			) : null}
-			{isPulling ? (
-				<span className="folders-tree__pulling" role="status">
-					<LoaderCircle
-						className="folders-tree__pulling-spinner"
-						size={11}
-						aria-hidden="true"
-					/>
-					<span>Pulling…</span>
-				</span>
-			) : null}
 			{hasFacts && !collapsed ? (
 				<span className="folders-tree__facts">
 					{changeChip === undefined ? null : (
@@ -981,6 +975,51 @@ function FolderHeader({
 				</span>
 			) : null}
 		</div>
+	);
+}
+
+/** Elements on a folder's title line that carry their own tooltip. */
+export const FOLDER_TITLE_OWN_TOOLTIP = 'button, .folders-tree__activity';
+
+type FolderActivity = 'deleting' | 'pulling';
+
+/** What git is doing to a folder's worktree; a removal outranks a pull. */
+function folderActivity(
+	folder: Readonly<{ isDeleting?: boolean; isPulling?: boolean }>,
+): FolderActivity | undefined {
+	if (folder.isDeleting) return 'deleting';
+	if (folder.isPulling) return 'pulling';
+	return undefined;
+}
+
+const FOLDER_ACTIVITY_LABEL: Readonly<Record<FolderActivity, string>> = {
+	deleting: 'Deleting worktree…',
+	pulling: 'Pulling from origin…',
+};
+
+/**
+ * The animated icon that stands in the folder or branch icon's place while
+ * git works on the folder, so the card says what is happening without
+ * gaining a line.
+ */
+function FolderActivityIcon({
+	activity,
+}: Readonly<{ activity: FolderActivity }>) {
+	const text = FOLDER_ACTIVITY_LABEL[activity];
+	const Icon = activity === 'deleting' ? Trash2 : ArrowDownToLine;
+	return (
+		<span
+			className={`folders-tree__activity folders-tree__activity--${activity}`}
+			role="status"
+			title={text}
+		>
+			<Icon
+				className="folders-tree__activity-icon"
+				size={15}
+				aria-hidden="true"
+			/>
+			<span className="folders-tree__activity-text">{text}</span>
+		</span>
 	);
 }
 
@@ -1224,7 +1263,10 @@ function PanelRow({
 				</span>
 			)}
 			{panel.kind === 'terminal' ? (
-				<TerminalWorkflowBadge serverId={serverId} sessionId={panel.sessionId} />
+				<TerminalWorkflowBadge
+					serverId={serverId}
+					sessionId={panel.sessionId}
+				/>
 			) : null}
 		</div>
 	);

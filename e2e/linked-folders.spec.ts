@@ -6,19 +6,20 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { waitUntilBusy } from './support/busy-terminals';
 import {
 	activeFolderWorkspace,
 	changesPane,
-	contextMenuLabels,
 	confirmDelete,
+	contextMenuLabels,
 	createPlainFolder,
 	deleteDialog,
 	filesPane,
 	folderGroup,
 	folderNames,
 	folderRow,
-	folderTerminals,
 	foldersColumn,
+	folderTerminals,
 	git,
 	initRepository,
 	openFolderMenu,
@@ -26,21 +27,9 @@ import {
 	selectFolder,
 } from './support/folders';
 import {
-	runShellCommand,
-	typeInVisibleTerminal,
-} from './support/terminal-input';
-import {
-	activeTerminalSessionId,
-	terminalPanelForSession,
-} from './support/terminal-session';
-import type { FixtureWorkspace, WorkspaceOptions } from './support/workspace';
-import {
-	contextMenuItem,
-	openFileExplorer,
-	setProjectRoot,
-} from './support/ui';
-import { chooseProjectStart, createStartedProject } from './support/project-start';
-import { waitUntilBusy } from './support/busy-terminals';
+	chooseProjectStart,
+	createStartedProject,
+} from './support/project-start';
 import {
 	advanceRendererClock,
 	afterRendererTasks,
@@ -49,6 +38,20 @@ import {
 	nextAnimationFrame,
 	releaseRendererClock,
 } from './support/renderer-clock';
+import {
+	runShellCommand,
+	typeInVisibleTerminal,
+} from './support/terminal-input';
+import {
+	activeTerminalSessionId,
+	terminalPanelForSession,
+} from './support/terminal-session';
+import {
+	contextMenuItem,
+	openFileExplorer,
+	setProjectRoot,
+} from './support/ui';
+import type { FixtureWorkspace, WorkspaceOptions } from './support/workspace';
 
 const execFileAsync = promisify(execFile);
 
@@ -105,7 +108,9 @@ const fileItem = (page: Page, name: string): Locator =>
 		.filter({ hasText: name });
 
 const terminalOutput = (page: Page): Locator =>
-	page.locator('.project-workspace--active .terminal-panel:visible .xterm-rows');
+	page.locator(
+		'.project-workspace--active .terminal-panel:visible .xterm-rows',
+	);
 
 async function run(page: Page, command: string): Promise<void> {
 	await runShellCommand(page, command);
@@ -130,12 +135,14 @@ async function expectTerminalIn(
 
 /** The row of the Folders tree for one terminal session, wherever it is. */
 const terminalRowOf = (page: Page, sessionId: string): Locator =>
-	foldersColumn(page).locator(
-		`[data-folder-terminal-session="${sessionId}"]`,
-	);
+	foldersColumn(page).locator(`[data-folder-terminal-session="${sessionId}"]`);
 
 /** The row for a terminal session, only if it is listed under this folder. */
-const terminalRowIn = (page: Page, folder: string, sessionId: string): Locator =>
+const terminalRowIn = (
+	page: Page,
+	folder: string,
+	sessionId: string,
+): Locator =>
 	folderGroup(page, folder).locator(
 		`[data-folder-terminal-session="${sessionId}"]`,
 	);
@@ -361,12 +368,14 @@ test('selecting a linked folder shows its worktree in Files and Changes, General
 	expect(root).toBe(repo.root);
 
 	const changed = (name: string) =>
-		changesPane(mainWindow).locator('.git-panel__row').filter({ hasText: name });
+		changesPane(mainWindow)
+			.locator('.git-panel__row')
+			.filter({ hasText: name });
 
 	// General: the project root's files and the root checkout's changes.
-	await expect(filesPane(mainWindow).locator('.sidebar-pane__title')).toHaveText(
-		'Files',
-	);
+	await expect(
+		filesPane(mainWindow).locator('.sidebar-pane__title'),
+	).toHaveText('Files');
 	await expect(fileItem(mainWindow, 'only-in-main.txt')).toBeVisible();
 	await expect(fileItem(mainWindow, 'only-in-alpha.txt')).toHaveCount(0);
 	await expect(
@@ -382,9 +391,9 @@ test('selecting a linked folder shows its worktree in Files and Changes, General
 		'data-terminay-folder-kind',
 		'linked',
 	);
-	await expect(filesPane(mainWindow).locator('.sidebar-pane__title')).toHaveText(
-		'Files — alpha',
-	);
+	await expect(
+		filesPane(mainWindow).locator('.sidebar-pane__title'),
+	).toHaveText('Files — alpha');
 	await expect(fileItem(mainWindow, 'only-in-alpha.txt')).toBeVisible();
 	await expect(fileItem(mainWindow, 'only-in-main.txt')).toHaveCount(0);
 	await expect(
@@ -424,9 +433,9 @@ test('a terminal created while a linked folder is selected lands in that folder 
 	expect(sessionId).not.toBe(generalSession);
 	// It is in the linked folder and in no other.
 	await expect(folderTerminals(mainWindow, 'General')).toHaveCount(1);
-	await expect(terminalRowIn(mainWindow, 'General', generalSession)).toHaveCount(
-		1,
-	);
+	await expect(
+		terminalRowIn(mainWindow, 'General', generalSession),
+	).toHaveCount(1);
 	await expect(activeFolderWorkspace(mainWindow)).toHaveAttribute(
 		'data-terminay-folder-kind',
 		'linked',
@@ -697,8 +706,8 @@ test('folder context menus offer what each kind of folder can do, and Open shell
 		.poll(() =>
 			electronApp.evaluate(
 				() =>
-					(globalThis as { __terminayRevealed?: string[] })
-						.__terminayRevealed?.length ?? 0,
+					(globalThis as { __terminayRevealed?: string[] }).__terminayRevealed
+						?.length ?? 0,
 			),
 		)
 		.toBe(2);
@@ -729,9 +738,7 @@ test('deleting a plain folder that holds terminals asks once whether to move or 
 		await openFolderMenu(mainWindow, folder);
 		await contextMenuItem(mainWindow, 'Delete folder').click();
 		await expect(deleteDialog(mainWindow)).toBeVisible();
-		await expect(deleteDialog(mainWindow)).toContainText(
-			`Delete ${folder}?`,
-		);
+		await expect(deleteDialog(mainWindow)).toContainText(`Delete ${folder}?`);
 		await expect(deleteDialog(mainWindow)).toContainText(
 			'It still holds 2 panels',
 		);
@@ -857,9 +864,9 @@ test('deleting a worktree whose folder holds a terminal asks one question and no
 	expect(
 		(await dialogs.getCalls()).filter((call) => call.kind === 'confirm'),
 	).toHaveLength(0);
-	expect(
-		await git(repo.root, 'worktree', 'list', '--porcelain'),
-	).not.toContain(repo.worktree('alpha'));
+	expect(await git(repo.root, 'worktree', 'list', '--porcelain')).not.toContain(
+		repo.worktree('alpha'),
+	);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
@@ -882,7 +889,10 @@ test('closing a busy terminal while deleting its worktree is said once, in the d
 		'alpha',
 	);
 	// The terminal leaves the worktree and runs something that keeps it busy.
-	await run(mainWindow, `cd "${repo.root}"; printf 'busy-%s\\n' started; sleep 600`);
+	await run(
+		mainWindow,
+		`cd "${repo.root}"; printf 'busy-%s\\n' started; sleep 600`,
+	);
 	await expect(terminalOutput(mainWindow)).toContainText('busy-started');
 	await waitUntilBusy(electronApp, mainWindow);
 
@@ -905,17 +915,17 @@ test('closing a busy terminal while deleting its worktree is said once, in the d
 	expect(
 		(await dialogs.getCalls()).filter((call) => call.kind === 'confirm'),
 	).toHaveLength(0);
-	expect(
-		await git(repo.root, 'worktree', 'list', '--porcelain'),
-	).not.toContain(repo.worktree('alpha'));
+	expect(await git(repo.root, 'worktree', 'list', '--porcelain')).not.toContain(
+		repo.worktree('alpha'),
+	);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
-test('a worktree being deleted says Deleting… on its card until it is gone', async ({
+test('a worktree being deleted shows a trash icon in place of its branch icon until it is gone', async ({
 	appHarness,
 	createWorkspace,
 	mainWindow,
-}) => {
+}, testInfo) => {
 	const repo = await repository(createWorkspace, 'lf-deleting-card', [
 		'alpha',
 		'beta',
@@ -925,22 +935,31 @@ test('a worktree being deleted says Deleting… on its card until it is gone', a
 	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
 	await expect(folderRow(mainWindow, 'beta')).toBeVisible();
 	await expect(
-		foldersColumn(mainWindow).locator('.folders-tree__deleting'),
+		foldersColumn(mainWindow).locator('.folders-tree__activity'),
 	).toHaveCount(0);
+	const headerHeight = await folderRow(mainWindow, 'alpha').evaluate(
+		(row) => row.getBoundingClientRect().height,
+	);
 
 	// A small worktree is removed faster than a look at the card can be timed,
-	// so every card that says it is being deleted is written down as it does.
+	// so every card that shows it is being deleted is written down as it does.
 	await mainWindow.evaluate(() => {
 		const seen: string[] = [];
 		(window as unknown as { __deletingCards: string[] }).__deletingCards = seen;
 		const record = () => {
-			for (const line of document.querySelectorAll('.folders-tree__deleting')) {
-				const row = line.closest('.folders-tree__row--folder');
+			if (document.querySelector('.folders-tree__deleting') !== null)
+				seen.push('busy line');
+			for (const icon of document.querySelectorAll(
+				'.folders-tree__activity--deleting',
+			)) {
+				const row = icon.closest('.folders-tree__row--folder');
+				const title = icon.closest('.folders-tree__title');
 				const name = row?.querySelector('.folders-tree__name')?.textContent;
-				const card = line.closest('.folders-tree__folder');
+				const card = icon.closest('.folders-tree__folder');
 				const opacity = card === null ? '' : getComputedStyle(card).opacity;
+				const branchIcon = title?.querySelector('.folders-tree__icon') !== null;
 				seen.push(
-					`${name}|${line.textContent}|${row?.getAttribute('aria-busy')}|${opacity}`,
+					`${name}|${icon.getAttribute('title')}|${icon.textContent}|${row?.getAttribute('aria-busy')}|${opacity}|${branchIcon}|${row?.getBoundingClientRect().height}`,
 				);
 			}
 		};
@@ -956,9 +975,29 @@ test('a worktree being deleted says Deleting… on its card until it is gone', a
 	await contextMenuItem(mainWindow, 'Delete worktree').click();
 	await expect(deleteDialog(mainWindow)).toBeVisible();
 	await expect(deleteDialog(mainWindow).getByRole('radio')).toHaveCount(0);
+	// Git checks the worktree is clean before removing it; a monitor hook that
+	// takes a few seconds to answer holds the removal long enough to look at.
+	const slowMonitor = join(repo.root, '..', 'slow-fsmonitor.sh');
+	await writeFile(slowMonitor, '#!/bin/sh\nsleep 4\nexit 1\n', {
+		mode: 0o755,
+	});
+	await git(repo.root, 'config', 'extensions.worktreeConfig', 'true');
+	await git(
+		repo.worktree('alpha'),
+		'config',
+		'--worktree',
+		'core.fsmonitor',
+		slowMonitor,
+	);
 	await confirmDelete(mainWindow);
+	await expect(
+		folderRow(mainWindow, 'alpha').locator('.folders-tree__activity--deleting'),
+	).toBeVisible();
+	await foldersColumn(mainWindow).screenshot({
+		path: testInfo.outputPath('screenshots', '04-linked-deleting.png'),
+	});
 	await expect(folderRow(mainWindow, 'alpha')).toHaveCount(0, {
-		timeout: 10_000,
+		timeout: 20_000,
 	});
 	expect(
 		(await dialogs.getCalls()).filter((call) => call.kind === 'confirm'),
@@ -967,21 +1006,26 @@ test('a worktree being deleted says Deleting… on its card until it is gone', a
 	const seen = await mainWindow.evaluate(
 		() => (window as unknown as { __deletingCards: string[] }).__deletingCards,
 	);
-	// Only the worktree that was deleted said so, with its whole card dimmed,
-	// and nothing says so now.
-	expect(new Set(seen)).toEqual(new Set(['alpha|Deleting…|true|0.4']));
+	// Only the worktree that was deleted showed it, labelled, in place of its
+	// branch icon, with its whole card dimmed and its header no taller; no
+	// line was added beneath its label, and nothing shows it now.
+	expect(new Set(seen)).toEqual(
+		new Set([
+			`alpha|Deleting worktree…|Deleting worktree…|true|0.4|false|${headerHeight}`,
+		]),
+	);
 	await expect(folderGroup(mainWindow, 'beta')).toHaveCSS('opacity', '1');
 	await expect(
-		foldersColumn(mainWindow).locator('.folders-tree__deleting'),
+		foldersColumn(mainWindow).locator('.folders-tree__activity'),
 	).toHaveCount(0);
 	await expect(folderRow(mainWindow, 'beta')).toBeVisible();
-	expect(
-		await git(repo.root, 'worktree', 'list', '--porcelain'),
-	).not.toContain(repo.worktree('alpha'));
+	expect(await git(repo.root, 'worktree', 'list', '--porcelain')).not.toContain(
+		repo.worktree('alpha'),
+	);
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
-test('a folder being pulled says Pulling… on its card until the pull settles', async ({
+test('a folder being pulled shows a pull icon in place of its branch icon until the pull settles', async ({
 	createWorkspace,
 	mainWindow,
 }) => {
@@ -994,28 +1038,39 @@ test('a folder being pulled says Pulling… on its card until the pull settles',
 	await git(repo.root, 'init', '--bare', origin);
 	await git(repo.root, 'remote', 'add', 'origin', origin);
 	await git(repo.worktree('alpha'), 'push', '-u', 'origin', 'alpha');
+	// Unpushed work gives the card a facts line that must stay put.
+	await writeFile(join(repo.worktree('alpha'), 'notes.md'), 'draft\n', 'utf8');
 	await setProjectRoot(mainWindow, repo.root);
 	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
 	await expect(folderRow(mainWindow, 'beta')).toBeVisible();
 	await expect(
-		foldersColumn(mainWindow).locator('.folders-tree__pulling'),
+		folderRow(mainWindow, 'alpha').locator('.folders-tree__facts'),
+	).toBeVisible({ timeout: 10_000 });
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__activity'),
 	).toHaveCount(0);
+	const headerHeight = await folderRow(mainWindow, 'alpha').evaluate(
+		(row) => row.getBoundingClientRect().height,
+	);
 
 	// A local pull settles faster than a look at the card can be timed, so
-	// every card that says it is pulling is written down as it does.
+	// every card that shows it is pulling is written down as it does.
 	await mainWindow.evaluate(() => {
 		const seen: string[] = [];
 		(window as unknown as { __pullingCards: string[] }).__pullingCards = seen;
 		const record = () => {
-			for (const line of document.querySelectorAll('.folders-tree__pulling')) {
-				const row = line.closest('.folders-tree__row--folder');
+			if (document.querySelector('.folders-tree__pulling') !== null)
+				seen.push('busy line');
+			for (const icon of document.querySelectorAll(
+				'.folders-tree__activity--pulling',
+			)) {
+				const row = icon.closest('.folders-tree__row--folder');
 				const name = row?.querySelector('.folders-tree__name')?.textContent;
-				const spinner =
-					line.querySelector('.folders-tree__pulling-spinner') !== null;
-				const card = line.closest('.folders-tree__folder');
+				const card = icon.closest('.folders-tree__folder');
 				const opacity = card === null ? '' : getComputedStyle(card).opacity;
+				const facts = row?.querySelector('.folders-tree__facts') !== null;
 				seen.push(
-					`${name}|${line.textContent}|${spinner}|${row?.getAttribute('aria-busy')}|${opacity}`,
+					`${name}|${icon.getAttribute('title')}|${row?.getAttribute('aria-busy')}|${opacity}|${facts}|${row?.getBoundingClientRect().height}`,
 				);
 			}
 		};
@@ -1037,14 +1092,141 @@ test('a folder being pulled says Pulling… on its card until the pull settles',
 		)
 		.toBeGreaterThan(0);
 	await expect(
-		foldersColumn(mainWindow).locator('.folders-tree__pulling'),
+		foldersColumn(mainWindow).locator('.folders-tree__activity'),
 	).toHaveCount(0, { timeout: 10_000 });
 
 	const seen = await mainWindow.evaluate(
 		() => (window as unknown as { __pullingCards: string[] }).__pullingCards,
 	);
-	// Only the folder that was pulled said so, spinning, busy, and undimmed.
-	expect(new Set(seen)).toEqual(new Set(['alpha|Pulling…|true|true|1']));
+	// Only the folder that was pulled showed it: labelled, busy, undimmed,
+	// with its facts line kept and its header no taller.
+	expect(new Set(seen)).toEqual(
+		new Set([`alpha|Pulling from origin…|true|1|true|${headerHeight}`]),
+	);
+	await expect(
+		folderRow(mainWindow, 'alpha').locator('.folders-tree__icon'),
+	).toBeVisible();
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+});
+
+test('pulling General moves nothing in the tree, and its icon is still under reduced motion', async ({
+	createWorkspace,
+	mainWindow,
+}, testInfo) => {
+	const repo = await repository(createWorkspace, 'lf-pulling-general', [
+		'alpha',
+	]);
+	// An origin that answers only after a few seconds, so the pull is held
+	// long enough to look at and photograph: an "ssh" transport whose command
+	// waits, then runs the requested Git service on the local bare repository.
+	const origin = join(repo.root, '..', 'origin.git');
+	await git(repo.root, 'init', '--bare', origin);
+	await git(repo.root, 'remote', 'add', 'origin', origin);
+	await git(repo.root, 'push', '-u', 'origin', 'main');
+	await git(repo.worktree('alpha'), 'push', '-u', 'origin', 'alpha');
+	const slowSsh = join(repo.root, '..', 'slow-ssh.sh');
+	await writeFile(
+		slowSsh,
+		'#!/bin/sh\nfor last; do :; done\nsleep 8\nexec sh -c "$last"\n',
+		{ mode: 0o755 },
+	);
+	await git(repo.root, 'config', 'core.sshCommand', slowSsh);
+	await git(repo.root, 'config', 'ssh.variant', 'simple');
+	await git(
+		repo.root,
+		'remote',
+		'set-url',
+		'origin',
+		`ssh://localhost${origin}`,
+	);
+	await setProjectRoot(mainWindow, repo.root);
+	await expect(folderRow(mainWindow, 'alpha')).toBeVisible({ timeout: 10_000 });
+	await expect(
+		folderRow(mainWindow, 'General').locator('.folders-tree__branch'),
+	).toBeVisible({ timeout: 10_000 });
+
+	const place = () =>
+		mainWindow.evaluate(() => {
+			const rows = [
+				...document.querySelectorAll(
+					'.project-workspace--active .folders-tree__row--folder',
+				),
+			];
+			return rows.map((row) => {
+				const box = row.getBoundingClientRect();
+				return `${row.querySelector('.folders-tree__name')?.textContent}@${box.top}+${box.height}`;
+			});
+		});
+	const before = await place();
+	const shot = async (name: string) =>
+		await foldersColumn(mainWindow).screenshot({
+			path: testInfo.outputPath('screenshots', `${name}.png`),
+		});
+	await shot('01-general-idle');
+
+	await openFolderMenu(mainWindow, 'General');
+	await contextMenuItem(mainWindow, 'Pull from origin').click();
+	const icon = folderRow(mainWindow, 'General').locator(
+		'.folders-tree__activity--pulling',
+	);
+	await expect(icon).toBeVisible();
+	await expect(icon).toHaveAttribute('title', 'Pulling from origin…');
+	await expect(icon).toHaveAttribute('role', 'status');
+	await expect(folderRow(mainWindow, 'General')).toHaveAttribute(
+		'aria-busy',
+		'true',
+	);
+	// The folder icon has given way to it, and no line has been added.
+	await expect(
+		folderRow(mainWindow, 'General').locator('.folders-tree__icon'),
+	).toHaveCount(0);
+	expect(await place()).toEqual(before);
+	// It moves, unless the device asks it not to.
+	const animation = () =>
+		icon
+			.locator('.folders-tree__activity-icon')
+			.evaluate((svg) => getComputedStyle(svg).animationName);
+	expect(await animation()).toBe('folders-tree-activity-pull');
+	await shot('02-general-pulling');
+	await mainWindow.emulateMedia({ reducedMotion: 'reduce' });
+	expect(await animation()).toBe('none');
+	await mainWindow.emulateMedia({ reducedMotion: 'no-preference' });
+
+	await expect(icon).toHaveCount(0, { timeout: 20_000 });
+	await expect(
+		folderRow(mainWindow, 'General').locator('.folders-tree__icon'),
+	).toBeVisible();
+	expect(await place()).toEqual(before);
+	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
+
+	// A linked folder being pulled, photographed beside General at rest.
+	await openFolderMenu(mainWindow, 'alpha');
+	await contextMenuItem(mainWindow, 'Pull from origin').click();
+	const alphaIcon = folderRow(mainWindow, 'alpha').locator(
+		'.folders-tree__activity--pulling',
+	);
+	await expect(alphaIcon).toBeVisible();
+	await shot('03-linked-pulling');
+
+	// The activity icon says what it is itself: moving onto it closes the
+	// details tooltip that resting on the label opened, and cancels one that
+	// was still pending.
+	const alphaLabel = folderRow(mainWindow, 'alpha').locator(
+		'.folders-tree__text > .folders-tree__name',
+	);
+	await alphaLabel.hover();
+	await expect(detailsTooltip(mainWindow)).toBeVisible({ timeout: 3_000 });
+	await alphaIcon.hover();
+	await expect(detailsTooltip(mainWindow)).toHaveCount(0);
+	await alphaLabel.hover();
+	await mainWindow.waitForTimeout(300);
+	await alphaIcon.hover();
+	await mainWindow.waitForTimeout(1_500);
+	await expect(detailsTooltip(mainWindow)).toHaveCount(0);
+	await expect(alphaIcon).toHaveAttribute('title', 'Pulling from origin…');
+	await expect(
+		foldersColumn(mainWindow).locator('.folders-tree__activity'),
+	).toHaveCount(0, { timeout: 20_000 });
 	await expect(mainWindow.locator('.error-banner')).toHaveCount(0);
 });
 
@@ -1124,9 +1306,7 @@ test('a terminal that runs git worktree add is moved into the new folder with no
 	await expect(offered.locator('.folders-tree__offer')).toContainText(
 		'created this worktree',
 	);
-	await expect(
-		offered.getByRole('button', { name: 'Not now' }),
-	).toBeVisible();
+	await expect(offered.getByRole('button', { name: 'Not now' })).toBeVisible();
 	// Nothing moved: the terminal is in General, tagged with what it created.
 	await expect(terminalRowIn(mainWindow, 'General', sessionId)).toHaveCount(1);
 	await expect(folderTerminals(mainWindow, 'cap-two')).toHaveCount(0);
@@ -1172,9 +1352,9 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 	await expect(folderTerminals(mainWindow, 'feat/outside')).toHaveCount(0);
 	await expect(newTerminalRow(mainWindow, 'feat/outside')).toBeVisible();
 	// No terminal moved, nothing is offered, and nothing is announced.
-	await expect(terminalRowIn(mainWindow, 'General', generalSession)).toHaveCount(
-		1,
-	);
+	await expect(
+		terminalRowIn(mainWindow, 'General', generalSession),
+	).toHaveCount(1);
 	await expect(folderRow(mainWindow, 'General')).toHaveClass(
 		/folders-tree__row--selected/,
 	);
@@ -1193,13 +1373,19 @@ test('a worktree added outside the app gets an empty folder, and removing it out
 	// The server made this terminal after it had taken in the new worktree:
 	// had it moved General's terminal there, the folder would hold two.
 	await expect(folderTerminals(mainWindow, 'feat/outside')).toHaveCount(1);
-	await expect(terminalRowIn(mainWindow, 'General', generalSession)).toHaveCount(
-		1,
-	);
+	await expect(
+		terminalRowIn(mainWindow, 'General', generalSession),
+	).toHaveCount(1);
 	await run(mainWindow, "cd / && printf 'before-%s\\n' removal");
 	await expect(terminalOutput(mainWindow)).toContainText('before-removal');
 
-	await git(repo.root, 'worktree', 'remove', '--force', repo.worktree('outside'));
+	await git(
+		repo.root,
+		'worktree',
+		'remove',
+		'--force',
+		repo.worktree('outside'),
+	);
 
 	await expect(folderRow(mainWindow, 'feat/outside')).toHaveCount(0, {
 		timeout: 15_000,
@@ -1315,7 +1501,10 @@ test('tab peek shows an inactive project and jumps to a terminal in it, and neve
 		x: workspaceBox.x + workspaceBox.width / 2,
 		y: workspaceBox.y + workspaceBox.height / 2,
 	};
-	const tabMiddle = { x: tabBox.x + tabBox.width / 2, y: tabBox.y + tabBox.height / 2 };
+	const tabMiddle = {
+		x: tabBox.x + tabBox.width / 2,
+		y: tabBox.y + tabBox.height / 2,
+	};
 
 	// How long a rest is, is the renderer's time, and the test holds it.
 	await holdRendererClock(mainWindow);
@@ -1397,9 +1586,13 @@ test('tab peek shows an inactive project and jumps to a terminal in it, and neve
 	await expect(peek).toBeVisible();
 	await mainWindow.mouse.down();
 	await expect(peek).toHaveCount(0);
-	await mainWindow.mouse.move(firstBox.x + 8, firstBox.y + firstBox.height / 2, {
-		steps: 10,
-	});
+	await mainWindow.mouse.move(
+		firstBox.x + 8,
+		firstBox.y + firstBox.height / 2,
+		{
+			steps: 10,
+		},
+	);
 	await expect(peek).toHaveCount(0);
 	await mainWindow.mouse.up();
 	await expect(
@@ -1438,7 +1631,9 @@ test('at phone width there is no Folders column and the switcher lists the folde
 	await nativeWindow.evaluate((window) => {
 		window.setBounds({ x: 40, y: 40, width: 390, height: 740 });
 	});
-	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
+	await expect(
+		mainWindow.locator('[data-compact-chrome="true"]'),
+	).toBeVisible();
 	// The tree is not a column at this width.
 	await expect(foldersColumn(mainWindow)).toBeHidden();
 	await expect(
@@ -1469,9 +1664,9 @@ test('at phone width there is no Folders column and the switcher lists the folde
 	).toHaveCount(1);
 	const alphaRow = groupOf('alpha').locator('[data-compact-switcher-terminal]');
 	await expect(alphaRow).toHaveCount(1);
-	await expect(switcher.locator('[data-compact-switcher-terminal]')).toHaveCount(
-		2,
-	);
+	await expect(
+		switcher.locator('[data-compact-switcher-terminal]'),
+	).toHaveCount(2);
 	expect(await activeTerminalSessionId(mainWindow)).toBe(generalSession);
 
 	// A terminal in a folder that is not on screen is reachable from here.
@@ -1535,11 +1730,16 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 		await expect(
 			switcher.locator('[data-compact-dropup-open-in="true"]'),
 		).toHaveAccessibleName('Open in alpha');
-		await dropup.getByRole('menuitem', { name: /Terminal/ }).first().click();
+		await dropup
+			.getByRole('menuitem', { name: /Terminal/ })
+			.first()
+			.click();
 	};
 
 	await phone();
-	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
+	await expect(
+		mainWindow.locator('[data-compact-chrome="true"]'),
+	).toBeVisible();
 	await openSwitcher();
 	// General is in front, and the create control says so.
 	await expect(create).toHaveAccessibleName(/ in General of /);
@@ -1565,7 +1765,9 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 	const alphaSession = await activeTerminalSessionId(mainWindow);
 
 	await openSwitcher();
-	const alphaRows = groupOf('alpha').locator('[data-compact-switcher-terminal]');
+	const alphaRows = groupOf('alpha').locator(
+		'[data-compact-switcher-terminal]',
+	);
 	await expect(alphaRows).toHaveCount(1);
 	await expect(alphaRows).toHaveAttribute('aria-current', 'true');
 	await expect(
@@ -1584,7 +1786,9 @@ test('at phone width a folder label creates a terminal in that folder, from the 
 	await expect(mainWindow.locator('[data-pending-project-id]')).toHaveCount(0);
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	await phone();
-	await expect(mainWindow.locator('[data-compact-chrome="true"]')).toBeVisible();
+	await expect(
+		mainWindow.locator('[data-compact-chrome="true"]'),
+	).toBeVisible();
 	await openSwitcher();
 	await presentFirstProject();
 	await createInAlpha();
@@ -2229,7 +2433,8 @@ test('every folder is reordered by dragging its title or with Alt and the arrow 
 			};
 		},
 	);
-	if (held === undefined) throw new Error('The card was never read in the hand.');
+	if (held === undefined)
+		throw new Error('The card was never read in the hand.');
 	expect(Math.abs(held.dx)).toBeLessThan(1.5);
 	expect(held.pointerDy).toBeGreaterThan(20);
 	// The card follows from where the press became a carry, a few pixels in.
@@ -2387,8 +2592,13 @@ test('a short card is carried past a tall one in both directions', async ({
 test('cards slide to their new places, and take them at once where the device asks for reduced motion', async ({
 	mainWindow,
 }) => {
-	for (const name of ['alpha', 'beta']) await createPlainFolder(mainWindow, name);
-	await expect(folderNames(mainWindow)).toHaveText(['General', 'alpha', 'beta']);
+	for (const name of ['alpha', 'beta'])
+		await createPlainFolder(mainWindow, name);
+	await expect(folderNames(mainWindow)).toHaveText([
+		'General',
+		'alpha',
+		'beta',
+	]);
 	const grip = (folder: string) => folderRow(mainWindow, folder);
 	/**
 	 * Move a folder one place from the keyboard and read where the card it
@@ -2416,11 +2626,12 @@ test('cards slide to their new places, and take them at once where the device as
 				attributes: true,
 				attributeFilter: ['style'],
 			});
-			(element as HTMLElement & { stopSlideWatch?: () => number }).stopSlideWatch =
-				() => {
-					observer.disconnect();
-					return peak;
-				};
+			(
+				element as HTMLElement & { stopSlideWatch?: () => number }
+			).stopSlideWatch = () => {
+				observer.disconnect();
+				return peak;
+			};
 		});
 		// A reloaded terminal can take focus back as it reattaches and swallow
 		// the key. Press again only while the order is unchanged, since a second
@@ -2431,7 +2642,9 @@ test('cards slide to their new places, and take them at once where the device as
 				await grip(folder).focus();
 				await mainWindow.keyboard.press(key);
 			}
-			await expect(folderNames(mainWindow)).toHaveText(order, { timeout: 1_000 });
+			await expect(folderNames(mainWindow)).toHaveText(order, {
+				timeout: 1_000,
+			});
 		}).toPass({ timeout: 10_000 });
 		const early = await card.evaluate(
 			(element) =>
@@ -2446,14 +2659,17 @@ test('cards slide to their new places, and take them at once where the device as
 		// Over once the card is drawn where it is laid out, with no transform
 		// of its own left.
 		await expect
-			.poll(() => card.evaluate((element) => getComputedStyle(element).transform))
+			.poll(() =>
+				card.evaluate((element) => getComputedStyle(element).transform),
+			)
 			.toBe('none');
 		const settled = await card.evaluate(
 			(element) => element.getBoundingClientRect().top,
 		);
-		const peak = await card.evaluate(
-			(element) =>
-				(element as HTMLElement & { stopSlideWatch: () => number }).stopSlideWatch(),
+		const peak = await card.evaluate((element) =>
+			(
+				element as HTMLElement & { stopSlideWatch: () => number }
+			).stopSlideWatch(),
 		);
 		return { early, settled, peak };
 	};
@@ -2568,7 +2784,9 @@ test('a worktree is named by its branch on one line, by its directory when detac
 	const alpha = folderRow(mainWindow, 'alpha');
 	await expect(alpha.locator('.folders-tree__branch')).toHaveCount(0);
 	await expect(alpha).not.toContainText('alpha-tree');
-	await expect(alpha.locator('.folders-tree__title svg.lucide-git-branch')).toHaveCount(1);
+	await expect(
+		alpha.locator('.folders-tree__title svg.lucide-git-branch'),
+	).toHaveCount(1);
 	await expect(alpha.locator('svg.lucide-folder')).toHaveCount(0);
 	const general = folderRow(mainWindow, 'General');
 	await expect(general.locator('svg.lucide-folder')).toHaveCount(1);
@@ -2622,14 +2840,12 @@ test('a worktree is named by its branch on one line, by its directory when detac
 		await realpath(deep),
 	]);
 	// Three lines, one beneath another, inside the window.
-	const lines = await tooltip
-		.locator('dd')
-		.evaluateAll((values) =>
-			values.map((value) => {
-				const box = value.getBoundingClientRect();
-				return { top: Math.round(box.top), height: Math.round(box.height) };
-			}),
-		);
+	const lines = await tooltip.locator('dd').evaluateAll((values) =>
+		values.map((value) => {
+			const box = value.getBoundingClientRect();
+			return { top: Math.round(box.top), height: Math.round(box.height) };
+		}),
+	);
 	expect(new Set(lines.map((line) => line.top)).size).toBe(3);
 	expect(new Set(lines.map((line) => line.height)).size).toBe(1);
 	const fits = await tooltip.evaluate((element) => {
@@ -2657,10 +2873,16 @@ test('a worktree is named by its branch on one line, by its directory when detac
 				endShown: inner.right <= outer.right + 1,
 			};
 		});
-	expect(location).toEqual({ overflows: true, startHidden: true, endShown: true });
+	expect(location).toEqual({
+		overflows: true,
+		startHidden: true,
+		endShown: true,
+	});
 	// It is never between the pointer and a control.
 	expect(
-		await tooltip.evaluate((element) => getComputedStyle(element).pointerEvents),
+		await tooltip.evaluate(
+			(element) => getComputedStyle(element).pointerEvents,
+		),
 	).toBe('none');
 	await away();
 
@@ -2813,9 +3035,7 @@ test('the tree lists every tab of a folder: terminals, files and folder tabs, in
 		folderGroup(mainWindow, folder).locator('.folders-tree__row--panel');
 	const kinds = (folder: string) =>
 		rows(folder).evaluateAll((elements) =>
-			elements.map((element) =>
-				element.getAttribute('data-folder-panel-kind'),
-			),
+			elements.map((element) => element.getAttribute('data-folder-panel-kind')),
 		);
 	const tabs = mainWindow.locator(
 		'.project-workspace--active .terminal-tab-content',
@@ -3010,9 +3230,7 @@ async function watchFactsGaps(
 	name: string,
 	facts: readonly string[],
 ): Promise<void> {
-	const folderId = await folderGroup(page, name).getAttribute(
-		'data-folder-id',
-	);
+	const folderId = await folderGroup(page, name).getAttribute('data-folder-id');
 	if (folderId === null) throw new Error(`${name} has no folder id.`);
 	await page.evaluate(
 		({ id, label, expected }) => {
@@ -3086,7 +3304,11 @@ test('a worktree card keeps its facts on screen while another folder is created 
 		'beta',
 	]);
 	// alpha holds work that main does not, so its card has a facts line.
-	await writeFile(join(repo.worktree('alpha'), 'work.txt'), 'one\ntwo\n', 'utf8');
+	await writeFile(
+		join(repo.worktree('alpha'), 'work.txt'),
+		'one\ntwo\n',
+		'utf8',
+	);
 	await git(repo.worktree('alpha'), 'add', '.');
 	await git(repo.worktree('alpha'), 'commit', '-m', 'work');
 	await setProjectRoot(mainWindow, repo.root);

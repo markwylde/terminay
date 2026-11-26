@@ -8,15 +8,45 @@ const OPEN_VOID_TAG = new RegExp(
 	'giu',
 );
 const HAS_VOID_TAG = new RegExp(`<(?:${VOID_ELEMENTS})\\b`, 'iu');
+// CommonMark autolinks: `<scheme:anything-but-space-or-angle>` and `<user@host>`.
+const URI_AUTOLINK = /<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>/gu;
+const EMAIL_AUTOLINK =
+	/<([A-Za-z0-9.!#$%&'*+/=?^_{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>/gu;
+const HAS_AUTOLINK =
+	/<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>]+)>/u;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/u;
 
+const escapeLinkText = (text: string) => text.replace(/[\\[\]*_`]/gu, '\\$&');
+
+const toInlineLink = (text: string, url: string) =>
+	`[${escapeLinkText(text)}](<${url}>)`;
+
+function rewriteProse(part: string): string {
+	return part
+		.replace(
+			OPEN_VOID_TAG,
+			(_, name: string, attributes = '') =>
+				`<${name}${attributes.trimEnd()} />`,
+		)
+		.replace(URI_AUTOLINK, (_, url: string) => toInlineLink(url, url))
+		.replace(EMAIL_AUTOLINK, (_, email: string) =>
+			toInlineLink(email, `mailto:${email}`),
+		);
+}
+
 /**
- * The editor parses Markdown as MDX, where an HTML void element such as
- * `<img src="a.svg">` is an unclosed JSX tag and fails the whole document.
- * Self-close those tags outside code so plain GitHub-style Markdown opens.
+ * The editor parses Markdown as MDX, where some plain GitHub-style Markdown is
+ * invalid JSX and fails the whole document. Outside code:
+ *
+ * - an HTML void element such as `<img src="a.svg">` is an unclosed JSX tag,
+ *   so self-close it;
+ * - an autolink such as `<http://localhost:8080>` or `<me@example.com>` is an
+ *   invalid JSX tag name, so rewrite it as the equivalent inline link. The
+ *   serializer writes a link whose text is its URL back as an autolink.
  */
-export function selfCloseVoidHtmlElements(markdown: string): string {
-	if (!HAS_VOID_TAG.test(markdown)) return markdown;
+export function prepareMarkdownForMdx(markdown: string): string {
+	if (!HAS_VOID_TAG.test(markdown) && !HAS_AUTOLINK.test(markdown))
+		return markdown;
 	let fence: string | undefined;
 	return markdown
 		.split('\n')
@@ -38,15 +68,7 @@ export function selfCloseVoidHtmlElements(markdown: string): string {
 			}
 			return line
 				.split(/(`+[^`]*`+)/u)
-				.map((part, index) =>
-					index % 2 === 1
-						? part
-						: part.replace(
-								OPEN_VOID_TAG,
-								(_, name: string, attributes = '') =>
-									`<${name}${attributes.trimEnd()} />`,
-							),
-				)
+				.map((part, index) => (index % 2 === 1 ? part : rewriteProse(part)))
 				.join('');
 		})
 		.join('\n');

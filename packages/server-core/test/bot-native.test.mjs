@@ -123,6 +123,11 @@ test('the same words in a reply or inside another stderr line do not fail a turn
 	f.process.emit('close', 0);
 	await turn;
 });
+const backgroundTasks = (...ids) => ({
+	type: 'system',
+	subtype: 'background_tasks_changed',
+	tasks: ids.map((task_id) => ({ task_id })),
+});
 test('a turn survives a long quiet wait after its first result', async (t) => {
 	t.mock.timers.enable({ apis: ['setTimeout'] });
 	const f = fixture('autonomous');
@@ -132,14 +137,161 @@ test('a turn survives a long quiet wait after its first result', async (t) => {
 		() => (settled = true),
 		() => (settled = true),
 	);
+	f.receive(backgroundTasks('monitor'));
 	f.receive(success);
 	t.mock.timers.tick(6 * 60 * 60_000);
 	await Promise.resolve();
 	assert.equal(settled, false);
+	f.receive(backgroundTasks());
 	f.receive({ ...success, result: 'monitor finished' });
 	f.process.emit('close', 0);
 	await turn;
 });
+test('Autonomous approvals survive multiple background results through final exit', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive(backgroundTasks('batch', 'monitor'));
+	f.receive(success);
+	f.receive(backgroundTasks('monitor'));
+	f.receive(success);
+	f.receive(backgroundTasks());
+	assert.equal(f.process.stdin.writableEnded, false);
+	f.receive(request);
+	assert.equal(f.sent.at(-1).response.response.behavior, 'allow');
+
+	f.receive(backgroundTasks('new-job'));
+	f.receive(success);
+	f.receive(backgroundTasks());
+	f.receive({
+		...request,
+		request_id: 'report',
+		request: {
+			...request.request,
+			tool_name: 'mcp__terminay_bot__outcome_report',
+		},
+	});
+	assert.equal(f.sent.at(-1).response.request_id, 'report');
+	assert.equal(f.sent.at(-1).response.response.behavior, 'allow');
+	f.receive(success);
+	assert.equal(f.process.stdin.writableEnded, true);
+	f.process.emit('close', 0);
+	await turn;
+});
+test('Claude drains each queued wake-up before closing the approval stream', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive({ type: 'system', subtype: 'init' });
+	f.receive(backgroundTasks('batch', 'monitor'));
+	for (const status of ['completed', 'failed']) {
+		f.receive({ type: 'system', subtype: 'task_notification', status });
+	}
+	f.receive(backgroundTasks());
+	f.receive(success);
+	f.receive({ type: 'system', subtype: 'init' });
+	f.receive(success);
+	assert.equal(f.process.stdin.writableEnded, false);
+	f.receive({ type: 'system', subtype: 'init' });
+	f.receive(request);
+	assert.equal(f.sent.at(-1).response.response.behavior, 'allow');
+	f.receive(success);
+	assert.equal(f.process.stdin.writableEnded, true);
+	f.process.emit('close', 0);
+	await turn;
+});
+test('a task stopped by Claude does not reserve a wake-up', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive(backgroundTasks('batch'));
+	f.receive({ type: 'system', subtype: 'task_notification', status: 'stopped' });
+	f.receive(backgroundTasks());
+	f.receive(success);
+	assert.equal(f.process.stdin.writableEnded, true);
+	f.process.emit('close', 0);
+	await turn;
+});
+test('an interim result alone cannot complete an execution', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive(backgroundTasks('monitor'));
+	f.receive(success);
+	f.receive(backgroundTasks());
+	f.process.emit('close', 0);
+	await assert.rejects(turn);
+});
+test('Stop can interrupt Claude while background work is still active', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive(backgroundTasks('monitor'));
+	f.receive(success);
+	const cancelled = f.client.cancel();
+	cancelled.catch(() => {});
+	assert.equal(f.sent.at(-1).request.subtype, 'interrupt');
+	f.process.emit('close', 0);
+	await assert.rejects(cancelled);
+	await assert.rejects(turn);
+});
+test('Ask me answers a wake-up request and Stop denies another pending request', async () => {
+	const f = fixture();
+	const { turn } = await start(f);
+	f.receive(backgroundTasks('monitor'));
+	f.receive(success);
+	f.receive(backgroundTasks());
+	f.receive(request);
+	f.client.answer(f.client.permissions[0].id, 'allow');
+	assert.equal(f.sent.at(-1).response.response.behavior, 'allow');
+	f.receive({ ...request, request_id: 'pending' });
+	const cancelled = f.client.cancel();
+	cancelled.catch(() => {});
+	assert.equal(f.sent.at(-2).response.response.behavior, 'deny');
+	assert.equal(f.sent.at(-1).request.subtype, 'interrupt');
+	assert.deepEqual(f.client.permissions, []);
+	f.process.emit('close', 0);
+	await assert.rejects(cancelled);
+	await assert.rejects(turn);
+});
+test('ordinary Claude completion closes input without a background snapshot', async () => {
+	const f = fixture('autonomous');
+	const { turn } = await start(f);
+	f.receive({ ...backgroundTasks(), tasks: null });
+	f.receive(success);
+	assert.equal(f.process.stdin.writableEnded, true);
+	f.process.emit('close', 0);
+	await turn;
+});
+const closedApprovalStream =
+	'Tool permission request failed: AbortError: Stream closed';
+for (const fromProvider of [true, false]) {
+	test(`approval stream closure from ${fromProvider ? 'Claude fails' : 'tool output preserves'} the execution`, async () => {
+		const f = fixture('autonomous');
+		const { turn } = await start(f);
+		const updates = [];
+		f.client.on('update', (update) => updates.push(update));
+		f.receive({
+			type: 'user',
+			tool_result_meta: [
+				{
+					id: fromProvider ? 'report' : 'different-tool',
+					non_execution_kind: 'permission-rule',
+				},
+			],
+			message: {
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'report',
+						is_error: true,
+						content: closedApprovalStream,
+					},
+				],
+			},
+		});
+		assert.equal(updates.at(-1).rawOutput, closedApprovalStream);
+		f.receive(success);
+		f.process.emit('close', 0);
+		if (fromProvider) await assert.rejects(turn, /lost its approval channel/);
+		else await turn;
+	});
+}
 test('native success waits for zero exit and valid terminal event', async () => {
 	for (const [terminal, code] of [
 		[false, 0],
