@@ -341,57 +341,73 @@
 
 /* Change size, pull request, and checks: one line of chips that never wraps
    and never shrinks a chip. Where the tree is narrow the chips say less. */
-/* A worktree being removed: its whole card is dimmed, terminals and all, and
-   says so beneath its label until it is gone. */
+/* A worktree being removed: its whole card is dimmed, terminals and all. */
 .folders-tree__folder--deleting {
 	opacity: 0.4;
 }
 
-.folders-tree__deleting {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 11px;
-	font-style: italic;
-	color: rgba(220, 226, 240, 0.72);
-}
-
-/* A worktree being pulled from origin: a turning spinner and a word in place
-   of its facts. The card stays bright; the folder is not going anywhere. */
-.folders-tree__pulling {
-	display: flex;
-	align-items: center;
-	gap: 5px;
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-	font-size: 11px;
-	font-style: italic;
-	color: rgba(220, 226, 240, 0.72);
-}
-
-.folders-tree__pulling > span {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.folders-tree__pulling-spinner {
+/* What git is doing to a folder's worktree, drawn in the folder or branch
+   icon's own slot so the card never gains or loses a line. */
+.folders-tree__activity {
+	position: relative;
+	display: inline-flex;
 	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 15px;
+	height: 15px;
+	overflow: hidden;
 	color: color-mix(in srgb, var(--project-color, #57b7ff) 70%, #ffffff);
-	animation: folders-tree-pulling-spin 900ms linear infinite;
 }
 
-@keyframes folders-tree-pulling-spin {
-	to {
-		transform: rotate(360deg);
+.folders-tree__activity-text {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+}
+
+.folders-tree__activity--pulling .folders-tree__activity-icon {
+	animation: folders-tree-activity-pull 1100ms ease-in-out infinite;
+}
+
+.folders-tree__activity--deleting .folders-tree__activity-icon {
+	animation: folders-tree-activity-delete 1000ms ease-in-out infinite;
+}
+
+/* The arrow drops into the line and comes back from above. */
+@keyframes folders-tree-activity-pull {
+	0% {
+		transform: translateY(-3px);
+		opacity: 0.35;
+	}
+	55% {
+		transform: translateY(0);
+		opacity: 1;
+	}
+	100% {
+		transform: translateY(1px);
+		opacity: 0.35;
+	}
+}
+
+@keyframes folders-tree-activity-delete {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.45;
+		transform: scale(0.88);
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.folders-tree__pulling-spinner {
-		animation: none;
+	.folders-tree__activity-icon {
+		animation: none !important;
 	}
 }
 
@@ -798,9 +814,7 @@
 	color: #e2a45f;
 }
 
-.folders-tree--tree .folders-tree__facts,
-.folders-tree--tree .folders-tree__deleting,
-.folders-tree--tree .folders-tree__pulling {
+.folders-tree--tree .folders-tree__facts {
 	margin-top: 2px;
 }
 
@@ -981,7 +995,9 @@
 }
 
 /* Outranks the modal's blue submit button, whichever stylesheet loads last. */
-.folder-delete-dialog .project-edit-actions button.folder-delete-dialog__delete {
+.folder-delete-dialog
+	.project-edit-actions
+	button.folder-delete-dialog__delete {
 	background: #b3261e;
 	border-color: rgba(255, 255, 255, 0.1);
 	color: #fff;

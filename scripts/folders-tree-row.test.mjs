@@ -31,7 +31,7 @@ async function bundleModule(entryPoint, outputName) {
 	return require(outputPath);
 }
 
-const { FoldersTree } = await bundleModule(
+const { FoldersTree, FOLDER_TITLE_OWN_TOOLTIP } = await bundleModule(
 	'src/components/folders/FoldersTree.tsx',
 	'folders-tree.cjs',
 );
@@ -57,7 +57,10 @@ const presentation = await bundleModule(
 	'worktree-property-presentation.cjs',
 );
 
-const treeCssText = await readFile('src/components/folders/foldersTree.css', 'utf8');
+const treeCssText = await readFile(
+	'src/components/folders/foldersTree.css',
+	'utf8',
+);
 const treeCss = () => treeCssText;
 
 test.after(async () => {
@@ -179,20 +182,29 @@ const terminalRow = (extra = {}) => ({
 });
 
 test('the chips say the pull request with its state unless open, and the checks as a count and a word', () => {
-	assert.deepEqual(presentation.pullRequestChip({ number: 350, state: 'open' }), {
-		prefix: 'PR',
-		number: '#350',
-	});
-	assert.deepEqual(presentation.pullRequestChip({ number: 351, state: 'draft' }), {
-		prefix: 'PR',
-		number: '#351',
-		state: 'draft',
-	});
+	assert.deepEqual(
+		presentation.pullRequestChip({ number: 350, state: 'open' }),
+		{
+			prefix: 'PR',
+			number: '#350',
+		},
+	);
+	assert.deepEqual(
+		presentation.pullRequestChip({ number: 351, state: 'draft' }),
+		{
+			prefix: 'PR',
+			number: '#351',
+			state: 'draft',
+		},
+	);
 	assert.equal(
 		presentation.pullRequestChip({ number: 352, state: 'merged' }).state,
 		'merged',
 	);
-	assert.deepEqual(presentation.checksChip(checks), { count: 2, word: 'failed' });
+	assert.deepEqual(presentation.checksChip(checks), {
+		count: 2,
+		word: 'failed',
+	});
 	assert.deepEqual(presentation.checksChip({ ...checks, failed: 0 }), {
 		count: 2,
 		word: 'running',
@@ -279,7 +291,9 @@ test('a linked folder card has one line naming its branch, then its facts line, 
 		],
 		{ onOpenLink: () => {}, onFolderMenu: () => {} },
 	);
-	const title = markup.indexOf('class="folders-tree__title folders-tree__title--dirty"');
+	const title = markup.indexOf(
+		'class="folders-tree__title folders-tree__title--dirty"',
+	);
 	const facts = markup.indexOf('class="folders-tree__facts"');
 	assert.ok(title !== -1 && title < facts, markup);
 	// The branch is said once, on the title line, under the branch icon: there
@@ -295,7 +309,10 @@ test('a linked folder card has one line naming its branch, then its facts line, 
 
 	const root = render([general()]);
 	assert.match(root, /lucide-folder/);
-	assert.match(root, /<span class="folders-tree__name" title="General">General<\/span>/);
+	assert.match(
+		root,
+		/<span class="folders-tree__name" title="General">General<\/span>/,
+	);
 	assert.match(root, /class="folders-tree__branch"/);
 	assert.match(
 		markup,
@@ -307,7 +324,10 @@ test('a linked folder card has one line naming its branch, then its facts line, 
 	);
 	assert.match(markup, /folders-tree__delta--additions">\+1\.2k</);
 	assert.match(markup, /folders-tree__delta--deletions">−7</);
-	assert.match(markup, /class="folders-tree__row folders-tree__row--folder"[^>]*data-change="delta"/);
+	assert.match(
+		markup,
+		/class="folders-tree__row folders-tree__row--folder"[^>]*data-change="delta"/,
+	);
 	// One facts line, and the checks are not listed until they are opened.
 	assert.equal(markup.match(/class="folders-tree__facts"/g)?.length, 1);
 	assert.equal(markup.match(/folders-tree__checks-list/g), null);
@@ -315,7 +335,9 @@ test('a linked folder card has one line naming its branch, then its facts line, 
 });
 
 test('a branch takes the accent only when its checkout is dirty, and a dirty linked folder with no pull request says so', () => {
-	const dirty = render([linked({ isDirty: true, change: { kind: 'changed' } })]);
+	const dirty = render([
+		linked({ isDirty: true, change: { kind: 'changed' } }),
+	]);
 	assert.match(dirty, /folders-tree__title folders-tree__title--dirty"/);
 	assert.match(dirty, /folders-tree__change--changed">changed</);
 	assert.match(dirty, /folders-tree__chip--quiet">no PR</);
@@ -342,14 +364,25 @@ test('a branch takes the accent only when its checkout is dirty, and a dirty lin
 
 	// General is measured like any other checkout, and never asked for a pull request.
 	const root = render([
-		general({ isDirty: true, change: { kind: 'delta', additions: 4, deletions: 1 } }),
+		general({
+			isDirty: true,
+			change: { kind: 'delta', additions: 4, deletions: 1 },
+		}),
 	]);
 	assert.match(root, /folders-tree__branch folders-tree__branch--dirty"/);
 	assert.match(root, /folders-tree__delta--additions">\+4</);
 	assert.equal(root.includes('no PR'), false);
 
 	const plain = render([
-		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, panels: [], isEmpty: true },
+		{
+			id: 'p',
+			name: 'Servers',
+			kind: 'plain',
+			isSelected: false,
+			isDirty: false,
+			panels: [],
+			isEmpty: true,
+		},
 	]);
 	assert.equal(plain.includes('folders-tree__branch'), false);
 	assert.equal(plain.includes('folders-tree__facts'), false);
@@ -362,10 +395,16 @@ test('every card ends with New terminal where one can be made, and an empty fold
 	);
 	assert.equal(markup.match(/class="folders-tree__new-terminal"/g)?.length, 2);
 	assert.match(markup, /aria-label="New terminal in General"/);
-	assert.match(markup, /aria-label="New terminal in feat\/one-project-one-window"/);
+	assert.match(
+		markup,
+		/aria-label="New terminal in feat\/one-project-one-window"/,
+	);
 	assert.equal(markup.includes('No terminals yet'), false);
 	// The row is the last thing in its card.
-	assert.match(markup, /<\/button><\/fieldset><\/div><\/div>(<div class="folders-tree__folder"|<\/div>$)/);
+	assert.match(
+		markup,
+		/<\/button><\/fieldset><\/div><\/div>(<div class="folders-tree__folder"|<\/div>$)/,
+	);
 	// Without a way to make one there is no row.
 	assert.equal(render([general()]).includes('New terminal'), false);
 });
@@ -374,19 +413,39 @@ test('every title is a drag handle where folders can be reordered, General inclu
 	const folders = [
 		general(),
 		linked(),
-		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, panels: [], isEmpty: true },
+		{
+			id: 'p',
+			name: 'Servers',
+			kind: 'plain',
+			isSelected: false,
+			isDirty: false,
+			panels: [],
+			isEmpty: true,
+		},
 	];
 	const markup = render(folders, { onReorderFolders: () => {} });
 	assert.equal(markup.match(/data-folder-drag-handle="true"/g)?.length, 3);
 	// There is no grip: the title line is what a card is carried by.
 	assert.equal(markup.includes('folders-tree__grip'), false);
-	assert.equal(render(folders, { variant: 'peek' }).includes('data-folder-drag-handle'), false);
+	assert.equal(
+		render(folders, { variant: 'peek' }).includes('data-folder-drag-handle'),
+		false,
+	);
 	assert.equal(render(folders).includes('data-folder-drag-handle'), false);
 });
 
 test('a folder has a toggle where it can be collapsed, and collapsed it is its title line and one status', () => {
-	const working = terminalRow({ panelId: 'a', sessionId: 'a', status: 'working' });
-	const waiting = terminalRow({ panelId: 'b', sessionId: 'b', status: 'waiting', title: 'needs you' });
+	const working = terminalRow({
+		panelId: 'a',
+		sessionId: 'a',
+		status: 'working',
+	});
+	const waiting = terminalRow({
+		panelId: 'b',
+		sessionId: 'b',
+		status: 'waiting',
+		title: 'needs you',
+	});
 	const folders = [
 		general({ branch: 'main', isEmpty: false, panels: [working, waiting] }),
 		linked({ isEmpty: false, panels: [terminalRow({ title: 'quiet one' })] }),
@@ -396,7 +455,12 @@ test('a folder has a toggle where it can be collapsed, and collapsed it is its t
 	const open = render(folders, props);
 	assert.equal(open.match(/class="folders-tree__toggle"/g)?.length, 2);
 	assert.match(open, /aria-label="Collapse General"/);
-	assert.equal(open.match(/data-folder-header="true"[^>]*aria-expanded="true"|aria-expanded="true"[^>]*data-folder-header="true"/g)?.length, 2);
+	assert.equal(
+		open.match(
+			/data-folder-header="true"[^>]*aria-expanded="true"|aria-expanded="true"[^>]*data-folder-header="true"/g,
+		)?.length,
+		2,
+	);
 	assert.match(open, /class="folders-tree__branch/);
 	assert.match(open, />needs you</);
 	// Open, each terminal says its own state and the title says none.
@@ -416,7 +480,9 @@ test('a folder has a toggle where it can be collapsed, and collapsed it is its t
 	assert.equal(closed.includes('New terminal'), false);
 	// One state for the folder: the most urgent of its terminals. The folder
 	// whose terminals are all idle shows none.
-	const attention = [...closed.matchAll(/<[^>]*folders-tree__attention[^>]*>/g)].map(([tag]) => tag);
+	const attention = [
+		...closed.matchAll(/<[^>]*folders-tree__attention[^>]*>/g),
+	].map(([tag]) => tag);
 	assert.equal(attention.length, 1);
 	assert.match(attention[0], /data-agent-state="waiting"/);
 
@@ -426,14 +492,49 @@ test('a folder has a toggle where it can be collapsed, and collapsed it is its t
 
 test('any folder moves to any place, General included, and a place past either end is that end', () => {
 	const ids = ['general', 'alpha', 'beta', 'gamma'];
-	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 1), ['general', 'gamma', 'alpha', 'beta']);
-	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 0), ['gamma', 'general', 'alpha', 'beta']);
-	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', -5), ['gamma', 'general', 'alpha', 'beta']);
-	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 2), ['general', 'beta', 'alpha', 'gamma']);
-	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 99), ['general', 'beta', 'gamma', 'alpha']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 1), [
+		'general',
+		'gamma',
+		'alpha',
+		'beta',
+	]);
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', 0), [
+		'gamma',
+		'general',
+		'alpha',
+		'beta',
+	]);
+	assert.deepEqual(folderOrderAfterMove(ids, 'gamma', -5), [
+		'gamma',
+		'general',
+		'alpha',
+		'beta',
+	]);
+	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 2), [
+		'general',
+		'beta',
+		'alpha',
+		'gamma',
+	]);
+	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 99), [
+		'general',
+		'beta',
+		'gamma',
+		'alpha',
+	]);
 	assert.deepEqual(folderOrderAfterMove(ids, 'alpha', 1), ids);
-	assert.deepEqual(folderOrderAfterMove(ids, 'general', 3), ['alpha', 'beta', 'gamma', 'general']);
-	assert.deepEqual(folderOrderAfterMove(ids, 'general', 1), ['alpha', 'general', 'beta', 'gamma']);
+	assert.deepEqual(folderOrderAfterMove(ids, 'general', 3), [
+		'alpha',
+		'beta',
+		'gamma',
+		'general',
+	]);
+	assert.deepEqual(folderOrderAfterMove(ids, 'general', 1), [
+		'alpha',
+		'general',
+		'beta',
+		'gamma',
+	]);
 	assert.deepEqual(folderOrderAfterMove(ids, 'general', -1), ids);
 	assert.deepEqual(folderOrderAfterMove(ids, 'missing', 2), ids);
 });
@@ -456,15 +557,25 @@ test("the selected folder's header band is tinted whether or not one of its rows
 		}),
 		general(),
 	]);
-	assert.equal(withActive.match(/folders-tree__row--folder folders-tree__row--selected"/g)?.length, 1);
-	assert.match(withActive, /folders-tree__row--terminal folders-tree__row--active"/);
+	assert.equal(
+		withActive.match(/folders-tree__row--folder folders-tree__row--selected"/g)
+			?.length,
+		1,
+	);
+	assert.match(
+		withActive,
+		/folders-tree__row--terminal folders-tree__row--active"/,
+	);
 
 	const alone = render([linked({ isSelected: true })]);
 	assert.match(alone, /folders-tree__row--folder folders-tree__row--selected"/);
 	assert.equal(alone.includes('folders-tree__row--active'), false);
 
 	const css = treeCss();
-	assert.match(css, /\.folders-tree__row--selected,\s*\.folders-tree__row--selected:hover\s*\{[^}]*--project-color/);
+	assert.match(
+		css,
+		/\.folders-tree__row--selected,\s*\.folders-tree__row--selected:hover\s*\{[^}]*--project-color/,
+	);
 	assert.equal(css.includes('selected-alone'), false);
 });
 
@@ -484,42 +595,64 @@ test("a folder's title line ends with a count of all its tabs, then its menu", (
 		],
 		{ onFolderMenu: () => {} },
 	);
-	const counts = [...markup.matchAll(/class="folders-tree__count"[^>]*aria-label="([^"]+)"[^>]*>(\d+)</g)].map(
-		([, label, count]) => [label, count],
-	);
+	const counts = [
+		...markup.matchAll(
+			/class="folders-tree__count"[^>]*aria-label="([^"]+)"[^>]*>(\d+)</g,
+		),
+	].map(([, label, count]) => [label, count]);
 	assert.deepEqual(counts, [
 		['3 tabs', '3'],
 		['1 tab', '1'],
 		['0 tabs', '0'],
 	]);
 	// The count sits on the title line, directly before the menu button.
-	assert.match(markup, /class="folders-tree__count"[^>]*>3<\/span><button type="button" class="folders-tree__menu"/);
+	assert.match(
+		markup,
+		/class="folders-tree__count"[^>]*>3<\/span><button type="button" class="folders-tree__menu"/,
+	);
 	// The title line has no button that makes a terminal: that is the last row's.
-	const titles = [...markup.matchAll(/<span class="folders-tree__title"[^>]*>(.*?)<\/span><\/div>/g)].join('');
+	const titles = [
+		...markup.matchAll(
+			/<span class="folders-tree__title"[^>]*>(.*?)<\/span><\/div>/g,
+		),
+	].join('');
 	assert.equal(titles.includes('New terminal'), false);
 });
 
 test('the New terminal row offers the shell first, then each launcher in order, and a peek has no row', () => {
 	const launchers = [
-		{ id: 'x/launch-claude-code', displayName: 'Claude Code', icon: 'agent-claude-code' },
+		{
+			id: 'x/launch-claude-code',
+			displayName: 'Claude Code',
+			icon: 'agent-claude-code',
+		},
 		{ id: 'x/launch-codex', displayName: 'Codex', icon: 'agent-codex' },
-		{ id: 'y/launch-other', displayName: 'Other', icon: 'not-on-the-allowlist' },
+		{
+			id: 'y/launch-other',
+			displayName: 'Other',
+			icon: 'not-on-the-allowlist',
+		},
 	];
 	const markup = render([general()], {
 		onNewTerminal: () => {},
 		onLaunchTerminal: () => {},
 		launchers,
 	});
-	const buttons = [...markup.matchAll(/class="folders-tree__launcher" aria-label="([^"]+)" title="([^"]+)" data-launcher-id="([^"]+)"/g)].map(
-		([, label, title, id]) => [label, title, id],
-	);
+	const buttons = [
+		...markup.matchAll(
+			/class="folders-tree__launcher" aria-label="([^"]+)" title="([^"]+)" data-launcher-id="([^"]+)"/g,
+		),
+	].map(([, label, title, id]) => [label, title, id]);
 	assert.deepEqual(buttons, [
 		['Shell', 'New terminal', 'shell'],
 		['Claude Code', 'New Claude Code terminal', 'x/launch-claude-code'],
 		['Codex', 'New Codex terminal', 'x/launch-codex'],
 		['Other', 'New Other terminal', 'y/launch-other'],
 	]);
-	assert.match(markup, /<fieldset class="folders-tree__launchers" aria-label="New terminal in General with"/);
+	assert.match(
+		markup,
+		/<fieldset class="folders-tree__launchers" aria-label="New terminal in General with"/,
+	);
 	assert.match(markup, /launcher-icon--agent-claude-code/);
 	assert.match(markup, /launcher-icon--agent-codex/);
 	// An id the client does not know draws as a terminal.
@@ -537,8 +670,14 @@ test('the New terminal row offers the shell first, then each launcher in order, 
 	// The buttons are in the document always and revealed on hover or focus,
 	// and always shown where there is no hover.
 	const css = treeCss();
-	assert.match(css, /\.folders-tree__new-terminal-row:hover \.folders-tree__launchers,\s*\.folders-tree__new-terminal-row:focus-within \.folders-tree__launchers/);
-	assert.match(css, /@media \(hover: none\)\s*\{\s*\.folders-tree__launchers\s*\{\s*opacity: 1/);
+	assert.match(
+		css,
+		/\.folders-tree__new-terminal-row:hover \.folders-tree__launchers,\s*\.folders-tree__new-terminal-row:focus-within \.folders-tree__launchers/,
+	);
+	assert.match(
+		css,
+		/@media \(hover: none\)\s*\{\s*\.folders-tree__launchers\s*\{\s*opacity: 1/,
+	);
 });
 
 test('folders are full-width square blocks with a gutter, and titles are drawn as pane titles', () => {
@@ -546,7 +685,9 @@ test('folders are full-width square blocks with a gutter, and titles are drawn a
 	const block = css.match(/\.folders-tree__folder \{([^}]*)\}/)[1];
 	assert.equal(/margin|border-radius/.test(block), false);
 	assert.match(css.match(/\.folders-tree \{([^}]*)\}/)[1], /gap: 6px/);
-	const title = css.match(/\.folders-tree__row--folder \.folders-tree__name \{([^}]*)\}/)[1];
+	const title = css.match(
+		/\.folders-tree__row--folder \.folders-tree__name \{([^}]*)\}/,
+	)[1];
 	assert.match(title, /font-size: 11px/);
 	assert.match(title, /font-weight: 600/);
 	assert.match(title, /text-transform: uppercase/);
@@ -573,7 +714,10 @@ test('a card that only reports, as in a peek, shows the same facts with nothing 
 		{ variant: 'peek' },
 	);
 	assert.equal(markup.includes('<button'), false);
-	assert.match(markup, /folders-tree__pr folders-tree__pr--draft"[^>]*>.*?<span>#350<\/span><span>draft<\/span>/);
+	assert.match(
+		markup,
+		/folders-tree__pr folders-tree__pr--draft"[^>]*>.*?<span>#350<\/span><span>draft<\/span>/,
+	);
 	// Failures are the number shown when there are any.
 	assert.match(markup, /folders-tree__checks--failed"[^>]*>.*?<span>1<\/span>/);
 	assert.match(markup, /folders-tree__title--dirty/);
@@ -689,7 +833,11 @@ test('a shared branch is followed by the worktree directory, and the names of th
 				unmerged: { commits: 2 },
 			}),
 		],
-		{ onFolderMenu: () => {}, onNewTerminal: () => {}, onReorderFolders: () => {} },
+		{
+			onFolderMenu: () => {},
+			onNewTerminal: () => {},
+			onReorderFolders: () => {},
+		},
 	);
 	assert.match(
 		markup,
@@ -705,7 +853,9 @@ test('the details say the branch, the worktree, and the location on three labell
 		worktree: 'reorder-rows',
 		location: '/Users/mark/Projects/terminay/.claude/worktrees/reorder-rows',
 	};
-	const markup = renderToStaticMarkup(React.createElement(FolderDetails, { details }));
+	const markup = renderToStaticMarkup(
+		React.createElement(FolderDetails, { details }),
+	);
 	assert.equal(
 		markup,
 		'<dl class="folders-tree-details__lines">' +
@@ -726,12 +876,22 @@ test('the details say the branch, the worktree, and the location on three labell
 	const card = render([linked({ details })]);
 	assert.match(
 		card,
-		new RegExp(`aria-description="${folderDetailsDescription(details).replaceAll('.', '\\.')}"`),
+		new RegExp(
+			`aria-description="${folderDetailsDescription(details).replaceAll('.', '\\.')}"`,
+		),
 	);
 	assert.equal(card.includes('folders-tree-details'), false);
 	const others = render([
 		general(),
-		{ id: 'p', name: 'Servers', kind: 'plain', isSelected: false, isDirty: false, panels: [], isEmpty: true },
+		{
+			id: 'p',
+			name: 'Servers',
+			kind: 'plain',
+			isSelected: false,
+			isDirty: false,
+			panels: [],
+			isEmpty: true,
+		},
 	]);
 	assert.equal(others.includes('aria-description'), false);
 });
@@ -796,16 +956,29 @@ test('the details open after a full second of rest and not before, and whatever 
 	assert.deepEqual(events, ['open', 'close', 'open']);
 });
 
-test('a worktree being deleted says so beneath its label, in place of its facts', () => {
-	const facts = {
-		isDirty: true,
-		change: { kind: 'delta', additions: 4, deletions: 1 },
-		pullRequest: { number: 352, state: 'open', title: 'Banner' },
-	};
-	const markup = render([linked({ ...facts, isDeleting: true })]);
+const titleLine = (markup) => {
+	const start = markup.indexOf('class="folders-tree__title');
+	return markup.slice(start, markup.indexOf('folders-tree__count', start));
+};
+
+const busyFacts = {
+	isDirty: true,
+	change: { kind: 'delta', additions: 4, deletions: 1 },
+	pullRequest: { number: 352, state: 'open', title: 'Banner' },
+};
+
+test('a worktree being deleted shows a trash icon in place of its branch icon, keeps its facts, and is dimmed', () => {
+	const markup = render([linked({ ...busyFacts, isDeleting: true })]);
+	const title = titleLine(markup);
 	assert.match(
-		markup,
-		/class="folders-tree__deleting" role="status">Deleting…</,
+		title,
+		/<span class="folders-tree__activity folders-tree__activity--deleting" role="status" title="Deleting worktree…"><svg[^>]*lucide-trash[^>]*>.*?<\/svg><span class="folders-tree__activity-text">Deleting worktree…<\/span><\/span>/,
+	);
+	// The icon stands in the branch icon's place, before the label.
+	assert.equal(title.includes('lucide-git-branch'), false);
+	assert.ok(
+		title.indexOf('folders-tree__activity') <
+			title.indexOf('feat/one-project-one-window'),
 	);
 	assert.match(
 		markup,
@@ -816,52 +989,77 @@ test('a worktree being deleted says so beneath its label, in place of its facts'
 		markup,
 		/class="folders-tree__folder folders-tree__folder--deleting"/,
 	);
-	// The label stays, and comes before the line that says it is going.
-	assert.ok(
-		markup.indexOf('feat/one-project-one-window') <
-			markup.indexOf('folders-tree__deleting'),
-	);
-	assert.equal(markup.includes('folders-tree__facts'), false);
+	// No line is added beneath the label, and none is taken away.
+	assert.equal(markup.includes('Deleting…'), false);
+	assert.match(markup, /class="folders-tree__facts"/);
 
-	const idle = render([linked({ ...facts, isDeleting: false })]);
-	assert.equal(idle.includes('folders-tree__deleting'), false);
+	const idle = render([linked({ ...busyFacts, isDeleting: false })]);
+	assert.equal(idle.includes('folders-tree__activity'), false);
 	assert.equal(idle.includes('folders-tree__folder--deleting'), false);
 	assert.equal(idle.includes('aria-busy'), false);
+	assert.match(titleLine(idle), /lucide-git-branch/);
 	assert.match(idle, /class="folders-tree__facts"/);
 });
 
-test('a worktree being pulled shows a spinner and Pulling… in place of its facts, undimmed', () => {
-	const facts = {
-		isDirty: true,
-		change: { kind: 'delta', additions: 4, deletions: 1 },
-		pullRequest: { number: 352, state: 'open', title: 'Banner' },
-	};
-	const markup = render([linked({ ...facts, isPulling: true })]);
+test('a worktree being pulled shows a pull icon in place of its branch icon, keeps its facts, and is not dimmed', () => {
+	const markup = render([linked({ ...busyFacts, isPulling: true })]);
+	const title = titleLine(markup);
 	assert.match(
-		markup,
-		/class="folders-tree__pulling" role="status"><svg[^>]*folders-tree__pulling-spinner[^>]*>.*?<\/svg><span>Pulling…<\/span>/,
+		title,
+		/<span class="folders-tree__activity folders-tree__activity--pulling" role="status" title="Pulling from origin…"><svg[^>]*lucide-arrow-down-to-line[^>]*>.*?<\/svg><span class="folders-tree__activity-text">Pulling from origin…<\/span><\/span>/,
 	);
+	assert.equal(title.includes('lucide-git-branch'), false);
 	assert.match(
 		markup,
 		/class="folders-tree__row folders-tree__row--folder"[^>]*aria-busy="true"/,
 	);
-	assert.ok(
-		markup.indexOf('feat/one-project-one-window') <
-			markup.indexOf('folders-tree__pulling'),
-	);
-	assert.equal(markup.includes('folders-tree__facts'), false);
+	assert.equal(markup.includes('Pulling…'), false);
+	assert.match(markup, /class="folders-tree__facts"/);
 	// The folder is staying, so its card is not dimmed.
 	assert.equal(markup.includes('folders-tree__folder--deleting'), false);
 
-	// A removal outranks a pull.
-	const both = render([linked({ ...facts, isPulling: true, isDeleting: true })]);
-	assert.match(both, /Deleting…/);
-	assert.equal(both.includes('folders-tree__pulling'), false);
+	// A removal outranks a pull: the trash icon, and the card is dimmed.
+	const both = render([
+		linked({ ...busyFacts, isPulling: true, isDeleting: true }),
+	]);
+	assert.match(both, /folders-tree__activity--deleting/);
+	assert.equal(both.includes('folders-tree__activity--pulling'), false);
+	assert.match(both, /folders-tree__folder--deleting/);
 
-	const idle = render([linked({ ...facts, isPulling: false })]);
-	assert.equal(idle.includes('folders-tree__pulling'), false);
+	const idle = render([linked({ ...busyFacts, isPulling: false })]);
+	assert.equal(idle.includes('folders-tree__activity'), false);
 	assert.equal(idle.includes('aria-busy'), false);
-	assert.match(idle, /class="folders-tree__facts"/);
+	assert.match(titleLine(idle), /lucide-git-branch/);
+});
+
+test('General being pulled shows the pull icon in place of its folder icon and gains no line', () => {
+	const markup = render([general({ isPulling: true })]);
+	const title = titleLine(markup);
+	assert.match(title, /folders-tree__activity--pulling/);
+	assert.equal(/lucide-folder\b/.test(title), false);
+	assert.match(markup, /class="folders-tree__branch/);
+	assert.equal(markup.includes('Pulling…'), false);
+
+	const idle = render([general()]);
+	assert.match(titleLine(idle), /lucide-folder\b/);
+	// The same lines either way.
+	const lines = (html) =>
+		(html.match(/class="folders-tree__(title|branch|facts)\b/g) ?? []).length;
+	assert.equal(lines(markup), lines(idle));
+});
+
+test('the activity icon carries its own tooltip, not the details tooltip, and stops moving under reduced motion', () => {
+	// The title line's details tooltip gives way over anything matching this
+	// selector; the activity icon is one of them, as a control is.
+	const own = FOLDER_TITLE_OWN_TOOLTIP.split(',').map((part) => part.trim());
+	assert.ok(own.includes('.folders-tree__activity'));
+	assert.ok(own.includes('button'));
+	const css = treeCss();
+	assert.match(
+		css,
+		/@media \(prefers-reduced-motion: reduce\) \{\s*\.folders-tree__activity-icon \{\s*animation: none !important;/,
+	);
+	assert.doesNotMatch(css, /folders-tree__(pulling|deleting)\b/);
 });
 
 test('a file or folder tab is a row with its kind icon, and is neither renamed nor dragged', () => {
@@ -872,15 +1070,31 @@ test('a file or folder tab is a row with its kind icon, and is neither renamed n
 				isEmpty: false,
 				panels: [
 					terminalRow(),
-					{ kind: 'file', panelId: 'file-1', title: 'notes.md', isActive: true },
-					{ kind: 'folder', panelId: 'folder-1', title: 'src', isActive: false },
+					{
+						kind: 'file',
+						panelId: 'file-1',
+						title: 'notes.md',
+						isActive: true,
+					},
+					{
+						kind: 'folder',
+						panelId: 'folder-1',
+						title: 'src',
+						isActive: false,
+					},
 				],
 			}),
 		],
-		{ onRenameTerminal: () => {}, onTerminalDrag: () => {}, onTerminalMenu: () => {} },
+		{
+			onRenameTerminal: () => {},
+			onTerminalDrag: () => {},
+			onTerminalMenu: () => {},
+		},
 	);
 	const rows = [
-		...markup.matchAll(/<div class="folders-tree__row folders-tree__row--panel[^>]*>/g),
+		...markup.matchAll(
+			/<div class="folders-tree__row folders-tree__row--panel[^>]*>/g,
+		),
 	].map(([row]) => row);
 	assert.equal(rows.length, 3);
 	// In panel order, each saying what it is.
