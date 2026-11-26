@@ -241,3 +241,37 @@ test('failure settings default to 3 and pause, and round-trip through the form',
 	assert.equal(back.startupRetries, 0);
 	assert.equal(back.onNeedsHuman, 'keep-running');
 });
+
+test('the gate is optional, trimmed, and round-trips through the form', () => {
+	const form = emptyTriggerForm(0);
+	assert.equal(form.gate, '');
+	const base = {
+		...form,
+		name: 'Docs',
+		prompt: 'Sync',
+		kind: 'cron' as const,
+		cron: '0 0 * * *',
+	};
+	const none = formToDraft(base);
+	assert.ok(none.ok);
+	assert.equal('gate' in none.draft, false);
+	const blank = formToDraft({ ...base, gate: '   ' });
+	assert.ok(blank.ok);
+	assert.equal('gate' in blank.draft, false);
+	const gated = formToDraft({ ...base, gate: '  ./check-new-pulls.sh ' });
+	assert.ok(gated.ok);
+	assert.equal(gated.draft.gate, './check-new-pulls.sh');
+	const back = formFromTrigger(
+		{
+			...gated.draft,
+			condition: { kind: 'cron', cron: '0 0 * * *' },
+			id: 't'.repeat(24),
+			botId: 'b'.repeat(12),
+			evaluatedThrough: 0,
+			missedCount: 0,
+			missedLatest: null,
+		},
+		0,
+	);
+	assert.equal(back.gate, './check-new-pulls.sh');
+});

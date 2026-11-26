@@ -265,7 +265,7 @@ test('triggers withhold commands, URLs, headers and paths and redact the prompt'
 	const me = r.run(r.reader.id);
 	const ids = ['a'.repeat(24), 'b'.repeat(24), 'c'.repeat(24), 'd'.repeat(24)];
 	r.triggers.set(r.other.id, [
-		trigger(r.other.id, ids[0]),
+		trigger(r.other.id, ids[0], { gate: '/home/bot/GATEMARK.sh' }),
 		trigger(r.other.id, ids[1], {
 			condition: {
 				kind: 'command',
@@ -308,6 +308,7 @@ test('triggers withhold commands, URLs, headers and paths and redact the prompt'
 		'PATHMARK',
 		'GLOBMARK',
 		'SSEMARK',
+		'GATEMARK',
 		TOKEN,
 	])
 		assert.equal(raw.includes(mark), false, mark);
@@ -330,6 +331,7 @@ test('triggers withhold commands, URLs, headers and paths and redact the prompt'
 	});
 	assert.equal(got.text, 'Check the feed [redacted]');
 	assert.equal(JSON.stringify(got).includes('URLSECRET'), false);
+	assert.equal(JSON.stringify(got).includes('GATEMARK'), false);
 	await assert.rejects(
 		r.runtime.call(me.id, 'bots_triggers_get', {
 			botId: r.other.id,

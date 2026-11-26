@@ -125,6 +125,12 @@ const draft = schema(
 			description:
 				'While the user owes this trigger an action: pause it (default) or keep running.',
 		},
+		gate: {
+			type: 'string',
+			maxLength: 4096,
+			description:
+				'Optional path of a script in your container (absolute, or relative to /home/bot). It runs, with a 30-second limit, each time this trigger fires and before any AI session starts. If it prints any text to stdout, the run is skipped and that text is recorded as the reason. If it prints nothing and exits 0, the run starts. If it is broken (missing, non-zero exit with no output, or over its limit) the run starts anyway with a note so you can repair it. Run now ignores the gate. Add a gate whenever a cheap, read-only check can tell that a run would have nothing to do: it prevents wasteful AI sessions. Send an empty string to remove it.',
+		},
 	},
 	['name', 'enabled', 'prompt', 'condition'],
 );
@@ -180,13 +186,13 @@ export const BOT_TRIGGER_TOOLS = [
 	{
 		name: 'triggers_create',
 		description:
-			'Create a trigger for your bot using the current server revision. Maximum 50 triggers; intervals must be at least 1 minute.',
+			'Create a trigger for your bot using the current server revision. Maximum 50 triggers; intervals must be at least 1 minute. Give the trigger a gate (see draft.gate) whenever a cheap script can tell that a run would have nothing to do, so it does not start wasteful AI sessions.',
 		inputSchema: schema({ revision, draft }, ['revision', 'draft']),
 	},
 	{
 		name: 'triggers_update',
 		description:
-			'Replace your trigger definition with a complete draft, using the current server revision. Use triggers_enable for a simple enable/disable.',
+			'Replace your trigger definition with a complete draft, using the current server revision. Use triggers_enable for a simple enable/disable. The draft replaces the gate too: repeat it to keep it. Give the trigger a gate (see draft.gate) whenever a cheap script can tell that a run would have nothing to do, so it does not start wasteful AI sessions.',
 		inputSchema: schema({ triggerId: string, revision, draft }, [
 			'triggerId',
 			'revision',
@@ -259,6 +265,7 @@ function parseDraft(value: unknown): BotTriggerDraft {
 		'recovery',
 		'startupRetries',
 		'onNeedsHuman',
+		'gate',
 	]);
 	parseCondition(d.condition);
 	// BotTriggers owns all value validation and normalization, shared with the UI.

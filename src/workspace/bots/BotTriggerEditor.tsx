@@ -618,6 +618,21 @@ export function BotTriggerEditor({
 						</div>
 					) : null}
 				</section>
+				<section className="bots-source-section" aria-label="Only if">
+					<h4 className="bots-lab">Only if</h4>
+					{field('Gate', 'gate', 'text', {
+						placeholder: './check-new-pulls.sh',
+						spellCheck: false,
+						autoComplete: 'off',
+					})}
+					<p className="bots-faint" data-terminay-bot-trigger-gate-hint="true">
+						Optional. A script in {bot.name}’s container, run each time this
+						trigger fires. If it prints any text, the run is skipped and the
+						text is kept as the reason. If it prints nothing, the bot runs. Use
+						it to avoid waking the bot when there is nothing to do. Run now
+						ignores the gate.
+					</p>
+				</section>
 				<section className="bots-source-section">
 					<h4 className="bots-lab">Then ask the bot</h4>
 					<label className="bots-field">

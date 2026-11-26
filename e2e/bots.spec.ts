@@ -2170,6 +2170,36 @@ test.describe('Home: Bots', () => {
 		});
 	});
 
+	test('a trigger keeps the gate it is saved with, and clearing the field removes it', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await createBot(mainWindow, 'Plover');
+		const row = await newTrigger(tab, 'Nightly docs sync', 'sync the docs');
+		const editor = mainWindow.locator('[data-terminay-bot-trigger-editor]');
+		const gate = editor.locator('[data-terminay-bot-trigger-field="gate"]');
+
+		await row.locator('td').first().click();
+		await expect(gate).toHaveValue('');
+		await gate.fill('./check-new-pulls.sh');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('trigger-gate-field.png'),
+		});
+		await editor.locator('[data-terminay-bot-trigger-save]').click();
+		await expect(editor).toHaveCount(0);
+
+		await row.locator('td').first().click();
+		await expect(gate).toHaveValue('./check-new-pulls.sh');
+		await gate.fill('');
+		await editor.locator('[data-terminay-bot-trigger-save]').click();
+		await expect(editor).toHaveCount(0);
+
+		await row.locator('td').first().click();
+		await expect(gate).toHaveValue('');
+	});
+
 	test('a trigger status says Disabled only when the trigger or its bot is off', async ({
 		mainWindow,
 		tempDir,

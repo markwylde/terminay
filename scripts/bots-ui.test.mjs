@@ -2915,6 +2915,95 @@ test('the trigger editor offers Startup retries and When the bot needs you, with
 	}
 });
 
+test('the trigger editor saves a gate for any source and explains it', async () => {
+	const page = await configure('triggers');
+	try {
+		await page.locator('[data-terminay-bot-trigger-new]').click();
+		const editor = page.locator('[data-terminay-bot-trigger-editor]');
+		const gate = editor.locator('[data-terminay-bot-trigger-field="gate"]');
+		assert.equal(await gate.inputValue(), '');
+		assert.match(
+			await editor.locator('[data-terminay-bot-trigger-gate-hint]').innerText(),
+			/prints any text, the run is skipped[\s\S]*Run now ignores the gate/,
+		);
+		await editor
+			.locator('[data-terminay-bot-trigger-field="name"]')
+			.fill('Nightly docs sync');
+		await editor
+			.locator('[data-terminay-bot-trigger-field="prompt"]')
+			.fill('Sync the docs with merged pull requests');
+		await pick(editor, 'Source', 'files');
+		assert.equal(await gate.count(), 1, 'offered for file sources');
+		await pick(editor, 'Source', 'cron');
+		await gate.fill('./check-new-pulls.sh');
+		await editor
+			.locator('section[aria-label="Only if"]')
+			.scrollIntoViewIfNeeded();
+		await shot(page, 'trigger-editor-gate');
+		await editor.locator('[data-terminay-bot-trigger-save]').click();
+		await page.waitForFunction(() =>
+			window.__calls.some((c) => c.op === 'createTrigger'),
+		);
+		const [created] = await calls(page, 'createTrigger');
+		const draft = created.args.find(
+			(a) => a && typeof a === 'object' && 'condition' in a,
+		);
+		assert.equal(draft.gate, './check-new-pulls.sh');
+	} finally {
+		await page.close();
+	}
+});
+
+test('a gated firing shows its reason, and the gate reopens in the editor', async () => {
+	const page = await configure('triggers', {
+		extraTriggers: [
+			{
+				id: 'tr4',
+				botId: BIRD,
+				name: 'Nightly docs sync',
+				enabled: true,
+				prompt: 'Sync the docs with merged pull requests',
+				condition: { kind: 'cron', cron: '0 0 * * *' },
+				gate: './check-new-pulls.sh',
+				evaluatedThrough: 0,
+				missedCount: 0,
+				missedLatest: null,
+			},
+		],
+		extraFirings: [
+			{
+				id: 'f4',
+				botId: BIRD,
+				triggerId: 'tr4',
+				triggerName: 'Nightly docs sync',
+				firedAt: NOW - 3_600_000,
+				origin: 'trigger',
+				sessionId: null,
+				outcome: 'skipped',
+				reason: 'gate: no pull requests today',
+			},
+		],
+	});
+	try {
+		const row = page.locator('[data-terminay-bot-trigger="tr4"]');
+		await row.waitFor();
+		await page.waitForFunction(() =>
+			document
+				.querySelector('[data-terminay-bot-trigger="tr4"]')
+				?.textContent?.includes('gate: no pull requests today'),
+		);
+		await shot(page, 'triggers-gated-firing');
+		await row.locator('td').first().click();
+		const gate = page.locator(
+			'[data-terminay-bot-trigger-editor] [data-terminay-bot-trigger-field="gate"]',
+		);
+		await gate.waitFor();
+		assert.equal(await gate.inputValue(), './check-new-pulls.sh');
+	} finally {
+		await page.close();
+	}
+});
+
 test('Sessions shows startup attempts and the outcome the bot reported', async () => {
 	const attempt = (i) => ({
 		stage: 'adapter-check',

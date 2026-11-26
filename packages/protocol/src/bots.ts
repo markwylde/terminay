@@ -1,3 +1,4 @@
+import type { BotMessageAttachment } from './botMessages.js';
 import type {
 	BotFailureCause,
 	BotObservationSource,
@@ -5,7 +6,6 @@ import type {
 	BotSourceHealth,
 } from './botSources.js';
 import type { JsonValue } from './errors.js';
-import type { BotMessageAttachment } from './botMessages.js';
 
 export const BOTS_CAPABILITY = 'bots.v1';
 export const BOT_EVENTS = { changed: 'bots.changed' } as const;
@@ -317,7 +317,12 @@ export interface BotTriggerDraft {
 	readonly startupRetries?: number;
 	/** Absent means `pause`. */
 	readonly onNeedsHuman?: BotNeedsHumanPolicy;
+	/** Path of a script in the bot's container, absolute or relative to its
+	 * home. It runs before a firing starts a session: any text on stdout skips
+	 * the firing with that text as the reason. Absent means no gate. */
+	readonly gate?: string;
 }
+export const BOT_TRIGGER_GATE_MAX_BYTES = 4096;
 export interface BotTrigger extends Omit<BotTriggerDraft, 'condition'> {
 	/** Present while the trigger waits for the user. */
 	readonly blocker?: BotTriggerBlocker | null;
