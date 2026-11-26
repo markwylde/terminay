@@ -4,4 +4,5 @@ export {
 	type PlanStep,
 	type ToolStatus,
 	type TranscriptItem,
+	transcriptTime,
 } from '@terminay/protocol';

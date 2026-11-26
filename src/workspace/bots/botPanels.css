@@ -3906,3 +3906,31 @@
 		transition: none;
 	}
 }
+
+/* When each Sessions transcript entry happened: small and secondary. */
+.bots-entry-time,
+.bots-tool__time {
+	font-size: 11px;
+	font-weight: 400;
+	color: var(--bots-faint);
+	font-family: inherit;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.bots-entry-time {
+	margin-left: 8px;
+}
+.bots-entry-time-row {
+	line-height: 1.2;
+}
+.bots-entry-time-row .bots-entry-time {
+	margin-left: 0;
+}
+.bots-tool__head:has(.bots-tool__time) {
+	width: 100%;
+}
+.bots-tool__time {
+	margin-left: auto;
+	padding-left: 8px;
+	flex: none;
+}
