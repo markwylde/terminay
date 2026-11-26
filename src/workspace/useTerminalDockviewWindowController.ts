@@ -9,6 +9,18 @@ type DraggingDockviewTransfer = {
 	groupId: string;
 };
 
+/**
+ * Home's tab strip is a Dockview in the same document as a project's, but it
+ * holds Home tabs, never terminals, so it gets no terminal-creation chrome and
+ * its header clicks create nothing. Every other Dockview header in the
+ * document is still treated as a terminal header; a further Dockview host
+ * would need excluding here, or scoping by the controller's own groups.
+ */
+const HOME_TAB_STRIP_SELECTOR = '[data-terminay-home-tabs]';
+
+const isInHomeTabStrip = (element: Element | null | undefined): boolean =>
+	Boolean(element?.closest(HOME_TAB_STRIP_SELECTOR));
+
 /** A single terminal tab being dragged out of the workspace's main window. */
 export type TerminalTabDrag = { panelId: string };
 
@@ -213,6 +225,9 @@ export function useTerminalDockviewWindowController({
 				);
 
 			for (const container of containers) {
+				if (isInHomeTabStrip(container)) {
+					continue;
+				}
 				if (container.querySelector('.terminay-add-tab-button')) {
 					continue;
 				}
@@ -247,6 +262,7 @@ export function useTerminalDockviewWindowController({
 
 			const onClick = (event: PointerEvent) => {
 				const target = event.target as HTMLElement | null;
+				if (isInHomeTabStrip(target)) return;
 				if (target?.closest('.terminay-add-profile-tab-button')) {
 					event.preventDefault();
 					event.stopPropagation();
@@ -285,7 +301,7 @@ export function useTerminalDockviewWindowController({
 
 			const onDblClick = (event: globalThis.MouseEvent) => {
 				const target = event.target as HTMLElement | null;
-				if (!target?.closest('.dv-void-container')) {
+				if (!target?.closest('.dv-void-container') || isInHomeTabStrip(target)) {
 					return;
 				}
 
@@ -301,7 +317,11 @@ export function useTerminalDockviewWindowController({
 			};
 			const onContextMenu = (event: globalThis.MouseEvent) => {
 				const target = event.target as HTMLElement | null;
-				if (!target?.closest('.terminay-add-tab-button')) return;
+				if (
+					!target?.closest('.terminay-add-tab-button') ||
+					isInHomeTabStrip(target)
+				)
+					return;
 				event.preventDefault();
 				event.stopPropagation();
 				void openProfileChooser();
