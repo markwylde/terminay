@@ -154,6 +154,7 @@ export function RemoteDesktopCanvas({
 				rfb.viewOnly = settings.viewOnly;
 				rfb.scaleViewport = settings.scaleViewport;
 				rfb.resizeSession = settings.resizeSession;
+				layer.controls = !settings.viewOnly;
 				rfb.focusOnClick = !thumbnail;
 				rfb.background = '#0d0f12';
 				// Clipboard sharing is control mode only (ADR-0129). View-only
@@ -239,6 +240,14 @@ export function RemoteDesktopCanvas({
 		};
 	}, [streamKey, streamMode, thumbnail, attempt]);
 
+	// Whether the desktop follows this element's size can change while a
+	// stream is open: a canvas parked out of sight must not resize it.
+	useEffect(() => {
+		for (const l of layers.current)
+			if (l.rfb !== undefined && l.controls === true)
+				l.rfb.resizeSession = resize;
+	}, [resize]);
+
 	useEffect(
 		() => () => {
 			for (const l of [...layers.current]) retire(layers.current, l);
@@ -260,6 +269,8 @@ type DesktopLayer = {
 	shown: boolean;
 	retired?: boolean;
 	rfb?: RFB;
+	/** The stream was granted control. */
+	controls?: boolean;
 	channel?: RfbStreamChannel;
 	detachClipboard?: () => void;
 	detachSharing?: () => void;

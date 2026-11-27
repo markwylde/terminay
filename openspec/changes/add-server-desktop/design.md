@@ -191,13 +191,19 @@ The package set is the bot image's desktop packages without its applications, pl
 
 *Boundary:* privilege escalation from the run-as account to root.
 
-### D11. The desktop window is the shared in-page frame on every host
+### D11. A dropdown to glance, tabs to work; one stream per client window
 
-Terminay Desktop's native auxiliary windows are a deliberate fixed list, keyed by profile, not by the window that opened them. Adding the desktop there would need a new route bound to the originating window's server. The desktop window instead uses the shared in-page frame everywhere: movable, resizable, maximisable, one per client window.
+Show Desktop opens a dropdown under the header control: a live, scaled copy of the desktop, who controls it, take or give up control, and Open in tab. Setup and the off, unsupported, and failed states live in the dropdown too. Open in tab adds a desktop tab to what the window is showing, a project folder or Home, where it drags, splits, and closes like any tab, and can be moved to Home or another project of the same server. A window may hold any number of desktop tabs.
 
-*Trade-off:* that frame is modal, so the user cannot type in a terminal while the desktop is open. Accepted for this change.
+Desktop tabs are this device's alone, like pull request tabs: Home keeps them in its own remembered arrangement, and a project's are kept in local storage by folder, so they return after a reload and moving one is a change to one entry. The server records nothing.
 
-*Boundary:* none crossed; the Electron route allowlist is unchanged.
+However many places show the desktop, the client window holds one stream and one noVNC viewer. The viewer's element is moved into the desktop tab focused most recently that is on screen; input, the clipboard, and the desktop's size come from there. Every other place draws a copy of the viewer's canvas, about 15 times a second, only while it is on screen and the page is visible. Pressing a copy makes that place the one in use. With no desktop tab on screen the viewer waits off screen at the desktop's own size with resizing off, so glancing in the dropdown never resizes the desktop.
+
+*Rejected:* a stream per tab. Each stream is a separate display-server connection and a separate control claim, so two tabs of one window would contend for control of the same desktop and double the traffic. *Rejected:* the earlier modal in-page window. It blocked the workspace while open, and the desktop could not sit beside a terminal.
+
+*Trade-off:* copies lag the live tab slightly and cost a canvas draw per frame while visible. A server desktop tab cannot be dragged onto another project's tab; it moves through its menu.
+
+*Boundary:* none crossed. Tabs are client-only, the server's operations are unchanged, and the Electron route allowlist is unchanged.
 
 ### D12. Close out `adopt-atlas-bot-runtime` without ticking anything
 

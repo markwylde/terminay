@@ -4,11 +4,12 @@ import {
 } from '@terminay/client-core';
 import { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ServerDesktopHubProvider } from '../../src/workspace/serverDesktop/ServerDesktopHub';
+import { ServerDesktopDropdown } from '../../src/workspace/serverDesktop/ServerDesktopSurfaces';
 import { ServerDesktopButton } from '../../src/workspace/serverDesktop/ServerDesktopViews';
-import { ServerDesktopWindow } from '../../src/workspace/serverDesktop/ServerDesktopWindow';
 
 /**
- * The header control and the desktop window as a browser client mounts them,
+ * The header control and its dropdown as a browser client mounts them,
  * over a server that answers as a Debian host before setup does. The client
  * and both components are the production ones; only the wire is a stand-in.
  */
@@ -39,23 +40,32 @@ function serverBeforeSetup(): ServerDesktopClientTransport {
 }
 
 function Fixture() {
-	const client = useMemo(() => new ServerDesktopClient(serverBeforeSetup()), []);
+	const client = useMemo(
+		() => new ServerDesktopClient(serverBeforeSetup()),
+		[],
+	);
 	const [open, setOpen] = useState(false);
 	return (
-		<>
-			<ServerDesktopButton
-				serverLabel="studio.example"
-				isOpen={open}
-				onActivate={() => setOpen(true)}
-			/>
-			{open ? (
-				<ServerDesktopWindow
-					client={client}
+		<ServerDesktopHubProvider
+			client={client}
+			serverId="studio"
+			serverLabel="studio.example"
+		>
+			<div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+				<ServerDesktopButton
 					serverLabel="studio.example"
-					onClose={() => setOpen(false)}
-				/>
-			) : null}
-		</>
+					isOpen={open}
+					onActivate={() => setOpen((was) => !was)}
+				>
+					{open ? (
+						<ServerDesktopDropdown
+							onDismiss={() => setOpen(false)}
+							onOpenTab={() => setOpen(false)}
+						/>
+					) : null}
+				</ServerDesktopButton>
+			</div>
+		</ServerDesktopHubProvider>
 	);
 }
 

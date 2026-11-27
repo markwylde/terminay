@@ -431,8 +431,31 @@ import { ServerUpgradeDialog } from './workspace/ServerUpgradeDialog';
 import { ServerUpgradeMenuRows } from './workspace/ServerUpgradeMenuRows';
 import { withServerUpgradeNotifications } from './workspace/serverUpgradeNotifications';
 import { useServerUpgrades } from './workspace/useServerUpgrades';
-import { ServerDesktopButton } from './workspace/serverDesktop/ServerDesktopViews';
-import { ServerDesktopWindow } from './workspace/serverDesktop/ServerDesktopWindow';
+import {
+	desktopTabs,
+	desktopTabsIn,
+	newDesktopTabId,
+	SERVER_DESKTOP_PANEL_COMPONENT,
+	SERVER_DESKTOP_TAB_COMPONENT,
+	useDesktopTabs,
+} from './workspace/serverDesktop/desktopTabs';
+import { ServerDesktopHubProvider } from './workspace/serverDesktop/ServerDesktopHub';
+import {
+	type DesktopTabLocation,
+	ServerDesktopDropdown,
+	type ServerDesktopPlaces,
+	ServerDesktopPlacesContext,
+	ServerDesktopTabView,
+} from './workspace/serverDesktop/ServerDesktopSurfaces';
+import {
+	ServerDesktopPanel,
+	type ServerDesktopPanelParams,
+	ServerDesktopTabChip,
+} from './workspace/serverDesktop/ServerDesktopTab';
+import {
+	ServerDesktopButton,
+	type ServerDesktopMoveTarget,
+} from './workspace/serverDesktop/ServerDesktopViews';
 import {
 	areTerminalActivityIndicatorsEnabled,
 	buildProjectInventoryEntries,
@@ -2178,6 +2201,7 @@ const ProjectWorkspace = memo(forwardRef<
 				folder: FolderPanel,
 				terminal: TerminalPanel,
 				[FORGE_ITEM_PANEL_COMPONENT]: ForgeItemPanel,
+				[SERVER_DESKTOP_PANEL_COMPONENT]: ServerDesktopPanel,
 			}),
 			[],
 		);
@@ -2187,6 +2211,7 @@ const ProjectWorkspace = memo(forwardRef<
 				folderTab: FolderTab,
 				terminalTab: TerminalTab,
 				[FORGE_ITEM_TAB_COMPONENT]: ForgeItemTab,
+				[SERVER_DESKTOP_TAB_COMPONENT]: ServerDesktopTabChip,
 			}),
 			[],
 		);
@@ -3022,6 +3047,88 @@ const ProjectWorkspace = memo(forwardRef<
 			[project.color, syncPanelFocusState],
 		);
 		openForgeItemRef.current = openForgeItem;
+
+		// The server desktop tabs this device keeps in this folder: added where
+		// they are missing, and let go of once they have moved or closed.
+		const desktopTabEntries = useDesktopTabs();
+		const desktopServerId = terminalClientContext?.serverId;
+		const desktopTabsLetGoRef = useRef(new Set<string>());
+		// A desktop tab closed here by any route (its chip, a close shortcut, or
+		// closing its group) is forgotten, unless this folder let it go because it
+		// moved somewhere else.
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+			if (!api || !isDockviewReady) return;
+			const subscription = api.onDidRemovePanel((panel) => {
+				const tabId = (panel.params as { tabId?: unknown } | undefined)?.tabId;
+				if (!panel.id.startsWith('server-desktop-') || typeof tabId !== 'string')
+					return;
+				if (desktopTabsLetGoRef.current.delete(tabId)) return;
+				const place = desktopTabs.placeOf(tabId);
+				if (place?.projectId === project.id && place.folderId === folder.id)
+					desktopTabs.remove(tabId);
+			});
+			return () => subscription.dispose();
+		}, [isDockviewReady, project.id, folder.id]);
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+			if (!api || !isDockviewReady) return;
+			const wanted = desktopTabsIn(desktopTabEntries, desktopServerId, {
+				projectId: project.id,
+				folderId: folder.id,
+			});
+			const wantedIds = new Set(wanted.map((entry) => entry.id));
+			for (const panel of [...api.panels]) {
+				const tabId = (panel.params as { tabId?: unknown } | undefined)?.tabId;
+				if (
+					panel.id.startsWith('server-desktop-') &&
+					typeof tabId === 'string' &&
+					!wantedIds.has(tabId)
+				) {
+					desktopTabsLetGoRef.current.add(tabId);
+					api.removePanel(panel);
+				}
+			}
+			let added: string | undefined;
+			for (const entry of wanted) {
+				if (api.getPanel(entry.id)) continue;
+				api.addPanel<ServerDesktopPanelParams>({
+					component: SERVER_DESKTOP_PANEL_COMPONENT,
+					id: entry.id,
+					params: {
+						tabId: entry.id,
+						serverId: entry.serverId,
+						place: entry.place,
+						color: project.color,
+						isFocused: false,
+					},
+					position: api.activePanel
+						? {
+								direction: 'within',
+								referenceGroup: api.activePanel.group.id,
+							}
+						: undefined,
+					tabComponent: SERVER_DESKTOP_TAB_COMPONENT,
+					title: 'Desktop',
+				});
+				added = entry.id;
+			}
+			// A tab opened or moved here while this folder is on screen comes to
+			// the front.
+			if (added !== undefined && isActive) {
+				api.getPanel(added)?.api.setActive();
+				syncPanelFocusState();
+			}
+		}, [
+			desktopTabEntries,
+			desktopServerId,
+			project.id,
+			project.color,
+			folder.id,
+			isDockviewReady,
+			isActive,
+			syncPanelFocusState,
+		]);
 		useEffect(() => {
 			// A link is followed where it was clicked. Every folder of the project
 			// hears this, and only the one on screen can have been clicked in.
@@ -9486,6 +9593,64 @@ function App({
 		[openInHome, selectHome],
 	);
 	openHomeSectionRef.current = openHomeSection;
+
+	// Server desktop tabs: opened wherever the window is showing, and moved
+	// between Home and this server's projects. A project's tabs are kept in
+	// desktopTabs; Home keeps its own.
+	const serverDesktopPlaces = useMemo<ServerDesktopPlaces>(() => {
+		// The folder a project shows now; a project with none yet uses its own
+		// id, as its stand-in folder does.
+		const folderFor = (projectId: string): string =>
+			workspaceViewWindowRef.current.selectedFolderId(projectId) ??
+			workspaceViewWindowRef.current.folderIds(projectId)[0] ??
+			projectId;
+		return {
+			targets: (from: DesktopTabLocation) => {
+				const list: ServerDesktopMoveTarget[] = [];
+				if (from !== 'home') list.push({ kind: 'home' });
+				for (const candidate of projectsRef.current) {
+					if (from !== 'home' && candidate.id === from.projectId) continue;
+					list.push({
+						kind: 'project',
+						projectId: candidate.id,
+						title: candidate.title,
+						...(candidate.emoji ? { emoji: candidate.emoji } : {}),
+					});
+				}
+				return list;
+			},
+			move: (tabId, from, to, closeHere) => {
+				if (to.kind === 'home') {
+					if (from === 'home') return;
+					desktopTabs.remove(tabId);
+					openInHome({ kind: 'server-desktop', serverId: currentServerId, tabId });
+					selectHome();
+					return;
+				}
+				const place = { projectId: to.projectId, folderId: folderFor(to.projectId) };
+				if (from === 'home') {
+					closeHere();
+					desktopTabs.add({ id: tabId, serverId: currentServerId, place });
+				} else desktopTabs.move(tabId, place);
+				activateProjectRef.current(to.projectId);
+			},
+			openHere: () => {
+				const tabId = newDesktopTabId();
+				const projectId = isHomeSelectedRef.current
+					? undefined
+					: (activeProjectIdRef.current ?? undefined);
+				if (projectId === undefined) {
+					openInHome({ kind: 'server-desktop', serverId: currentServerId, tabId });
+					return;
+				}
+				desktopTabs.add({
+					id: tabId,
+					serverId: currentServerId,
+					place: { projectId, folderId: folderFor(projectId) },
+				});
+			},
+		};
+	}, [currentServerId, openInHome, selectHome, projectsRef]);
 	const showRecordings = useCallback(
 		() => openHomeSection('recordings'),
 		[openHomeSection],
@@ -11374,6 +11539,13 @@ function App({
 		>
 		<AppWindowsContext.Provider value={serverAppWindows}>
 		<WorkflowsContext.Provider value={serverWorkflows}>
+		<ServerDesktopHubProvider
+			key={currentServerId}
+			client={serverDesktopClient}
+			serverId={currentServerId}
+			serverLabel={currentServerLabel}
+		>
+		<ServerDesktopPlacesContext.Provider value={serverDesktopPlaces}>
 		<div
 			className={`app-shell${isMac && hasNativeWindowControls && !isWindowFullScreen ? ' app-shell--macos' : ''}${isWindows && hasNativeWindowControls ? ' app-shell--windows' : ''}`}
 			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
@@ -11611,11 +11783,19 @@ function App({
 							onActivate={() => {
 								setIsRemoteMenuOpen(false);
 								setIsActivityMenuOpen(false);
-								// Activating it again shows the one window; it never
-								// opens a second.
-								setIsServerDesktopOpen(true);
+								setIsServerDesktopOpen((open) => !open);
 							}}
-						/>
+						>
+							{isServerDesktopOpen ? (
+								<ServerDesktopDropdown
+									onDismiss={() => setIsServerDesktopOpen(false)}
+									onOpenTab={() => {
+										setIsServerDesktopOpen(false);
+										serverDesktopPlaces.openHere();
+									}}
+								/>
+							) : null}
+						</ServerDesktopButton>
 					)}
 					<RemoteAccessConnectionMenu
 						connectionSwitcherEntries={connectionSwitcherEntries}
@@ -12045,6 +12225,17 @@ function App({
 								<FeatureUnavailableState reason="This pull request or issue is on another server. Switch to that server to see it." />
 							)
 						}
+						renderServerDesktop={(target, host) => (
+							<ServerDesktopTabView
+								tabId={target.tabId}
+								serverId={target.serverId}
+								location="home"
+								isVisible={host.isVisible}
+								isActive={host.isVisible}
+								closeHere={host.close}
+								setTitle={host.setTitle}
+							/>
+						)}
 						renderBotIcon={(target) =>
 							serverBots.get(target.serverId)?.bots.some(
 								(bot) => bot.id === target.botId,
@@ -12195,14 +12386,6 @@ function App({
 				/>
 			) : null}
 
-			{isServerDesktopOpen && serverDesktopClient !== undefined ? (
-				<ServerDesktopWindow
-					key={currentServerId}
-					client={serverDesktopClient}
-					serverLabel={currentServerLabel}
-					onClose={() => setIsServerDesktopOpen(false)}
-				/>
-			) : null}
 			{serverUpgrades.confirmation === undefined ? null : (
 				<ServerUpgradeDialog
 					key={serverUpgrades.confirmation.entry.profileId}
@@ -12224,6 +12407,8 @@ function App({
 				/>
 			) : null}
 		</div>
+		</ServerDesktopPlacesContext.Provider>
+		</ServerDesktopHubProvider>
 		</WorkflowsContext.Provider>
 		</AppWindowsContext.Provider>
 		</TerminalTitleStoreContext.Provider>

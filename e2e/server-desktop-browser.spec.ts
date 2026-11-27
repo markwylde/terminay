@@ -32,7 +32,7 @@ test('in a browser client Show Desktop twice shows one window, and it reopens on
 		timeout: 15_000,
 	});
 	const button = page.locator('[data-server-desktop-button="true"]');
-	const desktop = page.locator('[data-in-page-window="server-desktop"]');
+	const desktop = page.locator('[data-server-desktop-dropdown="true"]');
 	await expect(button).toBeVisible({ timeout: 30_000 });
 	await expect(button).toHaveAttribute(
 		'aria-label',
@@ -40,13 +40,14 @@ test('in a browser client Show Desktop twice shows one window, and it reopens on
 	);
 	await expect(desktop).toHaveCount(0);
 
-	// The second activation goes to the control itself: the open window is
-	// modal over the page.
+	// The control opens its dropdown, and activating it again closes it.
 	await button.click();
 	await expect(desktop).toHaveCount(1);
-	await button.evaluate((element: HTMLElement) => element.click());
-	await expect(desktop).toHaveCount(1);
 	await expect(button).toHaveAttribute('aria-pressed', 'true');
+	await button.click();
+	await expect(desktop).toHaveCount(0);
+	await button.click();
+	await expect(desktop).toHaveCount(1);
 	await expect(desktop).toContainText('Desktop · studio.example');
 
 	await expect(
@@ -57,7 +58,7 @@ test('in a browser client Show Desktop twice shows one window, and it reopens on
 		desktop.locator('[data-server-desktop-state="setting-up"]'),
 	).toBeVisible();
 
-	// Closing and reopening shows the setup still running, in one window.
+	// Closing and reopening shows the setup still running.
 	await page.keyboard.press('Escape');
 	await expect(desktop).toHaveCount(0);
 	await expect(button).toHaveAttribute('aria-pressed', 'false');

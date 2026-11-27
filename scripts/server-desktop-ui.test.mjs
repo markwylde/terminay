@@ -71,10 +71,10 @@ test('the header control names the server and says whether its window is open', 
 test('the control is rendered only for a server whose connection has a desktop client, which only the capability gives', async () => {
 	const app = await readFile('src/App.tsx', 'utf8');
 	assert.match(app, /\{serverDesktopClient === undefined \? null : \(\s*<ServerDesktopButton/);
-	assert.match(app, /isServerDesktopOpen && serverDesktopClient !== undefined \? \(\s*<ServerDesktopWindow/);
-	// Activating it only ever sets the one window open: there is no second.
-	assert.match(app, /setIsServerDesktopOpen\(true\);/);
-	assert.equal(app.match(/<ServerDesktopWindow/g).length, 1);
+	// Activating it toggles its one dropdown, which is drawn inside it.
+	assert.match(app, /setIsServerDesktopOpen\(\(open\) => !open\);/);
+	assert.equal(app.match(/<ServerDesktopDropdown/g).length, 1);
+	assert.match(app, /<ServerDesktopHubProvider\s+key=\{currentServerId\}\s+client=\{serverDesktopClient\}/);
 	const wiring = await readFile('src/shared/rendererServerClient.ts', 'utf8');
 	assert.match(wiring, /serverOffersDesktop\(server\.capabilities\)\s*\? new ServerDesktopClient\(/);
 	assert.match(wiring, /serverDesktopClient === undefined \? \{\} : \{ serverDesktopClient \}/);
@@ -230,19 +230,65 @@ test('turning off asks first when program windows are open, and can be cancelled
 	assert.deepEqual(calls, ['confirm', 'cancel']);
 });
 
-test('the desktop window is the shared in-page frame, remembered by its own id, with the shared viewer', async () => {
-	const source = await readFile('src/workspace/serverDesktop/ServerDesktopWindow.tsx', 'utf8');
-	assert.match(source, /<InPageWindow/);
-	assert.match(source, /kind=\{\{ resizable: true, id: 'server-desktop'/);
-	assert.match(source, /from '@terminay\/remote-desktop\/ui'/);
-	assert.match(source, /<RemoteDesktopCanvas/);
-	// The controller's window sizes the desktop; the server decides the mode.
-	assert.match(source, /\n\t{5}resize\n/);
-	assert.match(source, /clipboard=\{desktopClipboardHost\}/);
-	assert.match(source, /<RemoteDesktopCanvas[^>]*?\n\t{5}mode="view-only"/);
-	const ids = await readFile('src/shared/inPageWindow/geometryStore.ts', 'utf8');
-	assert.match(ids, /'server-desktop',/);
+test('one stream feeds every place: the viewer moves to the tab in use, the rest copy it', async () => {
+	const hub = await readFile('src/workspace/serverDesktop/ServerDesktopHub.tsx', 'utf8');
+	assert.match(hub, /from '@terminay\/remote-desktop\/ui'/);
+	// Exactly one viewer, portalled into an element that moves between places.
+	assert.equal(hub.match(/<RemoteDesktopCanvas/g)?.length, 1);
+	assert.match(hub, /createPortal\(/);
+	assert.match(hub, /target\.appendChild\(viewerElement\)/);
+	// Only a tab's size is the desktop's; parked out of sight it keeps its own.
+	assert.match(hub, /resize=\{primaryId !== undefined\}/);
+	assert.match(hub, /clipboard=\{desktopClipboardHost\}/);
+	// The server decides the mode.
+	assert.match(hub, /mode="view-only"/);
+	const surfaces = await readFile('src/workspace/serverDesktop/ServerDesktopSurfaces.tsx', 'utf8');
+	// Copies are drawn only while on screen and the page is visible.
+	assert.match(surfaces, /IntersectionObserver/);
+	assert.match(surfaces, /visibilityState !== 'visible'/);
+	assert.match(surfaces, /drawImage\(/);
+	// The floating window is gone.
+	const app = await readFile('src/App.tsx', 'utf8');
+	assert.doesNotMatch(app, /ServerDesktopWindow/);
+	assert.match(app, /<ServerDesktopDropdown/);
 	// One clipboard host for every desktop: the bot's and the server's.
 	const bots = await readFile('src/workspace/bots/BotDesktopView.tsx', 'utf8');
 	assert.match(bots, /desktopClipboardHost/);
+});
+
+test('the options menu is closed until asked for, and offers moving a tab', () => {
+	const closed = html(React.createElement(ServerDesktopBar, bar()));
+	assert.match(closed, /aria-expanded="false"[^>]*data-server-desktop-menu-button="true"/);
+	assert.match(closed, /hidden=""[^>]*data-server-desktop-menu="true"|data-server-desktop-menu="true"[^>]*hidden=""/);
+	const moved = [];
+	const targets = [{ kind: 'home' }, { kind: 'project', projectId: 'p2', title: 'Website', emoji: '🌐' }];
+	const open = bar({ menuOpen: true, moveTargets: targets, onMove: (target) => moved.push(target) });
+	const markup = html(React.createElement(ServerDesktopBar, open));
+	assert.match(markup, /aria-expanded="true"/);
+	assert.doesNotMatch(markup, /data-server-desktop-menu="true"[^>]*hidden/);
+	assert.match(markup, /Move tab to/);
+	const tree = ServerDesktopBar(open);
+	find(tree, (props) => props['data-server-desktop-move'] === 'p2')[0].props.onClick();
+	find(tree, (props) => props['data-server-desktop-move'] === 'home')[0].props.onClick();
+	assert.deepEqual(moved, [targets[1], targets[0]]);
+	// Outside a tab there is nowhere to move.
+	assert.doesNotMatch(closed, /data-server-desktop-move/);
+});
+
+test('the dropdown bar leads with its own action and leaves status to the heading', () => {
+	const markup = html(
+		React.createElement(ServerDesktopBar, bar({ compact: true, leading: React.createElement('button', { 'data-server-desktop-action': 'open-tab' }, 'Open in tab') })),
+	);
+	assert.match(markup, /data-server-desktop-action="open-tab"/);
+	assert.doesNotMatch(markup, /You control this desktop\./);
+	assert.doesNotMatch(markup, /data-server-desktop-sharing/);
+});
+
+test('a controlling bar says how the clipboard is shared', () => {
+	const markup = html(React.createElement(ServerDesktopBar, bar({ sharing: 'unavailable' })));
+	assert.match(markup, /data-server-desktop-sharing="unavailable"/);
+	assert.match(markup, /paste shortcut/);
+	assert.match(html(React.createElement(ServerDesktopBar, bar({ sharing: 'active' }))), /Clipboard synced/);
+	// A viewer shares nothing, so says nothing.
+	assert.doesNotMatch(html(React.createElement(ServerDesktopBar, bar({ mode: 'view-only', sharing: 'active' }))), /data-server-desktop-sharing/);
 });

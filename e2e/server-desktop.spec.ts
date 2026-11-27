@@ -192,7 +192,8 @@ async function expectShowing(window: Page, label: string) {
 const desktopButton = (window: Page) =>
 	window.locator('[data-server-desktop-button="true"]');
 const desktopWindow = (window: Page) =>
-	window.locator('[data-in-page-window="server-desktop"]');
+	// The Show Desktop dropdown.
+	window.locator('[data-server-desktop-dropdown="true"]');
 const stateOf = (window: Page, state: string) =>
 	desktopWindow(window).locator(`[data-server-desktop-state="${state}"]`);
 const step = (window: Page, name: string) =>
@@ -238,18 +239,19 @@ test('Show Desktop opens one window, and setup carries on while it is closed', a
 		);
 		await expect(desktopWindow(mainWindow)).toHaveCount(0);
 
-		// Activating it twice shows one window. The second activation is sent
-		// to the control itself: the open window is modal over the header.
+		// Activating it opens its dropdown, and activating it again closes it.
 		await button.click();
 		await expect(desktopWindow(mainWindow)).toHaveCount(1);
-		await button.evaluate((element: HTMLElement) => element.click());
-		await expect(desktopWindow(mainWindow)).toHaveCount(1);
 		await expect(button).toHaveAttribute('aria-pressed', 'true');
+		await button.click();
+		await expect(desktopWindow(mainWindow)).toHaveCount(0);
+		await button.click();
+		await expect(desktopWindow(mainWindow)).toHaveCount(1);
 		await expect(desktopWindow(mainWindow)).toContainText(
 			`Desktop · ${serverHost}`,
 		);
 
-		// Nothing is installed here, and this install has a helper: the window
+		// Nothing is installed here, and this install has a helper: the dropdown
 		// offers setup and shows no command to copy.
 		await expect(stateOf(mainWindow, 'needs-setup')).toBeVisible();
 		const setUp = desktopWindow(mainWindow).locator(
@@ -288,8 +290,8 @@ test('Show Desktop opens one window, and setup carries on while it is closed', a
 			desktopWindow(mainWindow).locator('[data-server-desktop-action]'),
 		).toHaveCount(0);
 
-		// Closing the window ends nothing: setup moves on, and the window
-		// reopens on where it has got to.
+		// Closing the dropdown ends nothing: setup moves on, and it reopens on
+		// where it has got to.
 		await mainWindow.keyboard.press('Escape');
 		await expect(desktopWindow(mainWindow)).toHaveCount(0);
 		await helper.report({ run: 'e2e-run', step: 'installing', fraction: 0.8 });
@@ -329,7 +331,7 @@ test('Show Desktop opens one window, and setup carries on while it is closed', a
 			desktopWindow(mainWindow).locator('[data-server-desktop-action="setup"]'),
 		).toHaveText('Try again');
 
-		// Back on this device's own server there is no control and no window.
+		// Escape closes the dropdown.
 		await mainWindow.keyboard.press('Escape');
 		await expect(desktopWindow(mainWindow)).toHaveCount(0);
 	} finally {

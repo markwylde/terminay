@@ -25,6 +25,7 @@ import {
 	CircleDot,
 	Film,
 	GitPullRequest,
+	Monitor,
 	SquareTerminal,
 	Workflow,
 	X,
@@ -105,6 +106,19 @@ export type HomeForgeItemHost = Readonly<{
 	setTitle: (title: string) => void;
 }>;
 
+/** A server desktop tab in Home. */
+export type HomeServerDesktopTarget = Extract<
+	HomeTabDescriptor,
+	Readonly<{ kind: 'server-desktop' }>
+>;
+
+/** What a server desktop tab knows of its tab, and may do to it. */
+export type HomeServerDesktopHost = Readonly<{
+	isVisible: boolean;
+	close: () => void;
+	setTitle: (title: string) => void;
+}>;
+
 type HomeTabsContextValue = Readonly<{
 	automations: AutomationsData;
 	commandBarShortcutLabel?: string;
@@ -138,6 +152,10 @@ type HomeTabsContextValue = Readonly<{
 		target: HomeForgeItemTarget,
 		host: HomeForgeItemHost,
 	) => ReactNode;
+	renderServerDesktop?: (
+		target: HomeServerDesktopTarget,
+		host: HomeServerDesktopHost,
+	) => ReactNode;
 	requestClose: (id: string) => void;
 	setDirty: (id: string, dirty: boolean) => void;
 }>;
@@ -160,6 +178,8 @@ function descriptorIcon(descriptor: HomeTabDescriptor): ReactNode {
 			return <Film size={15} aria-hidden="true" />;
 		case 'bot':
 			return <Bot size={15} aria-hidden="true" />;
+		case 'server-desktop':
+			return <Monitor size={15} aria-hidden="true" />;
 		case 'forge-item':
 			return descriptor.itemKind === 'pullRequest' ? (
 				<GitPullRequest size={15} aria-hidden="true" />
@@ -318,6 +338,14 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 					setTitle: host.setTitle,
 				}) ?? null;
 			break;
+		case 'server-desktop':
+			content =
+				home.renderServerDesktop?.(descriptor, {
+					isVisible: onScreen,
+					close: () => forceClose(id),
+					setTitle: host.setTitle,
+				}) ?? null;
+			break;
 		case 'automation-terminal':
 			content = (
 				<AutomationTerminalPanel
@@ -463,7 +491,8 @@ export type HomeWorkspaceHandle = Readonly<{
 			| Readonly<{ kind: 'section'; section: HomeSection }>
 			| (BotTabTarget & Readonly<{ kind: 'bot' }>)
 			| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>
-			| HomeForgeItemTarget,
+			| HomeForgeItemTarget
+			| HomeServerDesktopTarget,
 	) => void;
 	/**
 	 * Close the tab in front as a person would. Returns whether there was one.
@@ -519,6 +548,11 @@ export type HomeWorkspaceProps = Readonly<{
 		target: HomeForgeItemTarget,
 		host: HomeForgeItemHost,
 	) => ReactNode;
+	/** A server desktop tab's content, which the window composes. */
+	renderServerDesktop?: (
+		target: HomeServerDesktopTarget,
+		host: HomeServerDesktopHost,
+	) => ReactNode;
 	/** The sidebar's bot roster, given the bot tab in front and how to open one. */
 	renderSidebarBots?: (args: {
 		activeBot: Readonly<{ serverId: string; botId: string }> | undefined;
@@ -551,6 +585,7 @@ export const HomeWorkspace = forwardRef<
 		renderSidebarBots,
 		renderBotIcon,
 		renderForgeItem,
+		renderServerDesktop,
 		sectionBadges,
 	},
 	ref,
@@ -755,7 +790,8 @@ export const HomeWorkspace = forwardRef<
 				if (
 					target.kind === 'section' ||
 					target.kind === 'recording' ||
-					target.kind === 'forge-item'
+					target.kind === 'forge-item' ||
+					target.kind === 'server-desktop'
 				)
 					openDescriptor(target);
 				else if (target.kind === 'bot') openBot(target);
@@ -905,6 +941,7 @@ export const HomeWorkspace = forwardRef<
 			requestClose,
 			setDirty,
 			...(renderForgeItem === undefined ? {} : { renderForgeItem }),
+			...(renderServerDesktop === undefined ? {} : { renderServerDesktop }),
 			...(hiddenSections === undefined ? {} : { hiddenSections }),
 			...(commandBarShortcutLabel === undefined
 				? {}
@@ -926,6 +963,7 @@ export const HomeWorkspace = forwardRef<
 			renderBotIcon,
 			renderBots,
 			renderForgeItem,
+			renderServerDesktop,
 			renderSection,
 			hiddenSections,
 			requestClose,

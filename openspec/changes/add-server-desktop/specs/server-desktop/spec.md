@@ -40,9 +40,9 @@ The server SHALL publish each state change only to attached clients that hold de
 
 ### Requirement: Show Desktop sits beside the server menu
 
-A window connected to a server that advertises `server-desktop.v1` SHALL show a Show Desktop control beside the server menu. A window whose server does not advertise it SHALL NOT show the control. Activating the control SHALL open the desktop window for that window's server, and the window SHALL present the server's state:
+A window connected to a server that advertises `server-desktop.v1` SHALL show a Show Desktop control beside the server menu. A window whose server does not advertise it SHALL NOT show the control. Activating the control SHALL open a dropdown beneath it for that window's server, and activating it again, pressing outside the dropdown, or pressing Escape SHALL close it. The dropdown SHALL present the server's state:
 
-- `ready` shows the desktop.
+- `ready` shows a live, scaled copy of the desktop, who controls it, a way to take or give up control, and an action that opens the desktop in a tab.
 - `needs-setup` and `setting-up` show guided setup.
 - `off` offers to turn the desktop on.
 - `unsupported` shows the reason and no action.
@@ -51,7 +51,7 @@ A window connected to a server that advertises `server-desktop.v1` SHALL show a 
 #### Scenario: Ready desktop
 
 - **WHEN** a user activates Show Desktop on a server whose desktop is `ready`
-- **THEN** one window opens showing the whole desktop
+- **THEN** a dropdown opens showing a live copy of the whole desktop and an action to open it in a tab
 
 #### Scenario: Server without the capability
 
@@ -61,18 +61,18 @@ A window connected to a server that advertises `server-desktop.v1` SHALL show a 
 #### Scenario: Unsupported host
 
 - **WHEN** a user activates Show Desktop on a server whose state is `unsupported`
-- **THEN** the window shows the reason, and shows no install, retry, or turn-on action
+- **THEN** the dropdown shows the reason, and shows no install, retry, or turn-on action
 
 ### Requirement: Guided setup installs a fixed package set
 
-When the state is `needs-setup` and the server can run setup itself, the desktop window SHALL offer to install the desktop. Accepting SHALL send `server.desktop.setup`, which SHALL carry nothing: any field SHALL be rejected as a validation error and SHALL NOT start setup. Setup SHALL install only the packages named in the installed Terminay release and the dependencies the host's package manager resolves for them, from the host's configured package sources. It SHALL NOT add a package source, and SHALL NOT leave any system service enabled or running that was not before. A request made while setup is running SHALL join that setup.
+When the state is `needs-setup` and the server can run setup itself, the dropdown and every desktop tab SHALL offer to install the desktop. Accepting SHALL send `server.desktop.setup`, which SHALL carry nothing: any field SHALL be rejected as a validation error and SHALL NOT start setup. Setup SHALL install only the packages named in the installed Terminay release and the dependencies the host's package manager resolves for them, from the host's configured package sources. It SHALL NOT add a package source, and SHALL NOT leave any system service enabled or running that was not before. A request made while setup is running SHALL join that setup.
 
-The window SHALL show setup's named steps and a progress bar driven by the package manager's own reported progress, and SHALL show the same setup after the window is reopened or the client reconnects. When setup completes, the desktop SHALL start unless it has been turned off, and the window SHALL show it. When setup fails, the state SHALL be `failed` with the failing step and its reason. A setup run that ends without recording an outcome SHALL be reported as `failed`, never left as `setting-up`.
+The dropdown SHALL show setup's named steps and a progress bar driven by the package manager's own reported progress, and SHALL show the same setup after the dropdown is reopened or the client reconnects. When setup completes, the desktop SHALL start unless it has been turned off, and the dropdown SHALL show it. When setup fails, the state SHALL be `failed` with the failing step and its reason. A setup run that ends without recording an outcome SHALL be reported as `failed`, never left as `setting-up`.
 
 #### Scenario: First use on a system-scope install
 
 - **WHEN** a user activates Show Desktop on a Debian system-scope server without the display server and accepts setup
-- **THEN** the packages are installed without the user typing a command, the window shows each step and a moving progress bar, and the desktop appears when setup completes
+- **THEN** the packages are installed without the user typing a command, the dropdown shows each step and a moving progress bar, and the desktop appears when setup completes
 
 #### Scenario: Setup carries a parameter
 
@@ -87,7 +87,7 @@ The window SHALL show setup's named steps and a progress bar driven by the packa
 #### Scenario: Package source unreachable
 
 - **WHEN** setup cannot download a package
-- **THEN** the state is `failed`, the window names the download step and the package manager's error, and a retry runs setup again
+- **THEN** the state is `failed`, the dropdown names the download step and the package manager's error, and a retry runs setup again
 
 #### Scenario: Setup process killed
 
@@ -101,22 +101,22 @@ The window SHALL show setup's named steps and a progress bar driven by the packa
 
 ### Requirement: Setup by command where the server cannot elevate
 
-When the server has no setup helper and cannot run the setup command with passwordless elevation, the desktop window SHALL show the one command that performs the same setup, with a way to copy it and a Check again action. The server SHALL re-examine the host when asked for status and when Check again is used, and SHALL start the desktop once the required programs are present, unless it has been turned off.
+When the server has no setup helper and cannot run the setup command with passwordless elevation, the dropdown and every desktop tab SHALL show the one command that performs the same setup, with a way to copy it and a Check again action. The server SHALL re-examine the host when asked for status and when Check again is used, and SHALL start the desktop once the required programs are present, unless it has been turned off.
 
 #### Scenario: User-scope install
 
-- **WHEN** a user opens the desktop window on a user-scope install without the display server
-- **THEN** the window shows the setup command and no install button
+- **WHEN** a user opens the desktop dropdown on a user-scope install without the display server
+- **THEN** the dropdown shows the setup command and no install button
 
 #### Scenario: Elevation present but refused
 
 - **WHEN** an elevation program is installed but refuses to run without a password
-- **THEN** the window shows the setup command and no install button
+- **THEN** the dropdown shows the setup command and no install button
 
 #### Scenario: Command has been run
 
 - **WHEN** the operator has run the command and the user chooses Check again
-- **THEN** the desktop starts and the window shows it
+- **THEN** the desktop starts and the dropdown shows it
 
 ### Requirement: Terminay runs its own display server
 
@@ -170,7 +170,7 @@ A client SHALL receive the desktop only through the Terminay connection. Nothing
 
 Pairing is the trust point: a client that holds a Terminay connection with write authority can already run programs as the server account. Desktop operations SHALL therefore be available to every such connection, and to no other. A connection narrowed to a project, terminal session, capability, chat, or MCP principal SHALL be refused as forbidden, and the refusal SHALL NOT reveal the desktop's state.
 
-The desktop is shared by every project on the server: any program the server account runs can draw on it, read it, and type into it, and every viewer sees all of it. The desktop window SHALL say so.
+The desktop is shared by every project on the server: any program the server account runs can draw on it, read it, and type into it, and every viewer sees all of it. Every place that shows the desktop SHALL offer a way to read that.
 
 Each desktop stream SHALL be bound to the authorized client connection, the mode, and a stream generation. The server SHALL revalidate that authority on every read and write, and SHALL close the stream when the connection ends or its device is revoked.
 
@@ -236,11 +236,11 @@ The server SHALL forward only a bounded allowlist of client messages and SHALL c
 
 ### Requirement: The desktop follows its window's size
 
-While a client holds control, resizing its desktop window SHALL resize the desktop to fit, as a single screen between 640 by 480 and 3840 by 2160 pixels. A request outside those bounds SHALL be clamped. A request that names more than one screen or is otherwise malformed SHALL close the stream. The server SHALL apply at most ten resizes per second from a stream and SHALL apply the latest request it received. A view-only client SHALL scale the desktop to fit its window and SHALL NOT resize it.
+While a client holds control, resizing the desktop tab in use SHALL resize the desktop to fit, as a single screen between 640 by 480 and 3840 by 2160 pixels. A request outside those bounds SHALL be clamped. A request that names more than one screen or is otherwise malformed SHALL close the stream. The server SHALL apply at most ten resizes per second from a stream and SHALL apply the latest request it received. A view-only client SHALL scale the desktop to fit its window and SHALL NOT resize it.
 
 #### Scenario: Controller resizes
 
-- **WHEN** the controlling client's desktop window is resized to 1600 by 900
+- **WHEN** the desktop tab in use on the controlling client is resized to 1600 by 900
 - **THEN** the desktop becomes 1600 by 900 and maximised programs fill it
 
 #### Scenario: Oversized request
@@ -258,28 +258,52 @@ While a client holds control, resizing its desktop window SHALL resize the deskt
 - **WHEN** a view-only client resizes its window
 - **THEN** the desktop keeps its size and that client's view is scaled to fit
 
-### Requirement: The desktop window
+### Requirement: The desktop in tabs
 
-The desktop SHALL open in the shared in-page window frame on every host. One desktop window SHALL exist per client window; activating Show Desktop again SHALL focus it. The window SHALL show the mode, a way to take or give up control, a reconnect action, and the display number. Losing the stream SHALL show a reconnecting state and SHALL NOT close the window.
+Opening the desktop in a tab SHALL add a desktop tab to whatever the window is showing: the selected folder of the project in front, or Home. A window MAY hold any number of desktop tabs, in any of its projects and in Home. A desktop tab SHALL behave as the other tabs of the place it is in: it can be dragged, split, and closed there. A desktop tab SHALL offer to move to Home or to any other project of the same server, and moving it SHALL close it where it was and open it there. Desktop tabs SHALL be remembered by the device that opened them and SHALL come back in the same places after the window reloads; the server SHALL NOT record them.
 
-#### Scenario: Activating twice
+A desktop tab SHALL show the mode, a way to take or give up control, how the clipboard is shared, and, in a menu, the display number, a reconnect action, and turning the desktop off. While the desktop is not `ready`, a desktop tab SHALL show the same state the dropdown shows. Losing the stream SHALL show a reconnecting state in every place that shows the desktop and SHALL NOT close any of them.
 
-- **WHEN** a user activates Show Desktop while the desktop window is already open
-- **THEN** the existing window is focused and no second window opens
+A client window SHALL hold at most one desktop stream, however many places show the desktop. Input, the clipboard, and the desktop's size SHALL follow the desktop tab that was focused most recently and is on screen; every other place SHALL show a copy of that stream's picture, updated only while that place is on screen. Activating a place that shows a copy SHALL make it the one in use. While no desktop tab is on screen, the stream SHALL keep the desktop's size.
 
-#### Scenario: Moving and resizing
+#### Scenario: Opening in a tab
 
-- **WHEN** a user drags the desktop window's title bar or an edge
-- **THEN** the window moves or resizes, and can be maximised
+- **WHEN** a user chooses to open the desktop in a tab while a project is in front
+- **THEN** a desktop tab opens among that project folder's tabs, and the dropdown closes
+
+#### Scenario: Several tabs, one stream
+
+- **WHEN** a user opens the desktop in two tabs of the same window
+- **THEN** the window holds one desktop stream, the tab focused last receives input, and the other shows the same picture
+
+#### Scenario: Using another tab
+
+- **WHEN** a user activates the desktop tab that shows a copy
+- **THEN** that tab receives input and the desktop takes its size
+
+#### Scenario: Moving a tab
+
+- **WHEN** a user moves a desktop tab from a project to Home
+- **THEN** the tab closes in the project and opens in Home
+
+#### Scenario: Reload
+
+- **WHEN** the window reloads with desktop tabs open in a project and in Home
+- **THEN** the same desktop tabs are open in the same places
+
+#### Scenario: Glancing does not resize
+
+- **WHEN** a user opens the dropdown while no desktop tab is on screen
+- **THEN** the desktop keeps its size
 
 #### Scenario: Stream lost
 
-- **WHEN** the connection drops while the desktop window is open
-- **THEN** the window shows that it is reconnecting and shows the desktop again once the connection returns
+- **WHEN** the connection drops while the desktop is shown
+- **THEN** every place showing it says it is reconnecting and shows the desktop again once the connection returns
 
 ### Requirement: The clipboard is shared only with the controlling host
 
-A host SHALL keep its clipboard text synchronized with the server desktop only while it holds control of that desktop and the desktop window is connected and visible. Sharing SHALL follow the same direction, ordering, paste-chord, size, text-only, selection, and browser-host rules as the bot desktop, and a host SHALL share with at most one desktop of any kind at a time.
+A host SHALL keep its clipboard text synchronized with the server desktop only while it holds control of that desktop and a place showing the desktop is connected and visible. Sharing SHALL follow the same direction, ordering, paste-chord, size, text-only, selection, and browser-host rules as the bot desktop, and a host SHALL share with at most one desktop of any kind at a time.
 
 A view-only stream SHALL carry no clipboard content in either direction. The server SHALL enforce that on the bytes of the stream itself, for every clipboard message form, and SHALL NOT rely on the client to ignore them. Clipboard contents SHALL NOT be persisted or logged.
 
@@ -331,7 +355,7 @@ When the display server exits unexpectedly, the server SHALL start it again with
 #### Scenario: Display server crash
 
 - **WHEN** the display server exits unexpectedly
-- **THEN** the server starts it again on the same display number, status reports the interruption, and open desktop windows reconnect
+- **THEN** the server starts it again on the same display number, status reports the interruption, and every place showing the desktop reconnects
 
 #### Scenario: Upgrade to a compatible release
 

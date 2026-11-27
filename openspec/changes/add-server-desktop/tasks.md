@@ -47,6 +47,7 @@
 - [x] 6.3 Build the setup, off, unsupported, and failed states: step list, progress bar, retry, copyable command, Check again, and no action on `unsupported`. Verified by component tests for each state and an E2E flow against a fake setup that survives closing and reopening the window.
 - [x] 6.4 Wire resize for the controlling client and scale-to-fit for viewers, and clipboard sharing limited to the controlling host with one shared desktop of any kind at a time, including the browser-host paste path. Verified by viewer tests for resize requests, viewer scaling, clipboard retirement when control is taken, and browser-host paste.
 - [x] 6.5 Add turn on and turn off to the desktop window, with the confirmation when program windows are open. Verified by component tests for both actions and the confirmation.
+- [x] 6.6 Replace the desktop window with the Show Desktop dropdown (live copy, control, Open in tab, setup states) and desktop tabs in project folders and Home: any number per window, one stream between them, the viewer following the tab in use and copies elsewhere, a slim toolbar with an options menu, Move to Home or another project, and tabs remembered per device. Verified by component tests for the toolbar, menu, and move targets, model tests for the tab store and Home tab id, and the server-desktop E2E flows against the dropdown.
 
 ## 7. Verification and documentation
 

@@ -1027,11 +1027,17 @@ the server's user can write.
 ## Server desktop
 
 A standalone server on Debian can show a desktop. Run `firefox` (or any other
-graphical program) in a terminal on the server and its window appears in
-Terminay, in the desktop window you open with **Show Desktop**, the monitor icon
-beside the notifications bell. One window shows the whole desktop: a small XFCE
-session with a panel, an applications menu, a list of open windows, and a
-terminal launcher.
+graphical program) in a terminal on the server and its window appears on the
+desktop: a small XFCE session with a panel, an applications menu, a list of
+open windows, and a terminal launcher.
+
+**Show Desktop**, the monitor icon beside the notifications bell, opens a
+dropdown with a live view of the desktop. **Open in tab** opens it as a tab in
+the project or Home you are looking at, where it moves, splits, and closes like
+any other tab; its menu can also move it to Home or another project. You can
+open as many desktop tabs as you like. They share one connection: the tab you
+used last gets the keyboard, mouse, and clipboard and sets the desktop's size,
+and the others show the same picture until you click one.
 
 The desktop runs as ordinary processes on the same host and under the same
 account as the server and its terminals. There is no virtual machine and no
@@ -1039,7 +1045,7 @@ container. A program on the desktop has that account's home, files, and
 network, exactly as the same program started from a terminal would.
 
 It is offered on **Debian Linux** and in the **official container image** only.
-On any other host the window says the desktop is not supported there and why,
+On any other host the dropdown says the desktop is not supported there and why,
 and nothing is started. The server built into Terminay Desktop has no desktop
 of its own, so the icon appears only while the window is on a standalone
 server.
@@ -1084,7 +1090,7 @@ browses from the server. That is the point of it, and the same as running
 
 ### Setting it up
 
-The first time you click **Show Desktop**, the window says what is needed and
+The first time you click **Show Desktop**, the dropdown says what is needed and
 offers **Set up desktop**. Setup installs a fixed list of stock Debian
 packages with `apt-get install --no-install-recommends` and nothing else:
 
@@ -1095,9 +1101,9 @@ fonts-noto-color-emoji adwaita-icon-theme python3 python3-seccomp
 ```
 
 None of them enables or starts a service, and no browser or other application
-is installed: install the programs you want to run yourself. The window shows
+is installed: install the programs you want to run yourself. The dropdown shows
 each step and a progress bar. You can close it; setup carries on, and the
-window shows where it has got to when you open it again.
+dropdown shows where it has got to when you open it again.
 
 The server is unprivileged and never runs the package manager. It asks root
 in one of two ways, and neither lets a client or the server choose what is
@@ -1119,7 +1125,7 @@ writes and the server only reads.
 
 ### Setting it up by hand
 
-Where the server has no way to ask root, the window shows one command to run
+Where the server has no way to ask root, the dropdown shows one command to run
 on the server and a **Check again** button instead. That is the case for a
 user-scope install, a container with no passwordless `sudo`, and a system-scope
 install that has no desktop helper yet.
@@ -1137,7 +1143,7 @@ docker exec -u root <container> terminay daemon desktop install
 The command must run as root, works on Debian only, takes no options, and
 exits at once when everything is already installed. If another package
 manager holds the lock it waits up to two minutes. If an earlier install was
-interrupted it finishes that first. Run it again after a failure; the window's
+interrupted it finishes that first. Run it again after a failure; the dropdown's
 **Try again** does the same.
 
 A container's packages live in the container. Recreating it from an image
@@ -1149,7 +1155,8 @@ again.
 New terminals on the server are given `DISPLAY` and `XAUTHORITY` while the
 desktop runs, so graphical programs just work. A terminal opened before the
 desktop was set up does not have them; open a new one. To start a program on
-the desktop from such a shell, the window's bar shows the display number:
+the desktop from such a shell, use the display number shown in a desktop tab's
+menu:
 
 ```bash
 DISPLAY=:765 firefox
@@ -1160,22 +1167,22 @@ Terminay takes the next free one and leaves the other display alone. A server
 that already has a display of its own (`DISPLAY` or `WAYLAND_DISPLAY` in the
 service's environment) keeps it for its terminals.
 
-The desktop takes the size of the controlling device's window. Viewers see it
-scaled to fit. Clipboard text is shared with the controlling device only, and
+The desktop takes the size of the controlling device's desktop tab in use.
+Viewers, the dropdown, and the other tabs see it scaled to fit; just opening the
+dropdown never resizes it. Clipboard text is shared with the controlling device only, and
 with one remote desktop at a time, a bot's or the server's.
 
 The desktop keeps running when the server restarts or is upgraded, with the
 programs on it still open, the same way terminals do. If the display server
 itself crashes, Terminay starts it again on the same number; programs that
-were open on it are gone, and the window reconnects.
+were open on it are gone, and every desktop tab reconnects.
 
 ### Limits
 
 - **Software rendering.** There is no GPU. Video and WebGL work, slowly.
 - **No audio.**
-- **One window.** The whole desktop is one Terminay window, and that window is
-  modal: close it to get back to the workspace. Programs keep running while it
-  is closed.
+- **One desktop.** Every tab shows the whole desktop, not one program. Programs
+  keep running while no tab shows it.
 - **The server must share `/tmp` with its terminals.** X clients find the
   display through a socket in `/tmp/.X11-unix`. A service unit with
   `PrivateTmp=true` hides that from the programs it starts, so the desktop is
@@ -1186,9 +1193,9 @@ were open on it are gone, and the window reconnects.
 
 ### Turning it off
 
-**Turn off** in the desktop window ends the session and the display server.
+**Turn off desktop…** in a desktop tab's menu ends the session and the display server.
 Every window on the desktop closes, including those of programs started from
-terminals, so the window asks first when any are open. Programs that have no
+terminals, so Terminay asks first when any are open. Programs that have no
 window, or that survive losing their display, are not ended: turning the
 desktop off does not kill what you started.
 
