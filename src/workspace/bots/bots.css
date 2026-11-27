@@ -307,6 +307,11 @@ button.bots-chip.bots-chip--on {
 	border-radius: inherit;
 	object-fit: cover;
 }
+/* An idle or stopped bot's picture is greyscale; its activity dot is not.
+   A Critter draws itself in greys (Chara's mono). */
+.bots-avatar--dormant img {
+	filter: grayscale(1);
+}
 .bots-avatar i {
 	position: absolute;
 	right: -2px;

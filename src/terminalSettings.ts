@@ -502,6 +502,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	rescaleOverlappingGlyphs: false,
 	rightClickSelectsWord: false,
 	screenReaderMode: false,
+	animateBotAvatars: true,
 	scrollback: 5000,
 	scrollOnEraseInDisplay: false,
 	scrollOnUserInput: true,
@@ -2360,6 +2361,16 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				categoryId: 'accessibility',
 				input: 'boolean',
 			}),
+			makeField({
+				key: 'animateBotAvatars',
+				label: 'Animate bot avatars',
+				description:
+					'Let Critter bot avatars move to show what the bot is doing: working, thinking, idle or asleep. Off draws them still. They are always still when the system asks to reduce motion.',
+				sectionId: 'readability',
+				categoryId: 'accessibility',
+				input: 'boolean',
+				keywords: ['bot', 'avatar', 'animation', 'motion', 'chara', 'critter'],
+			}),
 		],
 	},
 	{
@@ -3254,6 +3265,10 @@ export function normalizeTerminalSettings(
 			typeof input.screenReaderMode === 'boolean'
 				? input.screenReaderMode
 				: defaultTerminalSettings.screenReaderMode,
+		animateBotAvatars:
+			typeof input.animateBotAvatars === 'boolean'
+				? input.animateBotAvatars
+				: defaultTerminalSettings.animateBotAvatars,
 		scrollback: clampNumber(
 			Number(input.scrollback),
 			defaultTerminalSettings.scrollback,
