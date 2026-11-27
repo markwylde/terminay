@@ -4,6 +4,7 @@
  * dashboard. One definition so a state can never read two ways.
  */
 
+import type { BotAvatarStyle } from '@terminay/protocol';
 import type { TerminalActivityState } from '../components/TerminalTab';
 import type { AgentState } from '../types/agentStatus';
 import type { ServerUpgradeNotice } from './serverUpgradeModel';
@@ -24,6 +25,7 @@ export type BotNotificationRow = Readonly<{
 	botId: string;
 	name: string;
 	avatar: string;
+	avatarStyle?: BotAvatarStyle;
 	colour: string;
 	count: number;
 	/** The latest post this row covers; dismissing it acknowledges no further. */

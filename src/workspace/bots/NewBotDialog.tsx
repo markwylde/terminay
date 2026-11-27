@@ -3,6 +3,7 @@
  * set in its Profile tab, which opens as soon as the bot is created.
  */
 
+import type { BotAvatarStyle } from '@terminay/protocol';
 import { X } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { BotAvatar } from './BotAvatar';
@@ -32,6 +33,8 @@ export function NewBotDialog({
 	const agents = server?.agents ?? [];
 	const [name, setName] = useState('');
 	const [agentId, setAgentId] = useState('');
+	const [avatarStyle, setAvatarStyle] = useState<BotAvatarStyle>('critter');
+	const [avatar, setAvatar] = useState('');
 	const [colour, setColour] = useState<string>(COLOURS[0]);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string>();
@@ -51,8 +54,15 @@ export function NewBotDialog({
 	}, [onClose]);
 
 	const agent = agents.find((candidate) => candidate.id === agentId);
+	const avatarInvalid =
+		avatarStyle === 'character' &&
+		[...avatar].length > 2 &&
+		!/^\p{Extended_Pictographic}/u.test(avatar);
 	const canCreate =
-		server !== undefined && name.trim().length > 0 && agent !== undefined;
+		server !== undefined &&
+		name.trim().length > 0 &&
+		agent !== undefined &&
+		!avatarInvalid;
 
 	const submit = (event: FormEvent) => {
 		event.preventDefault();
@@ -63,7 +73,11 @@ export function NewBotDialog({
 			.save({
 				name: name.trim(),
 				agentId: agent.id,
+				avatarStyle,
 				colour,
+				...(avatarStyle === 'character' && avatar.trim().length > 0
+					? { avatar: avatar.trim() }
+					: {}),
 				...(agent.autonomousOnly ? { approvalMode: 'autonomous' } : {}),
 			})
 			.then((bot) => {
@@ -94,7 +108,12 @@ export function NewBotDialog({
 			>
 				<header className="bots-dialog__head">
 					<BotAvatar
-						bot={{ name: name || '?', colour, avatar: '' }}
+						bot={{
+							name: name.trim() || '?',
+							colour,
+							avatar,
+							avatarStyle,
+						}}
 						size="md"
 					/>
 					<h2 id="bots-new-title">New bot</h2>
@@ -155,22 +174,64 @@ export function NewBotDialog({
 						Profile.
 					</small>
 				</label>
-				<fieldset className="bots-field">
-					<legend>Colour</legend>
-					<div className="bots-swatches">
-						{COLOURS.map((candidate) => (
-							<button
-								key={candidate}
-								type="button"
-								className={`bots-swatch${candidate === colour ? ' bots-swatch--on' : ''}`}
-								style={{ background: candidate }}
-								aria-label={`Colour ${candidate}`}
-								aria-pressed={candidate === colour}
-								onClick={() => setColour(candidate)}
+				<div className="bots-field">
+					<span>Avatar</span>
+					<fieldset className="bots-seg" aria-label="Avatar style">
+						<button
+							type="button"
+							className={avatarStyle === 'critter' ? 'bots-seg--on' : ''}
+							aria-pressed={avatarStyle === 'critter'}
+							onClick={() => setAvatarStyle('critter')}
+							data-terminay-bots-new-avatar-style="critter"
+						>
+							Critter
+						</button>
+						<button
+							type="button"
+							className={avatarStyle === 'character' ? 'bots-seg--on' : ''}
+							aria-pressed={avatarStyle === 'character'}
+							onClick={() => setAvatarStyle('character')}
+							data-terminay-bots-new-avatar-style="character"
+						>
+							Character
+						</button>
+					</fieldset>
+				</div>
+				{avatarStyle === 'character' ? (
+					<div className="bots-avatar-picker__character">
+						<label className="bots-field bots-avatar-field">
+							<span>Character</span>
+							<input
+								value={avatar}
+								placeholder={[...name.trim()][0]?.toUpperCase() ?? 'B'}
+								maxLength={8}
+								onChange={(event) => setAvatar(event.target.value)}
+								data-terminay-bots-new-avatar="true"
 							/>
-						))}
+						</label>
+						<fieldset className="bots-field">
+							<legend>Colour</legend>
+							<div className="bots-swatches">
+								{COLOURS.map((candidate) => (
+									<button
+										key={candidate}
+										type="button"
+										className={`bots-swatch${candidate === colour ? ' bots-swatch--on' : ''}`}
+										style={{ background: candidate }}
+										aria-label={`Colour ${candidate}`}
+										aria-pressed={candidate === colour}
+										onClick={() => setColour(candidate)}
+									/>
+								))}
+							</div>
+						</fieldset>
 					</div>
-				</fieldset>
+				) : null}
+				{avatarInvalid ? (
+					<p className="bots-note bots-note--warn">
+						The avatar is one emoji or one character.
+					</p>
+				) : null}
 				{error ? <p className="bots-note bots-note--warn">{error}</p> : null}
 				<footer className="bots-dialog__foot">
 					<button type="button" className="bots-btn" onClick={onClose}>

@@ -167,3 +167,41 @@ test('Terminay MCP access defaults off, round-trips an explicit value and reject
 		store.save({ ...store.get(bot.id), terminayMcpAccess: 'yes' }),
 	);
 });
+
+test('Avatar style defaults to critter for new and existing bots, round-trips character and rejects unknown styles', (t) => {
+	const root = mkdtempSync(join(tmpdir(), 'bots-store-avatar-style-'));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const path = join(root, 'bots.json');
+	const store = new BotStore(path);
+	const bot = store.save({ name: 'Bird', agentId: 'fake.agent' });
+	assert.equal(bot.avatarStyle, 'critter');
+	store.save({
+		...store.get(bot.id),
+		avatarStyle: 'character',
+		avatar: '🦜',
+		colour: '#f5a97c',
+	});
+	const savedChar = new BotStore(path).get(bot.id);
+	assert.equal(savedChar.avatarStyle, 'character');
+	assert.equal(savedChar.avatar, '🦜');
+	assert.equal(savedChar.colour, '#f5a97c');
+	// Switching back to critter tolerates an empty avatar string.
+	const backToCritter = store.save({
+		...store.get(bot.id),
+		avatarStyle: 'critter',
+		avatar: '',
+	});
+	assert.equal(backToCritter.avatarStyle, 'critter');
+	assert.equal(backToCritter.avatar, 'B');
+	// A profile saved before avatarStyle existed reads as critter.
+	const raw = JSON.parse(readFileSync(path, 'utf8'));
+	for (const b of raw.bots) {
+		delete b.avatarStyle;
+		b.avatar = 'C';
+	}
+	writeFileSync(path, JSON.stringify(raw));
+	assert.equal(new BotStore(path).get(bot.id).avatarStyle, 'critter');
+	assert.throws(() =>
+		store.save({ ...store.get(bot.id), avatarStyle: 'mecha' }),
+	);
+});

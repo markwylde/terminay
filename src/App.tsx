@@ -8872,7 +8872,12 @@ function App({
 						bots: new Map(
 							currentServerBotList.map((bot) => [
 								bot.id,
-								{ name: bot.name, avatar: bot.avatar, colour: bot.colour },
+								{
+									name: bot.name,
+									avatar: bot.avatar,
+									avatarStyle: bot.avatarStyle,
+									colour: bot.colour,
+								},
 							]),
 						),
 					},

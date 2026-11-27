@@ -64,11 +64,14 @@ export type BotSignIn =
 	  }
 	| { readonly kind: 'none' };
 export type BotApprovalMode = 'autonomous' | 'ask';
+export type BotAvatarStyle = 'critter' | 'character';
 export interface BotProfile {
 	readonly enabled?: boolean;
 	readonly id: string;
 	readonly name: string;
 	readonly avatar: string;
+	/** How the bot's avatar is drawn. Missing reads as 'critter'. */
+	readonly avatarStyle?: BotAvatarStyle;
 	readonly colour: string;
 	readonly description: string;
 	readonly instructions: string;

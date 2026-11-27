@@ -26,6 +26,7 @@ await build({
 	logLevel: 'silent',
 });
 const css = [
+	await readFile('src/workspace/homeView.css', 'utf8'),
 	await readFile('src/workspace/bots/bots.css', 'utf8'),
 	(await readFile('src/App.css', 'utf8')).slice(
 		(await readFile('src/App.css', 'utf8')).indexOf('.context-menu {'),
@@ -3305,5 +3306,197 @@ test('bot Markdown cannot render an opaque durable attachment as an image', asyn
 		);
 	} finally {
 		await page.close();
+	}
+});
+
+test('bots default to Chara Critter avatars, Profile switches between Critter and Character, and sidebar avatars are 36px', async () => {
+	// 1. Sidebar roster: 36x36 Chara Critter avatars by default, with clear row height.
+	const sidebarPage = await open(
+		{
+			...FLEET,
+			view: 'sidebar',
+			bots: [
+				bot(BIRD, 'Imagine'),
+				bot(OWL, 'Infrado'),
+				bot(FINCH, 'Terminay', {
+					avatarStyle: 'character',
+					avatar: 'T',
+					colour: '#7cf5b4',
+				}),
+			],
+		},
+		{ width: 320, height: 480 },
+	);
+	try {
+		const rows = sidebarPage.locator('[data-terminay-home-sidebar-bot]');
+		await rows.first().waitFor();
+		assert.equal(await rows.count(), 3);
+		const imagineAvatar = sidebarPage.locator(
+			`[data-terminay-home-sidebar-bot="${BIRD}"] .bots-avatar`,
+		);
+		assert.equal(
+			await imagineAvatar.getAttribute('data-terminay-bot-avatar-style'),
+			'critter',
+		);
+		assert.equal(await imagineAvatar.locator('svg').count(), 1);
+		assert.equal(
+			await imagineAvatar.locator('svg rect[width="100"][height="100"]').count(),
+			0,
+			'Critter avatars must render without a background tile rect',
+		);
+		const terminayAvatar = sidebarPage.locator(
+			`[data-terminay-home-sidebar-bot="${FINCH}"] .bots-avatar`,
+		);
+		assert.equal(
+			await terminayAvatar.getAttribute('data-terminay-bot-avatar-style'),
+			'character',
+		);
+		assert.equal(await terminayAvatar.locator('svg').count(), 0);
+		assert.equal((await terminayAvatar.textContent())?.trim(), 'T');
+		const avatarBox = await imagineAvatar.boundingBox();
+		assert.ok(avatarBox);
+		assert.equal(Math.round(avatarBox.width), 36);
+		assert.equal(Math.round(avatarBox.height), 36);
+		const row0 = await rows.nth(0).boundingBox();
+		const row1 = await rows.nth(1).boundingBox();
+		assert.ok(row0 && row1);
+		assert.ok(
+			row0.height >= 44,
+			`expected sidebar bot row >= 44px, got ${row0.height}`,
+		);
+		assert.ok(
+			row1.y >= row0.y + row0.height,
+			'sidebar bot rows must not overlap',
+		);
+		await shot(sidebarPage, 'bots-sidebar-critter-36px');
+	} finally {
+		await sidebarPage.close();
+	}
+
+	// 2. Profile: Critter default with live preview on rename, switch to Character & save.
+	const profilePage = await open(TAB());
+	try {
+		await profilePage
+			.locator('[data-terminay-bot-mode-button="configure"]')
+			.click();
+		await profilePage.locator('[data-terminay-bot-panel="profile"]').waitFor();
+		const picker = profilePage.locator('[data-terminay-bot-avatar-picker]');
+		assert.equal(
+			await picker
+				.locator('[data-terminay-bot-avatar-style-option="critter"]')
+				.getAttribute('aria-pressed'),
+			'true',
+		);
+		assert.equal(
+			await profilePage.locator('[data-terminay-bot-profile="avatar"]').count(),
+			0,
+		);
+		const previewBefore = await picker
+			.locator('.bots-avatar svg')
+			.evaluate((el) => el.outerHTML);
+		// The tab header and Profile preview both render the same Critter bot;
+		// each must have distinct internal SVG clipPath ids.
+		const clipIds = await profilePage
+			.locator('.bots-avatar svg clipPath[id]')
+			.evaluateAll((els) => els.map((el) => el.id));
+		assert.ok(clipIds.length >= 2, 'expected clipPaths on header and preview');
+		assert.equal(
+			new Set(clipIds).size,
+			clipIds.length,
+			'repeated Critter avatars on one page must not collide on SVG ids',
+		);
+		await shot(profilePage, 'bot-profile-critter');
+		// Editing Character fields and switching back to Critter does not leave a no-op dirty state.
+		await picker
+			.locator('[data-terminay-bot-avatar-style-option="character"]')
+			.click();
+		await profilePage
+			.locator('[data-terminay-bot-profile="avatar"]')
+			.fill('🦉');
+		await picker
+			.locator('[data-terminay-bot-avatar-style-option="critter"]')
+			.click();
+		assert.equal(
+			await profilePage
+				.locator('[data-terminay-bot-profile-save]')
+				.isDisabled(),
+			true,
+		);
+		await profilePage
+			.locator('[data-terminay-bot-profile="name"]')
+			.fill('Quail');
+		const previewAfter = await picker
+			.locator('.bots-avatar svg')
+			.evaluate((el) => el.outerHTML);
+		assert.notEqual(
+			previewAfter,
+			previewBefore,
+			'renaming a Critter bot updates the live avatar preview',
+		);
+		await picker
+			.locator('[data-terminay-bot-avatar-style-option="character"]')
+			.click();
+		await profilePage
+			.locator('[data-terminay-bot-profile="avatar"]')
+			.fill('🦅');
+		await picker.locator('button[aria-label="Colour #f5a97c"]').click();
+		assert.equal(
+			await picker
+				.locator('.bots-avatar')
+				.getAttribute('data-terminay-bot-avatar-style'),
+			'character',
+		);
+		await shot(profilePage, 'bot-profile-character');
+		await profilePage.locator('[data-terminay-bot-profile-save]').click();
+		const saved = (await calls(profilePage, 'save')).at(-1)?.args[0];
+		assert.equal(saved.avatarStyle, 'character');
+		assert.equal(saved.avatar, '🦅');
+		assert.equal(saved.colour, '#f5a97c');
+	} finally {
+		await profilePage.close();
+	}
+
+	// 3. New Bot dialog: defaults to Critter and supports choosing Character.
+	const newBotPage = await open(FLEET);
+	try {
+		await newBotPage.getByRole('button', { name: 'New bot' }).first().click();
+		const dialog = newBotPage.locator('[data-terminay-bots-new-dialog]');
+		await dialog.waitFor();
+		assert.equal(
+			await dialog
+				.locator('[data-terminay-bots-new-avatar-style="critter"]')
+				.getAttribute('aria-pressed'),
+			'true',
+		);
+		assert.equal(
+			await dialog
+				.locator('.bots-avatar')
+				.getAttribute('data-terminay-bot-avatar-style'),
+			'critter',
+		);
+		await dialog.locator('[data-terminay-bots-new-name]').fill('Kestrel');
+		await shot(newBotPage, 'bot-new-dialog-critter');
+		await dialog.locator('[data-terminay-bots-new-create]').click();
+		const created = (await calls(newBotPage, 'save')).at(-1)?.args[0];
+		assert.equal(created.name, 'Kestrel');
+		assert.equal(created.avatarStyle, 'critter');
+		assert.equal(created.colour, '#7cc4f5');
+		// Creating a Character bot sends its chosen character and swatch colour.
+		await newBotPage.getByRole('button', { name: 'New bot' }).first().click();
+		await dialog.waitFor();
+		await dialog.locator('[data-terminay-bots-new-name]').fill('Wren');
+		await dialog
+			.locator('[data-terminay-bots-new-avatar-style="character"]')
+			.click();
+		await dialog.locator('[data-terminay-bots-new-avatar]').fill('🐦');
+		await dialog.locator('button[aria-label="Colour #7cf5b4"]').click();
+		await dialog.locator('[data-terminay-bots-new-create]').click();
+		const createdChar = (await calls(newBotPage, 'save')).at(-1)?.args[0];
+		assert.equal(createdChar.name, 'Wren');
+		assert.equal(createdChar.avatarStyle, 'character');
+		assert.equal(createdChar.avatar, '🐦');
+		assert.equal(createdChar.colour, '#7cf5b4');
+	} finally {
+		await newBotPage.close();
 	}
 });

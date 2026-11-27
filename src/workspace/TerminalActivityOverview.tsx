@@ -144,6 +144,7 @@ function ActivityRows({
 									bot={{
 										name: bot.name,
 										avatar: bot.avatar,
+										avatarStyle: bot.avatarStyle,
 										colour: bot.colour,
 									}}
 									size="sm"

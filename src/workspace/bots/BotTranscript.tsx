@@ -85,7 +85,7 @@ function ReplyBar({
 }: Readonly<{
 	messageKey: string;
 	thread: TranscriptThread;
-	bot: Pick<BotProfile, 'id' | 'name' | 'colour' | 'avatar'>;
+	bot: Pick<BotProfile, 'id' | 'name' | 'colour' | 'avatar' | 'avatarStyle'>;
 	onOpenThread: (key: string) => void;
 }>) {
 	const { summary, isNew } = thread;
@@ -668,7 +668,7 @@ export const BotTranscript = memo(function BotTranscript({
 	containerRef?: Ref<HTMLDivElement>;
 	transport?: BotIoTransport;
 	items: readonly (TranscriptItem | BotActionItem)[];
-	bot: Pick<BotProfile, 'id' | 'name' | 'colour' | 'avatar'>;
+	bot: Pick<BotProfile, 'id' | 'name' | 'colour' | 'avatar' | 'avatarStyle'>;
 	onMessageMenu?: (request: MessageMenuRequest) => void;
 }>) {
 	const imageLoader = useMemo(() => {

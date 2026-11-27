@@ -110,9 +110,20 @@ function profile(value: unknown): BotProfile {
 	const description = text(d.description, 800, 'description', true);
 	if ([...description].length > 200)
 		throw new BotError('validation', 'description exceeds 200 characters');
+	const avatarStyle =
+		d.avatarStyle === undefined
+			? 'critter'
+			: d.avatarStyle === 'critter' || d.avatarStyle === 'character'
+				? d.avatarStyle
+				: (() => {
+						throw new BotError('validation', 'invalid avatar style');
+					})();
 	// Pre-release builds defaulted every bot to a robot; it shows the initial.
+	// A Critter bot with an empty character field also falls back to its initial.
 	const avatar =
-		d.avatar === '🤖' ? initialOf(name) : text(d.avatar, 64, 'avatar');
+		d.avatar === '🤖' || (avatarStyle === 'critter' && d.avatar === '')
+			? initialOf(name)
+			: text(d.avatar, 64, 'avatar');
 	if (
 		[
 			...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(
@@ -148,6 +159,7 @@ function profile(value: unknown): BotProfile {
 		name,
 		description,
 		avatar,
+		avatarStyle,
 		colour: text(d.colour, 64, 'colour'),
 		instructions: text(d.instructions, 32 * 1024, 'instructions', true),
 		agentId: text(d.agentId, 256, 'agent id'),
@@ -370,8 +382,9 @@ export class BotStore extends EventEmitter {
 		const previous = draft.id ? this.get(draft.id) : undefined;
 		const bot = profile({
 			id: randomBytes(6).toString('hex'),
-			// A new bot shows its name's initial until a picture is chosen.
+			// A new bot defaults to a Chara Critter and keeps its initial for character mode.
 			avatar: initialOf(String(draft.name ?? '')),
+			avatarStyle: 'critter',
 			colour: 'blue',
 			description: '',
 			instructions: '',

@@ -503,16 +503,21 @@
 	outline: 1px solid rgba(87, 183, 255, 0.7);
 }
 
+.home-sidebar__bot {
+	height: 46px;
+	gap: 10px;
+}
+
 .home-sidebar__bot .bots-avatar {
-	width: 18px;
-	height: 18px;
-	border-radius: 5px;
-	font-size: 9px;
+	width: 36px;
+	height: 36px;
+	border-radius: 8px;
+	font-size: 13px;
 }
 
 .home-sidebar__bot .bots-avatar i {
-	width: 7px;
-	height: 7px;
+	width: 9px;
+	height: 9px;
 	right: -2px;
 	bottom: -2px;
 }
