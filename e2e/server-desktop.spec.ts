@@ -199,7 +199,7 @@ const stateOf = (window: Page, state: string) =>
 const step = (window: Page, name: string) =>
 	desktopWindow(window).locator(`[data-server-desktop-step="${name}"]`);
 
-test('Show Desktop opens one window, and setup carries on while it is closed', async ({
+test('Show Desktop opens a dropdown, and setup carries on while it is closed', async ({
 	appHarness,
 	mainWindow,
 	tempDir,

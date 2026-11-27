@@ -20,7 +20,7 @@ test.afterAll(async () => {
 	await fixture.close();
 });
 
-test('in a browser client Show Desktop twice shows one window, and it reopens on setup in progress', async ({
+test('in a browser client Show Desktop toggles its dropdown, and it reopens on setup in progress', async ({
 	browser,
 }) => {
 	const context = await browser.newContext({
