@@ -486,6 +486,9 @@ Commands:
   approve <id>         Approve a pending device.
   deny <id>            Deny a pending device.
   reset-identity       Rotate the host key and revoke every paired device.
+  desktop install      As root on Debian: install what the server desktop
+                       needs. Takes no options; installs a fixed package
+                       list and nothing else.
 
 With no server installed and TERMINAY_DATA_ROOT set, status, qr-code,
 approvals, approve, and deny reach the server running against that data root

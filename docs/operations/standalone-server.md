@@ -1024,6 +1024,182 @@ Terminay's data directory is at a path too long for a local socket. … Start Te
 Use a shorter `--data-root`, or set `XDG_RUNTIME_DIR` to a short directory only
 the server's user can write.
 
+## Server desktop
+
+A standalone server on Debian can show a desktop. Run `firefox` (or any other
+graphical program) in a terminal on the server and its window appears in
+Terminay, in the desktop window you open with **Show Desktop**, the monitor icon
+beside the notifications bell. One window shows the whole desktop: a small XFCE
+session with a panel, an applications menu, a list of open windows, and a
+terminal launcher.
+
+The desktop runs as ordinary processes on the same host and under the same
+account as the server and its terminals. There is no virtual machine and no
+container. A program on the desktop has that account's home, files, and
+network, exactly as the same program started from a terminal would.
+
+It is offered on **Debian Linux** and in the **official container image** only.
+On any other host the window says the desktop is not supported there and why,
+and nothing is started. The server built into Terminay Desktop has no desktop
+of its own, so the icon appears only while the window is on a standalone
+server.
+
+### Who can use it
+
+Anyone who is in Terminay on that server. Pairing is the trust point: a paired
+device can already open a shell there, and the desktop gives it nothing a
+shell does not. The desktop belongs to the server, not to a project, so every
+project and every paired device sees the same windows.
+
+One device controls the desktop at a time. The first to open it has the
+keyboard and mouse; everyone else watches. **Take control** takes it from
+whoever has it, and they are told who took it. **Give up control** keeps you
+watching.
+
+### Nothing listens on the network
+
+The desktop is reachable only through a Terminay connection. Terminay starts
+its own display server (TigerVNC's `Xtigervnc`) for this and never uses or
+changes a VNC or X session you already run, or `~/.vnc`.
+
+- The display server opens no TCP or UDP port. It listens on one unix socket
+  in an owner-only directory inside the server's data directory.
+- It is started under a system-call filter that removes its ability to open
+  network sockets at all, so it cannot be told to dial out either.
+- The X display accepts only clients holding a cookie in an owner-only file.
+- Screen updates and input travel over the paired device's existing Terminay
+  connection, and the server filters what a client may send.
+
+`terminay daemon doctor` checks the first three on a running desktop and
+fails if one is not true. It also says whether the desktop is set up and
+whether the setup helper is installed. To see for yourself:
+
+```bash
+ss -lntup | grep -i vnc      # prints nothing
+```
+
+Because the desktop's programs do have the network, a browser on the desktop
+browses from the server. That is the point of it, and the same as running
+`curl` in a terminal there.
+
+### Setting it up
+
+The first time you click **Show Desktop**, the window says what is needed and
+offers **Set up desktop**. Setup installs a fixed list of stock Debian
+packages with `apt-get install --no-install-recommends` and nothing else:
+
+```
+tigervnc-standalone-server tigervnc-tools xfwm4 xfce4-panel xfce4-settings
+xfce4-terminal xfdesktop4 x11-xserver-utils dbus-x11 xauth fonts-dejavu-core
+fonts-noto-color-emoji adwaita-icon-theme python3 python3-seccomp
+```
+
+None of them enables or starts a service, and no browser or other application
+is installed: install the programs you want to run yourself. The window shows
+each step and a progress bar. You can close it; setup carries on, and the
+window shows where it has got to when you open it again.
+
+The server is unprivileged and never runs the package manager. It asks root
+in one of two ways, and neither lets a client or the server choose what is
+installed:
+
+- **System-scope install.** `terminay daemon install --system` leaves a second
+  root helper beside the upgrade helper, `terminay-desktop-setup.path` and
+  `terminay-desktop-setup.service`. The server changes a trigger file; systemd,
+  as root, answers by running `terminay daemon desktop install`, whose command
+  line is fixed in the unit and takes no arguments. Nothing written to the
+  trigger is read. An install made by an older release gets the helper the next
+  time root runs `sudo terminay daemon upgrade --system`.
+- **Official image.** The image's account is root-equivalent by design. The
+  server runs the same command through `sudo -n`, on the CLI in the image's own
+  root-owned release directory, with a cleared environment.
+
+Progress is recorded in `/run/terminay-desktop-setup/status.json`, which root
+writes and the server only reads.
+
+### Setting it up by hand
+
+Where the server has no way to ask root, the window shows one command to run
+on the server and a **Check again** button instead. That is the case for a
+user-scope install, a container with no passwordless `sudo`, and a system-scope
+install that has no desktop helper yet.
+
+```bash
+sudo terminay daemon desktop install
+```
+
+In a container, run it from the container's host:
+
+```bash
+docker exec -u root <container> terminay daemon desktop install
+```
+
+The command must run as root, works on Debian only, takes no options, and
+exits at once when everything is already installed. If another package
+manager holds the lock it waits up to two minutes. If an earlier install was
+interrupted it finishes that first. Run it again after a failure; the window's
+**Try again** does the same.
+
+A container's packages live in the container. Recreating it from an image
+without them returns the desktop to "needs setup", and setup has to be run
+again.
+
+### Using it
+
+New terminals on the server are given `DISPLAY` and `XAUTHORITY` while the
+desktop runs, so graphical programs just work. A terminal opened before the
+desktop was set up does not have them; open a new one. To start a program on
+the desktop from such a shell, the window's bar shows the display number:
+
+```bash
+DISPLAY=:765 firefox
+```
+
+The number is 765 unless something else already has it, in which case
+Terminay takes the next free one and leaves the other display alone. A server
+that already has a display of its own (`DISPLAY` or `WAYLAND_DISPLAY` in the
+service's environment) keeps it for its terminals.
+
+The desktop takes the size of the controlling device's window. Viewers see it
+scaled to fit. Clipboard text is shared with the controlling device only, and
+with one remote desktop at a time, a bot's or the server's.
+
+The desktop keeps running when the server restarts or is upgraded, with the
+programs on it still open, the same way terminals do. If the display server
+itself crashes, Terminay starts it again on the same number; programs that
+were open on it are gone, and the window reconnects.
+
+### Limits
+
+- **Software rendering.** There is no GPU. Video and WebGL work, slowly.
+- **No audio.**
+- **One window.** The whole desktop is one Terminay window, and that window is
+  modal: close it to get back to the workspace. Programs keep running while it
+  is closed.
+- **The server must share `/tmp` with its terminals.** X clients find the
+  display through a socket in `/tmp/.X11-unix`. A service unit with
+  `PrivateTmp=true` hides that from the programs it starts, so the desktop is
+  reported as unsupported with that reason. The installer writes no
+  `PrivateTmp`. To correct a unit that has it, run
+  `sudo terminay daemon upgrade --system`, which rewrites the unit and
+  restarts the service.
+
+### Turning it off
+
+**Turn off** in the desktop window ends the session and the display server.
+Every window on the desktop closes, including those of programs started from
+terminals, so the window asks first when any are open. Programs that have no
+window, or that survive losing their display, are not ended: turning the
+desktop off does not kill what you started.
+
+While it is off, new terminals get no display, and finishing setup does not
+start it. **Turn on** starts it again. The choice is remembered across
+restarts.
+
+`terminay daemon uninstall` ends a running desktop and removes the setup
+helper. It does not remove the Debian packages; `apt-get remove` them yourself
+if you want them gone.
+
 ## Bot browsers on AppArmor hosts
 
 A bot's desktop runs Chromium with its sandbox on, and the sandbox creates a

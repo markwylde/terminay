@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# The Terminay desktop session: one XFCE desktop on a display that already
+# exists. The bot image and the server desktop both run this script and differ
+# only in what they pass:
+#
+#   TERMINAY_DESKTOP_DISPLAY    the X display to run on, such as :1 (required)
+#   TERMINAY_DESKTOP_STATE_DIR  where the generated configuration is written
+#                               (required; created if missing)
+#   TERMINAY_DESKTOP_HOME       the directory programs start in (default $HOME)
+#   TERMINAY_DESKTOP_LAUNCHERS  optional directory of menu entries: every
+#                               *.desktop file in it is added to the menu, and
+#                               each name listed in its `hidden` file is hidden
+#   TERMINAY_DESKTOP_SERVICES   optional directory of executables started with
+#                               the session and supervised with it
+#   TERMINAY_DESKTOP_BUS_FILE   optional file the session bus address is
+#                               published to while the session runs
+#
+# With no launchers and no services the session starts the desktop and nothing
+# else: it opens no network listener of its own.
+#
+# This file is kept in the bot image's build context, and the
+# @terminay/remote-desktop build copies it from here for the server desktop.
+#
+# XFCE configuration adapted from the source recorded in PORTING.md.
+set -euo pipefail
+
+: "${TERMINAY_DESKTOP_DISPLAY:?TERMINAY_DESKTOP_DISPLAY is required}"
+: "${TERMINAY_DESKTOP_STATE_DIR:?TERMINAY_DESKTOP_STATE_DIR is required}"
+TERMINAY_DESKTOP_HOME="${TERMINAY_DESKTOP_HOME:-$HOME}"
+export DISPLAY="$TERMINAY_DESKTOP_DISPLAY" XDG_CURRENT_DESKTOP=XFCE
+export TERMINAY_DESKTOP_DISPLAY TERMINAY_DESKTOP_STATE_DIR TERMINAY_DESKTOP_HOME
+
+write_xfce_config() {
+  local config_dir="$1" data_dir="$2"
+  local xfconf="$config_dir/xfce4/xfconf/xfce-perchannel-xml"
+  mkdir -p "$xfconf" "$data_dir/applications"
+  cat > "$xfconf/xfce4-panel.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="configver" type="int" value="2"/>
+  <property name="panels" type="array">
+    <value type="int" value="1"/>
+    <property name="dark-mode" type="bool" value="true"/>
+    <property name="panel-1" type="empty">
+      <property name="position" type="string" value="p=10;x=0;y=0"/>
+      <property name="length" type="uint" value="100"/>
+      <property name="position-locked" type="bool" value="true"/>
+      <property name="size" type="uint" value="32"/>
+      <property name="icon-size" type="uint" value="20"/>
+      <property name="plugin-ids" type="array">
+        <value type="int" value="1"/>
+        <value type="int" value="2"/>
+        <value type="int" value="3"/>
+        <value type="int" value="4"/>
+      </property>
+    </property>
+  </property>
+  <property name="plugins" type="empty">
+    <property name="plugin-1" type="string" value="applicationsmenu">
+      <property name="button-title" type="string" value="Applications"/>
+    </property>
+    <property name="plugin-2" type="string" value="tasklist">
+      <property name="grouping" type="uint" value="0"/>
+    </property>
+    <property name="plugin-3" type="string" value="separator">
+      <property name="expand" type="bool" value="true"/>
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-4" type="string" value="clock">
+      <property name="digital-format" type="string" value="%H:%M"/>
+    </property>
+  </property>
+</channel>
+EOF
+  # Compositing is pure overhead over VNC.
+  cat > "$xfconf/xfwm4.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+    <property name="workspace_count" type="int" value="1"/>
+    <property name="click_to_focus" type="bool" value="true"/>
+  </property>
+</channel>
+EOF
+  cat > "$xfconf/xfce4-desktop.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="desktop-icons" type="empty">
+    <property name="style" type="int" value="0"/>
+  </property>
+</channel>
+EOF
+  cat > "$xfconf/xsettings.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Adwaita-dark"/>
+    <property name="IconThemeName" type="string" value="Adwaita"/>
+  </property>
+</channel>
+EOF
+
+  # The caller's menu entries, and the stock entries it wants out of the menu.
+  local launchers="${TERMINAY_DESKTOP_LAUNCHERS:-}" entry hidden
+  [ -n "$launchers" ] || return 0
+  for entry in "$launchers"/*.desktop; do
+    [ -f "$entry" ] || continue
+    cp "$entry" "$data_dir/applications/${entry##*/}"
+  done
+  [ -f "$launchers/hidden" ] || return 0
+  while IFS= read -r hidden; do
+    case "$hidden" in ''|'#'*|*/*) continue ;; esac
+    printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n' "$hidden" > "$data_dir/applications/$hidden"
+  done < "$launchers/hidden"
+}
+
+mkdir -p "$TERMINAY_DESKTOP_STATE_DIR"
+write_xfce_config "$TERMINAY_DESKTOP_STATE_DIR/config" "$TERMINAY_DESKTOP_STATE_DIR/data"
+export XDG_CONFIG_DIRS="$TERMINAY_DESKTOP_STATE_DIR/config:/etc/xdg"
+export XDG_DATA_DIRS="$TERMINAY_DESKTOP_STATE_DIR/data:/usr/local/share:/usr/share"
+xset s off -dpms || true
+# Re-exec under a private D-Bus session, preserving the generated defaults.
+if [ "${TERMINAY_DESKTOP_BUS:-}" != 1 ]; then
+ export TERMINAY_DESKTOP_BUS=1
+ # Through the shell, not by its own execute bit: a release archive does
+ # not keep the bit.
+ exec dbus-run-session -- bash "$0"
+fi
+cd "$TERMINAY_DESKTOP_HOME"
+pids=()
+# Publish the bus for programs started outside the session; remove it on exit.
+bus_file="${TERMINAY_DESKTOP_BUS_FILE:-}"
+if [ -n "$bus_file" ] && [ -d "${bus_file%/*}" ]; then
+ printf '%s\n' "$DBUS_SESSION_BUS_ADDRESS" > "$bus_file.$$"
+ mv -f "$bus_file.$$" "$bus_file"
+else
+ bus_file=
+fi
+cleanup() {
+ [ -z "$bus_file" ] || rm -f "$bus_file"
+ for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+}
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+for component in xfsettingsd xfwm4 xfce4-panel xfdesktop; do
+ if [ "$component" = xfsettingsd ]; then "$component" --no-daemon & else "$component" & fi
+ pids+=("$!")
+done
+services="${TERMINAY_DESKTOP_SERVICES:-}"
+if [ -n "$services" ]; then
+ for service in "$services"/*; do
+  [ -f "$service" ] && [ -x "$service" ] || continue
+  "$service" &
+  pids+=("$!")
+ done
+fi
+# Event-driven lifecycle: loss of a required component fails the environment.
+wait -n
+exit 78

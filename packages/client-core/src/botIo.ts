@@ -8,6 +8,11 @@ import {
 	type JsonValue,
 	BOT_IO_OPERATIONS as op,
 } from '@terminay/protocol';
+import {
+	ByteStreamClient,
+	type ByteStreamTransport,
+	type StreamHandle,
+} from '@terminay/remote-desktop/client';
 import type {
 	BinaryCommandTransport,
 	BinaryQueryTransport,
@@ -15,73 +20,36 @@ import type {
 import type { CommandOptions, QueryOptions } from './types.js';
 export type BotIoTransport = BinaryCommandTransport & BinaryQueryTransport;
 
-/** A pull is one credit. No timer or background read runs when unused. */
-export class BotByteStreamClient {
-	private closed = false;
-	constructor(
-		private readonly transport: BotIoTransport,
-		readonly handle: BotIoHandle,
-	) {}
-	async *read(options: QueryOptions = {}): AsyncIterable<Uint8Array> {
-		try {
-			while (!this.closed) {
-				const { result, body } = await this.transport.queryWithBody(
-					op.read,
-					{ ...this.handle },
-					options,
-				);
-				if (
-					!result ||
-					typeof result !== 'object' ||
-					Array.isArray(result) ||
-					typeof result.done !== 'boolean' ||
-					body.length > 1024 * 1024
-				)
-					throw new TypeError('invalid bot stream response');
-				if (result.done) {
-					this.closed = true;
-					return;
-				}
-				yield body;
-			}
-		} finally {
-			await this.close();
-		}
-	}
-	async write(bytes: Uint8Array, options: CommandOptions = {}): Promise<void> {
-		if (this.closed) throw new Error('bot stream closed');
-		if (bytes.length > 1024 * 1024)
-			throw new RangeError('bot stream chunk too large');
-		await this.transport.commandWithBody(
-			op.write,
-			{ ...this.handle },
-			bytes,
-			options,
+const streamOperations = Object.freeze({
+	read: op.read,
+	write: op.write,
+	finish: op.finish,
+	close: op.close,
+});
+
+/** The shared pull byte stream, served under the bot stream operations. */
+export class BotByteStreamClient extends ByteStreamClient<
+	BotIoHandle & StreamHandle
+> {
+	constructor(transport: BotIoTransport, handle: BotIoHandle) {
+		super(
+			transport as unknown as ByteStreamTransport,
+			streamOperations,
+			handle as BotIoHandle & StreamHandle,
+			'bot',
 		);
-	}
-	async finish(options: CommandOptions = {}): Promise<void> {
-		if (this.closed) throw new Error('bot stream closed');
-		await this.transport.command(op.finish, { ...this.handle }, options);
-		this.closed = true;
 	}
 	async resize(
 		cols: number,
 		rows: number,
 		options: CommandOptions = {},
 	): Promise<void> {
-		if (this.closed) throw new Error('bot stream closed');
-		await this.transport.command(
+		this.assertOpen();
+		await (this.transport as unknown as BotIoTransport).command(
 			op.shellResize,
 			{ ...this.handle, cols, rows },
 			options,
 		);
-	}
-	async close(): Promise<void> {
-		if (this.closed) return;
-		this.closed = true;
-		await this.transport
-			.command(op.close, { ...this.handle })
-			.catch(() => undefined);
 	}
 }
 export class BotFilesClient {

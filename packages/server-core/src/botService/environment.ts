@@ -55,6 +55,8 @@ export interface BotEnvironmentHooks {
 	/** Vault-backed bootstrap delivered on stdin. */
 	readonly bootstrap: (botId: string) => Promise<{
 		readonly vncPassword: string;
+		/** Authenticates view-only streams: no input, no clipboard. */
+		readonly vncViewPassword: string;
 	}>;
 	/** Resolve the engine-side gid (including inside a Podman machine). */
 	readonly socketGid?: (driver: EngineDriver) => Promise<number>;

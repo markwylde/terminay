@@ -18,6 +18,7 @@ import { runStart, runStatus, runStop } from '../dist/commands/lifecycle.js';
 import { runResetIdentity, runUninstall } from '../dist/commands/uninstall.js';
 import { runUpgrade, UpgradeError } from '../dist/commands/upgrade.js';
 import { NotInstalledError, resolveContext } from '../dist/context.js';
+import { desktopSetupHelperInstalled } from '../dist/desktopHelper.js';
 import { upgradeHelperInstalled } from '../dist/helper.js';
 import { activeVersion, installedVersions } from '../dist/install.js';
 import {
@@ -2102,6 +2103,43 @@ test('uninstall removes the helper units and the request directory', async () =>
 		assert.ok(
 			disabled < calls.lastIndexOf('systemctl daemon-reload'),
 			'systemd is reloaded after the units are gone',
+		);
+	});
+});
+
+test('a system-scope install leaves the desktop setup helper armed, an upgrade restores it, and uninstall removes it', async () => {
+	await withSystemInstall(async ({ layout, fake, context, upgradeDependencies }) => {
+		const helper = layout.upgradeHelper;
+		assert.equal(await desktopSetupHelperInstalled(layout), true);
+		assert.ok(
+			fake
+				.invocations()
+				.includes('systemctl enable --now terminay-desktop-setup.path'),
+		);
+		assert.match(
+			await readFile(helper.desktopServiceUnitPath, 'utf8'),
+			/^ExecStart=.*\/current\/bin\/terminay daemon desktop install$/mu,
+		);
+		// Installing set nothing up: the trigger is there and untouched.
+		assert.equal(await readFile(helper.desktopRequestFile, 'utf8'), '');
+
+		// An install made before the helper existed: root's next upgrade adds it.
+		await rm(helper.desktopPathUnitPath);
+		await rm(helper.desktopServiceUnitPath);
+		assert.equal(await desktopSetupHelperInstalled(layout), false);
+		await runUpgrade(undefined, OPTIONS, await context(), upgradeDependencies);
+		assert.equal(await desktopSetupHelperInstalled(layout), true);
+
+		await runUninstall({ ...OPTIONS, yes: true }, await context(), pipe());
+		await assert.rejects(() => stat(helper.desktopPathUnitPath));
+		await assert.rejects(() => stat(helper.desktopServiceUnitPath));
+		await assert.rejects(() => stat(helper.desktopRequestFile));
+		const calls = fake.invocations();
+		assert.ok(calls.includes('systemctl disable --now terminay-desktop-setup.path'));
+		// The desktop is ended with the terminal sessions, before the helper goes.
+		assert.ok(
+			calls.findIndex((line) => line.includes('end-sessions')) <
+				calls.indexOf('systemctl disable --now terminay-desktop-setup.path'),
 		);
 	});
 });

@@ -24,9 +24,9 @@ test('engine proxy readiness gates desktop startup and a missing proxy fails the
 	python(`
 with tempfile.TemporaryDirectory() as d:
     m.prepare_dirs=lambda: None
-    m.read_bootstrap=lambda: {'botId':'abc123def456','serverId':'server-test','vncPassword':'fake-password'}
+    m.read_bootstrap=lambda: {'botId':'abc123def456','serverId':'server-test','vncPassword':'fake-password','vncViewPassword':'view-password'}
     m.bot_ids=lambda: (1000,1000)
-    m.write_vnc_password=lambda p: '/private/password'
+    m.write_vnc_password=lambda p, v: '/private/password'
     calls=[]
     class Proxy:
         pid=777
@@ -52,9 +52,9 @@ test('unexpected engine proxy exit is fatal after startup and never silently res
 with tempfile.TemporaryDirectory() as d:
     m.READY=d+'/ready'
     m.prepare_dirs=lambda: None
-    m.read_bootstrap=lambda: {'botId':'abc123def456','serverId':'server-test','vncPassword':'fake-password'}
+    m.read_bootstrap=lambda: {'botId':'abc123def456','serverId':'server-test','vncPassword':'fake-password','vncViewPassword':'view-password'}
     m.bot_ids=lambda: (1000,1000)
-    m.write_vnc_password=lambda p: '/private/password'
+    m.write_vnc_password=lambda p, v: '/private/password'
     order=[]
     class Proxy:
         pid=777
@@ -93,9 +93,20 @@ with tempfile.TemporaryDirectory() as d:
     assert stat.S_IMODE(os.stat(m.VNC_DIR).st_mode)==0o700
     class Result:
         stdout=b'encrypted'
-    m.subprocess.run=lambda *args, **kwargs: Result()
-    passwd=m.write_vnc_password('fake-password')
+    inputs=[]
+    m.subprocess.run=lambda *args, **kwargs: (inputs.append(kwargs.get('input')), Result())[1]
+    passwd=m.write_vnc_password('fake-password', 'view-password')
     assert stat.S_IMODE(os.stat(passwd).st_mode)==0o600
+    # One file, two lines: the full password, then the view-only one.
+    assert inputs==[b'fake-password\\nview-password\\n']
+    # VNC compares eight bytes, so a view password equal within them is refused.
+    for full, view in (('same-pass-one', 'same-pass-two'), ('fake-password', 'short'), ('fake-password', None), ('fake-password', 'view\\npassword')):
+        try:
+            m.write_vnc_password(full, view)
+            raise AssertionError('accepted %r' % (view,))
+        except ValueError:
+            pass
+    assert len(inputs)==1
     calls=[]
     m.spawn=lambda args, **kwargs: calls.append(args)
     m.wait_path=lambda *args: None
@@ -216,13 +227,16 @@ test('4.4 real container exits without bootstrap, bot cannot read password, tunn
 		return result.stdout.trim();
 	};
 	t.after(() => spawnSync(realEngine, ['rm', '-f', name], { timeout: 10000 }));
-	run(['run', '-d', '--pull', 'never', '--name', name, 'terminay-bot:local']);
+	// The image under test; never the tag a running server's bots use unless
+	// that is what was asked for.
+	run(['run', '-d', '--pull', 'never', '--name', name, process.env.TERMINAY_BOT_TEST_IMAGE ?? 'terminay-bot:local']);
 	assert.equal(run(['wait', name]), '78');
 	run(['start', name]);
 	run(['exec', '-i', '-u', 'root', name, 'terminay-init', '--bootstrap'], {
 		input: JSON.stringify({
 			botId: 'abc123def456',
 			vncPassword: 'fake-only-password',
+			vncViewPassword: 'view-only-password',
 		}),
 	});
 	const denied = spawnSync(
@@ -376,6 +390,7 @@ test('desktop apps survive supervised session closure and end with their disposa
 			botId: 'appverify001',
 			serverId: 'app-lifetime-test',
 			vncPassword: 'test-only-password',
+			vncViewPassword: 'view-only-password',
 		}),
 	});
 	assert.equal(

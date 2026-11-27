@@ -431,6 +431,8 @@ import { ServerUpgradeDialog } from './workspace/ServerUpgradeDialog';
 import { ServerUpgradeMenuRows } from './workspace/ServerUpgradeMenuRows';
 import { withServerUpgradeNotifications } from './workspace/serverUpgradeNotifications';
 import { useServerUpgrades } from './workspace/useServerUpgrades';
+import { ServerDesktopButton } from './workspace/serverDesktop/ServerDesktopViews';
+import { ServerDesktopWindow } from './workspace/serverDesktop/ServerDesktopWindow';
 import {
 	areTerminalActivityIndicatorsEnabled,
 	buildProjectInventoryEntries,
@@ -6837,6 +6839,14 @@ function App({
 		(currentServerId === 'desktop-local'
 			? 'Local'
 			: `Remote · ${currentServerId}`);
+	// The server desktop of the server this window is on: one window, opened
+	// from the header. A server that offers no desktop has no client and so no
+	// control; switching to one closes the window.
+	const serverDesktopClient = terminalClientContext?.serverDesktopClient;
+	const [isServerDesktopOpen, setIsServerDesktopOpen] = useState(false);
+	useEffect(() => {
+		if (serverDesktopClient === undefined) setIsServerDesktopOpen(false);
+	}, [serverDesktopClient]);
 	const [workspaceSynchronizationError, setWorkspaceSynchronizationError] =
 		useState<string | null>(null);
 	const popoutUrl = useMemo(
@@ -11594,6 +11604,19 @@ function App({
 							setIsActivityMenuOpen((current) => !current);
 						}}
 					/>
+					{serverDesktopClient === undefined ? null : (
+						<ServerDesktopButton
+							serverLabel={currentServerLabel}
+							isOpen={isServerDesktopOpen}
+							onActivate={() => {
+								setIsRemoteMenuOpen(false);
+								setIsActivityMenuOpen(false);
+								// Activating it again shows the one window; it never
+								// opens a second.
+								setIsServerDesktopOpen(true);
+							}}
+						/>
+					)}
 					<RemoteAccessConnectionMenu
 						connectionSwitcherEntries={connectionSwitcherEntries}
 						currentServerLabel={currentServerLabel}
@@ -12172,6 +12195,14 @@ function App({
 				/>
 			) : null}
 
+			{isServerDesktopOpen && serverDesktopClient !== undefined ? (
+				<ServerDesktopWindow
+					key={currentServerId}
+					client={serverDesktopClient}
+					serverLabel={currentServerLabel}
+					onClose={() => setIsServerDesktopOpen(false)}
+				/>
+			) : null}
 			{serverUpgrades.confirmation === undefined ? null : (
 				<ServerUpgradeDialog
 					key={serverUpgrades.confirmation.entry.profileId}

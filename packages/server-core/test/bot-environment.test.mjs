@@ -28,7 +28,10 @@ const setup = (t, options = {}) => {
 		stopSessions: async (id) => {
 			driver.calls.push(['sessions-stop', id]);
 		},
-		bootstrap: async () => ({ vncPassword: 'fake-password' }),
+		bootstrap: async () => ({
+			vncPassword: 'fake-password',
+			vncViewPassword: 'view-password',
+		}),
 		socketGid: async () => 999,
 		secrets: async () => ['secret'],
 		now: () => Date.parse('2026-11-01T00:01:00Z'),
@@ -101,7 +104,12 @@ test('4.3 lazy creation, defaults, bootstrap stdin and config restoration before
 	);
 	assert.equal(bootstrap[3].user, 'root');
 	assert.equal(JSON.parse(bootstrap[3].input).vncPassword, 'fake-password');
+	assert.equal(
+		JSON.parse(bootstrap[3].input).vncViewPassword,
+		'view-password',
+	);
 	assert.equal(create.join(' ').includes('fake-password'), false);
+	assert.equal(create.join(' ').includes('view-password'), false);
 	await service.prepareSession(botId);
 	const configs = driver.calls.filter(
 		(args) => args[0] === 'exec' && args[2][1] === '--config',

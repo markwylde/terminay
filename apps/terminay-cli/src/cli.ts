@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { ScopeError } from './account.js';
 import { HOST_SETUP_COMMAND, runHostSetup } from './apparmor.js';
+import { DESKTOP_COMMAND, runDesktopCommand } from './desktop.js';
 import { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
 import { runUpgradeCheck } from './commands/check.js';
 import { runContainerUpgrade } from './commands/containerUpgrade.js';
@@ -63,6 +64,11 @@ async function main(argv: readonly string[]): Promise<number> {
 	// own host setup before it starts (ADR-0120).
 	if (argv[0] === 'daemon' && argv[1] === HOST_SETUP_COMMAND)
 		return runHostSetup(argv.slice(2), write);
+	// `daemon desktop install` is matched here, before anything is parsed or
+	// resolved: its command line is fixed, it needs no install record, and the
+	// root helper and the official image run exactly it.
+	if (argv[0] === 'daemon' && argv[1] === DESKTOP_COMMAND)
+		return runDesktopCommand(argv.slice(2), write);
 
 	const parsed = parseCommandLine(argv);
 	if (parsed.command === 'help') {

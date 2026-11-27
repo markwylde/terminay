@@ -7,7 +7,9 @@ import {
 	MdxRuntimeClient,
 	NotificationClient,
 	RecordingsClient,
+	ServerDesktopClient,
 	ServerUpgradeClient,
+	serverOffersDesktop,
 	serverPublishesUpgradeAttempts,
 	serverPublishesUpgradeStatus,
 	TerminayClient,
@@ -220,6 +222,19 @@ export async function createConnectedServerClientContext(
 		void serverUpgradeClient?.subscribe().catch((error) => {
 			console.warn('server upgrade subscription failed', error);
 		});
+		// A server's desktop is optional the same way: only a server whose hello
+		// offers one is given a client, and nothing is sent to any other.
+		const serverDesktopClient = serverOffersDesktop(server.capabilities)
+			? new ServerDesktopClient({
+					query: featureTransport.query.bind(featureTransport),
+					command: featureTransport.command.bind(featureTransport),
+					queryWithBody: featureTransport.queryWithBody.bind(featureTransport),
+					commandWithBody:
+						featureTransport.commandWithBody.bind(featureTransport),
+					subscribe: (event, listener, onResync) =>
+						featureTransport.subscribeClientEvents(event, listener, onResync),
+				})
+			: undefined;
 		const fileViewerClient = new FileViewerClient(featureTransport);
 		const fileObservationClient = new FileObservationClient(featureTransport);
 		const documentationClient = new DocumentationClient(featureTransport);
@@ -371,6 +386,7 @@ export async function createConnectedServerClientContext(
 			activityClient,
 			...(notificationClient === undefined ? {} : { notificationClient }),
 			...(serverUpgradeClient === undefined ? {} : { serverUpgradeClient }),
+			...(serverDesktopClient === undefined ? {} : { serverDesktopClient }),
 			agentStatusClient,
 			workspaceSnapshotStore: store,
 			terminalTitleStore: titles,

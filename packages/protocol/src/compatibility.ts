@@ -73,6 +73,9 @@ export const FEATURE_CAPABILITIES = Object.freeze({
 	/** Live CPU, memory, network and disk figures for the server's own host,
 	 * sampled only while a client watches. */
 	hostStats: 'host-stats.v1',
+	/** One virtual desktop on a standalone server's own host, shown to the
+	 * clients attached to it and reached only through Terminay. */
+	serverDesktop: 'server-desktop.v1',
 	/** Liveness and health are connection mechanics, not features. */
 	heartbeat: 'connection.heartbeat',
 	health: 'server.health',
@@ -132,6 +135,7 @@ export const CLIENT_SERVER_COMPATIBILITY: ServerCompatibilityRequirements =
 			// in its default folder, as before.
 			FEATURE_CAPABILITIES.projectStartChoice,
 			FEATURE_CAPABILITIES.hostStats,
+			FEATURE_CAPABILITIES.serverDesktop,
 		]),
 	});
 

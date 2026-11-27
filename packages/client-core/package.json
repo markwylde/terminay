@@ -12,7 +12,8 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "@terminay/protocol": "1.0.0"
+    "@terminay/protocol": "1.0.0",
+    "@terminay/remote-desktop": "1.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

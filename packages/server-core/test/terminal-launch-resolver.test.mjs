@@ -77,7 +77,7 @@ function paths(available = ["/project", "/other", "/home", "/live", "/explicit",
   };
 }
 
-function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment, environmentFor, folderWorktreeRoot, available, shellIntegration } = {}) {
+function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment, environmentFor, baselineEnvironment, folderWorktreeRoot, available, shellIntegration } = {}) {
   return new TerminalLaunchResolver({
     serverId: "server-a",
     profiles: profiles(entries, catalogue),
@@ -90,6 +90,7 @@ function resolver({ state = workspace(), entries = [profile("system")], catalogu
     environmentCaseInsensitive,
     systemDefaultStartupMode,
     environmentFor,
+    baselineEnvironment,
     shellIntegration,
   });
 }
@@ -377,4 +378,76 @@ test("a WSL profile is never integrated", async () => {
   }).resolve(intent({ explicitProfileId: "wsl" }));
   assert.equal(asked, false);
   assert.equal(launch.shellIntegration, false);
+});
+
+// The server desktop's display environment (add-server-desktop, D5).
+const DESKTOP = { DISPLAY: ":765", XAUTHORITY: "/data/desktop/Xauthority" };
+
+test("the per-launch baseline is laid over the default environment and under the profile", async () => {
+  const launch = await resolver({ baselineEnvironment: () => DESKTOP }).resolve(intent());
+  assert.equal(launch.env.DISPLAY, ":765");
+  assert.equal(launch.env.XAUTHORITY, "/data/desktop/Xauthority");
+  assert.equal(launch.env.BASE, "host");
+  // It replaces a value the server's startup snapshot happened to hold.
+  const over = await resolver({
+    defaultEnvironment: { BASE: "host", DISPLAY: ":stale" },
+    baselineEnvironment: () => DESKTOP,
+  }).resolve(intent());
+  assert.equal(over.env.DISPLAY, ":765");
+});
+
+test("a shell profile overrides the baseline display, or removes it with null", async () => {
+  const own = profile("own", { environment: { DISPLAY: ":0" } });
+  const none = profile("none", { environment: { DISPLAY: null, XAUTHORITY: null } });
+  const entries = [profile("system"), own, none];
+  const overridden = await resolver({ entries, baselineEnvironment: () => DESKTOP }).resolve(intent({ explicitProfileId: "own" }));
+  assert.equal(overridden.env.DISPLAY, ":0");
+  assert.equal(overridden.env.XAUTHORITY, "/data/desktop/Xauthority");
+  const removed = await resolver({ entries, baselineEnvironment: () => DESKTOP }).resolve(intent({ explicitProfileId: "none" }));
+  assert.equal("DISPLAY" in removed.env, false);
+  assert.equal("XAUTHORITY" in removed.env, false);
+});
+
+test("the baseline is asked on every launch: nothing while the desktop is off, the display once it runs", async () => {
+  let running = false;
+  let asked = 0;
+  const launches = resolver({
+    baselineEnvironment: () => {
+      asked += 1;
+      return running ? DESKTOP : undefined;
+    },
+  });
+  const before = await launches.resolve(intent());
+  assert.equal("DISPLAY" in before.env, false);
+  assert.equal("XAUTHORITY" in before.env, false);
+  // The desktop starts after the server did.
+  running = true;
+  const after = await launches.resolve(intent({ identity: { serverId: "server-a", projectId: "project-a", sessionId: "session-b" } }));
+  assert.equal(after.env.DISPLAY, ":765");
+  // And is turned off again.
+  running = false;
+  const off = await launches.resolve(intent({ identity: { serverId: "server-a", projectId: "project-a", sessionId: "session-c" } }));
+  assert.equal("DISPLAY" in off.env, false);
+  assert.equal(asked, 3);
+});
+
+test("a server with a display of its own keeps it: the baseline adds nothing", async () => {
+  // The desktop service returns nothing where the server has DISPLAY or
+  // WAYLAND_DISPLAY (server-desktop-service.test.mjs); the launch then
+  // carries the server's own.
+  const launch = await resolver({
+    defaultEnvironment: { DISPLAY: ":0", XAUTHORITY: "/home/me/.Xauthority" },
+    baselineEnvironment: () => undefined,
+  }).resolve(intent());
+  assert.equal(launch.env.DISPLAY, ":0");
+  assert.equal(launch.env.XAUTHORITY, "/home/me/.Xauthority");
+});
+
+test("the host's per-session environment still applies after a baseline", async () => {
+  const launch = await resolver({
+    baselineEnvironment: () => DESKTOP,
+    environmentFor: () => ({ HOST_TOKEN: "t" }),
+  }).resolve(intent());
+  assert.equal(launch.env.DISPLAY, ":765");
+  assert.equal(launch.env.HOST_TOKEN, "t");
 });

@@ -1,0 +1,11 @@
+# Stock menu entries hidden in the bot desktop. The entries beside this file
+# take the names of the menu's preferred-application entries (Terminay browser
+# with its persistent profile and CDP, and the terminal), so the menu never
+# opens a second browser profile the agent cannot see.
+chromium.desktop
+xfce4-terminal.desktop
+xfce4-terminal-settings.desktop
+xfce4-file-manager.desktop
+xfce4-mail-reader.desktop
+debian-xterm.desktop
+debian-uxterm.desktop

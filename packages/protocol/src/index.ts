@@ -25,6 +25,7 @@ export * from './pairingApproval.js';
 export * from './projectStart.js';
 export * from './push.js';
 export * from './refreshSchedule.js';
+export * from './serverDesktop.js';
 export * from './serverUpgrade.js';
 export * from './signalingBootstrap.js';
 export * from './transport.js';

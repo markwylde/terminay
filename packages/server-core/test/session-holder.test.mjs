@@ -655,3 +655,15 @@ test('a disconnected snapshot cannot send into a later connection and recovery c
  assert.equal(raw.text(), 'before-during-live');
  assert.deepEqual(pty.children[0].kills, []);
 });
+
+test("a holder that outlived its server starts a new terminal with the display environment the launch resolved", async (t) => {
+  // The holder snapshots nothing: the environment is the spawn request's, so
+  // a terminal opened after a server restart gets the desktop's display.
+  const { holder, pty } = await startHolder(t);
+  const client = await SessionHolderClient.connect(recordOf(holder));
+  await client.spawn(spawnRequest("before"));
+  const env = { A: "1", DISPLAY: ":765", XAUTHORITY: "/data/desktop/Xauthority" };
+  await client.spawn(spawnRequest("after", { env }));
+  assert.deepEqual(pty.children[0].options.env, { A: "1" });
+  assert.deepEqual(pty.children[1].options.env, env);
+});

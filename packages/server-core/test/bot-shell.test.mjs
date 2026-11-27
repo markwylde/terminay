@@ -107,7 +107,11 @@ test('4.10 opt-in real PTY whoami, resize and shell process teardown', {
 	t.after(() => spawnSync(real, ['rm', '-f', name], { timeout: 15_000 }));
 	run(['run', '-d', '--pull', 'never', '--name', name, 'terminay-bot:local']);
 	run(['exec', '-i', '-u', 'root', name, 'terminay-init', '--bootstrap'], {
-		input: JSON.stringify({ botId: id, vncPassword: 'fake-pass' }),
+		input: JSON.stringify({
+			botId: id,
+			vncPassword: 'fake-pass',
+			vncViewPassword: 'view-pass',
+		}),
 	});
 	const engine = new BotEngine({
 		load: async () => undefined,

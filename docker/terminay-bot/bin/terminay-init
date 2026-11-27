@@ -74,10 +74,18 @@ def read_bootstrap():
         os.unlink(FIFO)
 
 
-def write_vnc_password(password):
-    if not isinstance(password, str) or not (6 <= len(password) <= 64):
-        raise ValueError("bad vnc password")
-    out = subprocess.run(["vncpasswd", "-f"], input=password.encode(), capture_output=True, check=True).stdout
+def write_vnc_password(password, view_password):
+    # Two lines make a file with a full password and a view-only one. A stream
+    # that authenticates with the second can send no input and is sent no
+    # clipboard, which is how view-only desktop streams are held to viewing.
+    for value in (password, view_password):
+        if not isinstance(value, str) or not (6 <= len(value) <= 64) or "\n" in value:
+            raise ValueError("bad vnc password")
+    # VNC compares the first eight bytes only.
+    if password[:8] == view_password[:8]:
+        raise ValueError("vnc passwords must differ")
+    out = subprocess.run(["vncpasswd", "-f"], input=f"{password}\n{view_password}\n".encode(),
+                         capture_output=True, check=True).stdout
     path = VNC_DIR + "/passwd"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as f:
@@ -251,7 +259,7 @@ def main_init():
     try:
         bot_id = str(doc["botId"])
         server_id = str(doc["serverId"])
-        passwd = write_vnc_password(doc["vncPassword"])
+        passwd = write_vnc_password(doc["vncPassword"], doc["vncViewPassword"])
 
     except Exception as e:  # noqa: BLE001
         log(f"bad bootstrap: {e}")

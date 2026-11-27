@@ -60,6 +60,12 @@ export interface TerminalLaunchResolverOptions {
 		folderId: ProtocolId,
 	) => Promise<string | null>;
 	readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
+	/** Environment that depends on the server's state when a terminal is
+	 * launched, laid over the default environment and under the shell profile:
+	 * a profile overrides or removes it by the ordinary rules. */
+	readonly baselineEnvironment?: () =>
+		| Readonly<Record<string, string>>
+		| undefined;
 	/** Host-owned, per-session environment added after shell-profile resolution.
 	 * This is reserved for ephemeral capability material which must not be
 	 * expressible or overridden by a user shell profile. `placement` is read
@@ -201,8 +207,11 @@ export class TerminalLaunchResolver {
 			shellPathForMode(resolvedProfile),
 			startupMode,
 		);
+		const launchBaseline = this.options.baselineEnvironment?.();
 		const env = applyProfileEnvironment(
-			this.options.defaultEnvironment,
+			launchBaseline === undefined
+				? this.options.defaultEnvironment
+				: { ...(this.options.defaultEnvironment ?? {}), ...launchBaseline },
 			resolvedProfile.definition.environment,
 			this.options.environmentCaseInsensitive === true,
 		);

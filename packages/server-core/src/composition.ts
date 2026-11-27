@@ -65,6 +65,7 @@ import {
 	createBotOperations,
 	type BotService,
 } from './botService/index.js';
+import type { ServerDesktopService } from './serverDesktop/service.js';
 import { OrderedEventJournal } from './events.js';
 import {
 	createExtensionOperationHandlers,
@@ -466,6 +467,9 @@ export interface ServerCoreCompositionOptions
 	};
 	/** A host supplies the bot runtime and its engine/vault/helper seams. */
 	readonly bots?: BotService;
+	/** The server desktop, composed by standalone servers and never by an
+	 * embedded one. Its capability is advertised exactly when it is here. */
+	readonly serverDesktop?: ServerDesktopService;
 	/** Configure server-owned app windows (ADR-0037, ADR-0108). App windows are
 	 * always composed; the MCP permission policy's Window Messages group gates
 	 * what a view types into its terminal. */
@@ -777,6 +781,12 @@ export function createServerCoreComposition(
 			? undefined
 			: new TerminalLaunchResolver({
 					...(shellIntegration === undefined ? {} : { shellIntegration }),
+					...(options.serverDesktop === undefined
+						? {}
+						: {
+								baselineEnvironment: () =>
+									options.serverDesktop?.displayEnvironment(),
+							}),
 					serverId: options.serverId,
 					profiles: options.terminalProfiles,
 					workspaceSnapshot: () =>
@@ -1987,7 +1997,10 @@ export function createServerCoreComposition(
 						mergeOperationRegistries(
 							mergeOperationRegistries(
 								mergeOperationRegistries(
-									options.operations ?? {},
+									mergeOperationRegistries(
+										options.operations ?? {},
+										options.serverDesktop?.operations() ?? {},
+									),
 									botOperations,
 								),
 								extensionOperations ?? {},
@@ -2091,6 +2104,7 @@ export function createServerCoreComposition(
 		agentChat?.forgetViewerConnection(connectionId);
 		options.bots?.forgetViewerConnection(connectionId);
 		options.bots?.connections.revoke(connectionId);
+		options.serverDesktop?.closeConnection(connectionId);
 		options.onConnectionClosed?.(connectionId, clientId);
 	};
 	const coreOptions: ServerCoreOptions = {
@@ -2387,6 +2401,7 @@ export function createServerCoreComposition(
 			await attempt(() => options.agentSessions?.bridge.dispose());
 			await attempt(() => options.agentSessions?.scope.dispose());
 			await attempt(() => liveTerminalPanels?.dispose());
+			await attempt(() => options.serverDesktop?.dispose());
 			// Terminal exit is a final agent lifecycle input, so terminal stops
 			// before the agent service. Every later cleanup still runs if it fails.
 			// With a session holder, shutting down is letting go: the shells keep
@@ -2769,10 +2784,14 @@ function uniqueCapabilities(
 		...new Set([
 			...options.capabilities.filter(
 				(capability) =>
-					(capability !== FEATURE_CAPABILITIES.bots &&
+					capability !== FEATURE_CAPABILITIES.serverDesktop &&
+					((capability !== FEATURE_CAPABILITIES.bots &&
 						capability !== FEATURE_CAPABILITIES.botSources) ||
-					options.bots !== undefined,
+						options.bots !== undefined),
 			),
+			...(options.serverDesktop === undefined
+				? []
+				: [FEATURE_CAPABILITIES.serverDesktop]),
 			FEATURE_CAPABILITIES.terminal,
 			// Every server says whether it has an upgrade to offer; one with no
 			// upgrader says it has none.

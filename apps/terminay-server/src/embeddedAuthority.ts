@@ -24,8 +24,13 @@ export function createEmbeddedDesktopAuthority(
 	// The embedded server is updated with Terminay Desktop (ADR-0062). It is
 	// never given an upgrader, whatever its caller or environment carries, so
 	// it checks no release and offers no upgrade.
-	const { serverUpgrade: _serverUpgrade, ...embedded } =
-		options as ServerCoreCompositionOptions;
+	// Nor a server desktop: that belongs to a standalone server on a headless
+	// host, and the embedded server never advertises it.
+	const {
+		serverUpgrade: _serverUpgrade,
+		serverDesktop: _serverDesktop,
+		...embedded
+	} = options as ServerCoreCompositionOptions;
 	const bots =
 		options.bots ??
 		(options.botHost && ['linux', 'darwin'].includes(process.platform)

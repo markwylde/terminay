@@ -34,3 +34,5 @@ export {
 	UnsupportedHostError,
 } from './platform.js';
 export { buildFromSource, preflightToolchain } from './source.js';
+export * from './desktop.js';
+export * from './desktopHelper.js';

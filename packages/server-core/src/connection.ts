@@ -12,11 +12,13 @@ import {
 	negotiateVersion,
 	protocolError,
 	type QueryEnvelope,
+	SERVER_DESKTOP_PREFIX,
 	type ServerHello,
 	validateEnvelope,
 } from '@terminay/protocol';
 import { authError, validateIdentity } from './auth.js';
 import { canReadBotEvents } from './botService/authority.js';
+import { hasServerDesktopAuthority } from './serverDesktop/authority.js';
 import {
 	createOperationDispatcher,
 	type OperationDispatcher,
@@ -679,6 +681,14 @@ export class ServerConnection implements ServerConnectionLike {
 				: payload.event;
 		if (
 			typeof event === 'string' &&
+			event.startsWith(SERVER_DESKTOP_PREFIX) &&
+			!hasServerDesktopAuthority(this.authenticatedClient)
+		)
+			return commandError(
+				command, 'forbidden', 'the server desktop needs an unrestricted connection to this server',
+			);
+		if (
+			typeof event === 'string' &&
 			event.startsWith('bots.') &&
 			!canReadBotEvents(this.authenticatedClient)
 		)
@@ -1050,6 +1060,12 @@ export class ServerConnection implements ServerConnectionLike {
 	}
 
 	private projectEvent(event: OrderedEvent): OrderedEvent | undefined {
+		// A narrowed connection learns nothing of the desktop, not even that
+		// its state changed.
+		if (
+			event.event.startsWith(SERVER_DESKTOP_PREFIX) &&
+			!hasServerDesktopAuthority(this.authenticatedClient)
+		) return undefined;
 		if (
 			event.event.startsWith('bots.') &&
 			!canReadBotEvents(this.authenticatedClient)

@@ -46,6 +46,9 @@ const serverCoreRoot = resolve(
 	args['server-core-root'] ?? 'packages/server-core',
 );
 const protocolRoot = resolve(args['protocol-root'] ?? 'packages/protocol');
+const remoteDesktopRoot = resolve(
+	args['remote-desktop-root'] ?? 'packages/remote-desktop',
+);
 const webrtcRuntime = resolve(required(args, 'webrtc-runtime'));
 const release = normalizeArtifactRelease({
 	channel: args.channel ?? 'tag',
@@ -77,6 +80,7 @@ try {
 	await assertSafeTree(serverRoot, 'server runtime');
 	await assertSafeTree(serverCoreRoot, 'server core runtime');
 	await assertSafeTree(protocolRoot, 'protocol runtime');
+	await assertSafeTree(remoteDesktopRoot, 'remote desktop runtime');
 	await assertSafeTree(uiBundle, 'web UI bundle');
 	await assertHostedUiEntry(uiBundle);
 	await assertSafeTree(webrtcRuntime, 'selected WebRTC runtime');
@@ -133,12 +137,19 @@ try {
 	const compiledProtocol = join(compiledWorkspaceRoot, 'protocol');
 	await stageCompiledWorkspacePackage(serverCoreRoot, compiledServerCore);
 	await stageCompiledWorkspacePackage(protocolRoot, compiledProtocol);
+	// The desktop relay, and with it the desktop session script.
+	const compiledRemoteDesktop = join(compiledWorkspaceRoot, 'remote-desktop');
+	await stageCompiledWorkspacePackage(
+		remoteDesktopRoot,
+		compiledRemoteDesktop,
+	);
 	const productionDependencies = await stageProductionDependencyClosure({
 		destinationModules: join(root, 'node_modules'),
 		runtimeModules,
 		workspacePackages: {
 			'@terminay/server-core': compiledServerCore,
 			'@terminay/protocol': compiledProtocol,
+			'@terminay/remote-desktop': compiledRemoteDesktop,
 		},
 		rootPackages: Object.keys(serverPackage.dependencies ?? {}),
 	});

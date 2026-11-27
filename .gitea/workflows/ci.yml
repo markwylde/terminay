@@ -462,6 +462,13 @@ jobs:
         shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
         run: node scripts/standalone-systemd-restart.mjs --archive release/standalone/terminay-server-main-linux-x64.tar.gz
 
+      # The server desktop's root helper, with the real package manager: the
+      # trigger starts one fixed command, a killed install is recovered from,
+      # and the packages enable and start no unit.
+      - name: Desktop setup under systemd
+        shell: node scripts/ci-watchdog.mjs bash --noprofile --norc -eo pipefail {0}
+        run: node scripts/desktop-setup-systemd.mjs
+
       - name: Free this job's Docker images
         if: ${{ always() }}
         run: sh scripts/prune-ci-docker-images.sh

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Web Browser
+Exec=/usr/local/bin/terminay-desktop-session browser %U
+Icon=chromium
+Categories=Network;WebBrowser;X-XFCE;X-Xfce-Toplevel;

@@ -39,6 +39,7 @@
     "@terminay/cron": "1.0.0",
     "@terminay/extension-api": "^3.4.0",
     "@terminay/protocol": "1.0.0",
+    "@terminay/remote-desktop": "1.0.0",
     "@terminay/ui-bundle": "1.0.0",
     "@xterm/addon-serialize": "0.15.0-beta.331",
     "@xterm/headless": "6.1.0-beta.335",

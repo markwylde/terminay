@@ -15,6 +15,7 @@ const STORAGE_KEY = 'terminay.view.in-page-window.v1';
 export const IN_PAGE_WINDOW_IDS = [
 	'settings',
 	'performance-log',
+	'server-desktop',
 ] as const;
 
 export type InPageWindowId = (typeof IN_PAGE_WINDOW_IDS)[number];

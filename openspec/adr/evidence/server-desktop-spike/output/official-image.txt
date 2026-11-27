@@ -1,0 +1,40 @@
+== image: terminay-server built from this worktree's Dockerfile; entrypoint: ["/usr/local/bin/terminay-server-entrypoint"]; user: uid=10001(terminay) gid=10001(terminay) groups=10001(terminay)
+== confinement: privileged=false seccomp(pid1)=Seccomp: 2
+== main processes:     PID USER     COMMAND;      1 terminay /bin/sh /usr/local/bin/terminay-server-entrypoint;     23 terminay /opt/terminay/bin/node /opt/terminay/server/dist/cli.js;     38 terminay /opt/terminay/bin/node /opt/terminay/node_modules/@terminay/server-core/dist/extensions/child.js;     39 terminay /opt/terminay/bin/node /opt/terminay/node_modules/@terminay/server-core/dist/extensions/child.js;     45
+== os: Debian GNU/Linux 12 (bookworm) kind=image kernel=6.12.118+deb13-cloud-amd64
+RESULT [install] j INFO package set installed (106 packages configured)
+RESULT [install] j INFO no systemd in this configuration; checked listeners only
+RESULT [install] j PASS no new TCP/UDP listener after install
+RESULT [none] start PASS Xtigervnc pid=3254 version: 1.12.0+dfsg-8
+RESULT [none] start INFO process state: NoNewPrivs: 0 Seccomp: 2  netns=net:[4026532923] self=net:[4026532923]
+RESULT [none] a PASS no TCP/UDP listener for pid 3254 (all listeners in its netns: 2 lines: tcp:127.0.0.1:8444 tcp:0.0.0.0:8443 )
+RESULT [none] c INFO baseline: reverse connection reached the listener (test detects it) []
+RESULT [none] c PASS cookie-holding X client connects
+RESULT [none] c PASS an ordinary program of the account still has network
+RESULT [netns] start FAIL display server not running: unshare: unshare failed: Operation not permitted 
+RESULT [netns] i INFO no service unit in this configuration
+RESULT [seccomp] start PASS Xtigervnc pid=3564 version: 1.12.0+dfsg-8
+RESULT [seccomp] start INFO process state: NoNewPrivs: 1 Seccomp: 2  netns=net:[4026532923] self=net:[4026532923]
+RESULT [seccomp] a PASS no TCP/UDP listener for pid 3564 (all listeners in its netns: 2 lines: tcp:127.0.0.1:8444 tcp:0.0.0.0:8443 )
+RESULT [seccomp] c PASS reverse connection refused [connecting to 127.0.0.1::5599 failed ]
+RESULT [seccomp] c PASS cookie-holding X client connects
+RESULT [seccomp] c PASS an ordinary program of the account still has network
+RESULT [seccomp] b PASS other account refused on X display
+RESULT [seccomp] b PASS other account refused on RFB socket (600 terminay in 700 dir)
+RESULT [seccomp] b INFO X sockets: path=X765  lock=/tmp/.X765-lock abstract=1
+RESULT [seccomp] d PASS viewer pointer refused, controller pointer applied
+RESULT [seccomp] d INFO clipboard view/legacy: (nothing);
+RESULT [seccomp] d INFO clipboard view/ext: ServerCutText ext actions=['caps', 'request', 'peek', 'notify', 'provide'] formats=0x1 bytes=4;(nothing);
+RESULT [seccomp] d INFO clipboard full/legacy: ServerCutText legacy len=12 data=b'spike-secret';
+RESULT [seccomp] d INFO clipboard full/ext: ServerCutText ext actions=['caps', 'request', 'peek', 'notify', 'provide'] formats=0x1 bytes=4;ServerCutText ext actions=['provide'] formats=0x1 bytes=25;ServerCutText ext actions=['provide'] formats=0x1 bytes=25;
+RESULT [seccomp] d PASS view-only connection received no clipboard content (legacy and extended, including after an explicit request)
+RESULT [seccomp] d INFO full connection received clipboard content (test detects it)
+RESULT [seccomp] e INFO held key+button during=2, after its connection closed=1
+RESULT [seccomp] e PASS nothing held after close plus the release step (during=2 after-close=1 after-release=0)
+RESULT [seccomp] f PASS desktop is 1600x900
+RESULT [seccomp] f INFO after view-only resize request desktop is 1600x900
+RESULT [seccomp] g PASS session processes running; TCP/UDP listeners owned by any visible process: 2
+RESULT [seccomp] h PASS xterm viewable and received typed input through RFB
+RESULT [seccomp] i PASS after the entrypoint restarted the real server (pid 23 -> 3880): same display pid 3564, same xterm 3829, same xfwm4 3575, display answers
+== done
+== server after the run: running healthy

@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import type { BotAgentContribution } from '@terminay/extension-api';
-import type { BotAgent, BotSessionSnapshot } from '@terminay/protocol';
+import type {
+	BotAgent,
+	BotDesktopMode,
+	BotSessionSnapshot,
+} from '@terminay/protocol';
 import {
 	loadCanonicalStateSync,
 	writeFileDurablySync,
@@ -195,7 +199,23 @@ export function createBotServerService(options: BotServerOptions): BotService {
 				: [],
 		);
 	};
-	const passwordId = (id: string) => `bot:${id}:vnc`;
+	// A control stream authenticates with the full password; a view-only one
+	// with the view password, which the display server holds to viewing.
+	const passwordId = (id: string, mode: BotDesktopMode = 'control') =>
+		mode === 'control' ? `bot:${id}:vnc` : `bot:${id}:vnc-view`;
+	const ensurePassword = async (key: string, differsFrom?: string) => {
+		if (options.vault.status().entries.some((e) => e.id === key)) return;
+		// VNC compares eight bytes, so the two must differ within them.
+		let text = randomBytes(8).toString('hex').slice(0, 8);
+		while (text === differsFrom)
+			text = randomBytes(8).toString('hex').slice(0, 8);
+		const value = Buffer.from(text);
+		try {
+			await options.vault.put({ id: key, label: key, value });
+		} finally {
+			value.fill(0);
+		}
+	};
 	const environment = new BotEnvironmentService(options.serverId, {
 		engine: () => images.driver(),
 		ensureImage: (d) => images.ensureImage(d),
@@ -210,16 +230,15 @@ export function createBotServerService(options: BotServerOptions): BotService {
 		},
 		bootstrap: async (id) => {
 			const key = passwordId(id);
-			if (!options.vault.status().entries.some((e) => e.id === key)) {
-				const value = Buffer.from(randomBytes(8).toString('hex').slice(0, 8));
-				try {
-					await options.vault.put({ id: key, label: key, value });
-				} finally {
-					value.fill(0);
-				}
-			}
-			return options.vault.withSecret(key, (v) => ({
-				vncPassword: Buffer.from(v).toString('utf8'),
+			const viewKey = passwordId(id, 'view-only');
+			await ensurePassword(key);
+			const vncPassword = await options.vault.withSecret(key, (v) =>
+				Buffer.from(v).toString('utf8'),
+			);
+			await ensurePassword(viewKey, vncPassword);
+			return options.vault.withSecret(viewKey, (v) => ({
+				vncPassword,
+				vncViewPassword: Buffer.from(v).toString('utf8'),
 			}));
 		},
 		secrets: async () => [],
@@ -266,7 +285,8 @@ export function createBotServerService(options: BotServerOptions): BotService {
 	const desktops = new BotDesktopService({
 		engine: () => images.driver(),
 		running: (id) => environment.state(id) === 'running',
-		withPassword: (id, fn) => options.vault.withSecret(passwordId(id), fn),
+		withPassword: (id, fn, mode) =>
+			options.vault.withSecret(passwordId(id, mode), fn),
 		activity: (id, delta, preview) =>
 			streamActivity(id, preview ? 'previews' : 'desktops', delta),
 	});
