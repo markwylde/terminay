@@ -306,8 +306,8 @@ function toSnapshot({
 	);
 	if (tool) snapshot.tool = tool;
 	if (session.activity.lastTurn) snapshot.lastTurn = session.activity.lastTurn;
-	if (session.activity.lastTurnEndedAt !== undefined)
-		snapshot.lastTurnEndedAt = session.activity.lastTurnEndedAt;
+	const lastTurnEndedAt = wholeMilliseconds(session.activity.lastTurnEndedAt);
+	if (lastTurnEndedAt !== undefined) snapshot.lastTurnEndedAt = lastTurnEndedAt;
 	const error = boundedAgentText(
 		session.activity.error,
 		EXTENSION_LIMITS.agentErrorLength,
@@ -315,6 +315,18 @@ function toSnapshot({
 	if (error) snapshot.error = error;
 	if (subagents.size > 0) snapshot.subagents = boundedSubagents(subagents);
 	return snapshot;
+}
+
+/**
+ * The host accepts a turn end time only as whole epoch milliseconds. Some
+ * harnesses (agy) record sub-millisecond precision, which is floored so the
+ * end never moves later. A value that cannot be published is left out, so no
+ * library timestamp can make the host refuse a publication.
+ */
+function wholeMilliseconds(value: number | undefined): number | undefined {
+	if (value === undefined || !Number.isFinite(value)) return undefined;
+	const whole = Math.floor(value);
+	return whole >= 0 && whole <= Number.MAX_SAFE_INTEGER ? whole : undefined;
 }
 
 /** Keep running subagents first, then the most recently seen finished ones. */

@@ -8,6 +8,10 @@ import {
 	createClaudeFixtureDriver,
 	createMemoryHarness,
 } from '@markwylde/all-your-agents/testing';
+import {
+	validateAgentSessionReset,
+	validateAgentSessionSnapshot,
+} from '@terminay/extension-api';
 import { createAgentExtensionHarness } from '@terminay/extension-api/testing';
 import { createBuiltInAgentsExtension, HARNESSES } from '../dist/index.js';
 
@@ -301,7 +305,10 @@ function harnessesReportingWaitAs(waitingFor) {
 for (const waitingFor of ['task', 'subagent']) {
 	test(`a background ${waitingFor} wait is reported as running, not as waiting on the user`, async (t) => {
 		const { driver, harnesses } = harnessesReportingWaitAs(waitingFor);
-		const harness = await start(t, { harnesses, enabledHarnesses: ['antigravity'] });
+		const harness = await start(t, {
+			harnesses,
+			enabledHarnesses: ['antigravity'],
+		});
 		await driver.createLiveSession({ id: 'live', pid: 261, cwd: '/work/app' });
 		await harness.waitFor((h) => h.sessions()[0]?.status === 'idle');
 
@@ -318,7 +325,10 @@ for (const waitingFor of ['task', 'subagent']) {
 
 test('a wait for the user to approve stays waiting with its reason', async (t) => {
 	const { driver, harnesses } = harnessesReportingWaitAs('approval');
-	const harness = await start(t, { harnesses, enabledHarnesses: ['antigravity'] });
+	const harness = await start(t, {
+		harnesses,
+		enabledHarnesses: ['antigravity'],
+	});
 	await driver.createLiveSession({ id: 'live', pid: 271, cwd: '/work/app' });
 	await harness.waitFor((h) => h.sessions()[0]?.status === 'idle');
 
@@ -446,4 +456,195 @@ test('the real Claude Code provider reads a live session from its home', async (
 	await driver.remove(REAL_ID);
 	await harness.waitFor((h) => h.sessions().length === 0);
 	harness.assertConformant();
+});
+
+/**
+ * The memory provider stamps every row `provider: 'memory'`. A second one is
+ * renamed on the way out so the library can tell the two apart.
+ */
+function renamedProvider(provider, id, onWatch = () => {}) {
+	const rename = (value) =>
+		value && typeof value === 'object' && value.provider === 'memory'
+			? { ...value, provider: id }
+			: value;
+	const context = (ctx) =>
+		new Proxy(ctx, {
+			get(target, key) {
+				if (key === 'emit')
+					return (verb, payload) => target.emit(verb, rename(payload));
+				const value = target[key];
+				return typeof value === 'function' ? value.bind(target) : value;
+			},
+		});
+	return {
+		...provider,
+		id,
+		watch: (ctx) => {
+			const stop = provider.watch(context(ctx));
+			onWatch();
+			return stop;
+		},
+		async *list(ctx, ...rest) {
+			for await (const row of provider.list(context(ctx), ...rest))
+				yield rename(row);
+		},
+		inspect: (ctx, ...rest) => provider.inspect(context(ctx), ...rest),
+		revalidate: (ctx, ...rest) => provider.revalidate(context(ctx), ...rest),
+		subagents: (ctx, ...rest) => provider.subagents(context(ctx), ...rest),
+	};
+}
+
+/** Claude Code and Antigravity, each backed by its own memory provider. */
+function twoMemoryHarnesses({ onAgyWatch } = {}) {
+	const claude = createMemoryHarness();
+	const agy = createMemoryHarness();
+	const agyProvider = renamedProvider(
+		agy.provider,
+		'memory-antigravity',
+		onAgyWatch && (() => onAgyWatch(agy.driver)),
+	);
+	const harnesses = HARNESSES.map((harness) => {
+		if (harness.id === 'claude-code')
+			return { ...harness, createProvider: () => claude.provider };
+		if (harness.id === 'antigravity')
+			return { ...harness, createProvider: () => agyProvider };
+		return harness;
+	});
+	return { claude: claude.driver, agy: agy.driver, harnesses };
+}
+
+/** Run `fn` while the library's clock reads `at`. */
+async function at(t, value, fn) {
+	const mock = t.mock.method(Date, 'now', () => value);
+	try {
+		await fn();
+	} finally {
+		mock.mock.restore();
+	}
+}
+
+// agy records turn end times with sub-millisecond precision.
+const AGY_ENDED_AT = 1795772970190.7083;
+
+test('with Claude Code and Antigravity live, every publication stays valid through a fractional turn end', async (t) => {
+	const { claude, agy, harnesses } = twoMemoryHarnesses();
+	await claude.createLiveSession({ id: 'claude', pid: 601, cwd: '/work/app' });
+	await agy.createLiveSession({ id: 'agy', pid: 602, cwd: '/work/app' });
+	const harness = await start(t, {
+		harnesses,
+		enabledHarnesses: ['claude-code', 'antigravity'],
+	});
+	assert.deepEqual(
+		lastReset(harness)
+			.sessions.map((session) => [session.id, session.harness])
+			.sort(),
+		[
+			['agy', 'antigravity'],
+			['claude', 'claude-code'],
+		],
+	);
+
+	// The memory fixture only reports turns while it is watched, so the
+	// fractional end arrives as a live upsert beside the Claude Code session.
+	await claude.runTurnWithTool('claude');
+	await at(t, AGY_ENDED_AT, () => agy.runTurnWithTool('agy'));
+	await harness.waitFor((h) =>
+		h.sessions().every((session) => session.lastTurn === 'completed'),
+	);
+	const published = harness.sessions().find((session) => session.id === 'agy');
+	assert.equal(published.lastTurnEndedAt, 1795772970190);
+	assert.equal(validateAgentSessionReset(harness.sessions()).ok, true);
+	for (const publication of harness.publications()) {
+		if (publication.kind === 'reset')
+			assert.equal(validateAgentSessionReset(publication.sessions).ok, true);
+		if (publication.kind === 'upsert')
+			assert.equal(validateAgentSessionSnapshot(publication.session).ok, true);
+	}
+	harness.assertConformant();
+});
+
+test('a fractional turn end time reported during catch-up is floored in the reset', async (t) => {
+	// The turn ends while the library is catching up, before `ready`, so it is
+	// part of the one reset rather than a later upsert.
+	const { claude, agy, harnesses } = twoMemoryHarnesses({
+		onAgyWatch: (driver) => {
+			const mock = t.mock.method(Date, 'now', () => AGY_ENDED_AT);
+			try {
+				driver.runTurnWithTool('agy');
+			} finally {
+				mock.mock.restore();
+			}
+		},
+	});
+	await claude.createLiveSession({ id: 'claude', pid: 611, cwd: '/work/app' });
+	await agy.createLiveSession({ id: 'agy', pid: 612, cwd: '/work/app' });
+	const harness = await start(t, {
+		harnesses,
+		enabledHarnesses: ['claude-code', 'antigravity'],
+	});
+
+	const resets = harness
+		.publications()
+		.filter((publication) => publication.kind === 'reset');
+	assert.equal(resets.length, 1);
+	assert.deepEqual(
+		resets[0].sessions.map((session) => [session.id, session.harness]).sort(),
+		[
+			['agy', 'antigravity'],
+			['claude', 'claude-code'],
+		],
+	);
+	const published = resets[0].sessions.find((session) => session.id === 'agy');
+	assert.equal(published.lastTurn, 'completed');
+	assert.equal(published.lastTurnEndedAt, 1795772970190);
+	assert.equal(validateAgentSessionReset(resets[0].sessions).ok, true);
+	harness.assertConformant();
+});
+
+test('a fractional turn end time in a live upsert is floored', async (t) => {
+	const { agy, harnesses } = twoMemoryHarnesses();
+	const harness = await start(t, {
+		harnesses,
+		enabledHarnesses: ['antigravity'],
+	});
+	await agy.createLiveSession({ id: 'agy', pid: 603, cwd: '/work/app' });
+	await at(t, AGY_ENDED_AT, () => agy.runTurnWithTool('agy'));
+	await harness.waitFor((h) => h.sessions()[0]?.lastTurn === 'completed');
+
+	const published = harness.sessions()[0];
+	assert.equal(published.lastTurnEndedAt, 1795772970190);
+	assert.equal(validateAgentSessionSnapshot(published).ok, true);
+	harness.assertConformant();
+});
+
+test('an unusable turn end time is omitted; a whole one is unchanged', async (t) => {
+	const cases = [
+		[Number.NaN, undefined],
+		[Number.POSITIVE_INFINITY, undefined],
+		[Number.NEGATIVE_INFINITY, undefined],
+		[-1, undefined],
+		[Number.MAX_SAFE_INTEGER + 2, undefined],
+		[1_795_772_970_190, 1_795_772_970_190],
+	];
+	for (const [endedAt, expected] of cases) {
+		const { driver, harnesses } = memoryHarnesses();
+		const harness = await start(t, { harnesses });
+		await driver.createLiveSession({ id: 's', pid: 604, cwd: '/work/app' });
+		await at(t, endedAt, () => driver.runTurnWithTool('s'));
+		await harness.waitFor((h) => h.sessions()[0]?.lastTurn === 'completed');
+		const published = harness.sessions()[0];
+		assert.equal(published.lastTurnEndedAt, expected, `end time ${endedAt}`);
+		assert.equal(
+			Object.hasOwn(published, 'lastTurnEndedAt'),
+			expected !== undefined,
+		);
+		harness.assertConformant();
+	}
+
+	// A session whose turn never ended carries no end time.
+	const { driver, harnesses } = memoryHarnesses();
+	const harness = await start(t, { harnesses });
+	await driver.createLiveSession({ id: 'fresh', pid: 605, cwd: '/work/app' });
+	await harness.waitFor((h) => h.sessions().length === 1);
+	assert.equal(Object.hasOwn(harness.sessions()[0], 'lastTurnEndedAt'), false);
 });
