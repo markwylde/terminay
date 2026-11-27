@@ -28,6 +28,7 @@ async function fixture({
 	worktrees = {},
 	clock = { now: 1_000 },
 	bridgeOptions = {},
+	sourceHarnesses = harnesses,
 } = {}) {
 	const activity = new TerminalActivityService({ serverId });
 	const agents = new AgentStatusService({ activity, now: () => clock.now });
@@ -65,8 +66,8 @@ async function fixture({
 		...bridgeOptions,
 	});
 	bridge.registerSource(
-		{ id: sourceId, extensionId, harnesses },
-		harnesses.map((harness) => harness.id),
+		{ id: sourceId, extensionId, harnesses: sourceHarnesses },
+		sourceHarnesses.map((harness) => harness.id),
 	);
 	const terminal = (sessionId, projectId, shellPid) => {
 		const identity = { serverId, projectId, sessionId };
@@ -138,7 +139,7 @@ test('two terminals in one directory each own the session their process tree hol
 	assert.equal(root('b').activationTerminalSessionId, 'terminal-2');
 });
 
-test('a detached server a terminal\'s agent spawned binds to no terminal', async () => {
+test("a detached server a terminal's agent spawned binds to no terminal", async () => {
 	// The shared Codex server: forked from an agent in terminal-1, then
 	// detached (setsid), so it has no controlling terminal.
 	const { terminal, publish, root } = await fixture({
@@ -173,7 +174,7 @@ test('an unreadable controlling terminal binds nowhere', async () => {
 	assert.equal(root('session-1').terminalSessionId, null);
 });
 
-test('sub-agents sharing their parent\'s pid stay bound to its terminal', async () => {
+test("sub-agents sharing their parent's pid stay bound to its terminal", async () => {
 	const { terminal, publish, root } = await fixture({
 		parents: { 500: 300 },
 		terminals: { 300: 'ttys001', 500: 'ttys001' },
@@ -688,4 +689,61 @@ test("a bound root drives its terminal's provider activity; an external one neve
 	const snapshot = activity.snapshot().sessions[identity.sessionId];
 	assert.equal(snapshot.providerState, 'working');
 	assert.equal(snapshot.agentId, 'session-1');
+});
+
+const antigravityHarnesses = [
+	...harnesses,
+	{ id: 'antigravity', displayName: 'Antigravity' },
+];
+
+/** agy's live session as observed: a direct child of its terminal's shell,
+ * idle after a completed turn that ended before Terminay first saw it. */
+const agySession = (lastTurnEndedAt) =>
+	session({
+		id: 'cf486cd3-caed-4526-8130-1b0283d2e25c',
+		harness: 'antigravity',
+		pid: 1835371,
+		status: 'idle',
+		title: 'App Crash From Table Query',
+		lastTurn: 'completed',
+		lastTurnEndedAt,
+	});
+
+test('an idle Antigravity session binds to its terminal and drives it idle', async () => {
+	const { terminal, publish, root, activity } = await fixture({
+		parents: { 1835371: 1834928 },
+		clock: { now: 1_795_772_990_000 },
+		sourceHarnesses: antigravityHarnesses,
+	});
+	const identity = terminal('terminal-agy', 'project-1', 1834928);
+	const agy = agySession(1_795_772_970_190);
+	assert.deepEqual(await publish({ reset: [agy] }), { ok: true });
+
+	const entry = root(agy.id);
+	assert.equal(entry.terminalSessionId, 'terminal-agy');
+	assert.equal(entry.harness, 'antigravity');
+	assert.equal(entry.state, 'idle');
+	const snapshot = activity.snapshot().sessions[identity.sessionId];
+	assert.equal(snapshot.authority, 'provider');
+	assert.equal(snapshot.providerState, 'idle');
+	assert.equal(snapshot.status, 'idle');
+});
+
+test('the host still refuses a fractional turn end time', async () => {
+	const { terminal, publish, agents, entries } = await fixture({
+		parents: { 1835371: 1834928 },
+		clock: { now: 1_795_772_990_000 },
+		sourceHarnesses: antigravityHarnesses,
+	});
+	terminal('terminal-agy', 'project-1', 1834928);
+	const revision = agents.getSnapshot().revision;
+	const result = await publish({
+		reset: [session(), agySession(1795772970190.7083)],
+	});
+	assert.equal(result.ok, false);
+	assert.equal(agents.getSnapshot().revision, revision);
+	assert.equal(
+		entries().some((entry) => entry.kind === 'root'),
+		false,
+	);
 });
