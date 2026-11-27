@@ -74,11 +74,9 @@ export function NewBotDialog({
 				name: name.trim(),
 				agentId: agent.id,
 				avatarStyle,
-				...(avatarStyle === 'character'
-					? {
-							colour,
-							...(avatar.trim().length > 0 ? { avatar: avatar.trim() } : {}),
-						}
+				colour,
+				...(avatarStyle === 'character' && avatar.trim().length > 0
+					? { avatar: avatar.trim() }
 					: {}),
 				...(agent.autonomousOnly ? { approvalMode: 'autonomous' } : {}),
 			})

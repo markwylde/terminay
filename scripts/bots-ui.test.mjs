@@ -3389,7 +3389,34 @@ test('bots default to Chara Critter avatars, Profile switches between Critter an
 		const previewBefore = await picker
 			.locator('.bots-avatar svg')
 			.evaluate((el) => el.outerHTML);
+		// The tab header and Profile preview both render the same Critter bot;
+		// each must have distinct internal SVG clipPath ids.
+		const clipIds = await profilePage
+			.locator('.bots-avatar svg clipPath[id]')
+			.evaluateAll((els) => els.map((el) => el.id));
+		assert.ok(clipIds.length >= 2, 'expected clipPaths on header and preview');
+		assert.equal(
+			new Set(clipIds).size,
+			clipIds.length,
+			'repeated Critter avatars on one page must not collide on SVG ids',
+		);
 		await shot(profilePage, 'bot-profile-critter');
+		// Editing Character fields and switching back to Critter does not leave a no-op dirty state.
+		await picker
+			.locator('[data-terminay-bot-avatar-style-option="character"]')
+			.click();
+		await profilePage
+			.locator('[data-terminay-bot-profile="avatar"]')
+			.fill('🦉');
+		await picker
+			.locator('[data-terminay-bot-avatar-style-option="critter"]')
+			.click();
+		assert.equal(
+			await profilePage
+				.locator('[data-terminay-bot-profile-save]')
+				.isDisabled(),
+			true,
+		);
 		await profilePage
 			.locator('[data-terminay-bot-profile="name"]')
 			.fill('Quail');
@@ -3448,6 +3475,22 @@ test('bots default to Chara Critter avatars, Profile switches between Critter an
 		const created = (await calls(newBotPage, 'save')).at(-1)?.args[0];
 		assert.equal(created.name, 'Kestrel');
 		assert.equal(created.avatarStyle, 'critter');
+		assert.equal(created.colour, '#7cc4f5');
+		// Creating a Character bot sends its chosen character and swatch colour.
+		await newBotPage.getByRole('button', { name: 'New bot' }).first().click();
+		await dialog.waitFor();
+		await dialog.locator('[data-terminay-bots-new-name]').fill('Wren');
+		await dialog
+			.locator('[data-terminay-bots-new-avatar-style="character"]')
+			.click();
+		await dialog.locator('[data-terminay-bots-new-avatar]').fill('🐦');
+		await dialog.locator('button[aria-label="Colour #7cf5b4"]').click();
+		await dialog.locator('[data-terminay-bots-new-create]').click();
+		const createdChar = (await calls(newBotPage, 'save')).at(-1)?.args[0];
+		assert.equal(createdChar.name, 'Wren');
+		assert.equal(createdChar.avatarStyle, 'character');
+		assert.equal(createdChar.avatar, '🐦');
+		assert.equal(createdChar.colour, '#7cf5b4');
 	} finally {
 		await newBotPage.close();
 	}

@@ -175,9 +175,15 @@ export function BotProfilePanel({
 		: form.approvalMode;
 	const problem = profileProblem(form);
 	const original = formFromBot(base);
-	const dirty = (Object.keys(form) as (keyof ProfileForm)[]).some(
-		(key) => form[key] !== original[key],
-	);
+	const dirty = (Object.keys(form) as (keyof ProfileForm)[]).some((key) => {
+		if (
+			form.avatarStyle === 'critter' &&
+			original.avatarStyle === 'critter' &&
+			(key === 'avatar' || key === 'colour')
+		)
+			return false;
+		return form[key] !== original[key];
+	});
 
 	const save = () => {
 		if (problem !== undefined || busy) return;

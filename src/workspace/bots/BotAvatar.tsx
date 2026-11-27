@@ -1,5 +1,6 @@
 import { Avatar } from '@markwylde/chara-react';
 import type { BotProfile } from '@terminay/protocol';
+import { useId } from 'react';
 import { type BotActivity, botAvatarStyle, initials } from './botsModel';
 
 const ACTIVITY_DOT: Readonly<Record<BotActivity, string>> = {
@@ -20,6 +21,10 @@ export function BotAvatar({
 	activity?: BotActivity;
 	size?: 'sm' | 'md' | 'lg';
 }>) {
+	const rawId = useId();
+	// Isolate internal SVG <defs>/<clipPath> ids per mounted avatar so a hidden
+	// copy (e.g. an inactive tab) can never break clipping on visible copies.
+	const idPrefix = `ba_${rawId.replace(/[^A-Za-z0-9_-]/g, '')}_`;
 	const picture = /^data:image\/(png|jpeg|webp|gif);base64,/.test(bot.avatar)
 		? bot.avatar
 		: undefined;
@@ -38,7 +43,7 @@ export function BotAvatar({
 			{picture !== undefined ? (
 				<img src={picture} alt="" />
 			) : style === 'critter' ? (
-				<Avatar name={bot.name} theme="critter" radius={0} />
+				<Avatar name={bot.name} theme="critter" radius={0} idPrefix={idPrefix} />
 			) : (
 				bot.avatar.trim() || initials(bot.name)
 			)}
