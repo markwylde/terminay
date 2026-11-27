@@ -280,6 +280,8 @@ export type TerminalSettings = {
 	rescaleOverlappingGlyphs: boolean;
 	rightClickSelectsWord: boolean;
 	screenReaderMode: boolean;
+	/** Device setting: whether Critter bot avatars animate their activity. */
+	animateBotAvatars: boolean;
 	scrollback: number;
 	/** Device setting: whether the workspace status bar is shown. */
 	showStatusBar: boolean;

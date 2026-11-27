@@ -39,6 +39,11 @@ export function TerminalSettingsClientProvider({
 	return createElement(TerminalSettingsClientContext.Provider, { value: client }, children);
 }
 
+/** The settings client, or undefined outside a settings provider. */
+export function useOptionalTerminalSettingsClient(): TerminalSettingsClient | undefined {
+	return useContext(TerminalSettingsClientContext);
+}
+
 export function useTerminalSettingsClient(): TerminalSettingsClient {
 	const client = useContext(TerminalSettingsClientContext);
 	if (client === undefined) {
