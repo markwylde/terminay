@@ -43,7 +43,12 @@ export function BotAvatar({
 			{picture !== undefined ? (
 				<img src={picture} alt="" />
 			) : style === 'critter' ? (
-				<Avatar name={bot.name} theme="critter" radius={0} idPrefix={idPrefix} />
+				<Avatar
+					name={bot.name}
+					theme="critter"
+					variant="standalone"
+					idPrefix={idPrefix}
+				/>
 			) : (
 				bot.avatar.trim() || initials(bot.name)
 			)}

@@ -296,6 +296,9 @@ button.bots-chip.bots-chip--on {
 .bots-avatar--critter {
 	background: transparent;
 }
+.bots-avatar--critter > svg {
+	border-radius: 0;
+}
 .bots-avatar img,
 .bots-avatar > svg {
 	width: 100%;

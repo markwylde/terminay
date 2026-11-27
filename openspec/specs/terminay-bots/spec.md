@@ -40,7 +40,7 @@ A bot SHALL have:
 - a **Terminay MCP access** setting, off unless the user turns it on;
 - an **Inspect other bots** setting, off unless the user turns it on (see bot-inspection).
 
-When a bot's avatar style is Critter, every surface showing the bot's avatar SHALL render the Chara `critter` SVG for the bot's name, filling the avatar frame while keeping any activity dot intact. When a bot's avatar style is Character, every surface showing the bot's avatar SHALL render the saved emoji or single character (or the bot's initials when blank) on the bot's chosen colour.
+When a bot's avatar style is Critter, every surface showing the bot's avatar SHALL render the standalone Chara `critter` SVG for the bot's name on a transparent background (with no background tile), keeping any activity dot intact. When a bot's avatar style is Character, every surface showing the bot's avatar SHALL render the saved emoji or single character (or the bot's initials when blank) on the bot's chosen colour.
 
 The Profile SHALL let the user switch between Critter and Character and SHALL show a live avatar preview that reflects the current name and avatar settings. The character input and colour swatches SHALL be shown when Character is selected and hidden when Critter is selected. A bot whose saved profile has no explicit avatar style SHALL default to Critter.
 

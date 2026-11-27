@@ -3339,6 +3339,11 @@ test('bots default to Chara Critter avatars, Profile switches between Critter an
 			'critter',
 		);
 		assert.equal(await imagineAvatar.locator('svg').count(), 1);
+		assert.equal(
+			await imagineAvatar.locator('svg rect[width="100"][height="100"]').count(),
+			0,
+			'Critter avatars must render without a background tile rect',
+		);
 		const terminayAvatar = sidebarPage.locator(
 			`[data-terminay-home-sidebar-bot="${FINCH}"] .bots-avatar`,
 		);
