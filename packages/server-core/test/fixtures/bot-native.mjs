@@ -236,7 +236,8 @@ async function holdOnBackgroundWork(prompt) {
 			{
 				task_id: 'monitor-1',
 				task_type: 'local_bash',
-				description: 'watch the build with secret',
+				description:
+					process.env.FAKE_HOLD_DESCRIPTION ?? 'Watch the CI build',
 			},
 		],
 	});

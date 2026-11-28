@@ -37,7 +37,10 @@ async function setup(t, options = {}) {
 	const childFile = join(root, 'child.pid');
 	const r = await runtime(root, {
 		nativeTimers: timers,
-		env: { FAKE_CHILD_PID_FILE: childFile },
+		env: {
+			FAKE_CHILD_PID_FILE: childFile,
+			FAKE_HOLD_DESCRIPTION: 'watch the build with secret',
+		},
 		...options,
 	});
 	t.after(async () => {

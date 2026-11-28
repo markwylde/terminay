@@ -1698,7 +1698,7 @@ test.describe('Home: Bots', () => {
 			'Held open by background work since',
 		);
 		await expect(background).toContainText('Shell or Monitor');
-		await expect(background).toContainText('watch the build with');
+		await expect(background).toContainText('Watch the CI build');
 		await expect(background).toContainText('Last activity at');
 		await expect(background).toContainText('Not asked yet whether it is done.');
 		await mainWindow.screenshot({
@@ -1717,7 +1717,7 @@ test.describe('Home: Bots', () => {
 		await expect(background).toContainText(
 			'Waited on background work after a turn ended.',
 		);
-		await expect(background).toContainText('watch the build with');
+		await expect(background).toContainText('Watch the CI build');
 		await mainWindow.screenshot({
 			path: testInfo.outputPath('bot-background-wait-ended.png'),
 		});
