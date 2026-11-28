@@ -236,7 +236,7 @@ The server SHALL forward only a bounded allowlist of client messages and SHALL c
 
 ### Requirement: The desktop follows its window's size
 
-While a client holds control, resizing the desktop tab in use SHALL resize the desktop to fit, as a single screen between 640 by 480 and 3840 by 2160 pixels. A request outside those bounds SHALL be clamped. A request that names more than one screen or is otherwise malformed SHALL close the stream. The server SHALL apply at most ten resizes per second from a stream and SHALL apply the latest request it received. A view-only client SHALL scale the desktop to fit its window and SHALL NOT resize it.
+While a client holds control, resizing the desktop tab in use SHALL resize the desktop to fit, as a single screen no larger than 3840 by 2160 pixels. A larger request SHALL be clamped. The desktop SHALL have no minimum size beyond one pixel each way. A request that names more than one screen or is otherwise malformed SHALL close the stream. The server SHALL apply at most ten resizes per second from a stream and SHALL apply the latest request it received. A view-only client SHALL scale the desktop to fit its window and SHALL NOT resize it.
 
 #### Scenario: Controller resizes
 
@@ -247,6 +247,11 @@ While a client holds control, resizing the desktop tab in use SHALL resize the d
 
 - **WHEN** a control stream asks for a desktop of 20000 by 20000 pixels
 - **THEN** the desktop is no larger than 3840 by 2160
+
+#### Scenario: Narrow tab
+
+- **WHEN** the desktop tab in use on the controlling client is resized to 450 by 900
+- **THEN** the desktop becomes 450 by 900 and fills the tab
 
 #### Scenario: Malformed layout
 

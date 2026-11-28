@@ -159,7 +159,7 @@ Enforcement is on the stream's bytes, for both the legacy `ServerCutText` and th
 
 Measured before the change (task 2.4, `packages/server-core/test/real-display/bot-view-only-clipboard.test.mjs` on TigerVNC 1.15, every bot stream authenticating with the one full password): a bot view-only stream received the bot's clipboard text in the legacy form (`ServerCutText` carrying the text) and, with the extended encoding negotiated, an unsolicited `provide` carrying it. The relay dropping the viewer's own clipboard messages did not stop either, because both are sent by the display server. So this is a fix to the bot desktop as well as a rule for the server desktop.
 
-`SetDesktopSize` is admitted only as a named option, on control streams, for a single screen, clamped to 640x480–3840x2160, at most ten per second with the latest winning. A multi-screen or malformed layout closes the stream. Bots keep the option off.
+`SetDesktopSize` is admitted only as a named option, on control streams, for a single screen, clamped to at most 3840x2160 with no minimum, at most ten per second with the latest winning. A multi-screen or malformed layout closes the stream. Bots keep the option off.
 
 *Boundary:* the relay's allowlist.
 

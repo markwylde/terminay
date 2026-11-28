@@ -33,18 +33,14 @@ export interface RfbClientLimits {
 
 /** What a client may ask the desktop's screen to become. */
 export interface DesktopResizeLimits {
-	readonly minWidth: number;
-	readonly minHeight: number;
 	readonly maxWidth: number;
 	readonly maxHeight: number;
 	/** Most resizes passed on per second; the latest request wins. */
 	readonly perSecond: number;
 }
 
-/** 640x480 to 3840x2160, at most ten a second. */
+/** Up to 3840x2160, at most ten a second. */
 export const DESKTOP_RESIZE_LIMITS: DesktopResizeLimits = Object.freeze({
-	minWidth: 640,
-	minHeight: 480,
 	maxWidth: 3840,
 	maxHeight: 2160,
 	perSecond: 10,
@@ -77,15 +73,14 @@ export class RfbClientFilter {
 		 * Without it a resize is an unknown message and closes the stream. */
 		private readonly resize?: RfbResizeAdmission,
 	) {}
-	/** One screen, clamped to the limits, at most `perSecond` a second with
+	/** One screen, no larger than the limits and never empty, at most `perSecond` a second with
 	 * the latest request applied. Returns the message to send now, if any. */
 	private admitResize(message: Buffer): Buffer | undefined {
 		const resize = this.resize as RfbResizeAdmission;
 		const { limits } = resize;
-		const clamp = (value: number, low: number, high: number) =>
-			Math.min(high, Math.max(low, value));
-		const width = clamp(u16(message, 2), limits.minWidth, limits.maxWidth);
-		const height = clamp(u16(message, 4), limits.minHeight, limits.maxHeight);
+		// A screen has at least one pixel each way; there is no other floor.
+		const width = Math.min(limits.maxWidth, Math.max(1, u16(message, 2)));
+		const height = Math.min(limits.maxHeight, Math.max(1, u16(message, 4)));
 		const out = Buffer.alloc(24);
 		out[0] = SET_DESKTOP_SIZE;
 		const target = view(out);

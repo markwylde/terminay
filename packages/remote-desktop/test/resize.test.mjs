@@ -74,13 +74,14 @@ test('an in-range resize of one screen passes unchanged in size, with its screen
 	assert.equal(out.readUInt32BE(8), 7);
 });
 
-test('an oversized or undersized resize is clamped to 640x480 through 3840x2160', () => {
+test('an oversized resize is clamped to 3840x2160, and a small one passes as asked', () => {
 	assert.deepEqual(size(admitting().filter.push(resize(10000, 9000))), [
 		3840, 2160, 3840, 2160,
 	]);
 	assert.deepEqual(size(admitting().filter.push(resize(100, 50))), [
-		640, 480, 640, 480,
+		100, 50, 100, 50,
 	]);
+	assert.deepEqual(size(admitting().filter.push(resize(0, 0))), [1, 1, 1, 1]);
 	assert.deepEqual(size(admitting().filter.push(resize(5000, 600))), [
 		3840, 600, 3840, 600,
 	]);
