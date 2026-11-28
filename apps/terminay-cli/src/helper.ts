@@ -1,14 +1,15 @@
 import { execFile } from 'node:child_process';
 import {
 	chmod,
+	lstat,
 	mkdir,
-	open,
+	mkdtemp,
 	readFile,
+	rename,
 	rm,
-	stat,
 	writeFile,
 } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -98,15 +99,25 @@ async function requestDirectoryPrepared(
 ): Promise<boolean> {
 	const helper = layout.upgradeHelper;
 	if (helper === undefined) return false;
-	const [directory, file, latest] = await Promise.all([
-		stat(helper.requestDirectory).catch(() => undefined),
-		stat(helper.requestFile).catch(() => undefined),
-		stat(helper.latestRequestFile).catch(() => undefined),
+	const directory = await lstat(helper.requestDirectory).catch(
+		(error: NodeJS.ErrnoException) => {
+			if (error.code !== 'ENOENT') throw error;
+			return undefined;
+		},
+	);
+	if (directory === undefined) return false;
+	if (!directory.isDirectory())
+		throw new Error(`Unsafe upgrade request directory: ${helper.requestDirectory}`);
+	const [file, latest] = await Promise.all([
+		lstat(helper.requestFile).catch(() => undefined),
+		lstat(helper.latestRequestFile).catch(() => undefined),
 	]);
 	if (directory === undefined || file === undefined || latest === undefined)
 		return false;
 	if (
 		(directory.mode & 0o777) !== 0o700 ||
+		!file.isFile() || file.nlink !== 1 ||
+		!latest.isFile() || latest.nlink !== 1 ||
 		(file.mode & 0o777) !== 0o600 ||
 		(latest.mode & 0o777) !== 0o600
 	)
@@ -162,17 +173,28 @@ export async function installUpgradeHelper(options: {
 		// for.
 		await mkdir(helper.requestDirectory, { recursive: true, mode: 0o700 });
 		await chmod(helper.requestDirectory, 0o700);
-		// The file exists from the start, so the first request is a change to
-		// a file systemd is already watching rather than the appearance of one.
-		for (const request of [helper.requestFile, helper.latestRequestFile]) {
-			await (await open(request, 'a', 0o600)).close();
-			await chmod(request, 0o600);
+		// Prepare only the two upgrade files in a private sibling directory.
+		// The run-as account controls the destination entries, including any
+		// old desktop trigger left there, so never open or chown them.
+		const staging = await mkdtemp(join(dirname(helper.requestDirectory), '.upgrade-'));
+		try {
+			const requests = [helper.requestFile, helper.latestRequestFile];
+			const prepared = requests.map((request) => join(staging, basename(request)));
+			for (const path of prepared) {
+				await writeFile(path, '', { flag: 'wx', mode: 0o600 });
+				await chmod(path, 0o600);
+			}
+			await execFileAsync(
+				'chown',
+				[`${runAs}:${runAs}`, helper.requestDirectory, ...prepared],
+				{ timeout: 60_000 },
+			);
+			await Promise.all(
+				requests.map((request, index) => rename(prepared[index]!, request)),
+			);
+		} finally {
+			await rm(staging, { recursive: true, force: true });
 		}
-		await execFileAsync(
-			'chown',
-			['-R', `${runAs}:${runAs}`, helper.requestDirectory],
-			{ timeout: 60_000 },
-		);
 	}
 
 	const wrotePath = await writeIfChanged(

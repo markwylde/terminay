@@ -1,7 +1,7 @@
 // Runs as root inside the systemd container. See ../desktop-setup-systemd.mjs.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const { installLayout } = await import('/cli/dist/layout.js');
 const { installDesktopSetupHelper, removeDesktopSetupHelper, desktopSetupHelperInstalled } = await import(
@@ -105,6 +105,36 @@ assert.equal(systemctl('is-active', PATH_UNIT), 'active');
 await sleep(2000);
 assert.equal(starts(), 0);
 assert.equal(existsSync(STATUS), false);
+
+write('--- reinstalling the helper repairs a disabled or stopped watch without starting setup');
+const triggerStamp = () => {
+	const info = lstatSync(trigger);
+	assert.equal(info.isFile(), true);
+	return [info.ino, info.mtimeMs, info.ctimeMs];
+};
+const installedTrigger = triggerStamp();
+sh('systemctl', ['disable', PATH_UNIT]);
+assert.equal(systemctl('is-enabled', PATH_UNIT), 'disabled');
+assert.equal(systemctl('is-active', PATH_UNIT), 'active');
+assert.equal(await installDesktopSetupHelper({ layout, runAs: RUN_AS, systemd }), true);
+assert.equal(systemctl('is-enabled', PATH_UNIT), 'enabled');
+assert.equal(systemctl('is-active', PATH_UNIT), 'active');
+sh('systemctl', ['stop', PATH_UNIT]);
+assert.equal(systemctl('is-enabled', PATH_UNIT), 'enabled');
+assert.equal(systemctl('is-active', PATH_UNIT), 'inactive');
+assert.equal(await installDesktopSetupHelper({ layout, runAs: RUN_AS, systemd }), true);
+assert.equal(systemctl('is-enabled', PATH_UNIT), 'enabled');
+assert.equal(systemctl('is-active', PATH_UNIT), 'active');
+assert.deepEqual(triggerStamp(), installedTrigger);
+
+write('--- the account cannot unlink or rename the trigger');
+assert.equal(asAccount(`rm ${trigger}`), false);
+assert.equal(asAccount(`mv ${trigger} ${trigger}.renamed`), false);
+assert.deepEqual(triggerStamp(), installedTrigger);
+await sleep(2000);
+assert.equal(starts(), 0);
+assert.equal(existsSync(STATUS), false);
+
 const enabledBefore = enabledUnits();
 const runningBefore = runningUnits();
 // What systemd will run, without the times and pid of its last run.

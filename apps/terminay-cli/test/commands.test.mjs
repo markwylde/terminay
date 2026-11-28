@@ -63,7 +63,7 @@ async function withMachine(options, run) {
 	fake.install('journalctl', 'echo "no log lines"');
 	fake.install('loginctl', '');
 	fake.install('getent', `echo "ada:x:1000:1000:Ada:${home}:/bin/bash"`);
-	fake.install('id', '');
+	fake.install('id', `echo ${process.getuid()}`);
 	const releases = await startReleaseFixture({
 		directory: home,
 		releases: options.releases,
@@ -1962,7 +1962,7 @@ test('a system-scope install writes the upgrade helper and arms it', async () =>
 		assert.equal((await stat(helper.serviceUnitPath)).mode & 0o777, 0o644);
 		assert.equal((await stat(helper.requestDirectory)).mode & 0o777, 0o700);
 		const calls = fake.invocations();
-		assert.ok(calls.includes(`chown -R ada:ada ${helper.requestDirectory}`));
+		assert.ok(calls.some((line) => line.startsWith(`chown ada:ada ${helper.requestDirectory} `)));
 		assert.ok(calls.includes('systemctl enable --now terminay-upgrade.path'));
 		assert.ok(
 			!calls.some((line) => /chown .*systemd\/system/u.test(line)),

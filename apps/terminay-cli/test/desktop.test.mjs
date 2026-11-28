@@ -6,7 +6,7 @@ import {
 	statSync,
 	writeFileSync,
 } from 'node:fs';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { link, lstat, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -28,6 +28,7 @@ import {
 	installDesktopSetupHelper,
 	removeDesktopSetupHelper,
 } from '../dist/desktopHelper.js';
+import { installUpgradeHelper } from '../dist/helper.js';
 import { installLayout } from '../dist/layout.js';
 import { createSystemd } from '../dist/systemd.js';
 import {
@@ -493,7 +494,7 @@ test('the helper units: a fixed command as root, a deadline, a start limit, and 
 	const path = renderDesktopSetupPathUnit(layout);
 	assert.match(
 		path,
-		/^PathChanged=\/var\/lib\/terminay-upgrade\/desktop-setup$/m,
+		/^PathChanged=\/var\/lib\/terminay-desktop-setup\/desktop-setup$/m,
 	);
 	assert.match(path, /^Unit=terminay-desktop-setup\.service$/m);
 	assert.match(path, /^WantedBy=multi-user\.target$/m);
@@ -504,11 +505,53 @@ test('the helper units: a fixed command as root, a deadline, a start limit, and 
 	);
 });
 
+test('retrying watch activation repairs a disabled or inactive path without touching the trigger', async (t) => {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-desktop-activation-'));
+	const fake = await createFakeBin();
+	const originalPath = process.env.PATH;
+	process.env.PATH = `${fake.directory}:${originalPath}`;
+	t.after(async () => {
+		process.env.PATH = originalPath;
+		await fake.close();
+		await rm(root, { recursive: true, force: true });
+	});
+	fake.install('id', `echo ${process.getuid()}`);
+	fake.install('systemctl', '[ "$1" != enable ]');
+	const layout = installLayout('system', root, root);
+	const helper = layout.upgradeHelper;
+	const systemd = createSystemd({ scope: 'system', env: fake.env() });
+	const install = () => installDesktopSetupHelper({ layout, runAs: 'ada', systemd });
+	await assert.rejects(install, /enable --now terminay-desktop-setup\.path failed/);
+	assert.equal(existsSync(helper.desktopPathUnitPath), true);
+	assert.equal(existsSync(helper.desktopServiceUnitPath), true);
+	const stamp = () => {
+		const info = statSync(helper.desktopRequestFile);
+		return [info.ino, info.mtimeMs, info.ctimeMs];
+	};
+	const before = stamp();
+	for (const [unhealthyState, checks] of [
+		['is-enabled', ['is-enabled']],
+		['is-active', ['is-enabled', 'is-active']],
+	]) {
+		fake.install('systemctl', `[ "$1" != ${unhealthyState} ]`);
+		const offset = fake.invocations().length;
+		assert.equal(await install(), true);
+		assert.deepEqual(stamp(), before);
+		assert.deepEqual(
+			fake.invocations().slice(offset).filter((call) => call.startsWith('systemctl ')),
+			[
+				...checks.map((check) => `systemctl ${check} terminay-desktop-setup.path`),
+				'systemctl enable --now terminay-desktop-setup.path',
+			],
+		);
+	}
+});
+
 test('installing the helper arms the watch once; reinstalling leaves the trigger untouched; removing leaves nothing', async (t) => {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-desktop-helper-'));
 	const fake = await createFakeBin();
 	fake.install('systemctl', '');
-	fake.install('chown', '');
+	fake.install('id', `echo ${process.getuid()}`);
 	const originalPath = process.env.PATH;
 	process.env.PATH = `${fake.directory}:${originalPath}`;
 	t.after(async () => {
@@ -525,12 +568,11 @@ test('installing the helper arms the watch once; reinstalling leaves the trigger
 		true,
 	);
 	assert.equal(await desktopSetupHelperInstalled(layout), true);
-	assert.equal(statSync(helper.requestDirectory).mode & 0o777, 0o700);
+	assert.equal(statSync(helper.desktopRequestDirectory).mode & 0o777, 0o755);
 	assert.equal(statSync(helper.desktopRequestFile).mode & 0o777, 0o600);
 	assert.equal(statSync(helper.desktopServiceUnitPath).mode & 0o777, 0o644);
 	assert.equal(readFileSync(helper.desktopRequestFile, 'utf8'), '');
-	assert.deepEqual(fake.invocations(), [
-		`chown ada:ada ${helper.requestDirectory} ${helper.desktopRequestFile}`,
+	assert.deepEqual(fake.invocations().filter((call) => call.startsWith('systemctl')), [
 		'systemctl daemon-reload',
 		'systemctl enable --now terminay-desktop-setup.path',
 	]);
@@ -541,7 +583,10 @@ test('installing the helper arms the watch once; reinstalling leaves the trigger
 		false,
 	);
 	assert.equal(statSync(helper.desktopRequestFile).mtimeMs, before);
-	assert.deepEqual(fake.invocations().slice(3), []);
+	assert.deepEqual(fake.invocations().filter((call) => call.startsWith('systemctl')).slice(2), [
+		'systemctl is-enabled terminay-desktop-setup.path',
+		'systemctl is-active terminay-desktop-setup.path',
+	]);
 	// A user-scope install gets none.
 	assert.equal(
 		await installDesktopSetupHelper({
@@ -556,10 +601,69 @@ test('installing the helper arms the watch once; reinstalling leaves the trigger
 	assert.equal(existsSync(helper.desktopPathUnitPath), false);
 	assert.equal(existsSync(helper.desktopServiceUnitPath), false);
 	assert.equal(existsSync(helper.desktopRequestFile), false);
-	assert.deepEqual(fake.invocations().slice(3), [
+	assert.deepEqual(fake.invocations().filter((call) => call.startsWith('systemctl')).slice(4), [
 		'systemctl disable --now terminay-desktop-setup.path',
 		'systemctl stop terminay-desktop-setup.service',
 		'systemctl reset-failed terminay-desktop-setup.path',
 		'systemctl reset-failed terminay-desktop-setup.service',
 	]);
+});
+
+test('desktop trigger migration and repair leave targets of account-selected links untouched', async (t) => {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-desktop-migration-'));
+	const fake = await createFakeBin();
+	fake.install('systemctl', '');
+	fake.install('chown', '');
+	fake.install('id', `echo ${process.getuid()}`);
+	const originalPath = process.env.PATH;
+	process.env.PATH = `${fake.directory}:${originalPath}`;
+	t.after(async () => {
+		process.env.PATH = originalPath;
+		await fake.close();
+		await rm(root, { recursive: true, force: true });
+	});
+	const layout = installLayout('system', root, root);
+	const helper = layout.upgradeHelper;
+	const systemd = createSystemd({ scope: 'system', env: fake.env() });
+	const options = { layout, runAs: 'ada', systemd };
+	const target = join(root, 'keep');
+	await writeFile(target, 'keep', { mode: 0o644 });
+	await mkdir(helper.requestDirectory, { recursive: true });
+	const legacy = join(helper.requestDirectory, 'desktop-setup');
+	await link(target, legacy);
+	await symlink(target, helper.requestFile);
+	await mkdir(join(root, 'etc/systemd/system'), { recursive: true });
+	await writeFile(
+		helper.desktopPathUnitPath,
+		renderDesktopSetupPathUnit(layout).replace(helper.desktopRequestFile, legacy),
+	);
+	const original = await lstat(target);
+
+	// Legacy upgrade helper repair must leave the old desktop entry alone.
+	await installUpgradeHelper(options);
+	await installDesktopSetupHelper(options);
+	assert.equal((await lstat(legacy)).ino, original.ino);
+	assert.equal((await lstat(target)).ctimeMs, original.ctimeMs);
+	assert.match(
+		readFileSync(helper.desktopPathUnitPath, 'utf8'),
+		/terminay-desktop-setup\/desktop-setup$/m,
+	);
+	const calls = fake.invocations();
+	const stop = calls.indexOf('systemctl stop terminay-desktop-setup.path');
+	assert.ok(stop >= 0);
+	assert.deepEqual(calls.slice(stop, stop + 3), [
+		'systemctl stop terminay-desktop-setup.path',
+		'systemctl daemon-reload',
+		'systemctl enable --now terminay-desktop-setup.path',
+	]);
+
+	await rm(helper.desktopRequestFile);
+	await symlink(target, helper.desktopRequestFile);
+	await installDesktopSetupHelper(options);
+	const repaired = await lstat(helper.desktopRequestFile);
+	assert.ok(repaired.isFile());
+	assert.equal(repaired.mode & 0o7777, 0o600);
+	assert.notEqual(repaired.ino, original.ino);
+	assert.equal((await lstat(target)).ctimeMs, original.ctimeMs);
+	assert.equal(readFileSync(target, 'utf8'), 'keep');
 });

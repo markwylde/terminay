@@ -91,11 +91,11 @@ export function createSystemd(options: SystemdOptions) {
 		stopUnit: (unit: string) => systemctl(['stop', unit]),
 		disableNowUnit: (unit: string) => systemctl(['disable', '--now', unit]),
 		resetFailedUnit: (unit: string) => systemctl(['reset-failed', unit]),
-		async isActive(): Promise<boolean> {
-			return (await systemctl(['is-active', UNIT_NAME])).code === 0;
+		async isActive(unit: string = UNIT_NAME): Promise<boolean> {
+			return (await systemctl(['is-active', unit])).code === 0;
 		},
-		async isEnabled(): Promise<boolean> {
-			return (await systemctl(['is-enabled', UNIT_NAME])).code === 0;
+		async isEnabled(unit: string = UNIT_NAME): Promise<boolean> {
+			return (await systemctl(['is-enabled', unit])).code === 0;
 		},
 		async state(): Promise<string> {
 			const result = await systemctl(['is-active', UNIT_NAME]);

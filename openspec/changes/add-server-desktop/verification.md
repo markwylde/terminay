@@ -33,6 +33,8 @@ did before this change.
 container with real systemd and the real package manager, the CLI installed
 system-scope. Result: `desktop setup under systemd: all checks passed`.
 
+- The run-as account can signal setup but cannot rename or unlink the trigger.
+- Reinstall restored a disabled watch and a stopped watch without changing the trigger inode or timestamp or starting the package service.
 - The trigger's content is ignored; only the fixed package list is installed.
 - The run-as account reads the status file and cannot write it.
 - An install killed at `installing 0.60` is recovered by the next run.
