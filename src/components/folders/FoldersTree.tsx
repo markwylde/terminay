@@ -12,6 +12,7 @@ import {
 	GitBranch,
 	GitPullRequest,
 	MinusCircle,
+	Monitor,
 	Plus,
 	Trash2,
 } from 'lucide-react';
@@ -1205,6 +1206,8 @@ function PanelRow({
 						<File size={12} />
 					) : panel.kind === 'forge-item' ? (
 						<GitPullRequest size={12} />
+					) : panel.kind === 'server-desktop' ? (
+						<Monitor size={12} />
 					) : (
 						<Folder size={12} />
 					)}

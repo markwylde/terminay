@@ -204,6 +204,20 @@ test('a row whose project has gone is stale', () => {
 	);
 });
 
+test('a desktop row activates its panel without a terminal session and rejects stale rows', () => {
+	const inventory = {
+		'p-a': [entry({ kind: 'server-desktop', panelId: 'server-desktop-1', title: 'Desktop · studio' })],
+	};
+	const rows = buildDashboardRows(projects, inventory);
+	assert.deepEqual(resolveDashboardActivation(rows[1], projects, inventory), {
+		kind: 'panel',
+		panelId: 'server-desktop-1',
+		projectId: 'p-a',
+	});
+	assert.deepEqual(resolveDashboardActivation(rows[1], projects, { 'p-a': [] }), { kind: 'stale' });
+	assert.deepEqual(resolveDashboardActivation(rows[1], [], inventory), { kind: 'stale' });
+});
+
 test('a file row activates its project rather than a terminal', () => {
 	const inventory = {
 		'p-a': [entry({ kind: 'file', panelId: 'f1', title: 'a.ts' })],

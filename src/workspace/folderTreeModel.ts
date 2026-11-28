@@ -125,10 +125,14 @@ export type FolderTreeTerminalRow = {
 };
 
 /** What a tab that is not a terminal shows. */
-export type FolderTreeViewerKind = 'file' | 'folder' | 'forge-item';
+export type FolderTreeViewerKind =
+	| 'file'
+	| 'folder'
+	| 'forge-item'
+	| 'server-desktop';
 
-/** A panel that is not a terminal: an open file, a folder tab, or a pull
- * request or issue tab. */
+/** A panel that is not a terminal: an open file, a folder tab, a pull
+ * request or issue tab, or a server desktop tab. */
 export type FolderTreeViewerRow = {
 	kind: FolderTreeViewerKind;
 	panelId: string;

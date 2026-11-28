@@ -2,8 +2,9 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { chmod, mkdir, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { createStartedProject } from './support/project-start';
 
 /**
  * The server desktop window, in Terminay Desktop, against a real standalone
@@ -197,6 +198,234 @@ const stateOf = (window: Page, state: string) =>
 	desktopWindow(window).locator(`[data-server-desktop-state="${state}"]`);
 const step = (window: Page, name: string) =>
 	desktopWindow(window).locator(`[data-server-desktop-step="${name}"]`);
+
+/** Pair this window with the standalone server and wait until it shows it. */
+async function pairWith(
+	appHarness: { openChildWindow: (open: () => Promise<void>) => Promise<Page> },
+	window: Page,
+	server: StandaloneServer,
+): Promise<string> {
+	const serverHost = new URL(server.pairingUrl).host;
+	const manager = await appHarness.openChildWindow(async () => {
+		await window.getByRole('button', { name: /Open connection menu/ }).click();
+		await window.getByRole('button', { name: 'Manage connections' }).click();
+	});
+	await manager.getByRole('button', { name: 'Add server…' }).click();
+	await manager.getByLabel('Pairing URL').fill(server.pairingUrl);
+	await manager
+		.getByRole('button', { name: 'Continue pairing', exact: true })
+		.click();
+	await expectShowing(window, serverHost);
+	await window.keyboard.press('Escape');
+	return serverHost;
+}
+
+const PHONE = { x: 40, y: 40, width: 390, height: 740 } as const;
+const WIDE = { x: 40, y: 40, width: 1280, height: 800 } as const;
+
+async function resize(
+	page: Page,
+	electronApp: ElectronApplication,
+	bounds: { x: number; y: number; width: number; height: number },
+): Promise<void> {
+	const nativeWindow = await electronApp.browserWindow(page);
+	await nativeWindow.evaluate((window, next) => {
+		window.setBounds(next);
+	}, bounds);
+	await expect(page.locator('.app-shell')).toHaveAttribute(
+		'data-terminay-compact-chrome',
+		bounds.width <= 640 ? 'true' : 'false',
+	);
+}
+
+const drawerOf = (page: Page) =>
+	page.getByRole('dialog', { name: 'Switch terminal' });
+
+async function openDrawer(page: Page): Promise<Locator> {
+	await page.locator('[data-compact-breadcrumb="true"]').click();
+	const drawer = drawerOf(page);
+	await expect(drawer).toBeVisible();
+	// A press measured mid-entrance lands where the row used to be.
+	await drawer.evaluate((element) =>
+		Promise.all(element.getAnimations().map((animation) => animation.finished)),
+	);
+	return drawer;
+}
+
+/** The drawer's Servers panel, opened from its rail. */
+async function openServersPanel(page: Page): Promise<Locator> {
+	const drawer = await openDrawer(page);
+	await drawer.locator('[data-compact-switcher-server="true"]').click();
+	const panel = drawer.locator('[data-compact-servers-panel="true"]');
+	await expect(panel).toBeVisible();
+	return panel;
+}
+
+const showDesktopRow = (page: Page) =>
+	drawerOf(page).locator('[data-compact-show-desktop="true"]');
+const desktopTab = (page: Page) =>
+	page.locator('[data-server-desktop-tab]:visible');
+const desktopBack = (page: Page) =>
+	page.locator('[data-server-desktop-back="true"]:visible');
+const desktopRow = (page: Page) =>
+	drawerOf(page).locator(
+		'[data-compact-switcher-panel]:not([data-compact-switcher-terminal])',
+		{ hasText: 'Desktop' },
+	);
+
+test('at phone width Show Desktop is a row of the Servers panel, and its tab is found and closed without a tab strip', async ({
+	appHarness,
+	electronApp,
+	mainWindow,
+	tempDir,
+}) => {
+	test.setTimeout(240_000);
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+
+	// This device's own server offers no desktop: no row at phone width.
+	await resize(mainWindow, electronApp, PHONE);
+	await openServersPanel(mainWindow);
+	await expect(showDesktopRow(mainWindow)).toHaveCount(0);
+	await mainWindow.keyboard.press('Escape');
+	await expect(drawerOf(mainWindow)).toHaveCount(0);
+	await resize(mainWindow, electronApp, WIDE);
+
+	const helper = await fakeHelper(tempDir);
+	const server = await startStandaloneServer(tempDir, helper);
+	try {
+		const serverHost = await pairWith(appHarness, mainWindow, server);
+		await createStartedProject(mainWindow);
+
+		// A dropdown left open does not come back after the window has been
+		// phone width.
+		await desktopButton(mainWindow).click();
+		await expect(desktopWindow(mainWindow)).toHaveCount(1);
+		await resize(mainWindow, electronApp, PHONE);
+		await expect(desktopWindow(mainWindow)).toHaveCount(0);
+		await resize(mainWindow, electronApp, WIDE);
+		await expect(desktopButton(mainWindow)).toBeVisible();
+		await expect(desktopWindow(mainWindow)).toHaveCount(0);
+
+		// At phone width the control is a row beneath the server list. It
+		// closes the drawer and opens the desktop as a tab of the project in
+		// front, showing the state the dropdown would.
+		await resize(mainWindow, electronApp, PHONE);
+		await expect(desktopButton(mainWindow)).toHaveCount(0);
+		await openServersPanel(mainWindow);
+		const row = showDesktopRow(mainWindow);
+		await expect(row).toHaveAccessibleName(`Show desktop of ${serverHost}`);
+		await row.click();
+		await expect(drawerOf(mainWindow)).toHaveCount(0);
+		await expect(desktopWindow(mainWindow)).toHaveCount(0);
+		await expect(desktopTab(mainWindow)).toHaveCount(1);
+		await expect(
+			desktopTab(mainWindow).locator(
+				'[data-server-desktop-state="needs-setup"]',
+			),
+		).toBeVisible();
+		// The compact row names a project's tab; the tab draws no header.
+		await expect(desktopBack(mainWindow)).toHaveCount(0);
+
+		// The drawer lists it as a desktop under its own title, never as a
+		// terminal, and the project still holds one terminal.
+		let drawer = await openDrawer(mainWindow);
+		await expect(desktopRow(mainWindow)).toHaveCount(1);
+		await expect(desktopRow(mainWindow)).toContainText(
+			`Desktop · ${serverHost}`,
+		);
+		await expect(desktopRow(mainWindow)).toHaveAttribute(
+			'aria-current',
+			'true',
+		);
+		await expect(
+			drawer.locator('[data-compact-switcher-terminal]'),
+		).toHaveCount(1);
+
+		// With the terminal in front, the desktop's row brings the tab back.
+		await drawer.locator('[data-compact-switcher-terminal]').click();
+		await expect(drawerOf(mainWindow)).toHaveCount(0);
+		await expect(desktopTab(mainWindow)).toHaveCount(0);
+		drawer = await openDrawer(mainWindow);
+		await desktopRow(mainWindow).click();
+		await expect(drawerOf(mainWindow)).toHaveCount(0);
+		await expect(desktopTab(mainWindow)).toHaveCount(1);
+
+		// The Tabs dashboard also activates this non-terminal by panel id.
+		drawer = await openDrawer(mainWindow);
+		await drawer.locator('[data-compact-switcher-terminal]').click();
+		drawer = await openDrawer(mainWindow);
+		await drawer.locator('[data-compact-switcher-home="true"]').click();
+		await drawer.locator('[data-compact-home-section="tabs"]').click();
+		await mainWindow
+			.locator('[data-terminay-dashboard-panel]', { hasText: `Desktop · ${serverHost}` })
+			.click();
+		await expect(desktopTab(mainWindow)).toHaveCount(1);
+
+		// Its row menu opens and closes it, and offers nothing a terminal's
+		// does besides.
+		drawer = await openDrawer(mainWindow);
+		await desktopRow(mainWindow).click({ button: 'right' });
+		const menu = drawer.locator('[data-compact-sheet="true"]');
+		await expect(menu).toBeVisible();
+		await expect(menu.locator('[data-compact-sheet-item]')).toHaveText([
+			'Open',
+			'Close',
+		]);
+		await menu.locator('[data-compact-sheet-item="close"]').click();
+		await expect(desktopRow(mainWindow)).toHaveCount(0);
+		await mainWindow.keyboard.press('Escape');
+		await expect(drawerOf(mainWindow)).toHaveCount(0);
+		await expect(desktopTab(mainWindow)).toHaveCount(0);
+
+		// Closed is forgotten: it is not there after a reload.
+		await mainWindow.reload();
+		await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+		await expect(mainWindow.locator('.app-shell')).toHaveAttribute(
+			'data-terminay-compact-chrome',
+			'true',
+		);
+		drawer = await openDrawer(mainWindow);
+		await expect(
+			drawer.locator('[data-compact-switcher-terminal]'),
+		).toHaveCount(1);
+		await expect(desktopRow(mainWindow)).toHaveCount(0);
+
+		// From Home the tab opens in Home. The drawer does not list Home's
+		// tabs, so the tab carries its own way out, even before the desktop
+		// has been set up.
+		await drawer.locator('[data-compact-switcher-home="true"]').click();
+		await drawer.locator('[data-compact-home-section="automations"]').click();
+		await expect(drawerOf(mainWindow)).toHaveCount(0);
+		const automations = mainWindow.locator(
+			'[data-terminay-automations]:visible',
+		);
+		await expect(automations).toHaveCount(1);
+		await openServersPanel(mainWindow);
+		await showDesktopRow(mainWindow).click();
+		await expect(drawerOf(mainWindow)).toHaveCount(0);
+		await expect(desktopTab(mainWindow)).toHaveCount(1);
+		await expect(automations).toHaveCount(0);
+		await expect(
+			desktopTab(mainWindow).locator(
+				'[data-server-desktop-state="needs-setup"]',
+			),
+		).toBeVisible();
+		await expect(desktopBack(mainWindow)).toHaveCount(1);
+
+		// A wide window has a tab strip, so the tab draws no control of its own.
+		await resize(mainWindow, electronApp, WIDE);
+		await expect(desktopTab(mainWindow)).toHaveCount(1);
+		await expect(desktopBack(mainWindow)).toHaveCount(0);
+		await resize(mainWindow, electronApp, PHONE);
+
+		// Closing returns to the tab that was in front.
+		await desktopBack(mainWindow).click();
+		await expect(desktopTab(mainWindow)).toHaveCount(0);
+		await expect(automations).toHaveCount(1);
+	} finally {
+		await server.stop();
+	}
+});
 
 test('Show Desktop opens a dropdown, and setup carries on while it is closed', async ({
 	appHarness,

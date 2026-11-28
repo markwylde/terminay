@@ -303,6 +303,23 @@ test('the file and folder tabs open on this device are rows of their folder, whe
 	assert.deepEqual(one.panels.map((row) => row.panelId), ['agent']);
 });
 
+test('a server desktop tab is a viewer row of its folder, not a terminal', () => {
+	const { sessionId: _none, ...desktop } = entry('server-desktop-1', {
+		kind: 'server-desktop',
+		folderId: 'general',
+		title: 'Desktop · studio',
+	});
+	const [general] = buildProjectFolderTree({
+		...projection,
+		selectedFolderId: 'general',
+		inventory: [desktop],
+	});
+	const row = general.panels.find((panel) => panel.panelId === 'server-desktop-1');
+	assert.equal(row.kind, 'server-desktop');
+	assert.equal(row.title, 'Desktop · studio');
+	assert.equal('status' in row, false);
+});
+
 test('a folder whose only tab is a file is not empty', () => {
 	const { sessionId: _none, ...file } = entry('notes', { kind: 'file', folderId: 'one', title: 'notes.txt' });
 	const [, one] = buildProjectFolderTree({

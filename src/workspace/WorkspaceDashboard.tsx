@@ -10,6 +10,7 @@ import {
 	GitPullRequest,
 	LayoutGrid,
 	List,
+	Monitor,
 	Search,
 	TerminalSquare,
 	X,
@@ -97,6 +98,7 @@ const KIND_ICON = {
 	file: FileText,
 	folder: Folder,
 	'forge-item': GitPullRequest,
+	'server-desktop': Monitor,
 	terminal: TerminalSquare,
 } as const;
 
@@ -104,6 +106,7 @@ const KIND_LABEL = {
 	file: 'File',
 	folder: 'Folder',
 	'forge-item': 'Pull request or issue',
+	'server-desktop': 'Desktop',
 	terminal: 'Terminal',
 } as const;
 

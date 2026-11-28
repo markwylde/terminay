@@ -115,6 +115,8 @@ export type HomeServerDesktopTarget = Extract<
 /** What a server desktop tab knows of its tab, and may do to it. */
 export type HomeServerDesktopHost = Readonly<{
 	isVisible: boolean;
+	/** Home draws no tab strip: the tab must offer its own way out. */
+	compact: boolean;
 	close: () => void;
 	setTitle: (title: string) => void;
 }>;
@@ -342,6 +344,7 @@ function HomeTabPanel({ api, params }: IDockviewPanelProps<HomeTabParams>) {
 			content =
 				home.renderServerDesktop?.(descriptor, {
 					isVisible: onScreen,
+					compact: isCompact,
 					close: () => forceClose(id),
 					setTitle: host.setTitle,
 				}) ?? null;

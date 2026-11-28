@@ -443,7 +443,7 @@ export function summarizeDashboard(
  */
 export type DashboardActivation =
 	| { kind: 'project'; projectId: string }
-	| { kind: 'panel'; panelId: string; projectId: string; sessionId: string }
+	| { kind: 'panel'; panelId: string; projectId: string; sessionId?: string }
 	| { kind: 'stale' };
 
 export function resolveDashboardActivation(
@@ -459,6 +459,14 @@ export function resolveDashboardActivation(
 		(candidate) => candidate.panelId === row.panelId,
 	);
 	if (entry === undefined) return { kind: 'stale' };
+	// Desktop tabs have no terminal session; their panel id is sufficient for
+	// the workspace to select their folder and bring the tab to the front.
+	if (entry.kind === 'server-desktop')
+		return {
+			kind: 'panel',
+			panelId: entry.panelId,
+			projectId: entry.projectId,
+		};
 	if (entry.sessionId === undefined)
 		return { kind: 'project', projectId: row.projectId };
 	return {

@@ -614,6 +614,10 @@ test('selecting Servers in the rail presents the Servers panel and opens no menu
 	await expect(
 		drawer.getByRole('button', { name: 'Add connection' }),
 	).toBeVisible();
+	// This server offers no desktop, so there is no Show Desktop row.
+	await expect(
+		panel.locator('[data-compact-show-desktop="true"]'),
+	).toHaveCount(0);
 
 	// Choosing the current server does nothing.
 	await current.click();

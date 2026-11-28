@@ -36,6 +36,35 @@
 	flex: 1;
 }
 
+/* Home at phone width draws no tab strip: the tab closes from here. */
+.server-desktop__back-bar {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+	min-height: 44px;
+	padding: 2px 8px;
+	border-bottom: 1px solid var(--sd-line);
+	box-sizing: border-box;
+}
+
+.server-desktop .server-desktop__back {
+	min-height: 40px;
+	padding: 0 10px 0 6px;
+	border-color: transparent;
+	background: transparent;
+	font-size: 13px;
+}
+
+.server-desktop__back-title {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--sd-faint);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .server-desktop__mode {
 	display: inline-flex;
 	align-items: center;
