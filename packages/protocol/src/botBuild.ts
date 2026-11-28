@@ -26,6 +26,8 @@ export interface BotBuildProgress {
 	readonly previousImageAvailable: boolean;
 	readonly steps: readonly BotBuildStep[];
 	readonly truncated: boolean;
+	/** The user has dismissed the ready notice for this build's image. */
+	readonly acknowledged?: boolean;
 }
 export function parseBotBuildProgress(value: unknown): BotBuildProgress | null {
 	if (value === null) return null;
@@ -53,6 +55,7 @@ export function parseBotBuildProgress(value: unknown): BotBuildProgress | null {
 		) ||
 		typeof r.previousImageAvailable !== 'boolean' ||
 		typeof r.truncated !== 'boolean' ||
+		!(r.acknowledged === undefined || typeof r.acknowledged === 'boolean') ||
 		!Array.isArray(r.steps) ||
 		r.steps.length > 128
 	)

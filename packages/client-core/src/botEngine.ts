@@ -35,6 +35,12 @@ export class BotEngineClient {
 			{ deadlineMs: 16 * 60_000, ...options },
 		);
 	}
+	async acknowledgeImage(
+		buildId: string,
+		options: CommandOptions = {},
+	): Promise<void> {
+		await this.transport.command(op.acknowledge, { buildId }, options);
+	}
 	async progress(options: QueryOptions = {}): Promise<BotBuildProgress | null> {
 		return parseBotBuildProgress(
 			await this.transport.query(op.progress, {}, options),

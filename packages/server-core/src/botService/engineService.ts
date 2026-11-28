@@ -389,6 +389,15 @@ export class BotEngineService extends EventEmitter {
 					await this.build();
 					return { result: null };
 				},
+				[op.acknowledge]: async (r) => {
+					authorize(r.context);
+					const buildId = (r.envelope.payload as Record<string, JsonValue>)
+						?.buildId;
+					if (typeof buildId !== 'string' || !buildId || buildId.length > 128)
+						throw new TypeError('invalid build id');
+					if (this.buildTracker.acknowledge(buildId)) this.changed();
+					return { result: null };
+				},
 				[op.use]: async (r) => {
 					authorize(r.context);
 					const p = r.envelope.payload as Record<string, JsonValue>;

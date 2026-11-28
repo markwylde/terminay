@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page, TestInfo } from '@playwright/test';
 import { expect, launchDesktopApp, test } from './fixtures';
 import { prepareWindow } from './support/app';
 import {
@@ -9,6 +9,11 @@ import {
 	closeFrontHomeTab,
 	frontHomeTab,
 } from './support/home-tabs';
+import { createStartedProject } from './support/project-start';
+import {
+	tabBarScreenPoints,
+	tearOffProjectTab,
+} from './support/project-tab-drag';
 
 /**
  * Home › Bots, end to end. The suite runs against a Docker-compatible socket API fixture
@@ -53,6 +58,35 @@ async function pick(
 		.getByRole('listbox', { name: label, exact: true })
 		.locator(`[data-grouped-select-value="${value}"]`)
 		.click();
+}
+
+const readyNotice = (page: Page): Locator =>
+	frontHomeTab(page).locator(
+		'[data-terminay-build-banner-state="completed"]',
+	);
+
+/** What an iOS framed session can do between visits: drop everything stored. */
+async function forgetBrowserStorageAndReload(page: Page): Promise<void> {
+	await page.evaluate(() => {
+		localStorage.clear();
+		sessionStorage.clear();
+	});
+	await page.reload();
+}
+
+/** Bots at desktop and phone widths. */
+async function notices(
+	page: Page,
+	testInfo: TestInfo,
+	name: string,
+): Promise<void> {
+	await page.screenshot({ path: testInfo.outputPath(`${name}-desktop.png`) });
+	await page.setViewportSize({ width: 430, height: 850 });
+	await expect(
+		page.locator('[data-compact-section="bots"]:visible'),
+	).toBeVisible();
+	await page.screenshot({ path: testInfo.outputPath(`${name}-phone.png`) });
+	await page.setViewportSize({ width: 1280, height: 850 });
 }
 
 async function engineReady(page: Page): Promise<void> {
@@ -192,6 +226,13 @@ test.describe('Home: Bots', () => {
 		await mainWindow.screenshot({
 			path: testInfo.outputPath('image-build-failed.png'),
 		});
+		// A failure stays: its notice cannot be dismissed.
+		await expect(
+			dashboard.locator('[data-terminay-build-banner-state="failed"]'),
+		).toBeVisible();
+		await expect(
+			dashboard.locator('[data-terminay-build-banner-dismiss]'),
+		).toHaveCount(0);
 		await rm(path.join(fakeRoot(tempDir), 'build-fail'));
 		await writeFile(path.join(fakeRoot(tempDir), 'build-delay'), '6000');
 		await progress.getByRole('button', { name: 'Retry build' }).click();
@@ -226,28 +267,110 @@ test.describe('Home: Bots', () => {
 		await progress.getByRole('button', { name: 'Close', exact: true }).click();
 		await expect(progress).toHaveCount(0);
 
-		// The success notice can be dismissed, and stays dismissed.
-		const ready = frontHomeTab(mainWindow).locator(
-			'[data-terminay-build-banner-state="completed"]',
-		);
+		// The success notice can be dismissed, and stays dismissed: the server
+		// remembers it, so a client with no stored state does not show it.
+		const ready = readyNotice(mainWindow);
 		await expect(ready).toContainText('Bot image ready');
+		await notices(mainWindow, testInfo, 'ready-notice');
 		await ready.locator('[data-terminay-build-banner-dismiss]').click();
 		await expect(ready).toHaveCount(0);
-		await mainWindow.reload();
-		await openBots(mainWindow);
+		await forgetBrowserStorageAndReload(mainWindow);
+		const reopened = await openBots(mainWindow);
+		await expect(
+			reopened.locator('[data-terminay-bots-image="current"]'),
+		).toBeVisible();
+		await expect(ready).toHaveCount(0);
+		await notices(mainWindow, testInfo, 'dismissed-after-reload');
+		// The finished build stays reachable from the image controls.
+		await reopened.locator('[data-terminay-build-details]').click();
+		await expect(
+			progress.getByRole('heading', { name: 'Your bot image is ready' }),
+		).toBeVisible();
+		await progress.getByRole('button', { name: 'Close', exact: true }).click();
+		await expect(progress).toHaveCount(0);
 		await expect(ready).toHaveCount(0);
 
-		// Once seen, leaving and coming back retires it without a click.
-		await mainWindow.evaluate(() =>
-			localStorage.removeItem('terminay.bots.buildBannerDismissed'),
+		// The same image built again is not news.
+		await rm(
+			path.join(fakeRoot(tempDir), 'image-terminay-bot%3Alocal.json'),
 		);
+		await rm(path.join(fakeRoot(tempDir), 'build-delay'));
+		await reopened.getByRole('button', { name: 'Check again' }).click();
+		await reopened.getByRole('button', { name: 'Build image' }).click();
+		await expect(
+			reopened.locator('[data-terminay-bots-image="current"]'),
+		).toBeVisible({ timeout: 30_000 });
+		await expect(
+			reopened.locator('[data-terminay-build-banner-state]'),
+		).toHaveCount(0);
+	});
+
+	test('a ready notice that was seen and left stays retired without any browser storage', async ({
+		mainWindow,
+	}) => {
+		await prepareWindow(mainWindow);
+		await engineReady(mainWindow);
+		const ready = readyNotice(mainWindow);
+		await expect(ready).toBeVisible();
+		// Crossing the compact width moves the notice; that is not leaving it.
+		const anywhere = mainWindow.locator(
+			'[data-terminay-build-banner-state="completed"]:visible',
+		);
+		await mainWindow.setViewportSize({ width: 430, height: 850 });
+		await expect(anywhere).toBeVisible();
+		await mainWindow.setViewportSize({ width: 1280, height: 850 });
+		await expect(ready).toBeVisible();
 		await mainWindow.reload();
 		await openBots(mainWindow);
 		await expect(ready).toBeVisible();
 		await mainWindow.locator('[data-terminay-home-control="true"]').click();
 		await mainWindow.locator('[data-terminay-home-section-tab="tabs"]').click();
-		await openBots(mainWindow);
+		// Reload before Bots is shown again: leaving alone told the server.
+		await forgetBrowserStorageAndReload(mainWindow);
+		const dashboard = await openBots(mainWindow);
+		await expect(
+			dashboard.locator('[data-terminay-bots-image="current"]'),
+		).toBeVisible();
 		await expect(ready).toHaveCount(0);
+	});
+
+	test('dismissing the ready notice in one window removes it from another', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await prepareWindow(mainWindow);
+		// A second window is a second client, with its own connection and memory.
+		await createStartedProject(mainWindow);
+		const known = new Set(electronApp.windows());
+		const projectTab = mainWindow.locator('.project-tab').last();
+		const { clearOfBar } = await tabBarScreenPoints(electronApp, mainWindow);
+		await tearOffProjectTab(electronApp, mainWindow, projectTab, clearOfBar);
+		let other: Page | undefined;
+		await expect
+			.poll(
+				async () => {
+					for (const page of electronApp.windows()) {
+						if (known.has(page) || page.isClosed()) continue;
+						// The drag ghost is a window too, and closes while it is read.
+						const homes = await page
+							.locator('[data-terminay-home-control="true"]')
+							.count()
+							.catch(() => 0);
+						if (homes > 0) other = page;
+					}
+					return other !== undefined;
+				},
+				{ timeout: 30_000 },
+			)
+			.toBe(true);
+		await engineReady(mainWindow);
+		await openBots(other!);
+		await expect(readyNotice(mainWindow)).toBeVisible();
+		await expect(readyNotice(other!)).toBeVisible();
+		await readyNotice(mainWindow)
+			.locator('[data-terminay-build-banner-dismiss]')
+			.click();
+		await expect(readyNotice(other!)).toHaveCount(0);
 	});
 
 	test('a bot is created while Docker is down, and chats once Docker is up', async ({
@@ -625,6 +748,15 @@ test.describe('Home: Bots', () => {
 		await mainWindow.screenshot({
 			path: testInfo.outputPath('bots-phone-engine.png'),
 		});
+		// On a phone the build page opens from the engine sheet, which closes.
+		await sheet.locator('[data-terminay-build-details]').click();
+		const buildPage = mainWindow.locator('[data-terminay-build-page]');
+		await expect(buildPage).toBeVisible();
+		await expect(sheet).toHaveCount(0);
+		await buildPage.getByRole('button', { name: 'Close', exact: true }).click();
+		await expect(buildPage).toHaveCount(0);
+		await card.click();
+		await expect(sheet).toBeVisible();
 		await mainWindow.keyboard.press('Escape');
 		await expect(sheet).toHaveCount(0);
 		await expect(card).toBeFocused();

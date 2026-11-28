@@ -33,6 +33,7 @@ export const ENGINE_REASON_TEXT: Readonly<Record<BotEngineReason, string>> = {
 };
 
 export type BotEngineView = Readonly<{
+	serverId: string | undefined;
 	status: BotEngineStatus | undefined;
 	error: string | undefined;
 	busy: boolean;
@@ -40,12 +41,17 @@ export type BotEngineView = Readonly<{
 	/** Pins a candidate. Replacing an existing pin needs `confirmed`. */
 	useEngine: (candidate: BotEngineCandidate, confirmed: boolean) => void;
 	buildImage: () => void;
+	/** Dismisses the ready notice of a build's image, for every client. */
+	acknowledgeImage: (buildId: string) => Promise<void>;
 	readBuildLog: () => Promise<string>;
 	readBuildProgress: () => Promise<BotBuildProgress | null>;
 }>;
 
 export function useBotEngine(server: ServerBots | undefined): BotEngineView {
-	const [status, setStatus] = useState<BotEngineStatus>();
+	const [loaded, setLoaded] = useState<{
+		client: BotEngineClient;
+		status: BotEngineStatus;
+	}>();
 	const [error, setError] = useState<string>();
 	const [busy, setBusy] = useState(false);
 	const transport = server?.transport;
@@ -62,7 +68,7 @@ export function useBotEngine(server: ServerBots | undefined): BotEngineView {
 	// queue a burst of requests.
 	// Kept per client, so a new connection never waits on the old one's read.
 	const reading = useMemo(
-		() => ({ client, running: false, again: false }),
+		() => ({ client, running: false, again: false, active: false }),
 		[client],
 	);
 	const load = useCallback(async () => {
@@ -77,13 +83,18 @@ export function useBotEngine(server: ServerBots | undefined): BotEngineView {
 			do {
 				state.again = false;
 				try {
-					setStatus(await client.status());
-					setError(undefined);
+					const status = await client.status();
+					if (state.active) {
+						setLoaded({ client, status });
+						setError(undefined);
+					}
 				} catch (cause) {
-					setStatus(undefined);
-					setError(refusalText(cause));
+					if (state.active) {
+						setLoaded(undefined);
+						setError(refusalText(cause));
+					}
 				}
-			} while (state.again);
+			} while (state.active && state.again);
 		} finally {
 			state.running = false;
 		}
@@ -91,16 +102,22 @@ export function useBotEngine(server: ServerBots | undefined): BotEngineView {
 
 	useEffect(() => {
 		if (client === undefined) return;
+		reading.active = true;
 		void load();
+		let unwatch: (() => void) | undefined;
 		try {
-			return client.watch(
+			unwatch = client.watch(
 				() => void load(),
 				() => void load(),
 			);
 		} catch {
-			return undefined;
+			/* A later connection can restore the watch. */
 		}
-	}, [load, client]);
+		return () => {
+			reading.active = false;
+			unwatch?.();
+		};
+	}, [load, client, reading]);
 
 	const run = useCallback(
 		(action: (c: BotEngineClient) => Promise<void>) => {
@@ -128,8 +145,19 @@ export function useBotEngine(server: ServerBots | undefined): BotEngineView {
 		[client],
 	);
 
+	// Not through `run`: a dismissal never marks the engine busy or failed.
+	const acknowledgeImage = useCallback(
+		(buildId: string) =>
+			client
+				? client.acknowledgeImage(buildId)
+				: Promise.reject(new Error('Server unavailable')),
+		[client],
+	);
+
 	return {
-		status,
+		serverId: server?.serverId,
+		status: loaded?.client === client ? loaded?.status : undefined,
+		acknowledgeImage,
 		readBuildLog,
 		readBuildProgress,
 		error,

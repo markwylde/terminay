@@ -10,12 +10,43 @@ import {
 	writeFileDurablySync,
 } from '../durableFile.js';
 
+const MAX_ACKNOWLEDGED_IMAGES = 32;
+/** What a ready notice is about: one engine's image of one set of inputs. */
+type ImageKey = Pick<BotBuildProgress, 'engineIdentity' | 'fingerprint'>;
+const sameImage = (a: ImageKey, b: ImageKey) =>
+	a.engineIdentity === b.engineIdentity && a.fingerprint === b.fingerprint;
+
+/** Lenient on purpose: a bad notice list never makes the build record unreadable. */
+function readAcknowledged(raw: unknown): ImageKey[] {
+	const images: ImageKey[] = [];
+	for (const entry of Array.isArray(raw) ? raw : []) {
+		const { engineIdentity, fingerprint } = (entry ?? {}) as Record<
+			string,
+			unknown
+		>;
+		if (
+			typeof engineIdentity !== 'string' ||
+			!engineIdentity ||
+			engineIdentity.length > 512 ||
+			typeof fingerprint !== 'string' ||
+			!fingerprint ||
+			fingerprint.length > 128
+		)
+			continue;
+		const image = { engineIdentity, fingerprint };
+		if (!images.some((other) => sameImage(other, image))) images.push(image);
+	}
+	return images.slice(-MAX_ACKNOWLEDGED_IMAGES);
+}
+
 /** Engine events are facts. Unknown text stays output, never a guessed percent. */
 export class BotBuildTracker {
 	private value: BotBuildProgress | null = null;
 	private buffer = '';
 	private tail = '';
 	private sequential: string | null = null;
+	/** Images whose ready notice the user dismissed, oldest first. */
+	private acknowledged: ImageKey[] = [];
 	constructor(
 		private readonly statePath?: string,
 		private readonly now: () => number = Date.now,
@@ -27,6 +58,7 @@ export class BotBuildTracker {
 						version?: unknown;
 						progress?: unknown;
 						output?: unknown;
+						acknowledged?: unknown;
 					};
 					if (
 						record?.version !== 1 ||
@@ -37,11 +69,13 @@ export class BotBuildTracker {
 					return {
 						progress: parseBotBuildProgress(record.progress),
 						output: record.output,
+						acknowledged: readAcknowledged(record.acknowledged),
 					};
 				},
 			});
 			this.value = saved?.progress ?? null;
 			this.tail = saved?.output ?? '';
+			this.acknowledged = saved?.acknowledged ?? [];
 			if (this.value?.state === 'running') {
 				this.value = {
 					...this.value,
@@ -61,7 +95,33 @@ export class BotBuildTracker {
 		return this.value?.revision ?? 0;
 	}
 	get snapshot(): BotBuildProgress | null {
-		return structuredClone(this.value);
+		const v = this.value;
+		return v && { ...structuredClone(v), acknowledged: this.isAcknowledged(v) };
+	}
+	private isAcknowledged(v: BotBuildProgress): boolean {
+		return (
+			v.state === 'completed' &&
+			this.acknowledged.some((image) => sameImage(image, v))
+		);
+	}
+	/**
+	 * Records that the user dismissed the ready notice of the latest build. The
+	 * image comes from this record, never from the caller. Returns whether
+	 * anything changed; throws, changing nothing, if it cannot be saved.
+	 */
+	acknowledge(buildId: string): boolean {
+		const v = this.value;
+		if (v?.id !== buildId || v.state !== 'completed' || this.isAcknowledged(v))
+			return false;
+		const acknowledged = [
+			...this.acknowledged,
+			{ engineIdentity: v.engineIdentity, fingerprint: v.fingerprint },
+		].slice(-MAX_ACKNOWLEDGED_IMAGES);
+		const next = { ...v, revision: v.revision + 1 };
+		this.persist(next, acknowledged);
+		this.value = next;
+		this.acknowledged = acknowledged;
+		return true;
 	}
 	start(
 		engineIdentity: string,
@@ -85,11 +145,19 @@ export class BotBuildTracker {
 		};
 		this.step('prepare', 'Preparing image build', 'running');
 	}
-	private persist(): void {
+	private persist(
+		progress = this.value,
+		acknowledged = this.acknowledged,
+	): void {
 		if (this.statePath)
 			writeFileDurablySync(
 				this.statePath,
-				JSON.stringify({ version: 1, progress: this.value, output: this.tail }),
+				JSON.stringify({
+					version: 1,
+					progress,
+					output: this.tail,
+					acknowledged,
+				}),
 				{
 					keepPrevious: true,
 				},

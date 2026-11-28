@@ -239,6 +239,10 @@ export function BotsCompactPage({
 									label={engineLabel}
 									visible={isVisible}
 									showBanner={false}
+									onShowBuild={() => {
+										setIsSheetOpen(false);
+										onBuildOpenChange(true);
+									}}
 								/>
 							),
 						}

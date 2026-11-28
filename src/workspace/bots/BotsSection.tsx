@@ -445,6 +445,7 @@ export function EngineSummary({
 	showBanner = true,
 	buildOpen,
 	onBuildOpenChange,
+	onShowBuild,
 }: Readonly<{
 	engine: BotEngineView;
 	label: string | undefined;
@@ -458,8 +459,15 @@ export function EngineSummary({
 	showBanner?: boolean;
 	buildOpen?: boolean;
 	onBuildOpenChange?: (open: boolean) => void;
+	/** Opens the build page where the owner draws the banner. */
+	onShowBuild?: () => void;
 }>) {
 	const { status } = engine;
+	const [ownBuildOpen, setOwnBuildOpen] = useState(false);
+	const setBuildOpen = onBuildOpenChange ?? setOwnBuildOpen;
+	// A dismissed ready notice leaves this as the way to the finished build.
+	const showBuild =
+		onShowBuild ?? (showBanner ? () => setBuildOpen(true) : undefined);
 	const [switching, setSwitching] = useState<string>();
 	const building =
 		status?.image.state === 'building' || status?.image.state === 'failed';
@@ -476,8 +484,8 @@ export function EngineSummary({
 					engine={engine}
 					label={label}
 					visible={visible}
-					open={buildOpen}
-					onOpenChange={onBuildOpenChange}
+					open={buildOpen ?? ownBuildOpen}
+					onOpenChange={setBuildOpen}
 				/>
 			) : null}
 			{!compact && !building ? (
@@ -557,6 +565,16 @@ export function EngineSummary({
 							onClick={engine.buildImage}
 						>
 							Build image
+						</button>
+					) : null}
+					{showBuild && status?.build?.state === 'completed' ? (
+						<button
+							type="button"
+							className="bots-btn bots-btn--sm"
+							onClick={showBuild}
+							data-terminay-build-details
+						>
+							Build details
 						</button>
 					) : null}
 				</div>
