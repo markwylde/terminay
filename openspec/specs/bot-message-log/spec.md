@@ -1011,7 +1011,8 @@ Each top-level message in Chat SHALL offer **Reply in thread**, both as an actio
 
 #### Scenario: Start a thread from the hover action
 - **WHEN** the user points at a bot message and activates Reply in thread
-- **THEN** the thread panel opens for that message with its composer focused
+- **THEN** the thread panel opens for that message
+- **AND** its composer does not have focus
 
 #### Scenario: Reply bar
 - **WHEN** a root has three replies, the latest from the bot five minutes ago
@@ -1264,3 +1265,33 @@ Audio attachments SHALL reach an execution only as files and SHALL NOT be sent t
 #### Scenario: Misnamed audio is delivered by its offered extension
 - **WHEN** a user sends MP3 bytes named `song.dat`
 - **THEN** the execution's container file uses the `.dat` extension and the briefing lists the type `audio/mpeg`
+
+### Requirement: Opening a thread leaves the reply composer unfocused
+
+Opening a thread, whether from the Reply in thread action, the message menu or a reply bar, and including switching from one open thread to another, SHALL NOT focus any text field, so a touch device does not raise its on-screen keyboard. Focus SHALL move to the thread panel itself, from which Tab reaches its controls and, with no menu or dialog open, Escape closes the panel. The reply composer SHALL take focus when the user taps, clicks or tabs to it, or uses an action that puts text into it, such as Quote.
+
+#### Scenario: Open a thread from the reply bar on a phone
+- **WHEN** a user on a touch device taps a root's reply bar
+- **THEN** the thread panel has focus, no text field does, and the on-screen keyboard stays down
+
+#### Scenario: Open a thread from the message menu by keyboard
+- **WHEN** a keyboard user chooses Reply in thread from a message's menu
+- **THEN** the thread panel has focus rather than the message or the composer
+- **AND** pressing Escape closes the panel and focuses the root message
+
+#### Scenario: Reach the composer with Tab
+- **WHEN** a thread has just opened and the user presses Tab repeatedly
+- **THEN** focus moves through the panel's controls and reaches the reply composer
+
+#### Scenario: Escape with a menu open
+- **WHEN** a message menu is open in the thread panel and the user presses Escape
+- **THEN** the menu closes and the panel stays open
+- **AND** pressing Escape again closes the panel
+
+#### Scenario: Switch threads
+- **WHEN** thread M's panel is open and the user opens thread N
+- **THEN** N's panel has focus and its composer does not
+
+#### Scenario: Choose to reply
+- **WHEN** a thread is open and the user taps its reply composer
+- **THEN** the composer takes focus
