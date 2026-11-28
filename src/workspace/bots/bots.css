@@ -1208,6 +1208,16 @@ button.bots-build-step__toggle:hover {
 	display: none;
 }
 
+.bots-held p {
+	margin: 0;
+}
+
+.bots-held__items {
+	margin: 6px 0;
+	padding-left: 18px;
+	overflow-wrap: anywhere;
+}
+
 .bots-attempts__summary {
 	margin: 0 0 4px;
 	color: var(--bots-fg);

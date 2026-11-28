@@ -1676,6 +1676,53 @@ test.describe('Home: Bots', () => {
 		await expect(divider).toHaveCount(0);
 	});
 
+	test('a held session shows background diagnostics live and after stopping', async ({
+		mainWindow,
+		tempDir,
+	}, testInfo) => {
+		await setEngineDown(tempDir, false);
+		await engineReady(mainWindow);
+		const tab = await chat(await createBot(mainWindow, 'Osprey'));
+		await send(tab, 'hold-background still-waiting');
+		await tab.locator('[data-terminay-bot-mode-button="configure"]').click();
+		await tab.locator('[data-terminay-bot-config-tab="sessions"]').click();
+		await tab.locator('[data-terminay-bot-session-row]').first().click();
+		const detail = tab.locator('[data-terminay-bot-session]');
+		const background = detail.locator('[data-terminay-bot-session-background]');
+		await expect(background).toHaveAttribute(
+			'data-terminay-bot-session-background',
+			'waiting',
+			{ timeout: 30_000 },
+		);
+		await expect(background).toContainText(
+			'Held open by background work since',
+		);
+		await expect(background).toContainText('Shell or Monitor');
+		await expect(background).toContainText('Watch the CI build');
+		await expect(background).toContainText('Last activity at');
+		await expect(background).toContainText('Not asked yet whether it is done.');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-background-wait.png'),
+		});
+		await detail.locator('[data-terminay-bot-session-stop]').click();
+		await expect(
+			tab.locator('[data-terminay-bot-session-row]').first(),
+		).toHaveAttribute('data-terminay-bot-session-state', 'stopped', {
+			timeout: 30_000,
+		});
+		await expect(background).toHaveAttribute(
+			'data-terminay-bot-session-background',
+			'over',
+		);
+		await expect(background).toContainText(
+			'Waited on background work after a turn ended.',
+		);
+		await expect(background).toContainText('Watch the CI build');
+		await mainWindow.screenshot({
+			path: testInfo.outputPath('bot-background-wait-ended.png'),
+		});
+	});
+
 	test('a session transcript shows when its prompt, replies and tool calls happened', async ({
 		mainWindow,
 		tempDir,

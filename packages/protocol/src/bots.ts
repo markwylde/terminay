@@ -224,6 +224,33 @@ export interface BotSessionRecord {
 	readonly startupFailure?: BotStartupFailure | null;
 	/** The outcome the execution reported with `outcome_report`. */
 	readonly outcome?: BotExecutionOutcome | null;
+	/** Present once the execution has waited on its own background work. */
+	readonly backgroundWait?: BotBackgroundWait;
+}
+export const BOT_BACKGROUND_ITEMS_MAX = 32;
+export const BOT_BACKGROUND_DESCRIPTION_BYTES = 256;
+export interface BotBackgroundItem {
+	readonly id: string;
+	/** The agent's own task type, such as `local_bash` or `local_agent`. */
+	readonly kind: string;
+	/** Agent-written text, redacted and cut to 256 bytes. */
+	readonly description: string;
+}
+/** What held an execution open after its turn ended, kept when it ends. */
+export interface BotBackgroundWait {
+	/** When the current wait began; null when not waiting. */
+	readonly waitingSince: number | null;
+	/** The items last seen holding the execution open. */
+	readonly items: readonly BotBackgroundItem[];
+	/** Items beyond the ones listed. */
+	readonly omitted: number;
+	/** Follow-up turns still expected for finished background tasks. */
+	readonly followUps: number;
+	readonly lastActivityAt: number;
+	/** Done checks sent. */
+	readonly checks: number;
+	readonly lastCheckAt: number | null;
+	readonly lastAnswer: 'waiting' | 'done' | null;
 }
 export type BotStartupStage =
 	| 'prepare'
