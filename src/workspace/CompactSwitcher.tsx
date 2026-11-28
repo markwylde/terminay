@@ -28,6 +28,7 @@ import {
 	GitBranch,
 	GripVertical,
 	House,
+	Monitor,
 	Pencil,
 	Plus,
 	Search,
@@ -152,6 +153,8 @@ export type CompactSwitcherProps = Readonly<{
 	onNewProject: () => void;
 	onOpenHomeSection: (section: HomeSection) => void;
 	onRenamePanel: (row: CompactSwitcherPanelRow) => void;
+	/** Open the current server's desktop; absent where it offers none. */
+	onShowDesktop?: () => void;
 	onReorderFolders: (
 		project: CompactSwitcherProjectGroup,
 		folderIds: readonly string[],
@@ -934,17 +937,20 @@ function moveRadioFocus(event: ReactKeyboardEvent<HTMLElement>) {
 
 /**
  * The Servers panel: every server this window could show, the current one
- * checked, and the upgrade rows of attached connections. Reachability belongs
+ * checked, its desktop where it offers one, and the upgrade rows of attached
+ * connections. Reachability belongs
  * to the connection this window is attached to, so only the current row has
  * it. Nothing here renames, edits, or forgets a saved server; Settings does.
  */
 function ServersPanel({
 	currentServer,
+	onShowDesktop,
 	onSwitchServer,
 	servers,
 	upgrades,
 }: Readonly<{
 	currentServer: CompactSwitcherProps['currentServer'];
+	onShowDesktop?: () => void;
 	onSwitchServer?: (profileId: string) => void;
 	servers: readonly CompactSwitcherServer[];
 	upgrades?: ReactNode;
@@ -1021,6 +1027,20 @@ function ServersPanel({
 					);
 				})}
 			</div>
+			{onShowDesktop === undefined ? null : (
+				<button
+					type="button"
+					className="compact-drawer__server-row compact-drawer__show-desktop"
+					aria-label={`Show desktop of ${currentServer.label}`}
+					data-compact-show-desktop="true"
+					onClick={onShowDesktop}
+				>
+					<span className="compact-drawer__server-glyph" aria-hidden="true">
+						<Monitor size={16} />
+					</span>
+					<span className="compact-drawer__server-name">Show Desktop</span>
+				</button>
+			)}
 			{upgrades ? (
 				<section
 					className="compact-drawer__server-upgrades"
@@ -1717,6 +1737,9 @@ export function CompactSwitcher(props: CompactSwitcherProps) {
 			<ServersPanel
 				currentServer={currentServer}
 				servers={props.servers ?? []}
+				{...(props.onShowDesktop === undefined
+					? {}
+					: { onShowDesktop: props.onShowDesktop })}
 				{...(props.onSwitchServer === undefined
 					? {}
 					: { onSwitchServer: props.onSwitchServer })}

@@ -109,7 +109,8 @@ export type WorkspaceInventoryPanelKind =
 	| 'terminal'
 	| 'file'
 	| 'folder'
-	| 'forge-item';
+	| 'forge-item'
+	| 'server-desktop';
 
 export type WorkspaceInventoryStatus = 'idle' | TerminalActivityOverviewState;
 
@@ -214,6 +215,8 @@ export type InventoryPanelParams = PanelTabAppearance & {
 	folderPath?: string;
 	/** A pull request or issue open as a tab (src/forge/ForgeItemTab.tsx). */
 	forgeItem?: unknown;
+	/** A server desktop tab's id (src/workspace/serverDesktop/desktopTabs.ts). */
+	tabId?: unknown;
 	sessionId?: string;
 	/** When `terminalActivityState` last changed, in epoch milliseconds. */
 	terminalActivitySince?: number;
@@ -234,9 +237,16 @@ export type InventoryProjectSource = {
 };
 
 function panelKind(
+	panelId: string,
 	params: InventoryPanelParams | undefined,
 ): WorkspaceInventoryPanelKind {
 	if (params?.sessionId) return 'terminal';
+	// The test a folder's workspace uses to know its own desktop panels.
+	if (
+		panelId.startsWith('server-desktop-') &&
+		typeof params?.tabId === 'string'
+	)
+		return 'server-desktop';
 	if (params?.folderPath !== undefined) return 'folder';
 	if (params?.filePath !== undefined) return 'file';
 	if (params?.forgeItem !== undefined) return 'forge-item';
@@ -247,6 +257,7 @@ function defaultPanelTitle(kind: WorkspaceInventoryPanelKind): string {
 	if (kind === 'folder') return 'Folder';
 	if (kind === 'file') return 'File';
 	if (kind === 'forge-item') return 'Pull request or issue';
+	if (kind === 'server-desktop') return 'Desktop';
 	return 'Terminal';
 }
 
@@ -266,7 +277,7 @@ export function buildProjectInventoryEntries(options: {
 
 	for (const panel of panels) {
 		const params = panel.params;
-		const kind = panelKind(params);
+		const kind = panelKind(panel.id, params);
 		const sessionId = params?.sessionId;
 		const agentState = params?.agentState;
 		const base = {

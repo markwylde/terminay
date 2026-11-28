@@ -1218,6 +1218,18 @@
 	color: #4db5ff;
 }
 
+.compact-drawer__show-desktop {
+	width: 100%;
+	margin-top: 6px;
+	border-top: 1px solid var(--compact-line, rgba(255, 255, 255, 0.08));
+	border-radius: 0 0 10px 10px;
+}
+
+.compact-drawer__show-desktop:focus-visible {
+	outline: 2px solid #4db5ff;
+	outline-offset: -2px;
+}
+
 .compact-drawer__server-upgrades {
 	margin-top: 10px;
 }

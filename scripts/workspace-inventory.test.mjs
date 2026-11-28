@@ -64,6 +64,28 @@ test('a pull request or issue tab is inventoried as one, never as a terminal', (
 	assert.equal(entry.status, 'idle');
 });
 
+test('a server desktop tab is inventoried as one, under its own title, never as a terminal', () => {
+	const [titled, untitled, sessionless] = build([
+		{
+			id: 'server-desktop-1',
+			title: 'Desktop · studio',
+			params: { tabId: 'server-desktop-1', serverId: 'studio' },
+		},
+		{ id: 'server-desktop-2', params: { tabId: 'server-desktop-2' } },
+		// A terminal that has not bound its session yet is still a terminal.
+		{ id: 'p9', title: 'zsh', params: {} },
+	]);
+	assert.equal(titled.kind, 'server-desktop');
+	assert.equal(titled.title, 'Desktop · studio');
+	assert.equal(titled.status, 'idle');
+	assert.equal(titled.isAgentStatus, false);
+	assert.equal(titled.sessionId, undefined);
+	assert.equal(untitled.kind, 'server-desktop');
+	assert.equal(untitled.title, 'Desktop');
+	assert.equal(sessionless.kind, 'terminal');
+	assert.deepEqual(selectNotableEntries([titled, untitled]), []);
+});
+
 test('the panel in front is marked whatever its kind, and only it', () => {
 	const panels = [
 		// A terminal keeps its own focus flag while a file is in front.

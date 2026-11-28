@@ -219,6 +219,25 @@ test('a project with no terminal has no summary to show', () => {
 	assert.equal(shown.accessible, '');
 });
 
+test('a server desktop tab is a row of its own kind and is not counted as a terminal', () => {
+	const project = withStates(['idle'], [
+		panel({
+			kind: 'server-desktop',
+			panelId: 'server-desktop-1',
+			title: 'Desktop · studio',
+		}),
+	]);
+	assert.deepEqual(project.summary, {
+		attention: 0,
+		working: 0,
+		done: 0,
+		idle: 1,
+	});
+	const row = project.panels.find((entry) => entry.panelId === 'server-desktop-1');
+	assert.equal(row.panelKind, 'server-desktop');
+	assert.equal(row.title, 'Desktop · studio');
+});
+
 test('a summary counts only its own server project', () => {
 	const sources = [
 		source('local', 'Local', [paged], {

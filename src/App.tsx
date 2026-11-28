@@ -7652,6 +7652,11 @@ function App({
 	// One observation of the bar decides compact chrome for every surface that
 	// changes at phone width, so a row and the strip under it cannot disagree.
 	const isCompactChrome = useCompactChrome(projectTabBarRef);
+	// The header that holds the desktop dropdown is not drawn at phone width,
+	// so a dropdown left open would come back when the window widens.
+	useEffect(() => {
+		if (isCompactChrome) setIsServerDesktopOpen(false);
+	}, [isCompactChrome]);
 	// Only the compact switcher reads the worktree listings through the
 	// handles, so only the compact layout re-renders when one is read again.
 	const [, noteWorktreeStatusChange] = useReducer(
@@ -10131,7 +10136,11 @@ function App({
 				title: row.title,
 				...(row.sessionId === undefined ? {} : { sessionId: row.sessionId }),
 			});
-			if (row.panelKind === 'terminal' || row.serverId !== currentServerId)
+			if (
+				row.panelKind === 'terminal' ||
+				row.panelKind === 'server-desktop' ||
+				row.serverId !== currentServerId
+			)
 				return;
 			// A file or folder panel has no session for the dashboard path to
 			// activate, so it is brought to the front by its panel id.
@@ -11958,6 +11967,14 @@ function App({
 						onOpenConnectionManager();
 					}}
 					onClosePanel={closeCompactSwitcherPanel}
+					{...(serverDesktopClient === undefined
+						? {}
+						: {
+								onShowDesktop: () => {
+									closeCompactSwitcher();
+									serverDesktopPlaces.openHere();
+								},
+							})}
 					onCloseProject={(group) => {
 						closeComposedTab(
 							compositionTabKey(group.serverId, group.projectId),
@@ -12234,6 +12251,7 @@ function App({
 								isActive={host.isVisible}
 								closeHere={host.close}
 								setTitle={host.setTitle}
+								{...(host.compact ? { onBack: host.close } : {})}
 							/>
 						)}
 						renderBotIcon={(target) =>

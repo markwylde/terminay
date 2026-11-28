@@ -4,7 +4,7 @@
  * every other place draws a copy of its picture while it is on screen.
  */
 
-import { ExternalLink, MousePointer2 } from 'lucide-react';
+import { ChevronLeft, ExternalLink, MousePointer2 } from 'lucide-react';
 import {
 	createContext,
 	useCallback,
@@ -328,6 +328,7 @@ export function ServerDesktopTabView({
 	isActive,
 	closeHere,
 	setTitle,
+	onBack,
 }: Readonly<{
 	tabId: string;
 	/** The server the tab was opened for. */
@@ -340,6 +341,11 @@ export function ServerDesktopTabView({
 	closeHere: () => void;
 	/** Name the tab, where its host lets it. */
 	setTitle?: (title: string) => void;
+	/**
+	 * Close the tab from inside it. Given where no tab strip is drawn and
+	 * nothing else lists the tab: Home at phone width.
+	 */
+	onBack?: () => void;
 }>) {
 	const hub = useServerDesktopHub();
 	const label = hub?.serverId === serverId ? hub.serverLabel : undefined;
@@ -358,8 +364,29 @@ export function ServerDesktopTabView({
 		if (sameServer && onScreen && isActive) focus?.(id);
 	}, [sameServer, onScreen, isActive, focus, id]);
 
-	if (!sameServer || hub === null)
-		return (
+	// Drawn above every state: the tab's menu exists only once the desktop is
+	// running, and a tab opened during setup must still close.
+	const back =
+		onBack === undefined ? null : (
+			<div className="server-desktop__back-bar">
+				<button
+					type="button"
+					className="server-desktop__back"
+					onClick={onBack}
+					aria-label="Close desktop tab"
+					data-server-desktop-back="true"
+				>
+					<ChevronLeft size={15} aria-hidden="true" />
+					Back
+				</button>
+				<span className="server-desktop__back-title">
+					{label === undefined ? 'Desktop' : serverDesktopTitle(label)}
+				</span>
+			</div>
+		);
+
+	if (!sameServer || hub === null) {
+		const elsewhere = (
 			<div
 				className="server-desktop__state"
 				data-server-desktop-state="elsewhere"
@@ -373,12 +400,22 @@ export function ServerDesktopTabView({
 				</div>
 			</div>
 		);
+		return back === null ? (
+			elsewhere
+		) : (
+			<div className="server-desktop server-desktop--tab">
+				{back}
+				{elsewhere}
+			</div>
+		);
+	}
 	if (hub.status?.state !== 'ready')
 		return (
 			<div
 				className="server-desktop server-desktop--tab"
 				data-server-desktop-tab={tabId}
 			>
+				{back}
 				<NotRunning hub={hub} />
 			</div>
 		);
@@ -393,6 +430,7 @@ export function ServerDesktopTabView({
 			data-server-desktop-tab={tabId}
 			data-server-desktop-live={holdsViewer ? 'true' : 'false'}
 		>
+			{back}
 			<ServerDesktopBar
 				{...barProps(hub, menu)}
 				moveTargets={targets}
