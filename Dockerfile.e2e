@@ -9,11 +9,6 @@ FROM ${E2E_BASE_IMAGE}
 USER root
 COPY --chown=node:node . .
 
-# The server checks the desktop setup trigger's parent belongs to root. The
-# E2E stand-in uses the same layout and can signal the trigger as node.
-RUN install -d -m 0755 /var/lib/terminay-desktop-setup \
-    && install -o node -g node -m 0600 /dev/null /var/lib/terminay-desktop-setup/desktop-setup
-
 USER node
 ARG TURBO_TEAM=wylde
 RUN --mount=type=secret,id=turbo_token,required=false,uid=1000,gid=1000,mode=0400 \

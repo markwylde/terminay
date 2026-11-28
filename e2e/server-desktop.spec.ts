@@ -35,7 +35,7 @@ async function fakeHelper(root: string): Promise<FakeHelper> {
 	const directory = path.join(root, 'fake-helper');
 	await mkdir(directory, { recursive: true });
 	const upgrader = path.join(directory, 'terminay');
-	// Dockerfile.e2e provisions the desktop trigger with a root-owned parent.
+	// The E2E base image provisions the desktop trigger with a root-owned parent.
 	const request = '/var/lib/terminay-upgrade/request';
 	const trigger = '/var/lib/terminay-desktop-setup/desktop-setup';
 	const statusFile = path.join(directory, 'status.json');
