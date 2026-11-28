@@ -4,6 +4,8 @@ import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	assertJsonValue,
+	BOT_BACKGROUND_DESCRIPTION_BYTES,
+	BOT_BACKGROUND_ITEMS_MAX,
 	BOT_OPAQUE_ATTACHMENT_MIME,
 	type BotFailureCause,
 	type BotFailureRef,
@@ -163,6 +165,35 @@ function parseResilience(d: Record<string, unknown>): void {
 		optionalTime(o.at, 'outcome time');
 	}
 }
+function parseBackgroundWait(value: unknown): void {
+	const w = object(value);
+	const count = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0;
+	if (
+		!Array.isArray(w.items) ||
+		w.items.length > BOT_BACKGROUND_ITEMS_MAX ||
+		!count(w.omitted) ||
+		!count(w.followUps) ||
+		!count(w.checks) ||
+		![null, 'waiting', 'done'].includes(w.lastAnswer as string | null)
+	)
+		throw new Error('invalid background wait');
+	for (const raw of w.items) {
+		const item = object(raw);
+		text(item.id, 256, 'background item id', true);
+		text(item.kind, 64, 'background item kind', true);
+		text(
+			item.description,
+			BOT_BACKGROUND_DESCRIPTION_BYTES,
+			'background item description',
+			true,
+		);
+	}
+	for (const at of [w.waitingSince, w.lastCheckAt])
+		if (at !== null && !Number.isFinite(at))
+			throw new Error('invalid background wait time');
+	if (!Number.isFinite(w.lastActivityAt))
+		throw new Error('invalid background wait time');
+}
 function parseRecord(value: unknown): BotSessionRecord {
 	const d = object(value);
 	sessionId(d.id);
@@ -222,6 +253,7 @@ function parseRecord(value: unknown): BotSessionRecord {
 	}
 	if (d.cause !== undefined && d.cause !== null) failureCause(d.cause);
 	parseResilience(d);
+	if (d.backgroundWait !== undefined) parseBackgroundWait(d.backgroundWait);
 	const origin = object(d.origin);
 	if (origin.kind === 'failure') {
 		if (

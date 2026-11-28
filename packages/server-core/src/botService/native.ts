@@ -144,6 +144,62 @@ function diagnosticOutput(value: unknown): string {
 				)
 	).slice(-65536);
 }
+/** How long an execution waits on background work before it is asked, and
+ * again after each further wait (ADR-0149). */
+export const BOT_DONE_CHECK_INTERVAL_MS = 5 * 60_000;
+/** How long an agent has to exit once its done answer is accepted. */
+export const BOT_DONE_SHUTDOWN_MS = 30_000;
+export interface BotNativeTimers {
+	setTimeout(fn: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+}
+const nativeTimers: BotNativeTimers = {
+	setTimeout: (fn, ms) => setTimeout(fn, ms),
+	clearTimeout: (handle) =>
+		clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+/** One background task Claude Code lists as running. */
+export interface BotNativeTask {
+	readonly id: string;
+	readonly kind: string;
+	readonly description: string;
+}
+/** What holds an execution open. Descriptions are redacted agent text. */
+export interface BotNativeWait {
+	readonly waiting: boolean;
+	readonly items: readonly BotNativeTask[];
+	/** Follow-up turns still expected for finished background tasks. */
+	readonly followUps: number;
+}
+const doneLine = (nonce: string) => `TERMINAY-DONE ${nonce}`;
+/** A whole line, so a quotation inside a sentence never counts. */
+function saysDone(reply: string, nonce: string): boolean {
+	return reply
+		.split('\n')
+		.some((line) => line.replace(/[`*]/g, '').trim() === doneLine(nonce));
+}
+function doneCheck(
+	nonce: string,
+	tasks: readonly BotNativeTask[],
+	followUps: number,
+): string {
+	const listed = tasks
+		.slice(0, 8)
+		.map(
+			(task) =>
+				`- ${task.kind}: ${JSON.stringify(task.description.slice(0, 128))}`,
+		);
+	if (tasks.length > 8) listed.push(`- and ${tasks.length - 8} more`);
+	if (followUps > 0)
+		listed.push('- a follow-up turn for a finished background task');
+	return [
+		'Terminay check: your turn ended, but this session is still running because it is waiting on background work.',
+		...(listed.length ? listed : ['- nothing Terminay can list']),
+		'Are you done? If your task is completely finished, including anything you meant to post, reply with this line on its own:',
+		doneLine(nonce),
+		'Terminay will then stop your background work and end this session as completed. If you are still waiting for something you need, do not write that line; say what you are waiting for. The session keeps running and you will be asked again in 5 minutes. Do not post to chat about this check.',
+	].join('\n');
+}
 interface Approval {
 	requestId: string;
 	input: JsonValue;
@@ -182,8 +238,20 @@ export class BotNativeClient extends EventEmitter {
 	private closed = false;
 	private terminal = false;
 	private resultFailed = false;
-	private claudeHasBackgroundTasks = false;
+	private claudeTasks: BotNativeTask[] = [];
 	private claudePendingWakeups = 0;
+	/** The agent's input is held open and no turn is running. */
+	private waiting = false;
+	private checkTimer?: unknown;
+	/** The latest done check's nonce; only its line is accepted. */
+	private checkNonce?: string;
+	/** Checks sent whose turn has not started. */
+	private unstartedChecks = 0;
+	private checkTurn = false;
+	/** Set once the done answer is accepted. */
+	private done?: { readonly failed: boolean };
+	private doneTimer?: unknown;
+	private readonly stopping = new Set<string>();
 	private claudeApprovalStreamClosed = false;
 	private textDelta = false;
 	private nextRequest = 0;
@@ -207,6 +275,7 @@ export class BotNativeClient extends EventEmitter {
 		private readonly driver: BotNativeDriver,
 		private readonly mode: BotApprovalMode,
 		private readonly interrupt?: () => Promise<void>,
+		private readonly timers: BotNativeTimers = nativeTimers,
 	) {
 		super();
 		this.runner = credential.stream();
@@ -234,7 +303,9 @@ export class BotNativeClient extends EventEmitter {
 			this.flushText();
 			this.rejectPermissions();
 			this.closed = true;
-			if (
+			this.endWait();
+			if (this.done) this.settleDone();
+			else if (
 				this.terminal &&
 				!this.resultFailed &&
 				!this.claudeApprovalStreamClosed &&
@@ -319,6 +390,7 @@ export class BotNativeClient extends EventEmitter {
 	}
 	async cancel(): Promise<void> {
 		this.expired = true;
+		this.endWait();
 		this.rejectPermissions();
 		if (this.closed || !this.active) return;
 		if (this.driver === 'claude-code-cli')
@@ -353,6 +425,7 @@ export class BotNativeClient extends EventEmitter {
 		this.respond(id, optionId === 'allow' && !this.expired && this.active);
 	}
 	closeInput(): void {
+		this.endWait();
 		this.rejectPermissions();
 		this.process.stdin.end();
 	}
@@ -361,6 +434,8 @@ export class BotNativeClient extends EventEmitter {
 		this.removeAllListeners();
 	}
 	private write(value: unknown): void {
+		// After an accepted done answer the input may already be closed.
+		if (this.done && (this.closed || this.process.stdin.writableEnded)) return;
 		if (this.closed || this.process.stdin.writableLength > 262144) {
 			this.fail();
 			return;
@@ -469,7 +544,7 @@ export class BotNativeClient extends EventEmitter {
 					input: (request.input ?? {}) as JsonValue,
 					permission,
 				});
-				if (this.expired || !this.active) {
+				if (this.expired || !this.active || this.done) {
 					this.respond(permission.id, false);
 					return;
 				}
@@ -491,7 +566,16 @@ export class BotNativeClient extends EventEmitter {
 				e.subtype === 'background_tasks_changed' &&
 				Array.isArray(e.tasks)
 			) {
-				this.claudeHasBackgroundTasks = e.tasks.length > 0;
+				this.claudeTasks = e.tasks.map((raw) => {
+					const task = object(raw);
+					return {
+						id: String(task.task_id),
+						kind: String(task.task_type ?? 'task'),
+						description: String(task.description ?? ''),
+					};
+				});
+				if (this.done) this.stopTasks();
+				else if (this.waiting) this.emitWait();
 			} else if (
 				e.type === 'system' &&
 				e.subtype === 'task_notification' &&
@@ -499,8 +583,14 @@ export class BotNativeClient extends EventEmitter {
 			) {
 				// Claude queues a turn per completed or failed background task.
 				this.claudePendingWakeups++;
+				if (this.waiting) this.emitWait();
 			} else if (e.type === 'system' && e.subtype === 'init') {
-				if (this.claudePendingWakeups > 0) this.claudePendingWakeups--;
+				// One init per check sent is the check's own, so a check never
+				// accounts for a notification's turn, whichever starts first.
+				this.checkTurn = this.unstartedChecks > 0;
+				if (this.checkTurn) this.unstartedChecks--;
+				else if (this.claudePendingWakeups > 0) this.claudePendingWakeups--;
+				this.endWait();
 			} else if (e.type === 'system' && e.subtype === 'task_progress') {
 				this.update({
 					sessionUpdate: 'plan',
@@ -565,13 +655,33 @@ export class BotNativeClient extends EventEmitter {
 					});
 				}
 			} else if (e.type === 'result') {
-				this.terminal =
-					!this.claudeHasBackgroundTasks && this.claudePendingWakeups === 0;
-				this.resultFailed ||= e.is_error === true || e.subtype !== 'success';
 				if (!this.textDelta && typeof e.result === 'string')
 					this.text(e.result);
+				// The done answer already decided the outcome.
+				if (this.done) return;
+				const failed = e.is_error === true || e.subtype !== 'success';
+				const checked = this.checkTurn;
+				this.checkTurn = false;
+				if (
+					!failed &&
+					!this.expired &&
+					this.active &&
+					this.checkNonce !== undefined &&
+					typeof e.result === 'string' &&
+					saysDone(e.result, this.checkNonce)
+				) {
+					this.acceptDone();
+					return;
+				}
+				if (checked) this.emit('done-answer', 'waiting');
+				this.terminal =
+					this.claudeTasks.length === 0 &&
+					this.claudePendingWakeups === 0 &&
+					this.unstartedChecks === 0;
+				this.resultFailed ||= failed;
 				// A background notification can wake Claude for another turn.
 				if (this.terminal) this.closeInput();
+				else this.startWait();
 			}
 		} else {
 			if (e.type === 'turn.completed') this.terminal = true;
@@ -638,6 +748,116 @@ export class BotNativeClient extends EventEmitter {
 			}
 		}
 	}
+	private emitWait(): void {
+		const wait: BotNativeWait = {
+			waiting: this.waiting,
+			items: this.claudeTasks.map((task) => ({
+				id: this.credential.redact(task.id),
+				kind: this.credential.redact(task.kind),
+				// Redacted before anything cuts it, so no part of a secret stays.
+				description: this.credential.redact(task.description),
+			})),
+			followUps: this.claudePendingWakeups,
+		};
+		this.emit('background-wait', wait);
+	}
+	private startWait(): void {
+		if (this.expired || !this.active || this.closed) return;
+		this.waiting = true;
+		this.armCheck();
+		this.emitWait();
+	}
+	private endWait(): void {
+		if (this.checkTimer !== undefined)
+			this.timers.clearTimeout(this.checkTimer);
+		this.checkTimer = undefined;
+		if (!this.waiting) return;
+		this.waiting = false;
+		this.emitWait();
+	}
+	/**
+	 * ADR-0028: a repeating timer the owner approved on 2026-11-28 in ticket
+	 * 680 ("asks again after another 5 minutes"), recorded in ADR-0149. A
+	 * process held open by background work emits nothing that could be watched.
+	 */
+	private armCheck(): void {
+		if (this.checkTimer !== undefined)
+			this.timers.clearTimeout(this.checkTimer);
+		this.checkTimer = this.timers.setTimeout(
+			() => this.askWhetherDone(),
+			BOT_DONE_CHECK_INTERVAL_MS,
+		);
+		(this.checkTimer as { unref?: () => void } | undefined)?.unref?.();
+	}
+	private askWhetherDone(): void {
+		this.checkTimer = undefined;
+		if (!this.waiting || this.expired || !this.active || this.closed) return;
+		this.armCheck();
+		// The agent cannot answer while the user is deciding.
+		if (this.approvals.size > 0) return;
+		this.checkNonce = randomBytes(8).toString('hex');
+		this.unstartedChecks++;
+		const text = doneCheck(
+			this.checkNonce,
+			this.claudeTasks.map((task) => ({
+				...task,
+				kind: this.credential.redact(task.kind),
+				description: this.credential.redact(task.description),
+			})),
+			this.claudePendingWakeups,
+		);
+		this.emit('done-check', this.credential.redact(text));
+		this.write({
+			type: 'user',
+			message: { role: 'user', content: text },
+			parent_tool_use_id: null,
+			session_id: '',
+		});
+	}
+	/** The agent says its task is finished, so the execution now ends. */
+	private acceptDone(): void {
+		this.endWait();
+		this.done = {
+			failed: this.resultFailed || this.claudeApprovalStreamClosed,
+		};
+		this.emit('done-answer', 'done');
+		this.rejectPermissions();
+		// Bounds shutdown only. The host then ends the process group.
+		this.doneTimer = this.timers.setTimeout(
+			() => this.settleDone(),
+			BOT_DONE_SHUTDOWN_MS,
+		);
+		(this.doneTimer as { unref?: () => void } | undefined)?.unref?.();
+		this.stopTasks();
+	}
+	/** Subagents first, so that ending one of their commands cannot resume them. */
+	private stopTasks(): void {
+		if (this.closed || this.process.stdin.writableEnded) return;
+		if (this.claudeTasks.length === 0) {
+			this.closeInput();
+			return;
+		}
+		const agentsFirst = [...this.claudeTasks].sort(
+			(a, b) =>
+				Number(b.kind === 'local_agent') - Number(a.kind === 'local_agent'),
+		);
+		for (const task of agentsFirst) {
+			if (this.stopping.has(task.id)) continue;
+			this.stopping.add(task.id);
+			this.write({
+				type: 'control_request',
+				request_id: `stop-${++this.nextRequest}`,
+				request: { subtype: 'stop_task', task_id: task.id },
+			});
+		}
+	}
+	private settleDone(): void {
+		if (this.doneTimer !== undefined) this.timers.clearTimeout(this.doneTimer);
+		this.doneTimer = undefined;
+		if (this.backgroundStopped || this.done?.failed)
+			this.reject(this.failure());
+		else this.finish();
+	}
 	private respond(id: string, allow: boolean): void {
 		const a = this.approvals.get(id);
 		if (!a) return;
@@ -666,15 +886,28 @@ export class BotNativeClient extends EventEmitter {
 		this.turn = undefined;
 		turn?.resolve();
 	}
+	private failure(): BotError {
+		if (this.backgroundStopped) return new BotBackgroundStoppedError();
+		// A closed approval stream after a done answer is not what failed it.
+		const approvalLost = this.done ? false : this.claudeApprovalStreamClosed;
+		return new BotError(
+			'unavailable',
+			approvalLost
+				? 'Claude Code lost its approval channel before a tool could run.'
+				: 'The native agent could not complete the request. See Runner output for details.',
+		);
+	}
 	private fail(): void {
-		const error = this.backgroundStopped
-			? new BotBackgroundStoppedError()
-			: new BotError(
-					'unavailable',
-					this.claudeApprovalStreamClosed
-						? 'Claude Code lost its approval channel before a tool could run.'
-						: 'The native agent could not complete the request. See Runner output for details.',
-				);
+		this.endWait();
+		// A broken pipe or frame while shutting down does not undo the answer.
+		if (this.done) {
+			this.settleDone();
+			return;
+		}
+		this.reject(this.failure());
+		this.emit('failure');
+	}
+	private reject(error: BotError): void {
 		const init = this.initialization;
 		this.initialization = undefined;
 		if (init) {
@@ -685,6 +918,5 @@ export class BotNativeClient extends EventEmitter {
 		this.turn = undefined;
 		turn?.reject(error);
 		this.active = false;
-		this.emit('failure');
 	}
 }

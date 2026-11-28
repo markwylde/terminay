@@ -9,6 +9,7 @@ import {
 	acceptChatFiles,
 	attachmentView,
 	type BotEntry,
+	backgroundWaitView,
 	botActivity,
 	botAvatarStyle,
 	chatFileKind,
@@ -595,4 +596,59 @@ test('bot avatar style defaults to critter unless explicitly character', () => {
 	assert.equal(botAvatarStyle({}), 'critter');
 	assert.equal(botAvatarStyle({ avatarStyle: 'critter' }), 'critter');
 	assert.equal(botAvatarStyle({ avatarStyle: 'character' }), 'character');
+});
+
+test('a held session says what holds it, what was asked and how it answered', () => {
+	const time = (at: number) => `T${at}`;
+	assert.equal(backgroundWaitView({ state: 'running' }, time), null);
+	const backgroundWait = {
+		waitingSince: 1,
+		items: [
+			{ id: 'a', kind: 'local_bash', description: 'watch CI' },
+			{ id: 'b', kind: 'local_agent', description: 'research' },
+			{ id: 'c', kind: 'other', description: '' },
+		],
+		omitted: 2,
+		followUps: 0,
+		lastActivityAt: 3,
+		checks: 2,
+		lastCheckAt: 4,
+		lastAnswer: 'waiting',
+	} as const;
+	const live = backgroundWaitView({ state: 'running', backgroundWait }, time);
+	assert.equal(live?.waiting, true);
+	assert.equal(live?.headline, 'Held open by background work since T1.');
+	assert.deepEqual(
+		live?.items.map((i) => `${i.kind}: ${i.text}`),
+		['Shell or Monitor: watch CI', 'Subagent: research', 'Background task: c'],
+	);
+	assert.deepEqual(live?.facts, [
+		'2 more not listed.',
+		'Last activity at T3.',
+		'Asked 2 times whether it is done, last at T4.',
+		'It last said it is still waiting.',
+	]);
+	const over = backgroundWaitView(
+		{
+			state: 'completed',
+			backgroundWait: {
+				...backgroundWait,
+				waitingSince: null,
+				items: [],
+				omitted: 0,
+				followUps: 1,
+				checks: 1,
+				lastAnswer: 'done',
+			},
+		},
+		time,
+	);
+	assert.equal(over?.waiting, false);
+	assert.equal(over?.headline, 'Waited on background work after a turn ended.');
+	assert.deepEqual(over?.facts, [
+		'Waiting for a follow-up turn for a finished background task.',
+		'Last activity at T3.',
+		'Asked once whether it is done, last at T4.',
+		'It said it is done.',
+	]);
 });

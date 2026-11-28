@@ -50,7 +50,7 @@ const workCount = (lane: Lane): number =>
 /**
  * Four work executions, one user-message coordination slot, and one check-in
  * slot that nothing else uses, so a stuck check-in can never hold up work or
- * a user's correction (ADR-0140). No idle provider is retained.
+ * a user's correction (ADR-0149). No idle provider is retained.
  */
 export class BotTurnQueue {
 	private lanes = new Map<string, Lane>();

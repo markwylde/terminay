@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BotTranscript } from './BotTranscript';
 import { formatWhen } from './BotTriggersPanel';
 import {
+	backgroundWaitView,
 	FAILURE_KIND_LABELS,
 	OUTCOME_LABELS,
 	SESSION_ORIGIN_CHIPS,
@@ -55,6 +56,30 @@ export function formatDuration(ms: number): string {
 	const m = Math.floor(s / 60);
 	if (m < 60) return `${m}m ${s % 60}s`;
 	return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function BackgroundWait({ record }: { record: BotSessionRecord }) {
+	const view = backgroundWaitView(record);
+	if (!view) return null;
+	return (
+		<div
+			className={`bots-note bots-held${view.waiting ? ' bots-note--warn' : ''}`}
+			data-terminay-bot-session-background={view.waiting ? 'waiting' : 'over'}
+		>
+			<p className="bots-held__headline">{view.headline}</p>
+			{view.items.length ? (
+				<ul className="bots-held__items">
+					{view.items.map((item) => (
+						<li key={item.key}>
+							<span className="bots-faint">{item.kind}</span>{' '}
+							<span className="bots-mono">{item.text}</span>
+						</li>
+					))}
+				</ul>
+			) : null}
+			<p className="bots-faint">{view.facts.join(' ')}</p>
+		</div>
+	);
 }
 
 export function BotSessionsPanel({
@@ -410,6 +435,7 @@ function SessionDetail({
 			{record.reason ? (
 				<p className="bots-note bots-note--warn">Reason: {record.reason}</p>
 			) : null}
+			<BackgroundWait record={record} />
 			{startupSummary(record) ? (
 				<div
 					className="bots-note"

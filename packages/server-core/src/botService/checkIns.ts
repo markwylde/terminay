@@ -1,6 +1,6 @@
 import type { BotSessionOrigin, BotSessionRecord } from '@terminay/protocol';
 
-/** How often a running execution is looked at (ADR-0140). */
+/** How often a running execution is looked at (ADR-0149). */
 export const CHECK_IN_INTERVAL_MS = 15 * 60_000;
 const LIVE = ['running', 'needs-you'];
 const ACTIVE = ['queued', 'running', 'needs-you'];

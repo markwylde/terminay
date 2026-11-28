@@ -143,7 +143,17 @@ test('a turn survives a long quiet wait after its first result', async (t) => {
 	await Promise.resolve();
 	assert.equal(settled, false);
 	f.receive(backgroundTasks());
-	f.receive({ ...success, result: 'monitor finished' });
+	// Drain the check turns queued during the quiet wait before exiting.
+	const checks = f.sent.filter(
+		(frame) =>
+			frame.type === 'user' &&
+			String(frame.message.content).startsWith('Terminay check'),
+	);
+	assert.ok(checks.length > 0);
+	for (const _check of checks) {
+		f.receive({ type: 'system', subtype: 'init' });
+		f.receive({ ...success, result: 'monitor finished' });
+	}
 	f.process.emit('close', 0);
 	await turn;
 });
