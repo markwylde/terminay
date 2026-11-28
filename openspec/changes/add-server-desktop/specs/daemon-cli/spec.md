@@ -59,6 +59,18 @@ While it runs, the setup command SHALL report each step and the package manager'
 
 A system-scope install SHALL carry a desktop-setup helper beside the upgrade helper: a path unit that watches one request file the run-as account may change, and a root oneshot service whose command line is fixed to that install's own `terminay daemon desktop install`. The path unit SHALL NOT pass the file on and the service SHALL NOT read it, so nothing the run-as account writes can choose what is installed. The service SHALL have a start deadline and a start-rate limit, so repeated requests cannot run the package manager continuously. Install and upgrade SHALL both render and enable the helper, and uninstall SHALL remove it. A user-scope install SHALL have no helper.
 
+The trigger SHALL be a regular file in a root-controlled directory. The run-as account may signal a request but SHALL NOT be able to replace the trigger. Install, upgrade and repair SHALL NOT follow links or change the metadata of account-selected files. They SHALL leave the watch enabled and active without starting a desktop installation.
+
+#### Scenario: Upgrade from an account-writable trigger directory
+
+- **WHEN** an upgrade encounters a previous trigger in a directory writable by the run-as account
+- **THEN** the helper watches a trigger under root control without following the previous entry or requiring an operator step
+
+#### Scenario: Retry interrupted activation
+
+- **WHEN** the units already exist and the watch is disabled or inactive
+- **THEN** repeating install or upgrade restores the watch and does not request package installation
+
 #### Scenario: Server requests setup
 
 - **WHEN** the server changes the request file on a system-scope install

@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { lstat, open, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import type {
@@ -33,7 +33,8 @@ export const DESKTOP_SETUP_STATUS_FILE =
 	'/run/terminay-desktop-setup/status.json';
 /** Names another status file to read; see `defaultDesktopSetupHost`. */
 export const DESKTOP_SETUP_STATUS_FILE_ENV = 'TERMINAY_DESKTOP_SETUP_STATUS_FILE';
-/** The helper's trigger, beside the upgrade helper's request file. */
+/** The helper's trigger, in a separate root-owned directory. */
+export const DESKTOP_SETUP_REQUEST_DIRECTORY = 'terminay-desktop-setup';
 export const DESKTOP_SETUP_REQUEST_FILE = 'desktop-setup';
 /** The official image's release directory. */
 export const IMAGE_RELEASE_DIRECTORY = '/opt/terminay';
@@ -122,6 +123,7 @@ export interface DesktopSetupHost {
 				readonly uid: number;
 				readonly mode: number;
 				readonly directory: boolean;
+				readonly regular: boolean;
 		  }
 		| undefined
 	>;
@@ -155,15 +157,23 @@ export function defaultDesktopSetupHost(options: {
 		env: options.env,
 		upgradeRequestFile: options.upgradeRequestFile,
 		stat: (path) =>
-			stat(path).then(
+			lstat(path).then(
 				(found) => ({
 					uid: found.uid,
 					mode: found.mode & 0o7777,
 					directory: found.isDirectory(),
+					regular: found.isFile() && found.nlink === 1,
 				}),
 				() => undefined,
 			),
-		touch: (path) => writeFile(path, ''),
+		touch: async (path) => {
+			const file = await open(path, constants.O_WRONLY | constants.O_NOFOLLOW);
+			try {
+				await file.truncate(0);
+			} finally {
+				await file.close();
+			}
+		},
 		readStatus: () =>
 			readFile(statusFile, 'utf8').then(
 				(text) => text,
@@ -319,10 +329,17 @@ export function createServerDesktopSetup(
 		const command = `sudo ${cliName} daemon desktop install`;
 		const upgrade = await host.upgradeRequestFile().catch(() => undefined);
 		if (upgrade === undefined) return { kind: 'command', command };
-		const trigger = join(dirname(upgrade), DESKTOP_SETUP_REQUEST_FILE);
+		const directory = join(dirname(dirname(upgrade)), DESKTOP_SETUP_REQUEST_DIRECTORY);
+		const trigger = join(directory, DESKTOP_SETUP_REQUEST_FILE);
 		// An install made before the helper existed has no trigger until root
 		// next upgrades it.
-		if ((await host.stat(trigger)) === undefined)
+		const parent = await host.stat(directory);
+		if (
+			parent?.directory !== true ||
+			parent.uid !== 0 ||
+			(parent.mode & 0o022) !== 0 ||
+			(await host.stat(trigger))?.regular !== true
+		)
 			return { kind: 'command', command };
 		return { kind: 'helper', trigger, command };
 	};
