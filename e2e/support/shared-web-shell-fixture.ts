@@ -42,7 +42,9 @@ export async function installSessionTransportHostStub(
 	});
 }
 
-export async function startSharedWebShellFixture(): Promise<SharedWebShellFixture> {
+export async function startSharedWebShellFixture(
+	port = 0,
+): Promise<SharedWebShellFixture> {
 	const repoDir = path.resolve(import.meta.dirname, '../..');
 	const server: ViteDevServer = await createServer({
 		configFile: false,
@@ -50,8 +52,8 @@ export async function startSharedWebShellFixture(): Promise<SharedWebShellFixtur
 		logLevel: 'error',
 		server: {
 			host: '127.0.0.1',
-			port: 0,
-			strictPort: false,
+			port,
+			strictPort: port !== 0,
 		},
 		resolve: {
 			alias: {
