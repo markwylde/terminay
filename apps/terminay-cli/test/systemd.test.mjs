@@ -175,8 +175,9 @@ test('installing the helper hands only the request directory to the run-as accou
 			await readFile(helper.serviceUnitPath, 'utf8'),
 			/allow-downgrade/u,
 		);
-		assert.deepEqual(fake.invocations(), [
-			`chown -R ada:ada ${helper.requestDirectory}`,
+		const initial = fake.invocations();
+		assert.ok(initial[0].startsWith(`chown ada:ada ${helper.requestDirectory} `));
+		assert.deepEqual(initial.slice(1), [
 			'systemctl daemon-reload',
 			'systemctl enable --now terminay-upgrade.path',
 			'systemctl enable --now terminay-upgrade-latest.path',
@@ -208,11 +209,12 @@ test('installing the helper hands only the request directory to the run-as accou
 		// again afterwards, and no upgrade is asked for by accident.
 		const rearm = fake.invocations().length;
 		await installUpgradeHelper({ layout, runAs: 'eve', systemd });
-		assert.deepEqual(fake.invocations().slice(rearm), [
+		const repaired = fake.invocations().slice(rearm);
+		assert.ok(repaired[3].startsWith(`chown eve:eve ${helper.requestDirectory} `));
+		assert.deepEqual(repaired.filter((line) => !line.startsWith('chown ')), [
 			'id -u eve',
 			'systemctl stop terminay-upgrade.path',
 			'systemctl stop terminay-upgrade-latest.path',
-			`chown -R eve:eve ${helper.requestDirectory}`,
 			'systemctl enable --now terminay-upgrade.path',
 			'systemctl enable --now terminay-upgrade-latest.path',
 		]);

@@ -14,7 +14,9 @@ import { buildSystemdImage, DEFAULT_IMAGE, stageCli } from './standalone-systemd
  *
  * It proves, from what systemd and the status file say, that changing the
  * trigger starts the one fixed command whatever is written into it, that the
- * run-as account can read progress and cannot write it, that a run killed
+ * run-as account cannot replace the trigger, that reinstall repairs a disabled
+ * or stopped watch without starting setup, that the run-as account can read
+ * progress and cannot write it, that a run killed
  * mid-install is recovered from by the next, that the packages enable and
  * start no unit, that a burst of triggers is rate-limited, and that removing
  * the helper leaves nothing. See `desktop-setup-systemd/driver.mjs`.

@@ -55,6 +55,11 @@ RUN npm ci \
 USER root
 RUN npx playwright install-deps chromium
 
+# The server checks the desktop setup trigger's parent belongs to root. The
+# E2E stand-in uses the same layout and can signal the trigger as node.
+RUN install -d -m 0755 /var/lib/terminay-desktop-setup \
+    && install -o node -g node -m 0600 /dev/null /var/lib/terminay-desktop-setup/desktop-setup
+
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends libgtk-3-0 libxss1 xauth zsh \
     && rm -rf /var/lib/apt/lists/*

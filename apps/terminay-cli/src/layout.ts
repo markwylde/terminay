@@ -35,6 +35,7 @@ export const INSTALL_LATEST_REQUEST_FILE = 'install-latest';
  */
 export const DESKTOP_SETUP_PATH_UNIT_NAME = 'terminay-desktop-setup.path';
 export const DESKTOP_SETUP_SERVICE_UNIT_NAME = 'terminay-desktop-setup.service';
+export const DESKTOP_SETUP_REQUEST_DIRECTORY = 'terminay-desktop-setup';
 export const DESKTOP_SETUP_REQUEST_FILE = 'desktop-setup';
 
 /**
@@ -72,9 +73,10 @@ export interface UpgradeHelperLayout {
 	readonly latestPathUnitPath: string;
 	readonly latestServiceUnitPath: string;
 	readonly latestRequestFile: string;
-	/** The desktop-setup pair, and its trigger in the same directory. */
+	/** The desktop-setup pair and its separate, root-owned trigger directory. */
 	readonly desktopPathUnitPath: string;
 	readonly desktopServiceUnitPath: string;
+	readonly desktopRequestDirectory: string;
 	readonly desktopRequestFile: string;
 }
 
@@ -101,6 +103,9 @@ export function installLayout(
 		const prefix = join(systemRoot, 'opt/terminay');
 		const units = join(systemRoot, 'etc/systemd/system');
 		const requestDirectory = join(systemRoot, 'var/lib/terminay-upgrade');
+		const desktopRequestDirectory = join(
+			systemRoot, 'var/lib', DESKTOP_SETUP_REQUEST_DIRECTORY,
+		);
 		return Object.freeze({
 			scope,
 			prefix,
@@ -121,7 +126,8 @@ export function installLayout(
 				latestRequestFile: join(requestDirectory, INSTALL_LATEST_REQUEST_FILE),
 				desktopPathUnitPath: join(units, DESKTOP_SETUP_PATH_UNIT_NAME),
 				desktopServiceUnitPath: join(units, DESKTOP_SETUP_SERVICE_UNIT_NAME),
-				desktopRequestFile: join(requestDirectory, DESKTOP_SETUP_REQUEST_FILE),
+				desktopRequestDirectory,
+				desktopRequestFile: join(desktopRequestDirectory, DESKTOP_SETUP_REQUEST_FILE),
 			}),
 		});
 	}
