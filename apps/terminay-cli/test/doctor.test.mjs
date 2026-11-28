@@ -48,6 +48,7 @@ async function machine(t, overrides = {}) {
 		desktop: {
 			debian: async () => true,
 			missing: async () => overrides.desktopMissing ?? ['Xtigervnc'],
+			missingBrowsers: async () => overrides.browsersMissing ?? [],
 			processes: async () => overrides.processes ?? [],
 			readable: async () => overrides.cookieReadable ?? true,
 			helperInstalled: async () =>
@@ -226,6 +227,20 @@ test('a desktop that is set up passes, running or not', async (t) => {
 			ok: true,
 			detail:
 				'set up, every program present; setup helper installed; no desktop is running',
+		},
+	);
+	// The desktop runs without a browser: said, with the command, and passing.
+	const bare = await machine(t, {
+		desktopMissing: [],
+		browsersMissing: ['chromium', 'firefox-esr'],
+	});
+	assert.deepEqual(
+		(await runDoctor(bare.context, bare.dependencies)).checks.at(-1),
+		{
+			name: 'desktop',
+			ok: true,
+			detail:
+				'set up, without chromium and firefox-esr (sudo terminay daemon desktop install adds them); setup helper installed; no desktop is running',
 		},
 	);
 	const running = await machine(t, {

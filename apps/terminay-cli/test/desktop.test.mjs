@@ -6,7 +6,16 @@ import {
 	statSync,
 	writeFileSync,
 } from 'node:fs';
-import { link, lstat, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+	link,
+	lstat,
+	mkdtemp,
+	mkdir,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -16,6 +25,7 @@ import {
 	DESKTOP_PACKAGES,
 	DESKTOP_SETUP_HELPER_ENVIRONMENT,
 	HELPER_MINIMUM_RUN_MS,
+	missingDesktopBrowsers,
 	missingDesktopPrograms,
 	packageManagerEnvironment,
 	parseAptStatusLine,
@@ -454,6 +464,73 @@ test('apt status lines and the program check', async () => {
 			list: async () => ['seccomp.so'],
 		}),
 		[],
+	);
+});
+
+test('setup installs the browsers, and a desktop set up without them gets them from a second run', async (t) => {
+	assert.ok(DESKTOP_PACKAGES.includes('chromium'));
+	assert.ok(DESKTOP_PACKAGES.includes('firefox-esr'));
+
+	// Either name Debian gives Firefox will do; Chromium has one.
+	assert.deepEqual(
+		await missingDesktopBrowsers({
+			executable: async (path) => path === '/usr/bin/firefox',
+		}),
+		['chromium'],
+	);
+	assert.deepEqual(
+		await missingDesktopBrowsers({ executable: async () => true }),
+		[],
+	);
+	// A browser is not one of the desktop's own programs.
+	assert.deepEqual(
+		await missingDesktopPrograms({
+			executable: async (path) => !/chromium|firefox/u.test(path),
+			list: async () => ['seccomp.so'],
+		}),
+		[],
+	);
+
+	// The desktop's programs are there and the browsers are not: the run does
+	// not exit early.
+	const m = await machine(t);
+	const marker = join(m.root, 'installed');
+	m.host.executable = async (path) =>
+		existsSync(marker) || !/chromium|firefox/u.test(path);
+	m.host.list = async () => ['seccomp.so'];
+	assert.equal(
+		await runDesktopInstall([], m.write, m.host),
+		DESKTOP_INSTALL_EXIT.ok,
+	);
+	assert.match(m.fake.invocations().at(-1), /^apt-get install .* chromium firefox-esr$/u);
+
+	// apt says it worked, yet a browser is not there.
+	const hollow = await machine(t, { aptGet: 'exit 0' });
+	hollow.host.executable = async (path) => !/chromium/u.test(path);
+	hollow.host.list = async () => ['seccomp.so'];
+	assert.equal(
+		await runDesktopInstall([], hollow.write, hollow.host),
+		DESKTOP_INSTALL_EXIT.failed,
+	);
+	const status = await readDesktopSetupStatus(hollow.statusDirectory);
+	assert.match(status.outcome.reason, /still missing: chromium\./u);
+});
+
+test('the server names the same packages setup installs', async () => {
+	const source = await readFile(
+		new URL(
+			'../../../packages/server-core/src/serverDesktop/support.ts',
+			import.meta.url,
+		),
+		'utf8',
+	);
+	const list = /SERVER_DESKTOP_PACKAGES[^=]*= Object\.freeze\(\[([^\]]*)\]\)/u.exec(
+		source,
+	);
+	assert.ok(list, 'the server package list was not found');
+	assert.deepEqual(
+		[...list[1].matchAll(/'([^']+)'/gu)].map((match) => match[1]),
+		[...DESKTOP_PACKAGES],
 	);
 });
 

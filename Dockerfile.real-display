@@ -14,7 +14,8 @@ FROM ${DOCKER_HUB}/node:24.15.0-${DEBIAN_RELEASE}-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# The server desktop's own package set, then the tools tests use to read what
+# The desktop session's packages (setup also installs browsers, which nothing
+# here runs), then the tools tests use to read what
 # the display holds.
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
