@@ -40,6 +40,7 @@ export function BotThreadPanel({
 	onDraftChange,
 	clearSentDraft,
 	inputRef,
+	escapeDisabled,
 	onClose,
 	onRootGone,
 	onObserved,
@@ -57,6 +58,7 @@ export function BotThreadPanel({
 	onDraftChange: (value: string) => void;
 	clearSentDraft: (sent: string) => void;
 	inputRef?: (element: HTMLTextAreaElement | null) => void;
+	escapeDisabled?: boolean;
 	onClose: () => void;
 	/** The root was deleted or the chat cleared. */
 	onRootGone: () => void;
@@ -76,8 +78,8 @@ export function BotThreadPanel({
 		[recovering, setRecovering] = useState<string>();
 	const scroller = useRef<HTMLDivElement>(null),
 		sentinel = useRef<HTMLDivElement>(null),
+		panel = useRef<HTMLElement>(null),
 		pinned = useRef(true),
-		composer = useRef<HTMLTextAreaElement | null>(null),
 		// Bumped whenever the panel starts over; late responses are dropped.
 		generation = useRef(0);
 	const gone = useRef(onRootGone);
@@ -213,9 +215,10 @@ export function BotThreadPanel({
 			unwatch();
 		};
 	}, [client, bot.id, rootId, upsert]);
-	// Opening a thread puts the caret in its composer.
+	// Opening a thread focuses the panel, never a text field: that would raise a
+	// touch device's keyboard over the thread. Escape and Tab work from here.
 	useEffect(() => {
-		composer.current?.focus();
+		panel.current?.focus({ preventScroll: true });
 	}, [rootId]);
 	const ordered = useMemo(
 		() => [...replies.values()].sort((a, b) => a.sequence - b.sequence),
@@ -293,20 +296,16 @@ export function BotThreadPanel({
 		}
 	};
 	const count = root?.thread?.replyCount ?? replies.size;
-	const composerRef = useCallback(
-		(element: HTMLTextAreaElement | null) => {
-			composer.current = element;
-			inputRef?.(element);
-		},
-		[inputRef],
-	);
 	return (
 		<aside
+			ref={panel}
+			tabIndex={-1}
 			className="bots-thread"
 			aria-label="Thread"
 			data-terminay-bot-thread={rootId}
 			onKeyDown={(event) => {
-				if (event.key !== 'Escape' || event.defaultPrevented) return;
+				if (event.key !== 'Escape' || event.defaultPrevented || escapeDisabled)
+					return;
 				event.preventDefault();
 				onClose();
 			}}
@@ -396,7 +395,7 @@ export function BotThreadPanel({
 				clearSentDraft={clearSentDraft}
 				label={`Reply in thread to ${bot.name}`}
 				placeholder="Reply in thread…"
-				inputRef={composerRef}
+				inputRef={inputRef}
 				onPosted={(result) => {
 					pinned.current = true;
 					if (result.message.threadId === rootId) upsert(result.message);

@@ -574,6 +574,8 @@ import {
 /** A request to open a chat message's menu. */
 export type MessageMenuRequest = Readonly<{
 	key: string;
+	/** The exact message surface to restore focus to when its menu closes. */
+	element: HTMLElement;
 	x: number;
 	y: number;
 	/** Opened with the context-menu key or Shift+F10, not the pointer. */
@@ -627,6 +629,7 @@ function messageMenuHandlers(
 			const rect = element.getBoundingClientRect();
 			onMessageMenu({
 				key,
+				element,
 				x: keyboard ? rect.left : event.clientX,
 				y: keyboard ? rect.bottom : event.clientY,
 				keyboard,

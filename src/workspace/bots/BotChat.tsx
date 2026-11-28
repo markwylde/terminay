@@ -111,6 +111,7 @@ export function BotChat({
 	threadRef.current = thread;
 	const [menu, setMenu] = useState<{
 		id: string;
+		element: HTMLElement;
 		/** The full stored text, which Edit message edits. */
 		text: string;
 		/** The formatted quote (of the selection, or else of `text`); '' when there is nothing to quote. */
@@ -129,7 +130,7 @@ export function BotChat({
 		threadComposer = useRef<HTMLTextAreaElement | null>(null),
 		// Which composer a quote just went into, to focus it after render.
 		caretPending = useRef<'main' | 'thread' | undefined>(undefined),
-		menuFor = useRef<string | undefined>(undefined);
+		menuFor = useRef<HTMLElement | undefined>(undefined);
 	const [editing, setEditing] = useState<{
 			id: string;
 			revision: number;
@@ -598,19 +599,15 @@ export function BotChat({
 	// A menu closed without moving focus elsewhere (Escape) hands it back to its message.
 	useEffect(() => {
 		if (menu) {
-			menuFor.current = menu.id;
+			menuFor.current = menu.element;
 			return;
 		}
-		const key = menuFor.current;
+		const element = menuFor.current;
 		menuFor.current = undefined;
 		const focused = document.activeElement;
-		if (!key || editing || clearing) return;
+		if (!element || editing || clearing) return;
 		if (focused && focused !== document.body && focused.isConnected) return;
-		document
-			.querySelector<HTMLElement>(
-				`.bots-chatwrap [data-terminay-message-key="${CSS.escape(key)}"][tabindex]`,
-			)
-			?.focus();
+		if (element.isConnected) element.focus();
 	}, [menu, editing, clearing]);
 	const revealAction = useCallback(
 		async (target: BotActionTarget): Promise<BotActionReveal> => {
@@ -637,12 +634,13 @@ export function BotChat({
 		onDraftChange(appendQuote(draftRef.current, text));
 	};
 	const openMenu = (
-		{ key, x, y, keyboard, selection }: MessageMenuRequest,
+		{ key, element, x, y, keyboard, selection }: MessageMenuRequest,
 		message: BotMessage,
 		inThread: string | undefined,
 	) =>
 		setMenu({
 			id: key,
+			element,
 			text: message.text,
 			quote: quoteMessage(selection ?? message.text),
 			revision: message.revision,
@@ -916,6 +914,7 @@ export function BotChat({
 					onDraftChange={(value) => setThreadDraft(thread, value)}
 					clearSentDraft={(sent) => clearSentThreadDraft(thread, sent)}
 					inputRef={threadComposerRef}
+					escapeDisabled={!!menu || !!editing || clearing}
 					onClose={closeThread}
 					onRootGone={() => setThread(undefined)}
 					onObserved={observePanel}

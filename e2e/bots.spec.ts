@@ -1761,7 +1761,11 @@ test.describe('Home: Bots', () => {
 				.locator('.context-menu__item .context-menu__label')
 				.allTextContents();
 		const shot = (name: string) =>
-			mainWindow.screenshot({ path: testInfo.outputPath(`${name}.png`) });
+			mainWindow.screenshot({
+				path: testInfo.outputPath(`${name}.png`),
+				// The panel fades in; capture it settled.
+				animations: 'disabled',
+			});
 
 		// A top-level exchange: the user's message and the bot's reply.
 		await send(tab, 'Plan the release');
@@ -1777,6 +1781,14 @@ test.describe('Home: Bots', () => {
 		await shot('thread-hover-action');
 		await action.click();
 		await expect(panel).toBeVisible();
+		// Opening focuses the panel, never the composer: no on-screen keyboard.
+		await expect(panel).toBeFocused();
+		await expect(panelComposer).not.toBeFocused();
+		await expect(panel.locator('[data-terminay-bot-thread-count]')).toHaveText(
+			'No replies yet',
+		);
+		await shot('thread-opened-unfocused');
+		await panelComposer.click();
 		await expect(panelComposer).toBeFocused();
 		await expect(panel.locator('[data-terminay-bot-thread-count]')).toHaveText(
 			'No replies yet',
@@ -1848,6 +1860,60 @@ test.describe('Home: Bots', () => {
 		await bar.hover();
 		await shot('thread-reply-bar');
 
+		// By keyboard: the menu opens the thread with the panel focused, Tab
+		// reaches the composer, and Escape closes a menu before the panel.
+		const rootMessage = botMessage.locator(
+			'.bots-md[data-terminay-message-key]',
+		);
+		await rootMessage.focus();
+		await mainWindow.keyboard.press('Shift+F10');
+		await expect(
+			menu.getByRole('menuitem', { name: 'Quote', exact: true }),
+		).toBeFocused();
+		await mainWindow.keyboard.press('ArrowDown');
+		await mainWindow.keyboard.press('Enter');
+		await expect(menu).toHaveCount(0);
+		await expect(panel).toBeFocused();
+		await shot('thread-opened-keyboard');
+		const threadMessage = panel
+			.locator('.bots-md[data-terminay-message-key]')
+			.first();
+		await threadMessage.focus();
+		await mainWindow.keyboard.press('Shift+F10');
+		await expect(menu).toBeVisible();
+		await mainWindow.keyboard.press('Escape');
+		await expect(menu).toHaveCount(0);
+		await expect(panel).toBeVisible();
+		await expect(threadMessage).toBeFocused();
+		await mainWindow.keyboard.press('Escape');
+		await expect(panel).toHaveCount(0);
+		await expect(rootMessage).toBeFocused();
+
+		// A pointer menu leaves focus in the panel; Escape dismisses only it.
+		await bar.click();
+		await expect(panel).toBeFocused();
+		await threadMessage.click({ button: 'right' });
+		await expect(menu).toBeVisible();
+		await mainWindow.keyboard.press('Escape');
+		await expect(menu).toHaveCount(0);
+		await expect(panel).toBeVisible();
+		await mainWindow.keyboard.press('Escape');
+		await expect(panel).toHaveCount(0);
+		await expect(rootMessage).toBeFocused();
+
+		await bar.click();
+		await expect(panel).toBeFocused();
+		for (let presses = 0; presses < 30; presses++) {
+			await mainWindow.keyboard.press('Tab');
+			if (await panelComposer.evaluate((el) => el === document.activeElement))
+				break;
+		}
+		await expect(panelComposer).toBeFocused();
+		await panel.focus();
+		await mainWindow.keyboard.press('Escape');
+		await expect(panel).toHaveCount(0);
+		await expect(rootMessage).toBeFocused();
+
 		// Each thread keeps its own draft.
 		await userMessage.click({ button: 'right' });
 		expect(await labels()).toEqual([
@@ -1859,6 +1925,7 @@ test.describe('Home: Bots', () => {
 		await menu
 			.getByRole('menuitem', { name: 'Reply in thread', exact: true })
 			.click();
+		await expect(panel).toBeFocused();
 		await expect(panelComposer).toHaveValue('');
 		// A pending file belongs to the thread it was attached in.
 		await panel.locator('[data-terminay-bot-attach-input]').setInputFiles({
@@ -1869,8 +1936,13 @@ test.describe('Home: Bots', () => {
 		await expect(
 			panel.locator('[data-terminay-bot-pending-images] li'),
 		).toHaveCount(1);
+		// Switching threads from a focused composer leaves the new one unfocused.
+		await panelComposer.click();
+		await expect(panelComposer).toBeFocused();
 		await bar.click();
 		await expect(panelComposer).toHaveValue('draft A');
+		await expect(panel).toBeFocused();
+		await expect(panelComposer).not.toBeFocused();
 		await expect(
 			panel.locator('[data-terminay-bot-pending-images] li'),
 		).toHaveCount(0);
@@ -1885,6 +1957,11 @@ test.describe('Home: Bots', () => {
 		await expect
 			.poll(() => panel.evaluate((el) => getComputedStyle(el).position))
 			.toBe('absolute');
+		await mainWindow.keyboard.press('Escape');
+		await expect(panel).toHaveCount(0);
+		await bar.click();
+		await expect(panel).toBeFocused();
+		await expect(panelComposer).not.toBeFocused();
 		await shot('thread-panel-narrow');
 		await nativeWindow.evaluate(
 			(window, next) => window.setBounds(next),
