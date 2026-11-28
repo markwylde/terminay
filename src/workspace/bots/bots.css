@@ -56,6 +56,10 @@
 	outline: 2px solid var(--bots-accent);
 	outline-offset: 1px;
 }
+/* The thread panel fills its edge, so its focus ring is drawn inside it. */
+.bots-ui .bots-thread:focus-visible {
+	outline-offset: -2px;
+}
 .bots-ui h2,
 .bots-ui h3,
 .bots-ui p {

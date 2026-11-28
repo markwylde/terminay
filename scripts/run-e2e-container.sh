@@ -86,6 +86,13 @@ else
   fi
 fi
 
+# The real standalone-desktop acceptance test shares its server's loopback.
+if [ -n "${TERMINAY_E2E_NETWORK:-}" ]; then
+  set -- --network "$TERMINAY_E2E_NETWORK" "$image" "$@"
+else
+  set -- "$image" "$@"
+fi
+
 docker create \
   --platform "$platform" \
   --name "$container" \
@@ -93,7 +100,7 @@ docker create \
   --shm-size 2g \
   --tmpfs /tmp:rw,exec,size=2g,mode=1777 \
   --env TERMINAY_E2E_REAL_MCP_APP \
-  "$image" \
+  --env TERMINAY_E2E_DESKTOP_PAIRING_URL \
   "$@" >/dev/null
 
 set +e

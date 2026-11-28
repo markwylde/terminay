@@ -2,6 +2,7 @@
 import { ScopeError } from './account.js';
 import { HOST_SETUP_COMMAND, runHostSetup } from './apparmor.js';
 import { DESKTOP_COMMAND, runDesktopCommand } from './desktop.js';
+import { installDesktopSetupHelperFromRecord } from './desktopHelper.js';
 import { HELP_TEXT, parseCommandLine, UsageError } from './args.js';
 import { runUpgradeCheck } from './commands/check.js';
 import { runContainerUpgrade } from './commands/containerUpgrade.js';
@@ -33,9 +34,11 @@ import {
 	resolveContext,
 	resolveForeground,
 } from './context.js';
+import { installLayout } from './layout.js';
 import { ManifestError } from './manifest.js';
 import { assertSupportedHost, UnsupportedHostError } from './platform.js';
 import { SocketError } from './socket.js';
+import { createSystemd } from './systemd.js';
 import { VerificationError } from './verify.js';
 
 /**
@@ -62,8 +65,19 @@ async function main(argv: readonly string[]): Promise<number> {
 	// Nor this: `daemon upgrade`, as root on a system-scope install, runs it
 	// from the release it has just switched to, so that release applies its
 	// own host setup before it starts (ADR-0120).
-	if (argv[0] === 'daemon' && argv[1] === HOST_SETUP_COMMAND)
-		return runHostSetup(argv.slice(2), write);
+	if (argv[0] === 'daemon' && argv[1] === HOST_SETUP_COMMAND) {
+		const exit = await runHostSetup(argv.slice(2), write);
+		if (exit !== 0) return exit;
+		await installDesktopSetupHelperFromRecord(
+			installLayout('system'),
+			createSystemd({ scope: 'system' }),
+		).catch((error: unknown) => {
+			write(
+				`Warning: the desktop setup helper could not be installed (${error instanceof Error ? error.message : String(error)}). The server desktop can still be set up with \`sudo terminay daemon desktop install\`.`,
+			);
+		});
+		return 0;
+	}
 	// `daemon desktop install` is matched here, before anything is parsed or
 	// resolved: its command line is fixed, it needs no install record, and the
 	// root helper and the official image run exactly it.

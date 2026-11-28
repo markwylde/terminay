@@ -33,6 +33,8 @@ did before this change.
 container with real systemd and the real package manager, the CLI installed
 system-scope. Result: `desktop setup under systemd: all checks passed`.
 
+- The run-as account can signal setup but cannot rename or unlink the trigger.
+- Reinstall restored a disabled watch and a stopped watch without changing the trigger inode or timestamp or starting the package service.
 - The trigger's content is ignored; only the fixed package list is installed.
 - The run-as account reads the status file and cannot write it.
 - An install killed at `installing 0.60` is recovered by the next run.
@@ -61,23 +63,35 @@ in Docker: 2 passed.
   wire: Show Desktop twice shows one window, and it reopens on setup in
   progress.
 
+## Browser workspace against the official container image (run)
+
+`sh scripts/run-server-desktop-e2e.sh`: 2 passed without retries. The
+standalone server was the Debian bookworm image previously built from this
+branch's Dockerfile as `terminay-pr678:local`. Playwright ran in the existing
+Electron E2E image with the current acceptance spec and fixture copied in.
+
+The Chromium fixture supplies the production browser workspace with an
+authenticated loopback WebSocket to the standalone server. The second browser
+enrolls a distinct device and connects with its one-use ticket. This exercises
+the standalone protocol and browser workspace. Hosted pairing and WebRTC are
+outside this run's scope.
+
+- The browser's Set up desktop action installed the real Debian packages.
+- A workspace terminal created after setup launched XFCE Terminal. The first
+  browser and the second browser as a viewer both rendered the same magenta
+  fixture window from the real framebuffer.
+- The viewer took control through the dropdown. The first browser switched
+  to viewing.
+- A replacement container from the same image, with a fresh data volume,
+  offered Set up desktop again.
+
 ## Not run
 
 - **A real Debian 13 system-scope install on a real host.** The only such host
   available is a live server, which was left untouched. The helper was
   exercised under real systemd on Debian 12 in a container instead (above).
-- **Guided setup started from the client against real packages.** The client
-  flow ran against a stand-in helper; the real install ran from the command the
-  server uses. The two were not joined in one run.
-- **`firefox` from a new terminal.** No browser was installed. A graphical
-  program was started on the display directly; a terminal's display environment
-  is covered by unit tests only.
+- **`firefox` from a new terminal.** The browser acceptance test launches
+  XFCE Terminal from a new workspace terminal.
 - **An in-app upgrade with a program open.** A server restart through the
   upgrade's restart path was run (above); an upgrade to a different release was
   not.
-- **Task 7.1's end-to-end spec.** No E2E drives a real desktop through the
-  client: the E2E image has no desktop packages and no Docker, and no harness
-  pairs a browser client with a standalone server. Seeing a program's window
-  from a browser client, a second client as a viewer, and take control through
-  the UI were not run end to end; the service-level equivalents ran against a
-  real display server (above).

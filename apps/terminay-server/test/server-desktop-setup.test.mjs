@@ -26,7 +26,8 @@ function machine(options = {}) {
 		script: [],
 		runs: 0,
 		paths: options.paths ?? {
-			'/var/lib/terminay-upgrade/desktop-setup': { uid: 1000, mode: 0o600, directory: false },
+			'/var/lib/terminay-desktop-setup': ROOT_DIRECTORY,
+			'/var/lib/terminay-desktop-setup/desktop-setup': { uid: 1000, mode: 0o600, directory: false, regular: true },
 		},
 	};
 	const start = () => {
@@ -104,7 +105,7 @@ test('a system-scope install sets up through the helper: one touch of the trigge
 	]);
 	// The trigger is the helper's own file, and nothing is written into it by
 	// anyone but a touch; the server ran no program at all.
-	assert.deepEqual(m.touches, [[0, '/var/lib/terminay-upgrade/desktop-setup']]);
+	assert.deepEqual(m.touches, [[0, '/var/lib/terminay-desktop-setup/desktop-setup']]);
 	assert.deepEqual(m.execs, []);
 });
 
@@ -220,6 +221,19 @@ test('where no elevation path works the manual command is reported and setup is 
 		},
 		'a system-scope install made before the helper existed': {
 			options: { paths: {} },
+			command: 'sudo /opt/terminay/current/bin/terminay daemon desktop install',
+		},
+		'an install with only the legacy trigger': {
+			options: { paths: { '/var/lib/terminay-upgrade/desktop-setup': ROOT } },
+			command: 'sudo /opt/terminay/current/bin/terminay daemon desktop install',
+		},
+		'an install with a writable trigger directory': {
+			options: {
+				paths: {
+					'/var/lib/terminay-desktop-setup': { ...ROOT_DIRECTORY, uid: 1000 },
+					'/var/lib/terminay-desktop-setup/desktop-setup': { ...ROOT, regular: true },
+				},
+			},
 			command: 'sudo /opt/terminay/current/bin/terminay daemon desktop install',
 		},
 		'a server started by hand': {

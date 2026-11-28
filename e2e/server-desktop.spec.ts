@@ -35,11 +35,12 @@ async function fakeHelper(root: string): Promise<FakeHelper> {
 	const directory = path.join(root, 'fake-helper');
 	await mkdir(directory, { recursive: true });
 	const upgrader = path.join(directory, 'terminay');
-	const request = path.join(directory, 'request');
-	const trigger = path.join(directory, 'desktop-setup');
+	// The E2E base image provisions the desktop trigger with a root-owned parent.
+	const request = '/var/lib/terminay-upgrade/request';
+	const trigger = '/var/lib/terminay-desktop-setup/desktop-setup';
 	const statusFile = path.join(directory, 'status.json');
 	// A system-scope install's upgrader: its check names the helper's request
-	// file, and the desktop trigger sits beside it.
+	// file, and the desktop trigger lives in its own sibling directory.
 	const check = {
 		schemaVersion: 1,
 		environment: 'system',
@@ -56,8 +57,6 @@ async function fakeHelper(root: string): Promise<FakeHelper> {
 		`#!/bin/sh\nif [ "$3" = "--check" ]; then\n\tcat <<'JSON'\n${JSON.stringify(check)}\nJSON\n\texit 0\nfi\nexit 1\n`,
 	);
 	await chmod(upgrader, 0o755);
-	await writeFile(request, '');
-	await writeFile(trigger, '');
 	const created = (await stat(trigger)).mtimeMs;
 	let seen = created;
 	let count = 0;
