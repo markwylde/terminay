@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -50,8 +51,7 @@ function context(overrides = {}) {
 }
 
 /** The workflow service, composed as a host composes it, and its MCP adapter. */
-function service({ beforeCommand } = {}) {
-  const store = new WorkflowStore();
+function service({ beforeCommand, store = new WorkflowStore() } = {}) {
   const typed = [];
   const templates = new WorkflowTemplateRepository(createMemoryWorkflowTemplateBackend());
   const registry = createWorkflowOperationRegistry({
@@ -97,6 +97,37 @@ const failure = (result, code) => {
   assert.equal(result.error.code, code);
   return result.error;
 };
+
+test("a workflow storage refusal stays internal over MCP and leaves the workflow unchanged", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "terminay-workflow-storage-"));
+  let full = false;
+  const store = new WorkflowStore({
+    directory,
+    fileOps: {
+      ...fs,
+      writeSync(...args) {
+        if (full) throw Object.assign(new Error("ENOSPC: private path"), { code: "ENOSPC", errno: -28, syscall: "write" });
+        return fs.writeSync(...args);
+      },
+    },
+  });
+  try {
+    const { call } = service({ store });
+    const created = await call("create_workflow", { name: "Storage", steps });
+    assert.equal(created.terminal, "session-a");
+    const before = store.get("session-a");
+    let published = 0;
+    store.onChange(() => { published += 1; });
+    full = true;
+    const result = await call("update_workflow_step", { step_id: before.workflow.steps[0].id, status: "running" });
+    failure(result, "internal");
+    assert.doesNotMatch(JSON.stringify(result), /ENOSPC|private path/);
+    assert.deepEqual(store.get("session-a"), before);
+    assert.equal(published, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 // 4.2 parsers
 

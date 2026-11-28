@@ -1,7 +1,7 @@
 // Deterministic native Claude control stream for host lifecycle tests.
 
 import { spawn } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { createInterface } from 'node:readline';
 import { MessageChannel } from 'node:worker_threads';
@@ -204,6 +204,57 @@ async function terminayActions() {
 	});
 }
 let ignoreCancel = false;
+/** Set while the fixture is held open by background work. */
+let held;
+/** An agent left waiting on a Monitor, with a command still running. */
+async function holdOnBackgroundWork(prompt) {
+	await postReply();
+	held = {
+		stillWaiting: prompt.includes('still-waiting'),
+		ignoreStop: prompt.includes('ignore-stop'),
+	};
+	const child = spawn(
+		process.execPath,
+		[
+			'-e',
+			"const {MessageChannel}=require('node:worker_threads');const {port1}=new MessageChannel();port1.on('message',()=>{});",
+		],
+		{ stdio: 'ignore' },
+	);
+	child.unref();
+	if (process.env.FAKE_CHILD_PID_FILE)
+		writeFileSync(process.env.FAKE_CHILD_PID_FILE, String(child.pid));
+	if (prompt.includes('ignore-eof')) {
+		const { port1 } = new MessageChannel();
+		port1.on('message', () => {});
+	}
+	send({ type: 'system', subtype: 'init' });
+	send({
+		type: 'system',
+		subtype: 'background_tasks_changed',
+		tasks: [
+			{
+				task_id: 'monitor-1',
+				task_type: 'local_bash',
+				description:
+					process.env.FAKE_HOLD_DESCRIPTION ?? 'Watch the CI build',
+			},
+		],
+	});
+	result();
+}
+function answerDoneCheck(prompt) {
+	send({ type: 'system', subtype: 'init' });
+	const line = prompt
+		.split('\n')
+		.find((candidate) => candidate.startsWith('TERMINAY-DONE '));
+	send({
+		type: 'result',
+		subtype: 'success',
+		is_error: false,
+		result: held.stillWaiting ? 'Still waiting for the build.' : line,
+	});
+}
 const result = () =>
 	send({ type: 'result', subtype: 'success', is_error: false });
 const lines = createInterface({ input: process.stdin });
@@ -221,6 +272,8 @@ lines.on('line', async (line) => {
 			!ignoreCancel
 		)
 			result();
+		else if (e.request.subtype === 'stop_task' && !held?.ignoreStop)
+			send({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
 	} else if (e.type === 'control_response') result();
 	else if (e.type === 'user') {
 		if (process.env.FAKE_RECORD_INPUT)
@@ -237,6 +290,15 @@ lines.on('line', async (line) => {
 		const context = briefing ? JSON.parse(briefing) : undefined;
 		if (context) prompt = context.triggerMessage?.text ?? prompt;
 		ignoreCancel = prompt.includes('ignore-cancel');
+		if (prompt.startsWith('Terminay check')) {
+			answerDoneCheck(prompt);
+			return;
+		}
+		if (prompt.includes('hold-background')) {
+			// Only the task's own words: a briefing may quote another execution's.
+			await holdOnBackgroundWork(prompt.trim().split('\n').at(-1));
+			return;
+		}
 		if (prompt === 'closed-approval-stream') {
 			send({
 				type: 'assistant',

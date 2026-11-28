@@ -263,7 +263,8 @@ export class WorkflowStore {
 			throw new WorkflowServiceError(
 				'write_failed',
 				'the workflow could not be saved',
-				{ cause: error instanceof Error ? error.message : String(error) },
+				undefined,
+				{ cause: error },
 			);
 		}
 	}

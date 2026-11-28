@@ -1285,6 +1285,22 @@ rollback command, or service-manager package. Those remain release gates in
 [Task 20](../tasks_completed/20-security-release-and-operations.md). The procedure above
 is the required operator runbook until those commands are packaged.
 
+### When the server cannot write
+
+When storage refuses a command, the client shows why, and the server log
+carries the underlying error and path. Terminals that are already open keep
+streaming, so an open terminal does not show that writes are working.
+
+| Client message | Fix |
+| --- | --- |
+| The server's disk is full | Free space on the filesystem named in the log, then retry. |
+| The server's disk quota is exceeded | Free space or raise the quota of the account that runs the server. |
+| The server's storage is read-only | Find why the filesystem is mounted read-only (often a disk error) and remount it. |
+| The server does not have permission to access its data folder | Give the account that runs the server ownership of the data root. |
+| The server does not have permission to access that file or folder | Fix the permissions of the path named in the log. |
+
+Terminay does not warn before a disk fills; monitor the data root's free space.
+
 ### Starting a corrupt store fresh
 
 State files are replaced durably, and a crash or power loss should leave the

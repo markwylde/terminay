@@ -28,6 +28,7 @@ export * from './refreshSchedule.js';
 export * from './serverDesktop.js';
 export * from './serverUpgrade.js';
 export * from './signalingBootstrap.js';
+export * from './storageFailure.js';
 export * from './transport.js';
 export * from './transportAuthentication.js';
 export * from './types.js';

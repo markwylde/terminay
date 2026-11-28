@@ -177,6 +177,8 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
 	readonly heartbeatTimers?: HeartbeatTimers;
 	readonly defaultQueryScope?: AuthScope;
 	readonly defaultCommandScope?: AuthScope;
+	/** The server data root. Only chooses the wording of a permission refusal. */
+	readonly dataRoot?: string;
 	/** Presentation-lane unconfirmed-bytes bound. Catch-up on a fresh
 	 * presentation is derived from this so a lowered host limit cannot
 	 * hydrate into congestion. */

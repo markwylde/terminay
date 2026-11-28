@@ -1,3 +1,4 @@
+import { storageFailure } from '../storageFailure.js';
 import { createHash } from 'node:crypto';
 import type { JsonValue, ProtocolError } from '@terminay/protocol';
 import type {
@@ -181,8 +182,9 @@ function stringArray(value: unknown, name: string): readonly string[] {
 function json(value: unknown): JsonValue {
 	return structuredClone(value) as JsonValue;
 }
-function mapError(error: unknown): ProtocolError {
-	if (isProtocolError(error)) return error;
+function mapError(error: unknown): unknown {
+	// The dispatcher names a write the storage refused (ADR-0150).
+	if (isProtocolError(error) || storageFailure(error)) return error;
 	if (error instanceof ShellProfileMutationError) {
 		const code =
 			error.code === 'not-found'

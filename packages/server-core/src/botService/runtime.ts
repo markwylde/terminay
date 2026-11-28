@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
 	BOT_OPAQUE_ATTACHMENT_MIME,
+	type BotBackgroundWait,
 	type BotExecutionRuntimeState,
 	type BotSessionOrigin,
 	type BotSessionRecord,
@@ -42,6 +43,8 @@ const string = { type: 'string' },
 		cursor: string,
 		limit: { type: 'integer', minimum: 1, maximum: 25 },
 	};
+export const BOT_CLEANUP_NOTE =
+	'Before you finish, stop any background tasks you started: background shells, Monitors, scheduled wakeups and background subagents. This session cannot end while they are pending.';
 export const BOT_RUNTIME_TOOLS = [
 	...BOT_TRIGGER_TOOLS,
 	...BOT_INSPECT_TOOLS,
@@ -167,6 +170,32 @@ export const BOT_RUNTIME_TOOLS = [
 		),
 	},
 ] as const;
+/**
+ * Adds what holds an execution open to its detail: at most 8 items with short
+ * descriptions, fewer when the whole result would not fit the tool budget.
+ */
+function withBackgroundWait<T extends object>(
+	detail: T,
+	wait: BotSessionRecord['backgroundWait'],
+): T | (T & { backgroundWait: BotBackgroundWait }) {
+	if (!wait) return detail;
+	const items = wait.items
+		.slice(0, 8)
+		.map((item) => ({ ...item, description: utf8(item.description, 128) }));
+	for (;;) {
+		const out = {
+			...detail,
+			backgroundWait: {
+				...wait,
+				items,
+				omitted: wait.omitted + wait.items.length - items.length,
+			},
+		};
+		if (!items.length || Buffer.byteLength(JSON.stringify(out)) <= 8192 - 512)
+			return out;
+		items.pop();
+	}
+}
 export class BotExecutionRuntime {
 	private secrets = new Map<string, { botId: string; token: string }>();
 	/** Hold a secret injected into an execution, so diagnostics redact it.
@@ -407,7 +436,8 @@ export class BotExecutionRuntime {
 			outcomeAction:
 				r.outcome?.action == null ? null : utf8(r.outcome.action, 512),
 		};
-		if (r.origin.kind !== 'failure') return base;
+		if (r.origin.kind !== 'failure')
+			return withBackgroundWait(base, r.backgroundWait);
 		const failures = r.origin.failures.map((f) => ({
 			...f,
 			reason: utf8(f.reason, 1024),
@@ -420,7 +450,7 @@ export class BotExecutionRuntime {
 			out.failures.pop();
 			out.failuresOmitted++;
 		}
-		return out;
+		return withBackgroundWait(out, r.backgroundWait);
 	}
 	/** `terminay`: whether this execution holds the `terminay` server. */
 	briefing(id: string, terminay = false): string {
@@ -602,6 +632,7 @@ export class BotExecutionRuntime {
 		return [
 			'You are the bot described above. This is a fresh execution, not a continuing provider chat.',
 			'Your provider output is diagnostic and is NOT posted to the user. Use chat_post to communicate. Bot posts do not trigger executions.',
+			BOT_CLEANUP_NOTE,
 			terminay
 				? "Use the scoped bot-runtime MCP tools for communication, coordination and managing your own triggers. You also have the `terminay` MCP server, with full control of the user's Terminay: projects, terminals, tabs, the window layout and settings. When the user asks for anything in Terminay, do it with those tools; never tell them you cannot or to ask Pixel."
 				: 'Use the scoped bot-runtime MCP tools for communication, coordination and managing your own triggers. You have no Terminay workspace/project/terminal authority.',

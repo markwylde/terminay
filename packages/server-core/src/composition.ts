@@ -2756,8 +2756,10 @@ function optionalCoreOptions(
 	| 'maxTerminalUnconfirmedBytes'
 	| 'defaultQueryScope'
 	| 'defaultCommandScope'
+	| 'dataRoot'
 > {
 	return {
+		...(options.dataRoot === undefined ? {} : { dataRoot: options.dataRoot }),
 		...(options.authenticate === undefined
 			? {}
 			: { authenticate: options.authenticate }),

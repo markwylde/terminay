@@ -169,6 +169,16 @@ test("workspace root update reports an older peer as precisely incompatible", as
   );
 });
 
+test("workspace root update passes a server storage failure through unchanged", async () => {
+  const failure = new ClientError("unavailable", "The server's disk is full", { retryable: true, details: { reason: "storage_full" } });
+  const workspace = new WorkspaceClient({ async command() { throw failure; } });
+
+  await assert.rejects(
+    workspace.updateProjectRoot({ projectId: "project-a", root: "/repo/a", expectedRevision: 2 }),
+    (error) => error === failure,
+  );
+});
+
 test("workspace view adapters expose only typed create and close operations", async () => {
   const calls = [];
   const workspace = new WorkspaceClient({

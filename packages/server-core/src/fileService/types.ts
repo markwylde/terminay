@@ -165,8 +165,9 @@ export class FileServiceError extends Error {
 		code: FileServiceErrorCode,
 		message: string,
 		details?: FileServiceErrorDetails,
+		options?: { readonly cause?: unknown },
 	) {
-		super(message);
+		super(message, options);
 		this.name = 'FileServiceError';
 		this.code = code;
 		this.details = details;

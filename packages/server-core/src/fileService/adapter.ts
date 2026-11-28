@@ -1,3 +1,4 @@
+import { storageFailure } from '../storageFailure.js';
 import type { AuthScope, JsonValue } from '@terminay/protocol';
 import { scopeAllows } from '../auth.js';
 import type { CommandRequest, QueryRequest } from '../types.js';
@@ -382,7 +383,7 @@ export class ServerFileAdapter {
 				[FILE_OPERATIONS.edit]: async (request) =>
 					serializeMutation(await this.edit(this.editRequest(request))),
 				[FILE_OPERATIONS.save]: async (request) =>
-					serializeMutation(await this.save(this.saveRequest(request))),
+					serializeSave(await this.save(this.saveRequest(request))),
 				[FILE_OPERATIONS.reload]: async (request) =>
 					serializeMutation(await this.reload(this.reloadRequest(request))),
 				[FILE_OPERATIONS.keepLocal]: async (request) =>
@@ -795,6 +796,12 @@ function serializeMutation<T>(result: FileMutationResult<T>): JsonValue {
 				: { details: asJson(error.details) }),
 		},
 	};
+}
+/** A save the storage refused fails the command, so the dispatcher names it
+ * (ADR-0150). Every other outcome is a result. */
+function serializeSave<T>(result: FileMutationResult<T>): JsonValue {
+	if (!result.ok && storageFailure(result.error)) throw result.error;
+	return serializeMutation(result);
 }
 function invalidRequest(message: string): FileServiceError {
 	return new FileServiceError('invalid_path', message);

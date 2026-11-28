@@ -98,10 +98,12 @@ export class TerminalFileDrops {
 			// Not recursive: a folder that already exists is not this drop's.
 			await mkdir(folder, { mode: 0o700 });
 			await ownedScratchDirectory(folder);
-		} catch {
+		} catch (error) {
 			throw new TerminalServiceError(
 				'upload_failed',
 				'the drop folder could not be created',
+				undefined,
+				{ cause: error },
 			);
 		}
 		const taken = new Set<string>();
@@ -167,6 +169,8 @@ export class TerminalFileDrops {
 				: new TerminalServiceError(
 						'upload_failed',
 						'the dropped file could not be written',
+						undefined,
+						{ cause: error },
 					);
 		}
 		upload.timer = this.idleTimer(upload.id);
@@ -189,6 +193,8 @@ export class TerminalFileDrops {
 				: new TerminalServiceError(
 						'upload_failed',
 						'the dropped file could not be written',
+						undefined,
+						{ cause: error },
 					);
 		}
 	}

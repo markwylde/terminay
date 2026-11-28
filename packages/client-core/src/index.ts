@@ -44,6 +44,7 @@ export * from './language.js';
 export * from './workspaceView.js';
 
 export { isClientConnectionLoss } from './connectionLoss.js';
+export { isServerStorageFailure } from './storageFailure.js';
 export * from './botEnvironment.js';
 export * from './botIo.js';
 export * from './botCredentials.js';

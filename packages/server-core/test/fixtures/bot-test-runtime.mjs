@@ -237,6 +237,7 @@ export async function runtime(root, options = {}) {
 		},
 	};
 	const hooks = {
+		...(options.nativeTimers ? { nativeTimers: options.nativeTimers } : {}),
 		...(options.terminayMcp === undefined
 			? {}
 			: { terminayMcp: options.terminayMcp }),

@@ -5,7 +5,11 @@ import type {
 import type { BotSessionSnapshot, JsonValue } from '@terminay/protocol';
 import { type BotAgentStream, type BotCredentialLease } from './credentials.js';
 import { BOT_KILL_DEADLINE_MS, type EngineDriver } from './engine.js';
-import { BotNativeClient, nativeArguments } from './native.js';
+import {
+	BotNativeClient,
+	type BotNativeTimers,
+	nativeArguments,
+} from './native.js';
 import { BotError } from './store.js';
 
 /** Read by the bot image's `terminay-tool-shell`. */
@@ -26,6 +30,8 @@ export interface BotAgentProcessOptions {
 		environment: Readonly<Record<string, string>>,
 	) => BotAgentStream;
 	readonly onClient: (client: BotNativeClient) => void;
+	/** Timers for the done check; tests inject a fake clock. */
+	readonly timers?: BotNativeTimers;
 	readonly released?: () => void;
 	readonly mcpServers?: readonly JsonValue[];
 	/** Container paths of the triggering message's images. */
@@ -134,6 +140,7 @@ export class BotAgentProcess {
 						{ user: 'root', deadlineMs: 5000 },
 					);
 				},
+				o.timers,
 			);
 			this.clientValue = client;
 			o.onClient(client);
