@@ -21,7 +21,10 @@ import type {
 	JsonValue,
 } from '@terminay/protocol';
 import {
+	BOT_BACKGROUND_DESCRIPTION_BYTES,
+	BOT_BACKGROUND_ITEMS_MAX,
 	BOT_STARTUP_RETRIES_DEFAULT,
+	type BotBackgroundWait,
 	botAttachmentLimit,
 	botAttachmentType,
 	botTriggerOrigin,
@@ -35,6 +38,7 @@ import {
 	BotCleanupError,
 } from './agentProcess.js';
 import { assertBotAuthority } from './authority.js';
+import { BotCheckIns } from './checkIns.js';
 import { BotConnectionResources } from './connections.js';
 import type { BotCredentialLease } from './credentials.js';
 import { BOT_KILL_DEADLINE_MS, type EngineDriver } from './engine.js';
@@ -43,7 +47,6 @@ import type {
 	BotEnvironmentService,
 } from './environment.js';
 import { botFailure, botFailureCause } from './failure.js';
-import { BotCheckIns } from './checkIns.js';
 import { BotFailureFollowUps } from './failureFollowUps.js';
 
 /** Shown while a blocked bot's earlier process cleanup is still unconfirmed. */
@@ -64,6 +67,8 @@ import {
 	BOT_BACKGROUND_STOPPED_REASON,
 	BotBackgroundStoppedError,
 	type BotNativeClient,
+	type BotNativeTimers,
+	type BotNativeWait,
 } from './native.js';
 import {
 	botProcessCount,
@@ -170,6 +175,8 @@ export interface BotServiceHooks {
 	readonly activity: (botId: string, running: number, queued: number) => void;
 	readonly process?: (options: BotAgentProcessOptions) => BotAgentProcess;
 	readonly now?: () => number;
+	/** Timers for the done check; tests inject a fake clock. */
+	readonly nativeTimers?: BotNativeTimers;
 	/** Timers for the check-in schedule; tests inject a fake clock. */
 	readonly setTimeout?: (fn: () => void, ms: number) => unknown;
 	readonly clearTimeout?: (handle: unknown) => void;
@@ -430,8 +437,10 @@ export class BotService extends EventEmitter {
 			previous: string;
 		}) => {
 			this.checkIns.sync(record);
-			if (!['running', 'needs-you'].includes(record.state))
+			if (!['running', 'needs-you'].includes(record.state)) {
+				this.endBackgroundWait(record);
 				this.activityTimes.delete(record.id);
+			}
 			if (record.state === 'failed' || record.state === 'timed-out')
 				void this.failureFollowUps.execution(record);
 			else {
@@ -1880,6 +1889,9 @@ export class BotService extends EventEmitter {
 						return launch.value;
 					},
 					onClient: (client) => this.bindClient(record.id, client),
+					...(this.hooks.nativeTimers
+						? { timers: this.hooks.nativeTimers }
+						: {}),
 				});
 				live = {
 					runner,
@@ -2054,15 +2066,113 @@ export class BotService extends EventEmitter {
 			});
 		this.sessions.commit(item.sessionId);
 	}
+	/** Keep what holds an execution open, so a held one can be diagnosed. */
+	private recordBackgroundWait(id: string, wait: BotNativeWait): void {
+		const record = this.sessions.get(id);
+		const previous = record.backgroundWait;
+		// An ended execution keeps what it last recorded.
+		if (!['running', 'needs-you'].includes(record.state)) return;
+		if (!wait.waiting && !previous) return;
+		const at = this.now();
+		const clean = (value: string, bytes: number) =>
+			utf8Slice(this.runtime.sanitizeSecrets(record.botId, value), bytes);
+		this.sessions.patch(id, {
+			backgroundWait: {
+				checks: 0,
+				lastCheckAt: null,
+				lastAnswer: null,
+				...previous,
+				waitingSince: wait.waiting ? (previous?.waitingSince ?? at) : null,
+				// Leaving a wait keeps the items that held it.
+				...(wait.waiting || !previous
+					? {
+							items: wait.items
+								.slice(0, BOT_BACKGROUND_ITEMS_MAX)
+								.map((item) => ({
+									id: utf8Slice(item.id, 256),
+									kind: utf8Slice(item.kind, 64),
+									description: clean(
+										item.description,
+										BOT_BACKGROUND_DESCRIPTION_BYTES,
+									),
+								})),
+							omitted: Math.max(
+								0,
+								wait.items.length - BOT_BACKGROUND_ITEMS_MAX,
+							),
+							followUps: wait.followUps,
+						}
+					: {
+							items: previous.items,
+							omitted: previous.omitted,
+							followUps: previous.followUps,
+						}),
+				lastActivityAt: this.activityTimes.get(id) ?? at,
+			},
+		});
+	}
+	private patchBackgroundWait(
+		id: string,
+		change: (wait: BotBackgroundWait) => BotBackgroundWait,
+	): void {
+		const record = this.sessions.get(id);
+		if (
+			record.backgroundWait &&
+			['running', 'needs-you'].includes(record.state)
+		)
+			this.sessions.patch(id, {
+				backgroundWait: change(record.backgroundWait),
+			});
+	}
+	/** Background work reports often; write at most once a minute. */
+	private noteWaitActivity(id: string): void {
+		const wait = this.sessions.get(id).backgroundWait;
+		const at = this.activityTimes.get(id);
+		if (
+			wait &&
+			wait.waitingSince !== null &&
+			at !== undefined &&
+			at - wait.lastActivityAt >= 60_000
+		)
+			this.patchBackgroundWait(id, (w) => ({ ...w, lastActivityAt: at }));
+	}
+	private endBackgroundWait(record: BotSessionRecord): void {
+		const wait = record.backgroundWait;
+		if (!wait) return;
+		const lastActivityAt =
+			this.activityTimes.get(record.id) ?? wait.lastActivityAt;
+		if (wait.waitingSince === null && lastActivityAt === wait.lastActivityAt)
+			return;
+		this.sessions.patch(record.id, {
+			backgroundWait: { ...wait, waitingSince: null, lastActivityAt },
+		});
+	}
 	private bindClient(id: string, client: BotNativeClient): void {
 		client.on('update', (update: JsonValue) => {
 			this.activityTimes.set(id, this.now());
 			this.sessions.append(id, update);
+			this.noteWaitActivity(id);
 		});
 		client.on('runner', (chunk: string) => {
 			this.activityTimes.set(id, this.now());
 			this.sessions.runner(id, chunk);
+			this.noteWaitActivity(id);
 		});
+		client.on('background-wait', (wait: BotNativeWait) =>
+			this.recordBackgroundWait(id, wait),
+		);
+		client.on('done-check', (text: string) => {
+			const at = this.now();
+			this.sessions.append(id, { kind: 'user', text });
+			this.patchBackgroundWait(id, (wait) => ({
+				...wait,
+				checks: wait.checks + 1,
+				lastCheckAt: at,
+			}));
+		});
+		client.on('done-answer', (lastAnswer: 'waiting' | 'done') =>
+			this.patchBackgroundWait(id, (wait) => ({ ...wait, lastAnswer })),
+		);
 		client.on('permission-request', (permission) => {
 			this.sessions.append(id, {
 				kind: 'permission-request',

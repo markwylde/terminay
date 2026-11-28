@@ -291,6 +291,66 @@ export function startupSummary(
 	}
 	return `${failed} startup attempt${failed === 1 ? '' : 's'} failed.`;
 }
+/** Claude Code lists Monitors and background shells as the same kind. */
+const BACKGROUND_KIND_LABELS: Readonly<Record<string, string>> = {
+	local_bash: 'Shell or Monitor',
+	local_agent: 'Subagent',
+};
+
+export type BackgroundWaitView = Readonly<{
+	waiting: boolean;
+	headline: string;
+	items: readonly Readonly<{ key: string; kind: string; text: string }>[];
+	facts: readonly string[];
+}>;
+
+/**
+ * What held, or is holding, a session open after its turn ended, or null when
+ * it never waited on background work.
+ */
+export function backgroundWaitView(
+	session: Pick<BotSessionRecord, 'backgroundWait' | 'state'>,
+	formatTime: (at: number) => string = (at) =>
+		new Date(at).toLocaleTimeString(undefined, {
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+		}),
+): BackgroundWaitView | null {
+	const wait = session.backgroundWait;
+	if (!wait) return null;
+	const live = ['running', 'needs-you'].includes(session.state);
+	const waiting = live && wait.waitingSince !== null;
+	const items = wait.items.map((item) => ({
+		key: item.id,
+		kind: BACKGROUND_KIND_LABELS[item.kind] ?? 'Background task',
+		text: item.description || item.id,
+	}));
+	const facts: string[] = [];
+	if (wait.omitted > 0) facts.push(`${wait.omitted} more not listed.`);
+	if (wait.followUps > 0)
+		facts.push('Waiting for a follow-up turn for a finished background task.');
+	facts.push(`Last activity at ${formatTime(wait.lastActivityAt)}.`);
+	if (wait.checks === 0 || wait.lastCheckAt === null)
+		facts.push('Not asked yet whether it is done.');
+	else
+		facts.push(
+			`Asked ${wait.checks === 1 ? 'once' : `${wait.checks} times`} whether it is done, last at ${formatTime(wait.lastCheckAt)}.`,
+		);
+	if (wait.lastAnswer === 'done') facts.push('It said it is done.');
+	else if (wait.lastAnswer === 'waiting')
+		facts.push('It last said it is still waiting.');
+	return {
+		waiting,
+		headline: waiting
+			? `Held open by background work since ${formatTime(wait.waitingSince!)}.`
+			: live
+				? 'Working again after waiting on background work.'
+				: 'Waited on background work after a turn ended.',
+		items,
+		facts,
+	};
+}
 /** What the bot judged about a problem, as Sessions says it. */
 export const OUTCOME_LABELS: Readonly<
 	Record<NonNullable<BotSessionRecord['outcome']>['disposition'], string>
