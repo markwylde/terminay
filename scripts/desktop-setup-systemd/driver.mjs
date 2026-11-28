@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
-const { installLayout } = await import('/cli/dist/layout.js');
+const { installLayout, writeInstallRecord } = await import('/cli/dist/layout.js');
 const { installDesktopSetupHelper, removeDesktopSetupHelper, desktopSetupHelperInstalled } = await import(
 	'/cli/dist/desktopHelper.js'
 );
 const { createSystemd } = await import('/cli/dist/systemd.js');
 const { missingDesktopPrograms, defaultDesktopInstallHost } = await import('/cli/dist/desktop.js');
+const { renderDesktopSetupPathUnit, renderDesktopSetupServiceUnit } = await import('/cli/dist/unit.js');
 
 const RUN_AS = 'terminay';
 const SERVICE = 'terminay-desktop-setup.service';
@@ -97,14 +98,42 @@ for (const args of [['--package', 'cowsay'], ['cowsay']]) {
 assert.equal(asAccount('/opt/terminay/current/bin/terminay daemon desktop install'), false);
 assert.equal(existsSync(STATUS), false);
 
-write('--- installing the helper arms the watch and starts nothing');
-assert.equal(await installDesktopSetupHelper({ layout, runAs: RUN_AS, systemd }), true);
+write('--- the new release reconciles the legacy helper on upgrade and starts nothing');
+const helper = layout.upgradeHelper;
+const legacyTrigger = `${helper.requestDirectory}/desktop-setup`;
+mkdirSync(helper.requestDirectory, { recursive: true, mode: 0o700 });
+writeFileSync(legacyTrigger, '', { mode: 0o600 });
+sh('chown', [`${RUN_AS}:${RUN_AS}`, helper.requestDirectory, legacyTrigger]);
+writeFileSync(
+	helper.desktopPathUnitPath,
+	renderDesktopSetupPathUnit(layout).replace(trigger, legacyTrigger),
+);
+writeFileSync(helper.desktopServiceUnitPath, renderDesktopSetupServiceUnit(layout));
+sh('systemctl', ['enable', '--now', PATH_UNIT]);
+await writeInstallRecord(layout, {
+	schemaVersion: 1,
+	scope: 'system',
+	channel: 'tag',
+	version: '1.0.0',
+	revision: 'test',
+	runAs: RUN_AS,
+	dataRoot: layout.defaultDataRoot,
+	projectRoot: '/home/terminay',
+	port: 8080,
+	healthPort: 8081,
+	expose: 'hosted',
+	installedAt: '2026-01-01T00:00:00Z',
+});
+sh('/opt/terminay/current/bin/terminay', ['daemon', 'host-setup']);
 assert.equal(await desktopSetupHelperInstalled(layout), true);
 assert.equal(systemctl('is-enabled', PATH_UNIT), 'enabled');
 assert.equal(systemctl('is-active', PATH_UNIT), 'active');
 await sleep(2000);
 assert.equal(starts(), 0);
 assert.equal(existsSync(STATUS), false);
+assert.equal(asAccount(`echo legacy > ${legacyTrigger}`), true);
+await sleep(1000);
+assert.equal(starts(), 0);
 
 write('--- reinstalling the helper repairs a disabled or stopped watch without starting setup');
 const triggerStamp = () => {
