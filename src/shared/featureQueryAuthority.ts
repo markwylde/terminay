@@ -1,4 +1,4 @@
-import { ClientError } from '@terminay/client-core';
+import { ClientError, isServerStorageFailure } from '@terminay/client-core';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import type { ServerWorkspaceProject } from './serverWorkspaceReconciliation';
 
@@ -176,6 +176,7 @@ export function describeFeatureFailure(
 	const code = source instanceof ClientError ? source.code : undefined;
 	const retryable = source instanceof ClientError ? source.retryable : false;
 	const target = `project ${scope.projectId} on server ${scope.serverId}`;
+	if (isServerStorageFailure(error)) return storageFeatureFailure(feature, error, operation);
 	if (code === 'cancelled') {
 		return {
 			title: `${feature} request was cancelled`,
@@ -229,6 +230,7 @@ export function describeServerFeatureFailure(
 		: error;
 	const code = source instanceof ClientError ? source.code : undefined;
 	const retryable = source instanceof ClientError ? source.retryable : false;
+	if (isServerStorageFailure(error)) return storageFeatureFailure(feature, error, operation);
 	if (code === 'disconnected' || code === 'unavailable' || code === 'deadline') {
 		return {
 			title: `${feature} is temporarily unavailable`,
@@ -250,6 +252,27 @@ export function describeServerFeatureFailure(
 		title: `${feature} could not be loaded`,
 		detail: `${operation === undefined ? 'The request' : operation} failed on server ${serverId}: ${boundedText(message)}`,
 		retryable,
+		...(operation === undefined ? {} : { operation }),
+	};
+}
+
+/** The server named what its storage refused; its words are the notice. */
+function storageFeatureFailure(
+	feature: string,
+	error: unknown,
+	operation: string | undefined,
+): FeatureFailure {
+	let source = error;
+	// Follow the same bounded chain the storage discriminator accepts, keeping
+	// the server error rather than a facade's summary (or its own inner cause).
+	for (let depth = 1; depth < 4 && source instanceof Error; depth += 1) {
+		if (!isServerStorageFailure(source.cause)) break;
+		source = source.cause;
+	}
+	return {
+		title: `${feature} could not be saved`,
+		detail: boundedText(source instanceof Error ? source.message : String(source)),
+		retryable: source instanceof ClientError && source.retryable,
 		...(operation === undefined ? {} : { operation }),
 	};
 }
@@ -301,6 +324,7 @@ export function isCancelledFeatureFailure(error: unknown): boolean {
 export function isTransportFeatureFailure(error: unknown): boolean {
 	const source = failureSource(error);
 	return (
+		!isServerStorageFailure(error) &&
 		source instanceof ClientError &&
 		(source.code === 'disconnected' ||
 			source.code === 'unavailable' ||
@@ -313,6 +337,7 @@ export function isTransportFeatureFailure(error: unknown): boolean {
 export function isOptionalObservationFailure(error: unknown): boolean {
 	const operation = readOperation(error);
 	if (
+		isServerStorageFailure(error) ||
 		operation === undefined ||
 		(!operation.startsWith('files.watch') &&
 			!operation.startsWith('files.folder-size'))

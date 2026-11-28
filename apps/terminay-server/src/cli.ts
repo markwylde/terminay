@@ -1278,6 +1278,7 @@ async function createServerComposition(
 		},
 	});
 	composition = createServerCoreComposition({
+		dataRoot: options.dataRoot,
 		...(bots ? { bots } : {}),
 		...(serverDesktop ? { serverDesktop } : {}),
 		connectionMetrics: {

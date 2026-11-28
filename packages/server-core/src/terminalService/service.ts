@@ -926,6 +926,7 @@ export class TerminalService {
 					// clients. Do not retain a stack or unbounded provider output here.
 					reason: boundedSpawnFailureReason(error),
 				},
+				{ cause: error },
 			);
 		}
 	}

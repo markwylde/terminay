@@ -46,6 +46,7 @@ describe('project feature authority', () => {
 			serverId: 'server-1',
 			projectId: 'project-1',
 			projectRoot: '/workspace/one',
+			hasRoot: true,
 		});
 	});
 
@@ -229,5 +230,46 @@ describe('feature failures', () => {
 			retryable: true,
 			operation: 'git.worktrees.list',
 		});
+	});
+
+	it('shows a server storage failure as sent, never as an outage or denial', () => {
+		for (const [code, reason, message] of [
+			['unavailable', 'storage_full', "The server's disk is full"],
+			['unavailable', 'storage_permission', 'The server does not have permission to access its data folder'],
+			['resource', 'storage_quota_exceeded', "The server's disk quota is exceeded"],
+		] as const) {
+			const cause = new ClientError(code, message, { details: { reason }, retryable: true });
+			const error = Object.assign(new Error(message, { cause }), { operation: 'files.watch.open' });
+			const expected = {
+				title: 'Explorer could not be saved',
+				detail: message,
+				retryable: true,
+				operation: 'files.watch.open',
+			};
+			assert.deepEqual(describeFeatureFailure('Explorer', error, { serverId: 'server-1', projectId: 'project-1' }), expected);
+			assert.deepEqual(describeServerFeatureFailure('Explorer', error, 'server-1'), expected);
+			assert.equal(isTransportFeatureFailure(error), false);
+			assert.equal(isOptionalObservationFailure(error), false);
+		}
+	});
+
+	it('keeps the storage message and retry flag through nested facade summaries', () => {
+		const failure = new ClientError('unavailable', "The server's disk is full", {
+			details: { reason: 'storage_full' }, retryable: true,
+			cause: new Error('private underlying cause'),
+		});
+		const wrapped = new Error('outer summary', {
+			cause: new Error('inner summary', { cause: failure }),
+		});
+		for (const error of [failure, wrapped]) {
+			const expected = {
+				title: 'Explorer could not be saved',
+				detail: failure.message,
+				retryable: true,
+			};
+			assert.deepEqual(describeFeatureFailure('Explorer', error, { serverId: 's', projectId: 'p' }), expected);
+			assert.deepEqual(describeServerFeatureFailure('Explorer', error, 's'), expected);
+			assert.equal(isTransportFeatureFailure(error), false);
+		}
 	});
 });

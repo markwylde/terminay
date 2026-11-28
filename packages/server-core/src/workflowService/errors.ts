@@ -17,8 +17,9 @@ export class WorkflowServiceError extends Error {
 		code: WorkflowErrorCode,
 		message: string,
 		details?: Readonly<Record<string, unknown>>,
+		options?: { readonly cause?: unknown },
 	) {
-		super(message);
+		super(message, options);
 		this.name = 'WorkflowServiceError';
 		this.code = code;
 		this.details = details;

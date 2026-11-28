@@ -408,6 +408,7 @@ export class NodeRecordingStorage implements RecordingStorage {
 				error instanceof Error
 					? error.message
 					: 'Unable to create recording cast.',
+				{ cause: error },
 			);
 		}
 		const entry: RecordingStorageEntry = { metadata, castPath };
@@ -431,6 +432,7 @@ export class NodeRecordingStorage implements RecordingStorage {
 			throw new RecordingServiceError(
 				'storage_failed',
 				error instanceof Error ? error.message : 'Unable to append recording.',
+				{ cause: error },
 			);
 		} finally {
 			if (descriptor !== undefined) closeSync(descriptor);
@@ -451,6 +453,7 @@ export class NodeRecordingStorage implements RecordingStorage {
 				error instanceof Error
 					? error.message
 					: 'Unable to write recording metadata.',
+				{ cause: error },
 			);
 		}
 	}
@@ -661,6 +664,7 @@ export class NodeRecordingStorage implements RecordingStorage {
 			throw new RecordingServiceError(
 				'storage_failed',
 				error instanceof Error ? error.message : 'Unable to delete recording.',
+				{ cause: error },
 			);
 		}
 	}

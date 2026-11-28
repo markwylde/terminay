@@ -1087,6 +1087,7 @@ export class ServerTerminalAuthority {
 					})
 				: undefined;
 		this.composition = createServerCoreComposition({
+			...(options.dataRoot === undefined ? {} : { dataRoot: options.dataRoot }),
 			...(bots ? { bots } : {}),
 			connectionMetrics:
 				options.dataRoot === undefined

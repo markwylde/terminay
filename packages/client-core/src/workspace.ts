@@ -20,6 +20,7 @@ import {
 	type WorkspaceSnapshotDto,
 } from '@terminay/protocol';
 import type { TerminayClient } from './client.js';
+import { isServerStorageFailure } from './storageFailure.js';
 import { type ClientCommandResult, ClientError } from './types.js';
 
 export interface WorkspaceQueryOptions {
@@ -671,7 +672,8 @@ export class WorkspaceClient {
 		} catch (error) {
 			if (
 				error instanceof ClientError &&
-				(error.code === 'not_found' || error.code === 'unavailable')
+				(error.code === 'not_found' || error.code === 'unavailable') &&
+				!isServerStorageFailure(error)
 			) {
 				throw new ClientError(
 					'incompatible',

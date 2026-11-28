@@ -490,7 +490,9 @@ export class FileSession {
 				error instanceof Error ? error.message : 'atomic save failed';
 			return {
 				ok: false,
-				error: new FileServiceError('write_failed', message),
+				error: new FileServiceError('write_failed', message, undefined, {
+					cause: error,
+				}),
 			};
 		}
 		this.diskRevisionValue += 1;
