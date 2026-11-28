@@ -62,7 +62,9 @@ closes, today and after this change).
    first, and if the CLI folds both into one turn the error keeps stdin open
    rather than closing it early. A stale follow-up count (one possible cause of
    #680) therefore ends through the done answer, not as a side effect of
-   asking. The terminal rule is otherwise unchanged.
+   asking. A turn is not terminal while a sent check has yet to start its turn,
+   so input never closes on a queued check. The terminal rule is otherwise
+   unchanged.
 6. **Diagnostics on the record.** The driver emits a wait snapshot; the service
    redacts and bounds it into an optional `BotSessionRecord.backgroundWait` and
    commits it on each change. Activity during a wait (subagent progress, runner

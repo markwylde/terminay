@@ -412,3 +412,62 @@ test('the recorded items and the transcript check are redacted', async () => {
 	assert.equal(f.waits[0].items[0].description, 'curl -u [redacted]');
 	assert.doesNotMatch(f.checks[0], /hunter2/);
 });
+
+test('checks redact secrets before truncation and redact every diagnostic field', async () => {
+	const secret = 'hunter2';
+	const credential = {
+		...noBotCredentials(),
+		redact: (value) => value.split(secret).join('[redacted]'),
+	};
+	const f = await agent({ credential });
+	await f.tasks([secret, secret, `${'x'.repeat(125)}${secret}`]);
+	await f.result();
+	await f.wait();
+	assert.doesNotMatch(f.checks[0], /hun/);
+	assert.doesNotMatch(JSON.stringify(f.waits), /hun/);
+	assert.doesNotMatch(f.asked()[0].message.content, /hun/);
+});
+
+test('queued unanswered checks must start before natural completion', async () => {
+	const f = await agent();
+	await f.tasks(['m1']);
+	await f.result();
+	await f.wait();
+	await f.wait();
+	await f.tasks();
+	await f.init();
+	await f.result('First queued check.');
+	assert.equal(f.process.stdin.writableEnded, false);
+	await f.init();
+	await f.result('Second queued check.');
+	assert.equal(f.process.stdin.writableEnded, true);
+	await f.exit();
+	assert.equal(f.state.settled, 'completed');
+});
+
+test('every listed task is counted and stopped, including beyond 256', async () => {
+	const f = await agent();
+	await f.tasks(...Array.from({ length: 257 }, (_, i) => [`task-${i}`]));
+	await f.result();
+	assert.equal(f.waits.at(-1).items.length, 257);
+	await f.wait();
+	await f.init();
+	await f.result(f.nonceLine());
+	assert.equal(f.stops().length, 257);
+	assert.equal(f.stops().at(-1), 'task-256');
+	await f.tasks();
+	await f.exit();
+	assert.equal(f.state.settled, 'completed');
+});
+
+test('a notification during a wait refreshes the recorded follow-up count', async () => {
+	const f = await agent();
+	await f.tasks(['m1']);
+	await f.result();
+	await f.tasks();
+	await f.notify();
+	assert.equal(f.waits.at(-1).followUps, 1);
+	await f.init();
+	await f.result();
+	await f.exit();
+});

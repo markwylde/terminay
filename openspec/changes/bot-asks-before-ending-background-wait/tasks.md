@@ -21,5 +21,5 @@
 ## 5. Verification
 
 - [x] 5.1 Run server-core, protocol and renderer tests, typecheck, lint and `openspec validate --all`. Verify: tests, typecheck and lint exit 0; this change validates and `--all` reports no failure that `main` does not.
-- [ ] 5.2 Extend `e2e/bots.spec.ts` to show a held session's details, and capture screenshots. Verify: `npm run test:e2e` passes for that spec.
+- [x] 5.2 Extend `e2e/bots.spec.ts` to show a held session's details, and capture screenshots. Verify: `npm run test:e2e` passes for that spec.
 - [x] 5.3 Run the real pinned Claude Code through the built driver with a shortened interval. Verify: a left-behind Monitor is asked about and the turn resolves as completed.

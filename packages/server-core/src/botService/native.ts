@@ -566,7 +566,7 @@ export class BotNativeClient extends EventEmitter {
 				e.subtype === 'background_tasks_changed' &&
 				Array.isArray(e.tasks)
 			) {
-				this.claudeTasks = e.tasks.slice(0, 256).map((raw) => {
+				this.claudeTasks = e.tasks.map((raw) => {
 					const task = object(raw);
 					return {
 						id: String(task.task_id),
@@ -583,6 +583,7 @@ export class BotNativeClient extends EventEmitter {
 			) {
 				// Claude queues a turn per completed or failed background task.
 				this.claudePendingWakeups++;
+				if (this.waiting) this.emitWait();
 			} else if (e.type === 'system' && e.subtype === 'init') {
 				// One init per check sent is the check's own, so a check never
 				// accounts for a notification's turn, whichever starts first.
@@ -674,7 +675,9 @@ export class BotNativeClient extends EventEmitter {
 				}
 				if (checked) this.emit('done-answer', 'waiting');
 				this.terminal =
-					this.claudeTasks.length === 0 && this.claudePendingWakeups === 0;
+					this.claudeTasks.length === 0 &&
+					this.claudePendingWakeups === 0 &&
+					this.unstartedChecks === 0;
 				this.resultFailed ||= failed;
 				// A background notification can wake Claude for another turn.
 				if (this.terminal) this.closeInput();
@@ -749,8 +752,8 @@ export class BotNativeClient extends EventEmitter {
 		const wait: BotNativeWait = {
 			waiting: this.waiting,
 			items: this.claudeTasks.map((task) => ({
-				id: task.id,
-				kind: task.kind,
+				id: this.credential.redact(task.id),
+				kind: this.credential.redact(task.kind),
 				// Redacted before anything cuts it, so no part of a secret stays.
 				description: this.credential.redact(task.description),
 			})),
@@ -796,7 +799,11 @@ export class BotNativeClient extends EventEmitter {
 		this.unstartedChecks++;
 		const text = doneCheck(
 			this.checkNonce,
-			this.claudeTasks,
+			this.claudeTasks.map((task) => ({
+				...task,
+				kind: this.credential.redact(task.kind),
+				description: this.credential.redact(task.description),
+			})),
 			this.claudePendingWakeups,
 		);
 		this.emit('done-check', this.credential.redact(text));

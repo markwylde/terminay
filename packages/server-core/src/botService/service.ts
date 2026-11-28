@@ -2089,8 +2089,8 @@ export class BotService extends EventEmitter {
 							items: wait.items
 								.slice(0, BOT_BACKGROUND_ITEMS_MAX)
 								.map((item) => ({
-									id: utf8Slice(item.id, 256),
-									kind: utf8Slice(item.kind, 64),
+									id: clean(item.id, 256),
+									kind: clean(item.kind, 64),
 									description: clean(
 										item.description,
 										BOT_BACKGROUND_DESCRIPTION_BYTES,
@@ -2163,7 +2163,10 @@ export class BotService extends EventEmitter {
 		);
 		client.on('done-check', (text: string) => {
 			const at = this.now();
-			this.sessions.append(id, { kind: 'user', text });
+			this.sessions.append(id, {
+				kind: 'user',
+				text: this.runtime.sanitizeSecrets(this.sessions.get(id).botId, text),
+			});
 			this.patchBackgroundWait(id, (wait) => ({
 				...wait,
 				checks: wait.checks + 1,
