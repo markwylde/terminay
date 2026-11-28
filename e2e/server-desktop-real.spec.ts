@@ -109,7 +109,8 @@ async function expectFixtureWindow(page: Page) {
 test('two browsers see a real server desktop and can transfer control', async ({
 	browser,
 }) => {
-	test.setTimeout(240_000);
+	// Setup downloads two browsers with the desktop: several hundred megabytes.
+	test.setTimeout(660_000);
 	const fixture = await startSharedWebShellFixture(fixturePort);
 	const controller = await browser.newContext({
 		viewport: { width: 1280, height: 800 },
@@ -125,7 +126,7 @@ test('two browsers see a real server desktop and can transfer control', async ({
 			.click();
 		await expect(
 			desktop(first).getByRole('button', { name: 'Give up control' }),
-		).toBeVisible({ timeout: 180_000 });
+		).toBeVisible({ timeout: 540_000 });
 
 		await first.keyboard.press('Escape');
 		const previousTerminal = await activeTerminalSessionId(first);

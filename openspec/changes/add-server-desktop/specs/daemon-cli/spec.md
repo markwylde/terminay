@@ -2,9 +2,9 @@
 
 ### Requirement: Desktop setup command
 
-`terminay daemon desktop install` SHALL install the server desktop's packages on a Debian host. It SHALL install exactly the packages named in the installed release and the dependencies the package manager resolves for them, without recommended packages, from the host's configured package sources. It SHALL accept no package name, source, or version from its arguments, its environment, or any file the run-as account can write, and SHALL run the package manager with an environment it builds itself. It SHALL NOT add a package source, and SHALL NOT leave any system service enabled or running that was not before.
+`terminay daemon desktop install` SHALL install the server desktop's packages on a Debian host: the desktop session and the Chromium and Firefox browsers. It SHALL install exactly the packages named in the installed release and the dependencies the package manager resolves for them, without recommended packages, from the host's configured package sources. It SHALL accept no package name, source, or version from its arguments, its environment, or any file the run-as account can write, and SHALL run the package manager with an environment it builds itself. It SHALL NOT add a package source, and SHALL NOT leave any system service enabled or running that was not before.
 
-The command SHALL hold an exclusive lock for its whole run, so two runs never overlap, and SHALL wait a bounded time for another package operation on the host to finish before failing. When every required program is already present it SHALL exit zero without contacting a package source. It SHALL first complete any package installation a previous run left unfinished.
+The command SHALL hold an exclusive lock for its whole run, so two runs never overlap, and SHALL wait a bounded time for another package operation on the host to finish before failing. When every program it installs, the browsers included, is already present it SHALL exit zero without contacting a package source. It SHALL first complete any package installation a previous run left unfinished.
 
 #### Scenario: Fresh Debian host
 
@@ -15,6 +15,11 @@ The command SHALL hold an exclusive lock for its whole run, so two runs never ov
 
 - **WHEN** the command runs on a host that already has the packages
 - **THEN** it exits zero, installs nothing, and contacts no package source
+
+#### Scenario: Desktop set up without the browsers
+
+- **WHEN** the command runs on a host that has the desktop session's programs and lacks a browser
+- **THEN** the named packages are installed, the browser is present afterwards, and the command exits zero
 
 #### Scenario: Two runs at once
 

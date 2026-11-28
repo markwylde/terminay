@@ -25,8 +25,9 @@ import { join } from 'node:path';
  * here assumes the caller may be anything running as the run-as account.
  */
 
-/** The Debian packages the desktop needs. The same list the server checks
- * for; a test keeps the two in step. */
+/** The Debian packages setup installs: the desktop session, then the browsers
+ * people expect to find on a desktop. The same list the server names; a test
+ * keeps the two in step. */
 export const DESKTOP_PACKAGES: readonly string[] = Object.freeze([
 	'tigervnc-standalone-server',
 	'tigervnc-tools',
@@ -43,6 +44,8 @@ export const DESKTOP_PACKAGES: readonly string[] = Object.freeze([
 	'adwaita-icon-theme',
 	'python3',
 	'python3-seccomp',
+	'chromium',
+	'firefox-esr',
 ]);
 
 /** Each program the desktop runs, with the names Debian ships it under. */
@@ -57,6 +60,16 @@ export const DESKTOP_PROGRAMS: readonly (readonly string[])[] = Object.freeze([
 	['xset'],
 	['bash'],
 	['python3'],
+]);
+
+/**
+ * The browsers setup installs, with the names Debian ships each under. The
+ * desktop runs without them, so they are checked apart from its programs: a
+ * host that lacks one is still set up, and setup run again adds it.
+ */
+export const DESKTOP_BROWSERS: readonly (readonly string[])[] = Object.freeze([
+	['chromium'],
+	['firefox-esr', 'firefox'],
 ]);
 
 const PROGRAM_DIRECTORIES = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'] as const;
@@ -177,12 +190,13 @@ export function osReleaseId(text: string | undefined): string | undefined {
 	return undefined;
 }
 
-/** What the desktop needs that is not there. */
-export async function missingDesktopPrograms(
-	host: Pick<DesktopInstallHost, 'executable' | 'list'>,
-): Promise<readonly string[]> {
+/** Which of `programs` are not there, each by its first name. */
+async function missingPrograms(
+	host: Pick<DesktopInstallHost, 'executable'>,
+	programs: readonly (readonly string[])[],
+): Promise<string[]> {
 	const missing: string[] = [];
-	for (const names of DESKTOP_PROGRAMS) {
+	for (const names of programs) {
 		let found = false;
 		for (const name of names) {
 			for (const directory of PROGRAM_DIRECTORIES)
@@ -194,10 +208,36 @@ export async function missingDesktopPrograms(
 		}
 		if (!found) missing.push(names[0] as string);
 	}
+	return missing;
+}
+
+/** What the desktop needs that is not there. */
+export async function missingDesktopPrograms(
+	host: Pick<DesktopInstallHost, 'executable' | 'list'>,
+): Promise<readonly string[]> {
+	const missing = await missingPrograms(host, DESKTOP_PROGRAMS);
 	const modules = await host.list(SECCOMP_MODULE_DIRECTORY);
 	if (!modules.some((name) => /^seccomp(\.|$)/u.test(name)))
 		missing.push('python3-seccomp');
 	return missing;
+}
+
+/** The browsers setup installs that are not there. */
+export function missingDesktopBrowsers(
+	host: Pick<DesktopInstallHost, 'executable'>,
+): Promise<readonly string[]> {
+	return missingPrograms(host, DESKTOP_BROWSERS);
+}
+
+/** Everything setup installs that is not there: what decides whether a run
+ * has anything to do. */
+export async function missingDesktopInstall(
+	host: Pick<DesktopInstallHost, 'executable' | 'list'>,
+): Promise<readonly string[]> {
+	return [
+		...(await missingDesktopPrograms(host)),
+		...(await missingDesktopBrowsers(host)),
+	];
 }
 
 /**
@@ -454,7 +494,7 @@ export async function runDesktopInstall(
 	try {
 		await record({});
 		// Already there: nothing is downloaded and the network is not touched.
-		if ((await missingDesktopPrograms(host)).length === 0) {
+		if ((await missingDesktopInstall(host)).length === 0) {
 			write('Everything the server desktop needs is already installed.');
 			return await finish({ ok: true });
 		}
@@ -533,7 +573,7 @@ export async function runDesktopInstall(
 				),
 			});
 
-		const missing = await missingDesktopPrograms(host);
+		const missing = await missingDesktopInstall(host);
 		if (missing.length > 0)
 			return await finish({
 				ok: false,

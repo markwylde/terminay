@@ -8,7 +8,7 @@ const { installDesktopSetupHelper, removeDesktopSetupHelper, desktopSetupHelperI
 	'/cli/dist/desktopHelper.js'
 );
 const { createSystemd } = await import('/cli/dist/systemd.js');
-const { missingDesktopPrograms, defaultDesktopInstallHost } = await import('/cli/dist/desktop.js');
+const { missingDesktopInstall, defaultDesktopInstallHost } = await import('/cli/dist/desktop.js');
 const { renderDesktopSetupPathUnit, renderDesktopSetupServiceUnit } = await import('/cli/dist/unit.js');
 
 const RUN_AS = 'terminay';
@@ -213,7 +213,7 @@ assert.notEqual(second.run, killed.run);
 const done = await until('the install to finish', () => (status()?.outcome ? status() : undefined), 1_200_000, 1000);
 assert.deepEqual(done.outcome, { ok: true }, JSON.stringify(done));
 assert.equal(done.fraction, 1);
-assert.deepEqual(await missingDesktopPrograms(defaultDesktopInstallHost()), []);
+assert.deepEqual(await missingDesktopInstall(defaultDesktopInstallHost()), []);
 assert.equal(existsSync('/usr/games/cowsay') || existsSync('/root/owned'), false);
 await idle();
 

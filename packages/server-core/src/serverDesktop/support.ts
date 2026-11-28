@@ -8,8 +8,10 @@ import type { ServerDesktopUnsupportedReason } from '@terminay/protocol';
  * is installed. Nothing here starts a desktop process or changes the host.
  */
 
-/** The Debian packages the desktop needs. Compiled in: nothing a client or
- * a file says can add to or change this list. */
+/** The Debian packages setup installs: the desktop session, then the browsers
+ * people expect to find on a desktop. Compiled in: nothing a client or a file
+ * says can add to or change this list. The desktop runs without the browsers,
+ * so `REQUIRED_PROGRAMS` below does not name them. */
 export const SERVER_DESKTOP_PACKAGES: readonly string[] = Object.freeze([
 	'tigervnc-standalone-server',
 	'tigervnc-tools',
@@ -26,6 +28,8 @@ export const SERVER_DESKTOP_PACKAGES: readonly string[] = Object.freeze([
 	'adwaita-icon-theme',
 	'python3',
 	'python3-seccomp',
+	'chromium',
+	'firefox-esr',
 ]);
 
 /** Where Debian installs programs. `PATH` is not consulted: the server's own
@@ -77,7 +81,9 @@ export type ServerDesktopSupport =
 			/** Programs that are absent; empty when the desktop is set up. */
 			readonly missing: readonly string[];
 			/** Where each present program is. */
-			readonly programs: Readonly<Partial<Record<ServerDesktopProgram, string>>>;
+			readonly programs: Readonly<
+				Partial<Record<ServerDesktopProgram, string>>
+			>;
 	  };
 
 const MESSAGES: Readonly<Record<ServerDesktopUnsupportedReason, string>> = {

@@ -38,6 +38,6 @@ This change builds on `daemon-restart-keeps-terminals-usable`: the desktop needs
 - **Server** (`packages/server-core`, `apps/terminay-server`): a desktop service and a detached desktop holder that supervises the display server and session, the desktop authority, the relay to a unix socket, and a per-launch baseline provider in the launch resolver.
 - **Installer** (`apps/terminay-cli`): two more rendered units, a `desktop install` subcommand, and a doctor check.
 - **UI** (`src/`): the Show Desktop control in the title bar, the dropdown, desktop tabs in projects and Home sharing one stream, and the setup and unavailable states.
-- **System dependencies** on supported hosts: stock Debian packages only (`tigervnc-standalone-server` and the XFCE, D-Bus, and font packages the bot image already uses). Nothing is added for other hosts.
+- **System dependencies** on supported hosts: stock Debian packages only (`tigervnc-standalone-server`, the XFCE, D-Bus, and font packages the bot image already uses, and the `chromium` and `firefox-esr` browsers). Nothing is added for other hosts.
 - **Docs**: `docs/operations/standalone-server.md` gains a desktop section.
 - **Housekeeping**: `openspec/changes/adopt-atlas-bot-runtime` is archived, which adds `bot-desktop`, `bot-cli-runtime`, and `bot-image-build-progress` to `openspec/specs/`.
