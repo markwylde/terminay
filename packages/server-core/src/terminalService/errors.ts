@@ -57,8 +57,9 @@ export class TerminalServiceError extends Error {
 		code: TerminalServiceErrorCode,
 		message: string,
 		details?: TerminalServiceErrorDetails,
+		options?: { readonly cause?: unknown },
 	) {
-		super(message);
+		super(message, options);
 		this.name = 'TerminalServiceError';
 		this.code = code;
 		this.details = details;

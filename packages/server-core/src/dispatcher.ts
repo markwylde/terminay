@@ -21,6 +21,7 @@ import { FileServiceError } from './fileService/types.js';
 import { ForgeServiceError } from './forge/service.js';
 import { GitServiceError } from './gitService/types.js';
 import { VaultServiceError } from './settings/vault.js';
+import { storageFailure } from './storageFailure.js';
 import { TerminalServiceError } from './terminalService/errors.js';
 import type {
 	BinaryQueryHandlerResult,
@@ -65,6 +66,8 @@ export interface OperationDispatcherOptions extends OperationRegistries {
 	readonly defaultQueryScope?: AuthScope;
 	readonly defaultCommandScope?: AuthScope;
 	readonly maxBodyBytes?: number;
+	/** The server data root, so a refused path inside it is named as such. */
+	readonly dataRoot?: string;
 }
 
 const MAX_DISPATCHERS = 256;
@@ -92,6 +95,9 @@ export function createOperationDispatcher(
 	const commandLookup = makeLookup<CommandHandler>(options.commands);
 	const policyLookup = makeLookup<OperationPolicy>(options.policies);
 	const ledgers = new Map<ProtocolId, ConnectionCommandLedger>();
+
+	const commandError = (error: unknown, fallback: string): ProtocolError =>
+		dispatchError(error, fallback, { dataRoot: options.dataRoot });
 
 	const query = async (request: QueryRequest): Promise<QueryDispatchResult> => {
 		const { envelope } = request;
@@ -197,7 +203,7 @@ export function createOperationDispatcher(
 					request,
 				) as CommandResultEnvelope;
 				return { envelope: { ...result, correlationId: envelope.correlationId }, executed: false };
-			} catch (error) { return refused(dispatchError(error, 'command wait failed')); }
+			} catch (error) { return refused(commandError(error, 'command wait failed')); }
 		}
 		if (ledger.pending >= MAX_PENDING_COMMANDS)
 			return refused(resourceError('in-flight command limit reached'));
@@ -258,7 +264,7 @@ export function createOperationDispatcher(
 							commandId: envelope.commandId,
 							correlationId: envelope.correlationId,
 							ok: false,
-							error: dispatchError(error, 'command failed'),
+							error: commandError(error, 'command failed'),
 						};
 					}
 				}
@@ -397,7 +403,12 @@ function deadlineError(): ProtocolError {
 	};
 }
 
-function dispatchError(error: unknown, fallback: string): ProtocolError {
+/** `command` is given for a command, whose storage failures are named. */
+function dispatchError(
+	error: unknown,
+	fallback: string,
+	command?: { readonly dataRoot: string | undefined },
+): ProtocolError {
 	const bot = botFailure(error);
 	if (bot) return bot;
 	if (isProtocolError(error))
@@ -413,6 +424,12 @@ function dispatchError(error: unknown, fallback: string): ProtocolError {
 				? {}
 				: { supportedMax: error.supportedMax }),
 		};
+	// Before the domain translations, so a wrapper never hides the cause.
+	const storage = command && storageFailure(error, command.dataRoot);
+	if (storage) {
+		console.error(`[terminay] ${fallback}:`, error);
+		return storage;
+	}
 	if (error instanceof TerminalServiceError) return terminalServiceError(error);
 	if (error instanceof FileServiceError) return fileServiceError(error);
 	if (error instanceof GitServiceError) return gitServiceError(error);

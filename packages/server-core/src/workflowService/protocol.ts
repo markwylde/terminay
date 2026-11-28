@@ -1,3 +1,4 @@
+import { storageFailure } from '../storageFailure.js';
 import { type JsonValue, protocolError } from '@terminay/protocol';
 import { withinClientBoundary } from '../appWindows/mirror.js';
 import type {
@@ -417,7 +418,8 @@ function asJson(value: unknown): JsonValue {
  * `details.reason`, with the id it names, so an MCP caller receives it intact.
  */
 export function toProtocolError(error: unknown): unknown {
-	if (!isWorkflowServiceError(error)) return error;
+	// The dispatcher names a write the storage refused (ADR-0149).
+	if (!isWorkflowServiceError(error) || storageFailure(error)) return error;
 	const code =
 		error.code === 'invalid_workflow'
 			? 'validation'

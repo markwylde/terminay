@@ -335,8 +335,12 @@ export class RecordingServiceError extends Error {
 		| 'invalid_request'
 		| 'capability_unavailable';
 
-	constructor(code: RecordingServiceError['code'], message: string) {
-		super(message);
+	constructor(
+		code: RecordingServiceError['code'],
+		message: string,
+		options?: { readonly cause?: unknown },
+	) {
+		super(message, options);
 		this.name = 'RecordingServiceError';
 		this.code = code;
 	}
