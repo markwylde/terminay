@@ -6,6 +6,7 @@ export const BOT_ENGINE_OPERATIONS = Object.freeze({
 	build: 'bots.image.build',
 	log: 'bots.image.log',
 	progress: 'bots.image.progress',
+	acknowledge: 'bots.image.acknowledge',
 });
 export const BOT_ENGINE_CHANGED = 'bots.engine.changed';
 export type BotEngineKind = 'docker' | 'podman';

@@ -3500,3 +3500,86 @@ test('bots default to Chara Critter avatars, Profile switches between Critter an
 		await newBotPage.close();
 	}
 });
+
+test('switching servers retires the ready notice on its owner and waits for the new status', async () => {
+	const page = await open({
+		view: 'dashboard',
+		bots: [],
+		sessions: {},
+		agents: [],
+		engine: {
+			engine: 'podman',
+			available: true,
+			reason: null,
+			detail: '',
+			pinned: { kind: 'podman', address: 'unix:///run/podman.sock' },
+			candidates: [],
+			runningContainers: 0,
+			botContainers: 0,
+			image: { state: 'current', fingerprint: 'abc', builtAt: 1, error: null },
+			build: {
+				id: 'retained-build',
+				engineIdentity: 'engine',
+				fingerprint: 'abc',
+				revision: 1,
+				startedAt: 1,
+				endedAt: 2,
+				state: 'completed',
+				previousImageAvailable: false,
+				steps: [],
+				truncated: false,
+				acknowledged: false,
+			},
+		},
+	});
+	try {
+		const notice = page.locator(
+			'[data-terminay-build-banner-state="completed"]',
+		);
+		await notice.waitFor({ state: 'visible' });
+		// Wait for the browser to observe the notice on screen.
+		await page.evaluate(
+			() =>
+				new Promise((resolve) => {
+					const observer = new IntersectionObserver(([entry]) => {
+						if (entry.isIntersecting) {
+							observer.disconnect();
+							resolve();
+						}
+					});
+					observer.observe(
+						document.querySelector(
+							'[data-terminay-build-banner-state="completed"]',
+						),
+					);
+				}),
+		);
+		await page.evaluate(() => window.__harness.switchServer('second'));
+		await notice.waitFor({ state: 'detached' });
+		await page.waitForFunction(() =>
+			window.__calls.some(
+				(c) =>
+					c.op === 'server.command' && c.args[1] === 'bots.image.acknowledge',
+			),
+		);
+		assert.deepEqual(
+			(await calls(page, 'server.command'))
+				.filter((c) => c.args[1] === 'bots.image.acknowledge')
+				.map((c) => c.args[0]),
+			['local'],
+		);
+		await page.evaluate(() => window.__harness.releaseEngineStatus());
+		// Identical build ids on two servers must still have independent notices.
+		await notice.waitFor({ state: 'visible' });
+		await notice.getByRole('button', { name: 'Dismiss', exact: true }).click();
+		await notice.waitFor({ state: 'detached' });
+		assert.deepEqual(
+			(await calls(page, 'server.command'))
+				.filter((c) => c.args[1] === 'bots.image.acknowledge')
+				.map((c) => c.args[0]),
+			['local', 'second'],
+		);
+	} finally {
+		await page.close();
+	}
+});

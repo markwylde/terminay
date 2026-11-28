@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -118,4 +124,107 @@ test('credential-shaped build output is redacted before retention across chunk b
 	const data = JSON.stringify(p.snapshot) + p.retainedOutput;
 	assert.doesNotMatch(data, /test-secret|private key|user:pass/);
 	assert.match(data, /redacted/);
+});
+
+function recordPath(t) {
+	const root = mkdtempSync(join(tmpdir(), 'build-notice-'));
+	t.after(() => rmSync(root, { force: true, recursive: true }));
+	return join(root, 'state', 'build.json');
+}
+function built(tracker, fingerprint = 'fp', engine = 'engine') {
+	tracker.start(engine, fingerprint, true);
+	tracker.finish(true);
+	return tracker.snapshot;
+}
+
+test('an acknowledgement belongs to the image, across rebuilds and restarts', (t) => {
+	const path = recordPath(t);
+	mkdirSync(join(path, '..'));
+	const p = new BotBuildTracker(path);
+	const first = built(p);
+	assert.equal(first.acknowledged, false);
+	assert.equal(p.acknowledge(first.id), true);
+	assert.equal(p.snapshot.acknowledged, true);
+	assert.ok(p.snapshot.revision > first.revision);
+	assert.equal(p.acknowledge(first.id), false);
+	assert.equal(new BotBuildTracker(path).snapshot.acknowledged, true);
+
+	const again = built(p);
+	assert.notEqual(again.id, first.id);
+	assert.equal(again.acknowledged, true);
+	assert.equal(built(p, 'other').acknowledged, false);
+	assert.equal(built(p, 'fp', 'other-engine').acknowledged, false);
+
+	p.start('engine', 'fp', true);
+	assert.equal(p.snapshot.acknowledged, false);
+	p.finish(false);
+	assert.equal(p.snapshot.acknowledged, false);
+	assert.equal(built(new BotBuildTracker(path)).acknowledged, true);
+});
+
+test('only the latest completed build can be acknowledged', () => {
+	const p = new BotBuildTracker();
+	assert.equal(p.acknowledge('none'), false);
+	const old = built(p);
+	p.start('engine', 'next', true);
+	assert.equal(p.acknowledge(old.id), false);
+	assert.equal(p.acknowledge(p.snapshot.id), false);
+	p.finish(false);
+	assert.equal(p.acknowledge(p.snapshot.id), false);
+	assert.equal(built(p).acknowledged, false);
+});
+
+test('the 32 newest acknowledgements are kept', () => {
+	const p = new BotBuildTracker();
+	for (let i = 0; i < 33; i++) p.acknowledge(built(p, `fp-${i}`).id);
+	assert.equal(built(p, 'fp-1').acknowledged, true);
+	assert.equal(built(p, 'fp-32').acknowledged, true);
+	assert.equal(built(p, 'fp-0').acknowledged, false);
+});
+
+test('an acknowledgement that cannot be saved is not made, and can be retried', (t) => {
+	const path = recordPath(t);
+	const directory = join(path, '..');
+	mkdirSync(directory);
+	const p = new BotBuildTracker(path);
+	const { id, revision } = built(p);
+	// A file where the directory was refuses the write, even for root.
+	rmSync(directory, { recursive: true });
+	writeFileSync(directory, '');
+	assert.throws(() => p.acknowledge(id));
+	assert.equal(p.snapshot.acknowledged, false);
+	assert.equal(p.snapshot.revision, revision);
+	rmSync(directory);
+	mkdirSync(directory);
+	assert.equal(p.acknowledge(id), true);
+	assert.equal(new BotBuildTracker(path).snapshot.acknowledged, true);
+});
+
+test('an absent or malformed acknowledgement list never loses the build record', (t) => {
+	const path = recordPath(t);
+	mkdirSync(join(path, '..'));
+	const first = built(new BotBuildTracker(path));
+	const record = JSON.parse(readFileSync(path, 'utf8'));
+	const load = (acknowledged) => {
+		writeFileSync(path, JSON.stringify({ ...record, acknowledged }));
+		return new BotBuildTracker(path).snapshot;
+	};
+	for (const bad of [undefined, 'nope', {}, [null, 1, { fingerprint: 'fp' }]]) {
+		assert.equal(load(bad).id, first.id);
+		assert.equal(load(bad).acknowledged, false);
+	}
+	const entry = { engineIdentity: 'engine', fingerprint: 'fp' };
+	assert.equal(load([null, entry, entry]).acknowledged, true);
+});
+
+test('the wire accepts a missing or boolean acknowledged flag only', () => {
+	const state = built(new BotBuildTracker());
+	const { acknowledged: _, ...without } = state;
+	assert.ok(parseBotBuildProgress(without));
+	assert.ok(parseBotBuildProgress({ ...state, acknowledged: true }));
+	for (const bad of ['true', 1, null])
+		assert.throws(
+			() => parseBotBuildProgress({ ...state, acknowledged: bad }),
+			/build progress/,
+		);
 });

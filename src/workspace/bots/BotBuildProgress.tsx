@@ -9,6 +9,7 @@ import {
 	useSyncExternalStore,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { buildAcknowledgementsFor } from './buildAcknowledgements';
 import type { BotEngineView } from './useBotEngine';
 import { useNow } from './useNow';
 
@@ -41,50 +42,10 @@ function Marker({
 		</span>
 	);
 }
-const DISMISSED_KEY = 'terminay.bots.buildBannerDismissed';
-const dismissedListeners = new Set<() => void>();
-let dismissedKeys: readonly string[] = (() => {
-	try {
-		const raw = localStorage.getItem(DISMISSED_KEY);
-		const parsed: unknown = raw ? JSON.parse(raw) : [];
-		return Array.isArray(parsed)
-			? parsed.filter((v): v is string => typeof v === 'string')
-			: [];
-	} catch {
-		return [];
-	}
-})();
-/** Hides the banner for one build outcome, on every surface that shows it. */
-function dismissBuild(key: string): void {
-	if (dismissedKeys.includes(key)) return;
-	dismissedKeys = [...dismissedKeys, key].slice(-20);
-	try {
-		localStorage.setItem(DISMISSED_KEY, JSON.stringify(dismissedKeys));
-	} catch {
-		/* Dismissal still holds for this window. */
-	}
-	for (const listener of dismissedListeners) listener();
-}
-function useDismissed(key: string): boolean {
-	return useSyncExternalStore(
-		(listener) => {
-			dismissedListeners.add(listener);
-			return () => dismissedListeners.delete(listener);
-		},
-		() => dismissedKeys.includes(key),
-	);
-}
-
 /** How many banners show each build, so a banner that moves is not "left". */
 const mountedBanners = new Map<string, number>();
 
-export function BuildBanner({
-	engine,
-	label,
-	visible = true,
-	open: openProp,
-	onOpenChange,
-}: {
+type BuildBannerProps = {
 	engine: BotEngineView;
 	label?: string;
 	/** False while the surface holding the banner is hidden, e.g. a background tab. */
@@ -96,7 +57,21 @@ export function BuildBanner({
 	 */
 	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
-}) {
+};
+
+export function BuildBanner(props: BuildBannerProps) {
+	// Remount on a server switch: retained progress and seen state belong to
+	// that server, as does the deferred retirement callback on unmount.
+	return <ServerBuildBanner key={props.engine.serverId} {...props} />;
+}
+
+function ServerBuildBanner({
+	engine,
+	label,
+	visible = true,
+	open: openProp,
+	onOpenChange,
+}: BuildBannerProps) {
 	const [ownOpen, setOwnOpen] = useState(false);
 	const open = openProp ?? ownOpen;
 	const setOpen = useCallback(
@@ -111,9 +86,27 @@ export function BuildBanner({
 	const banner = useRef<HTMLDivElement>(null);
 	if (engine.status?.build) last.current = engine.status.build;
 	const progress = engine.status?.build ?? last.current;
-	const key = progress ? `${progress.id}:${progress.state}` : '';
-	const dismissed = useDismissed(key);
+	const acknowledgements = buildAcknowledgementsFor(engine.serverId);
+	const buildId = progress?.id ?? '';
+	const mountKey = JSON.stringify([engine.serverId, buildId]);
 	const completed = progress?.state === 'completed';
+	const hidden = useSyncExternalStore(acknowledgements.subscribe, () =>
+		acknowledgements.isHidden(buildId),
+	);
+	// Only a ready notice is ever hidden; progress and failures always show.
+	const dismissed = completed && (hidden || progress?.acknowledged === true);
+	// Seen-and-left retires after the last banner unmounts, so the sender is
+	// kept where that late call can still reach it.
+	const send = useRef(engine.acknowledgeImage);
+	send.current = engine.acknowledgeImage;
+	const dismissBuild = useCallback(
+		(id: string) => acknowledgements.acknowledge(id, send.current),
+		[acknowledgements],
+	);
+	useEffect(() => {
+		const build = engine.status?.build;
+		if (build) acknowledgements.reconcile(build, send.current);
+	}, [engine.status, acknowledgements]);
 	// A success notice needs to be seen once: leaving the surface after it was
 	// shown (the tab hidden, or the banner unmounted) retires it.
 	const seen = useRef<string>(undefined);
@@ -121,33 +114,35 @@ export function BuildBanner({
 		const el = banner.current;
 		if (!completed || dismissed || !visible || !el) return;
 		const observer = new IntersectionObserver(([entry]) => {
-			if (entry?.isIntersecting) seen.current = key;
+			if (entry?.isIntersecting) seen.current = buildId;
 		});
 		observer.observe(el);
 		return () => observer.disconnect();
-	}, [completed, dismissed, visible, key]);
+	}, [completed, dismissed, visible, buildId]);
 	useEffect(() => {
-		if (!visible && seen.current === key && key) dismissBuild(key);
-	}, [visible, key]);
+		if (!visible && completed && buildId && seen.current === buildId)
+			dismissBuild(buildId);
+	}, [visible, completed, buildId, dismissBuild]);
 	// A banner that only moves (a compact page and a wide window's rail draw it
 	// in different places) has not been left: another one for the same build
 	// mounts in the same commit, and the notice stays.
 	useEffect(() => {
-		if (!key) return;
-		mountedBanners.set(key, (mountedBanners.get(key) ?? 0) + 1);
+		if (!buildId) return;
+		mountedBanners.set(mountKey, (mountedBanners.get(mountKey) ?? 0) + 1);
 		return () => {
-			mountedBanners.set(key, (mountedBanners.get(key) ?? 1) - 1);
+			mountedBanners.set(mountKey, (mountedBanners.get(mountKey) ?? 1) - 1);
 		};
-	}, [key]);
+	}, [buildId, mountKey]);
 	useEffect(
 		() => () => {
 			const left = seen.current;
 			if (!left) return;
 			window.setTimeout(() => {
-				if ((mountedBanners.get(left) ?? 0) === 0) dismissBuild(left);
+				const key = JSON.stringify([engine.serverId, left]);
+				if ((mountedBanners.get(key) ?? 0) === 0) dismissBuild(left);
 			}, 0);
 		},
-		[],
+		[dismissBuild, engine.serverId],
 	);
 	if (!progress) return null;
 	const running = progress.state === 'running';
@@ -193,7 +188,7 @@ export function BuildBanner({
 							className="bots-build-banner__close"
 							aria-label="Dismiss"
 							title="Dismiss"
-							onClick={() => dismissBuild(key)}
+							onClick={() => dismissBuild(buildId)}
 							data-terminay-build-banner-dismiss
 						>
 							<X size={14} aria-hidden="true" />

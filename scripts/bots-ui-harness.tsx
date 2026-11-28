@@ -76,6 +76,8 @@ declare global {
 			setSessions: (botId: string, sessions: BotSessionRecord[]) => void;
 			setTranscript: (sessionId: string, updates: unknown[]) => void;
 			setVisible: (visible: boolean) => void;
+			switchServer: (serverId: string) => void;
+			releaseEngineStatus: () => void;
 			/** The watched environment state changes, as a projection would. */
 			setEnvironment: (botId: string, state: string) => void;
 		};
@@ -668,6 +670,33 @@ const environment = {
 	containerAction: record('containerAction', () => null),
 };
 
+// Keep the transport stable between projection updates, as a real connection is.
+let releaseEngineStatus = () => {};
+function serverConnection(serverId: string, holdStatus = false) {
+	const gate = holdStatus
+		? new Promise<void>((resolve) => {
+				releaseEngineStatus = resolve;
+			})
+		: Promise.resolve();
+	return {
+		serverId,
+		transport: {
+			...transport,
+			query: async (...args: Parameters<typeof transport.query>) => {
+				if (args[0] === 'bots.engine.status') await gate;
+				return transport.query(...args);
+			},
+			command: async (...args: Parameters<typeof transport.command>) => {
+				window.__calls.push({
+					op: 'server.command',
+					args: [serverId, ...args],
+				});
+				return transport.command(...args);
+			},
+		},
+	};
+}
+
 function makeServer(
 	sessions: Map<string, BotSessionRecord[]>,
 	revision: number,
@@ -701,6 +730,7 @@ function Harness() {
 	const [sessions, setSessions] = useState(sessionsNow);
 	const [revision, setRevision] = useState(1);
 	const [visible, setVisible] = useState(true);
+	const [connection, setConnection] = useState(() => serverConnection('local'));
 	window.__harness = {
 		setSessions: (botId, next) => {
 			sessionsNow = new Map(sessionsNow).set(botId, next);
@@ -711,12 +741,17 @@ function Harness() {
 			transcripts.set(id, updates);
 		},
 		setVisible,
+		switchServer: (id) => setConnection(serverConnection(id, true)),
+		releaseEngineStatus: () => releaseEngineStatus(),
 		setEnvironment: (botId, state) => {
 			scenario.environments = { ...scenario.environments, [botId]: state };
 			setRevision((r) => r + 1);
 		},
 	};
-	const server = makeServer(sessions, revision);
+	const server = {
+		...makeServer(sessions, revision),
+		...connection,
+	} as ServerBots;
 	const host: BotTabHost = {
 		openBot: (target) => window.__opened.push(target),
 		setTitle: () => {},
