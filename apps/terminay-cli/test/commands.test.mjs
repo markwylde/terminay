@@ -2068,7 +2068,7 @@ test('an upgrade that is not root, or is the helper itself, leaves the helper un
 	await withSystemInstall(
 		async ({ layout, fake, context, upgradeDependencies }) => {
 			// Inside the oneshot the helper's own units are running. The upgrade
-			// stops and starts the server's unit and touches no other.
+			// may still reconcile the desktop helper and restart the server.
 			const before = fake.invocations().length;
 			const result = await runUpgrade(undefined, OPTIONS, await context(), {
 				...upgradeDependencies,
@@ -2077,7 +2077,11 @@ test('an upgrade that is not root, or is the helper itself, leaves the helper un
 			assert.equal(result.to, '4.1.1');
 			const calls = fake.invocations().slice(before);
 			assert.deepEqual(
-				calls.filter((line) => line.startsWith('systemctl')),
+				calls.filter(
+					(line) =>
+						line.startsWith('systemctl') &&
+						!line.endsWith('terminay-desktop-setup.path'),
+				),
 				[
 					'systemctl stop terminay-server.service',
 					'systemctl start terminay-server.service',

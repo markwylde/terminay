@@ -178,20 +178,23 @@ export async function installUpgradeHelper(options: {
 		// old desktop trigger left there, so never open or chown them.
 		const staging = await mkdtemp(join(dirname(helper.requestDirectory), '.upgrade-'));
 		try {
-			const requests = [helper.requestFile, helper.latestRequestFile];
-			const prepared = requests.map((request) => join(staging, basename(request)));
-			for (const path of prepared) {
+			const requests = [helper.requestFile, helper.latestRequestFile].map(
+				(path) => ({ path, temporary: join(staging, basename(path)) }),
+			);
+			for (const { temporary: path } of requests) {
 				await writeFile(path, '', { flag: 'wx', mode: 0o600 });
 				await chmod(path, 0o600);
 			}
 			await execFileAsync(
 				'chown',
-				[`${runAs}:${runAs}`, helper.requestDirectory, ...prepared],
+				[
+					`${runAs}:${runAs}`,
+					helper.requestDirectory,
+					...requests.map(({ temporary }) => temporary),
+				],
 				{ timeout: 60_000 },
 			);
-			await Promise.all(
-				requests.map((request, index) => rename(prepared[index]!, request)),
-			);
+			for (const { path, temporary } of requests) await rename(temporary, path);
 		} finally {
 			await rm(staging, { recursive: true, force: true });
 		}

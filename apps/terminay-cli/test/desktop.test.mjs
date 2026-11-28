@@ -26,10 +26,11 @@ import {
 import {
 	desktopSetupHelperInstalled,
 	installDesktopSetupHelper,
+	installDesktopSetupHelperFromRecord,
 	removeDesktopSetupHelper,
 } from '../dist/desktopHelper.js';
 import { installUpgradeHelper } from '../dist/helper.js';
-import { installLayout } from '../dist/layout.js';
+import { installLayout, writeInstallRecord } from '../dist/layout.js';
 import { createSystemd } from '../dist/systemd.js';
 import {
 	renderDesktopSetupPathUnit,
@@ -641,7 +642,30 @@ test('desktop trigger migration and repair leave targets of account-selected lin
 
 	// Legacy upgrade helper repair must leave the old desktop entry alone.
 	await installUpgradeHelper(options);
-	await installDesktopSetupHelper(options);
+	await mkdir(layout.prefix, { recursive: true });
+	await symlink(target, layout.recordPath);
+	await assert.rejects(
+		installDesktopSetupHelperFromRecord(layout, systemd),
+		/Unsafe system install record/u,
+	);
+	assert.equal(existsSync(helper.desktopRequestFile), false);
+	await rm(layout.recordPath);
+	await writeInstallRecord(layout, {
+		schemaVersion: 1,
+		scope: 'system',
+		channel: 'tag',
+		version: '1.0.0',
+		revision: 'test',
+		runAs: 'ada',
+		dataRoot: layout.defaultDataRoot,
+		projectRoot: root,
+		port: 8080,
+		healthPort: 8081,
+		expose: 'hosted',
+		installedAt: '2026-01-01T00:00:00Z',
+	});
+	assert.equal(await installDesktopSetupHelperFromRecord(layout, systemd), true);
+	assert.equal(await installDesktopSetupHelperFromRecord(layout, systemd), false);
 	assert.equal((await lstat(legacy)).ino, original.ino);
 	assert.equal((await lstat(target)).ctimeMs, original.ctimeMs);
 	assert.match(

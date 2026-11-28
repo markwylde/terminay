@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import type { Stats } from 'node:fs';
 import {
 	chmod,
 	lstat,
@@ -17,6 +18,7 @@ import {
 	DESKTOP_SETUP_PATH_UNIT_NAME,
 	DESKTOP_SETUP_SERVICE_UNIT_NAME,
 	type InstallLayout,
+	readInstallRecord,
 } from './layout.js';
 import type { Systemd } from './systemd.js';
 import {
@@ -44,12 +46,12 @@ function entry(path: string) {
 	});
 }
 
-function trustedDirectory(found: Awaited<ReturnType<typeof entry>>): boolean {
+function trustedDirectory(found: Stats | undefined): found is Stats {
 	return found?.isDirectory() === true &&
 		found.uid === process.getuid?.() && (found.mode & 0o022) === 0;
 }
 
-function regularTrigger(found: Awaited<ReturnType<typeof entry>>): boolean {
+function singleLinkFile(found: Stats | undefined): found is Stats {
 	return found?.isFile() === true && found.nlink === 1;
 }
 
@@ -85,7 +87,7 @@ export async function desktopSetupHelperInstalled(
 			(found) => found.isDirectory() && (found.mode & 0o022) === 0,
 			() => false,
 		)) &&
-		(await lstat(helper.desktopRequestFile).then(regularTrigger, () => false))
+		(await lstat(helper.desktopRequestFile).then(singleLinkFile, () => false))
 	);
 }
 
@@ -124,8 +126,8 @@ export async function installDesktopSetupHelper(options: {
 	if (directory !== undefined && !trustedDirectory(directory))
 		throw new Error(`Unsafe desktop setup directory: ${helper.desktopRequestDirectory}`);
 	const trigger = await entry(helper.desktopRequestFile);
-	const needsTrigger = !regularTrigger(trigger) ||
-		trigger?.uid !== uid || (trigger.mode & 0o7777) !== 0o600;
+	const needsTrigger = !singleLinkFile(trigger) ||
+		trigger.uid !== uid || (trigger.mode & 0o7777) !== 0o600;
 	const needsDirectoryMode = ((directory?.mode ?? 0) & 0o7777) !== 0o755;
 	const changed = needsDirectoryMode || needsTrigger;
 	const pathUnit = renderDesktopSetupPathUnit(layout);
@@ -164,6 +166,29 @@ export async function installDesktopSetupHelper(options: {
 	if (needsActivation)
 		await systemd.enableNowUnit(DESKTOP_SETUP_PATH_UNIT_NAME);
 	return needsActivation;
+}
+
+/** Apply the new release's helper when an older CLI drives the upgrade. */
+export async function installDesktopSetupHelperFromRecord(
+	layout: InstallLayout,
+	systemd: Systemd,
+): Promise<boolean> {
+	if (layout.upgradeHelper === undefined) return false;
+	const prefix = await entry(layout.prefix);
+	if (prefix === undefined) return false;
+	if (!trustedDirectory(prefix))
+		throw new Error(`Unsafe system install directory: ${layout.prefix}`);
+	const file = await entry(layout.recordPath);
+	if (file === undefined) return false;
+	if (
+		!singleLinkFile(file) ||
+		file.uid !== prefix.uid ||
+		(file.mode & 0o022) !== 0
+	)
+		throw new Error(`Unsafe system install record: ${layout.recordPath}`);
+	const record = await readInstallRecord(layout);
+	if (record?.scope !== 'system') return false;
+	return installDesktopSetupHelper({ layout, runAs: record.runAs, systemd });
 }
 
 /** Disarm the watch and remove the units and the trigger. */
