@@ -2,7 +2,7 @@ import { STORAGE_FAILURE_REASONS } from "@terminay/protocol";
 
 const REASONS: ReadonlySet<unknown> = new Set(Object.values(STORAGE_FAILURE_REASONS));
 
-/** The server's storage refused a command (ADR-0149). Its message is shown as
+/** The server's storage refused a command (ADR-0150). Its message is shown as
  * sent, so test this before rewriting an error by its code. Feature facades
  * wrap errors; their bounded cause chain is searched. */
 export function isServerStorageFailure(error: unknown): boolean {

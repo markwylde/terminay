@@ -798,7 +798,7 @@ function serializeMutation<T>(result: FileMutationResult<T>): JsonValue {
 	};
 }
 /** A save the storage refused fails the command, so the dispatcher names it
- * (ADR-0149). Every other outcome is a result. */
+ * (ADR-0150). Every other outcome is a result. */
 function serializeSave<T>(result: FileMutationResult<T>): JsonValue {
 	if (!result.ok && storageFailure(result.error)) throw result.error;
 	return serializeMutation(result);

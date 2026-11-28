@@ -418,7 +418,7 @@ function asJson(value: unknown): JsonValue {
  * `details.reason`, with the id it names, so an MCP caller receives it intact.
  */
 export function toProtocolError(error: unknown): unknown {
-	// The dispatcher names a write the storage refused (ADR-0149).
+	// The dispatcher names a write the storage refused (ADR-0150).
 	if (!isWorkflowServiceError(error) || storageFailure(error)) return error;
 	const code =
 		error.code === 'invalid_workflow'

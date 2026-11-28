@@ -161,3 +161,4 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0147](./0147-bot-and-server-desktops-share-one-remote-desktop-package-and-differ-only-in-connector-and-authority.md) | Bot and server desktops share one remote-desktop package and differ only in connector and authority | accepted | 2026-11-27 |
 | [0148](./0148-host-packages-are-installed-only-by-a-root-helper-with-a-fixed-command-line.md) | Host packages are installed only by a root helper with a fixed command line | accepted | 2026-11-27 |
 | [0149](./0149-a-bot-session-waiting-on-background-work-is-asked-whether-it-is-done.md) | A bot session waiting on background work is asked whether it is done | accepted, supersedes 0140 | 2026-11-28 |
+| [0150](./0150-storage-failures-are-classified-at-the-dispatcher-from-the-error-cause-chain.md) | Storage failures are classified at the dispatcher from the error cause chain | accepted | 2026-11-28 |

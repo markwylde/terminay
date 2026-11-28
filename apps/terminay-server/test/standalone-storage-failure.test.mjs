@@ -13,7 +13,7 @@ import {
 import { WebSocket } from 'ws';
 
 // A real standalone server whose data root stops accepting writes: the client
-// is told so, in words naming the data folder (ADR-0149).
+// is told so, in words naming the data folder (ADR-0150).
 
 async function startServer(root) {
 	const child = spawn(

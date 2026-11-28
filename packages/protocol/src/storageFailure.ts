@@ -1,4 +1,4 @@
-/** `details.reason` of a command the server's storage refused (ADR-0149).
+/** `details.reason` of a command the server's storage refused (ADR-0150).
  * Clients show such a failure's message as sent. */
 export const STORAGE_FAILURE_REASONS = Object.freeze({
 	full: 'storage_full',

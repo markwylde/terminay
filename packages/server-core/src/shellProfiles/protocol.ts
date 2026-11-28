@@ -183,7 +183,7 @@ function json(value: unknown): JsonValue {
 	return structuredClone(value) as JsonValue;
 }
 function mapError(error: unknown): unknown {
-	// The dispatcher names a write the storage refused (ADR-0149).
+	// The dispatcher names a write the storage refused (ADR-0150).
 	if (isProtocolError(error) || storageFailure(error)) return error;
 	if (error instanceof ShellProfileMutationError) {
 		const code =

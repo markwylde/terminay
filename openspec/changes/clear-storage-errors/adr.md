@@ -13,7 +13,7 @@
 
 ## Repository-Level ADRs Created
 
-- openspec/adr/0149-storage-failures-are-classified-at-the-dispatcher-from-the-error-cause-chain.md - dispatcher classification, preserved causes, reason-based client handling.
+- openspec/adr/0150-storage-failures-are-classified-at-the-dispatcher-from-the-error-cause-chain.md - dispatcher classification, preserved causes, reason-based client handling.
 
 ## Notes
 

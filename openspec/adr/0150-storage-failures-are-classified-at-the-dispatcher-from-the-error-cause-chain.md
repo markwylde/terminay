@@ -1,4 +1,4 @@
-# ADR-0149: Storage failures are classified at the dispatcher from the error cause chain
+# ADR-0150: Storage failures are classified at the dispatcher from the error cause chain
 
 Status: accepted
 Date: 2026-11-28

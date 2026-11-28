@@ -27,7 +27,7 @@ interface FilesystemError {
 
 /**
  * Name a command failure the server's storage caused, wherever the system
- * error sits in the cause chain (ADR-0149). The messages are fixed: no path or
+ * error sits in the cause chain (ADR-0150). The messages are fixed: no path or
  * platform text reaches the client. The refused path only chooses between the
  * two permission messages.
  */
