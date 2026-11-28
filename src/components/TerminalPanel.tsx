@@ -214,6 +214,8 @@ export interface TerminalPanelClientContextValue {
 	/** This connection's server's own upgrade status and request. Absent when
 	 * the server does not publish one. */
 	readonly serverUpgradeClient?: import('@terminay/client-core').ServerUpgradeClient;
+	/** This connection's server's desktop. Absent when the server offers none. */
+	readonly serverDesktopClient?: import('@terminay/client-core').ServerDesktopClient;
 	/** Optional reduced server-owned agent projection for this connection. */
 	readonly agentStatusClient?: AgentStatusClient;
 	/** Authenticated connection-wide workspace projection. */

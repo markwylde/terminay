@@ -26,8 +26,16 @@ export const UPGRADE_REQUEST_FILE = 'request';
  * on the installed channel even when that is older than the running one.
  */
 export const INSTALL_LATEST_PATH_UNIT_NAME = 'terminay-upgrade-latest.path';
-export const INSTALL_LATEST_SERVICE_UNIT_NAME = 'terminay-upgrade-latest.service';
+export const INSTALL_LATEST_SERVICE_UNIT_NAME =
+	'terminay-upgrade-latest.service';
 export const INSTALL_LATEST_REQUEST_FILE = 'install-latest';
+/**
+ * The desktop-setup pair: root installs the server desktop's packages when the
+ * server asks, with a command line fixed in the unit (see `desktop.ts`).
+ */
+export const DESKTOP_SETUP_PATH_UNIT_NAME = 'terminay-desktop-setup.path';
+export const DESKTOP_SETUP_SERVICE_UNIT_NAME = 'terminay-desktop-setup.service';
+export const DESKTOP_SETUP_REQUEST_FILE = 'desktop-setup';
 
 /**
  * The part of a layout that staging and switching a version needs. A container
@@ -64,6 +72,10 @@ export interface UpgradeHelperLayout {
 	readonly latestPathUnitPath: string;
 	readonly latestServiceUnitPath: string;
 	readonly latestRequestFile: string;
+	/** The desktop-setup pair, and its trigger in the same directory. */
+	readonly desktopPathUnitPath: string;
+	readonly desktopServiceUnitPath: string;
+	readonly desktopRequestFile: string;
 }
 
 export interface InstallLayout extends ReleaseTree {
@@ -107,6 +119,9 @@ export function installLayout(
 				latestPathUnitPath: join(units, INSTALL_LATEST_PATH_UNIT_NAME),
 				latestServiceUnitPath: join(units, INSTALL_LATEST_SERVICE_UNIT_NAME),
 				latestRequestFile: join(requestDirectory, INSTALL_LATEST_REQUEST_FILE),
+				desktopPathUnitPath: join(units, DESKTOP_SETUP_PATH_UNIT_NAME),
+				desktopServiceUnitPath: join(units, DESKTOP_SETUP_SERVICE_UNIT_NAME),
+				desktopRequestFile: join(requestDirectory, DESKTOP_SETUP_REQUEST_FILE),
 			}),
 		});
 	}

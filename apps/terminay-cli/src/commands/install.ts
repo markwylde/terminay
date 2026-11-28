@@ -68,6 +68,7 @@ import {
 } from '../usable.js';
 import { verifyArchive } from '../verify.js';
 import { runPairing } from './pairing.js';
+import { installDesktopSetupHelper } from '../desktopHelper.js';
 
 /**
  * `daemon install` — one command from a clean Linux box to a running,
@@ -420,6 +421,13 @@ export async function runInstall(
 	// A user-scope service upgrades as itself and has none.
 	if (scope === 'system') {
 		await installUpgradeHelper({ layout, runAs: selection.runAs, systemd });
+		// And one that can install what the server desktop needs, when someone
+		// asks for the desktop (see `desktopHelper.ts`). It installs nothing now.
+		await installDesktopSetupHelper({
+			layout,
+			runAs: selection.runAs,
+			systemd,
+		});
 	}
 
 	const report = await (
@@ -461,7 +469,7 @@ export async function runInstall(
 		healthPort: DEFAULT_HEALTH_PORT,
 		expose,
 		appServer: options.appServer ?? DEFAULT_APP_SERVER,
-			sessionServer: options.sessionServer ?? DEFAULT_SESSION_SERVER,
+		sessionServer: options.sessionServer ?? DEFAULT_SESSION_SERVER,
 		...(options.publicHost === undefined
 			? {}
 			: { publicHost: options.publicHost }),

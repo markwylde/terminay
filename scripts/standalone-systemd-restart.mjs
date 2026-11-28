@@ -53,7 +53,7 @@ function run(command, args, options = {}) {
  * CI runners the Docker daemon is the host's, and paths inside the job
  * container mean nothing to it.
  */
-function stageCli(repositoryRoot, into) {
+export function stageCli(repositoryRoot, into) {
 	const cliRoot = resolve(repositoryRoot, 'apps/terminay-cli');
 	if (!existsSync(join(cliRoot, 'dist/commands/install.js')))
 		throw new Error('build the CLI first: npm run build --workspace terminay');

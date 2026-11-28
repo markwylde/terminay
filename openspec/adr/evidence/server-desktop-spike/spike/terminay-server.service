@@ -1,0 +1,24 @@
+[Unit]
+Description=Terminay Server
+Documentation=https://terminay.com/docs/installation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=terminay
+Group=terminay
+WorkingDirectory=/var/lib/terminay
+EnvironmentFile=/etc/terminay/server.env
+ExecStart=/opt/terminay/current/bin/terminay-server
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+KillMode=process
+TimeoutStopSec=15s
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

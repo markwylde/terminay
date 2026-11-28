@@ -47,6 +47,7 @@ import {
 } from '../unit.js';
 import { describeFailures, serverFailed, verifyUsable } from '../usable.js';
 import { verifyArchive } from '../verify.js';
+import { installDesktopSetupHelper } from '../desktopHelper.js';
 
 /**
  * `daemon upgrade` — follow the installed channel, and never leave the machine
@@ -288,6 +289,22 @@ async function upgradeRelease(
 		await installUpgradeHelper({ layout, runAs: record.runAs, systemd });
 		write('Installed the upgrade helper, so this server can upgrade itself.');
 	}
+	// The desktop-setup helper is kept current on every upgrade root runs,
+	// the upgrade helper's own included: these are never the units that run
+	// is inside.
+	if (
+		layout.upgradeHelper !== undefined &&
+		(dependencies.uid ?? process.getuid?.()) === 0
+	)
+		await installDesktopSetupHelper({
+			layout,
+			runAs: record.runAs,
+			systemd,
+		}).catch((error: unknown) => {
+			write(
+				`Warning: the desktop setup helper could not be installed (${error instanceof Error ? error.message : String(error)}). The server desktop can still be set up with \`sudo terminay daemon desktop install\`.`,
+			);
+		});
 	// Root keeps the host's bot AppArmor profile current (ADR-0120), whether or
 	// not there is a newer release: `sudo terminay daemon upgrade` is the fix
 	// the server names when a bot's browser sandbox is refused.

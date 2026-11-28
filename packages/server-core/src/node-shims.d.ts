@@ -53,6 +53,11 @@ declare module 'node:child_process' {
 		readonly stdin: ChildInput;
 		readonly stdout: ChildStream;
 		readonly stderr: ChildStream;
+		/** Every descriptor the child was given, in order. */
+		readonly stdio: readonly unknown[];
+		readonly pid?: number;
+		readonly exitCode: number | null;
+		readonly signalCode: string | null;
 		readonly connected: boolean;
 		kill(signal?: string): boolean;
 		send(
@@ -82,7 +87,7 @@ declare module 'node:child_process' {
 		options?: {
 			readonly cwd?: string;
 			readonly env?: Readonly<Record<string, string | undefined>>;
-			readonly stdio?: readonly ('ignore' | 'pipe')[];
+			readonly stdio?: readonly ('ignore' | 'pipe' | number)[];
 			readonly detached?: boolean;
 			readonly windowsHide?: boolean;
 			readonly signal?: AbortSignal;
@@ -203,6 +208,7 @@ declare module 'node:fs/promises' {
 		isSymbolicLink(): boolean;
 	}
 	interface FileHandle {
+		readonly fd: number;
 		read(
 			buffer: Buffer,
 			offset: number,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FEATURE_CAPABILITIES, LANGUAGE_OPERATIONS, PROJECT_START_OPERATIONS, SERVER_UPGRADE_OPERATIONS, HOST_STATS_OPERATIONS } from "@terminay/protocol";
+import { FEATURE_CAPABILITIES, LANGUAGE_OPERATIONS, PROJECT_START_OPERATIONS, SERVER_UPGRADE_OPERATIONS, HOST_STATS_OPERATIONS, SERVER_DESKTOP_OPERATIONS, SERVER_DESKTOP_EVENTS } from "@terminay/protocol";
 import {
   ACTIVITY_OPERATIONS,
   NOTIFICATION_OPERATIONS,
@@ -150,6 +150,22 @@ test("a composed server advertises the versioned capability of every service it 
   } finally {
     await composition.shutdown();
   }
+});
+
+test("every server desktop operation and event belongs to the desktop capability, ahead of the bare server namespace", () => {
+  const names = [
+    ...Object.values(SERVER_DESKTOP_OPERATIONS),
+    ...Object.values(SERVER_DESKTOP_EVENTS),
+  ];
+  assert.equal(names.length, 12);
+  for (const name of names)
+    assert.equal(capabilityOf(name), FEATURE_CAPABILITIES.serverDesktop, name);
+  // Anything else under the prefix is the desktop's too, never a mechanic.
+  assert.equal(capabilityOf("server.desktop.anything"), FEATURE_CAPABILITIES.serverDesktop);
+  // The rest of the server namespace is unchanged.
+  assert.equal(capabilityOf("server.health"), CONNECTION_MECHANICS);
+  assert.equal(capabilityOf("server.desktop"), CONNECTION_MECHANICS);
+  assert.equal(capabilityOf("server.upgrade.status"), FEATURE_CAPABILITIES.serverUpgrade);
 });
 
 test("every stable operation name in the protocol surface maps to its own capability", () => {

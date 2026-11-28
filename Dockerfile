@@ -32,6 +32,7 @@ COPY packages/cron/package.json ./packages/cron/package.json
 COPY packages/extension-api/package.json ./packages/extension-api/package.json
 COPY packages/protocol/package.json ./packages/protocol/package.json
 COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/package.json
+COPY packages/remote-desktop/package.json ./packages/remote-desktop/package.json
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
 COPY packages/ui-bundle/package.json ./packages/ui-bundle/package.json

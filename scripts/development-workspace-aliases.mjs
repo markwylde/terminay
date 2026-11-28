@@ -33,6 +33,14 @@ export function developmentWorkspaceAliases(repositoryRoot) {
 			replacement: source('packages', 'cron', 'src', 'index.ts'),
 		},
 		{
+			find: '@terminay/remote-desktop/client',
+			replacement: source('packages', 'remote-desktop', 'src', 'client', 'index.ts'),
+		},
+		{
+			find: '@terminay/remote-desktop/ui',
+			replacement: source('packages', 'remote-desktop', 'src', 'ui', 'index.ts'),
+		},
+		{
 			find: '@terminay/client-core',
 			replacement: source('packages', 'client-core', 'src', 'index.ts'),
 		},

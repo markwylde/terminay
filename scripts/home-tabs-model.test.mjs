@@ -162,3 +162,13 @@ test('nothing restorable is no arrangement', () => {
 	])
 		assert.equal(sanitizeHomeLayout(stored), undefined);
 });
+
+test('a server desktop tab in Home is named by its server and its own id', () => {
+	const descriptor = { kind: 'server-desktop', serverId: 'vps:1', tabId: 'server-desktop-a/b' };
+	const id = homeTabId(descriptor);
+	assert.deepEqual(parseHomeTabId(id), descriptor);
+	assert.equal(homeTabServerId(descriptor), 'vps:1');
+	assert.equal(defaultHomeTabTitle(descriptor), 'Desktop');
+	assert.equal(homeTabSection(descriptor), 'home');
+	assert.equal(parseHomeTabId('server-desktop:only-one'), undefined);
+});

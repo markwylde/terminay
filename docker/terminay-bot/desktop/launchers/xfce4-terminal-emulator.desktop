@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Exec=/usr/local/bin/terminay-desktop-session terminal
+Icon=utilities-terminal
+Categories=System;TerminalEmulator;X-XFCE;X-Xfce-Toplevel;

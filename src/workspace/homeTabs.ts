@@ -41,6 +41,7 @@ export type HomeTabDescriptor =
 	  }>
 	| Readonly<{ kind: 'recording'; serverId: string; recordingId: string }>
 	| Readonly<{ kind: 'bot'; serverId: string; botId: string }>
+	| Readonly<{ kind: 'server-desktop'; serverId: string; tabId: string }>
 	| Readonly<{
 			kind: 'forge-item';
 			serverId: string;
@@ -98,6 +99,8 @@ export function homeTabId(descriptor: HomeTabDescriptor): string {
 			return `recording:${encode(descriptor.serverId)}:${encode(descriptor.recordingId)}`;
 		case 'bot':
 			return `bot:${encode(descriptor.serverId)}:${encode(descriptor.botId)}`;
+		case 'server-desktop':
+			return `server-desktop:${encode(descriptor.serverId)}:${encode(descriptor.tabId)}`;
 		case 'forge-item':
 			return [
 				'forge-item',
@@ -170,6 +173,10 @@ export function parseHomeTabId(id: unknown): HomeTabDescriptor | undefined {
 			return parts.length === 2 && first !== undefined && second !== undefined
 				? { kind: 'bot', serverId: first, botId: second }
 				: undefined;
+		case 'server-desktop':
+			return parts.length === 2 && first !== undefined && second !== undefined
+				? { kind: 'server-desktop', serverId: first, tabId: second }
+				: undefined;
 		case 'forge-item': {
 			if (parts.length !== 7) return undefined;
 			const [serverId, sourceId, itemKind, origin, owner, name, numberPart] =
@@ -193,6 +200,8 @@ export function homeTabSection(descriptor: HomeTabDescriptor): HomeSection {
 			return 'recordings';
 		case 'bot':
 			return 'bots';
+		case 'server-desktop':
+			return DEFAULT_HOME_SECTION;
 		case 'forge-item':
 			return descriptor.itemKind === 'pullRequest' ? 'pullRequests' : 'issues';
 		default:
@@ -219,6 +228,8 @@ export function defaultHomeTabTitle(descriptor: HomeTabDescriptor): string {
 			return 'Recording';
 		case 'bot':
 			return 'Bot';
+		case 'server-desktop':
+			return 'Desktop';
 		case 'forge-item':
 			return `${descriptor.name}#${descriptor.number}`;
 	}

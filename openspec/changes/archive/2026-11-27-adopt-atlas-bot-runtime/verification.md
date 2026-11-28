@@ -42,3 +42,19 @@ PR #488 run 23301 on `8bb52450` passed 27 checks, including all eighteen E2E sha
 The profile is copied from microsoft/playwright commit `ae935a43d9e376e4759548f6b3c6905c7b282333`, `utils/docker/seccomp_profile.json`, with its Apache-2.0 license retained in server-core and staged alongside the packaged profile. See https://playwright.dev/docs/next/docker and https://docs.docker.com/engine/security/seccomp/.
 
 The default-derived browser profile is extended with `pidfd_open` and `pidfd_send_signal` so the existing supervisor retains its PID-reuse protection. A real Docker probe verified both operations; the real MCP test containers now use the production profile too. The upstream profile and license remain unmodified, with the small extension assembled in `browserSandbox.ts`.
+
+## Scope closed — 2026-11-27
+
+Work on this change has ended. Six tasks were never completed and have been removed from `tasks.md` unticked; none is recorded as done. Their implementation is on `main`; what is missing is the evidence each task asked for.
+
+Moved to `add-server-desktop`, which extracts the desktop relay into a shared package and re-verifies it there:
+
+- 3.5 — loopback-only services, no published ports, and view-only relay filtering, with the negative access cases (its task 2.9).
+- 6.3 — the Docker-isolated bot end-to-end run (its tasks 2.3 and 2.9).
+- 6.2 and 6.4 — targeted suites, lint and type checks, and `openspec validate --all --archived` (its task 7.4).
+
+Dropped, with no further work planned. These behaviours ship without the evidence the task required:
+
+- 3.3 — every ArtCraft application launching, rendering, and saving a document on both amd64 and arm64. Launch and render were shown on arm64 only (see "Local passing gates").
+- 3.4 — the full desktop-control and browser-automation journey against the human-visible desktop, including refusal for revoked, wrong-bot, and non-owning executions. The Python operation tests cover part of it.
+- The engine-conformance portion of 3.5 and 6.2 against both Docker and Podman beyond what pull-request CI already runs.

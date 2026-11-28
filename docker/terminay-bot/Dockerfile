@@ -38,6 +38,17 @@ COPY bin/terminay_bus.py /usr/local/lib/terminay/
 RUN chmod 0755 /usr/local/lib/terminay && chmod 0644 /usr/local/lib/terminay/terminay_bus.py
 COPY bin/terminay-desktop-session bin/terminay-desktop-control.py bin/terminay-desktop-mcp.mjs /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/terminay-desktop*
+# The desktop session shared with the server desktop, which the
+# @terminay/remote-desktop build copies from here, and what the bot adds to it.
+COPY session/terminay-desktop-session /usr/local/lib/terminay/
+COPY desktop /usr/local/share/terminay/desktop/
+# The modes are set here, not taken from the checkout: the bot account reads
+# these, whatever umask the context was staged under.
+RUN chmod 0755 /usr/local/lib/terminay/terminay-desktop-session \
+    /usr/local/share/terminay /usr/local/share/terminay/desktop \
+    /usr/local/share/terminay/desktop/launchers /usr/local/share/terminay/desktop/services \
+    /usr/local/share/terminay/desktop/services/desktop-control \
+ && chmod 0644 /usr/local/share/terminay/desktop/launchers/*
 RUN mkdir -p /etc/chromium/policies/managed \
  && printf '%s\n' '{"DownloadDirectory":"/home/bot/Downloads","PromptForDownloadLocation":false,"DefaultBrowserSettingEnabled":false}' > /etc/chromium/policies/managed/terminay.json
 

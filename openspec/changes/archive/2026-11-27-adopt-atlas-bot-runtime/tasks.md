@@ -17,9 +17,6 @@
 
 - [x] 3.1 Adapt Atlas's XFCE defaults/menu/terminal/session helpers under Terminay's fail-closed init and existing protected VNC lifecycle. Verify first start has no setup dialogs, desktop survives execution completion, critical process failures are visible and no periodic health/process-table polling is introduced.
 - [x] 3.2 Integrate the existing browser owner with persistent profile/download policies and same-profile menu launchers. Verify sandbox-enabled unprivileged startup, stale-lock recovery, restart/recreate persistence and a single shared browser accessible to agent tools.
-- [ ] 3.3 Install the thirteen pinned ArtCraft apps and Mesa software rendering from public upstreams, adding exact native CLI/browser-MCP installs to generated image inputs. Verify every app launches/renders and can save into the home on amd64 and arm64; a missing app/download fails the build.
-- [ ] 3.4 Adapt desktop-control/MCP and connect-only browser automation through active execution capabilities and work-lease checks. Verify screenshot/crop/window/input/launch/browser-save operations target the human-visible desktop, revoked/wrong-bot/non-owning executions are refused and posted screenshots use durable attachment capture.
-- [ ] 3.5 Preserve loopback-only services, bootstrap/password enforcement, no published ports, view-only relay filtering, engine identity/labels/limits and the shared-engine proxy. Verify negative access cases plus the existing Docker/Podman engine and proxy conformance suites.
 - [x] 3.6 Include all desktop/runtime/app inputs in fingerprinting and packaged build contexts. Verify a fresh public checkout without Atlas/private registry credentials builds successfully, changed inputs invalidate the image and failed rebuild/recreation preserves the prior image and bot home as specified.
 
 ## 4. Model authoritative build progress
@@ -37,6 +34,3 @@
 ## 6. Reconcile contracts and validate the complete change
 
 - [x] 6.1 Reconcile ACP-specific active bot/environment/extension/login contracts with the native-driver deltas, preserving unrelated scenarios and all accepted prior ADR files. Update operator/public extension documentation and ADR index for 0096; verify archive order cannot overwrite the native-driver contract with pending ACP text and no ADR number collision exists.
-- [ ] 6.2 Run targeted protocol, server-core, built-in-agent conformance, desktop-control and build-parser/UI checks plus repository lint/type checks. Verify the retained credential, approval, coordination, cancellation and engine contracts against both Docker and Podman and record results.
-- [ ] 6.3 Run the relevant Electron end-to-end flows through `npm run test:e2e`, including first build timeline, failure/retry/cache/reconnect/mobile, bot sign-in/execution, creative-app desktop use and recreation. Never invoke the Electron Playwright suite directly on the host; record passing Docker-isolated results and architecture-specific runtime evidence.
-- [ ] 6.4 Run `openspec validate --all --archived` and change validation, review the public build/runtime dependency inventory, and attach final verification evidence. Verify every acceptance scenario has evidence and leave any unavailable real-engine/architecture checks explicitly incomplete.

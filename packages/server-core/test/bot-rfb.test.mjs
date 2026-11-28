@@ -138,15 +138,41 @@ test('extended ClientCutText over 1 MiB or without its flags closes the stream',
 		exact.length,
 	);
 });
-test('SetEncodings keeps ExtendedClipboard and still strips fences', () => {
+test('SetEncodings keeps ExtendedClipboard in control, withholds it in view-only, and still strips fences', () => {
 	const encodings = [0, -1063131698, -312];
 	const message = Buffer.alloc(4 + encodings.length * 4);
 	message[0] = 2;
 	message.writeUInt16BE(encodings.length, 2);
 	for (const [i, e] of encodings.entries()) message.writeInt32BE(e, 4 + i * 4);
-	const out = new BotRfbClientFilter('view-only').push(message);
+	const out = new BotRfbClientFilter('control').push(message);
 	assert.equal(out.readUInt16BE(2), 2);
 	assert.deepEqual([out.readInt32BE(4), out.readInt32BE(8)], [0, -1063131698]);
+	// A view-only stream never tells the display server it speaks the
+	// extended clipboard, so no such exchange can start on it.
+	const viewOnly = new BotRfbClientFilter('view-only').push(message);
+	assert.equal(viewOnly.readUInt16BE(2), 1);
+	assert.equal(viewOnly.readInt32BE(4), 0);
+	assert.equal(viewOnly.length, 8);
+});
+test('each stream authenticates with the password for its mode: view-only and thumbnail the view password, control the full one', async (t) => {
+	const modes = [];
+	const service = new BotDesktopService({
+		engine: async () => ({
+			exec: async (_name, command) => (command.includes('-get') ? 'off\n' : ''),
+			execStream: () => fakeVnc().child,
+		}),
+		running: () => true,
+		withPassword: async (_id, cb, mode) => {
+			modes.push(mode);
+			return cb(Buffer.from('fake-pass'));
+		},
+		activity: () => undefined,
+	});
+	t.after(() => service.close());
+	await service.open(authority(), id, 1);
+	await service.open(authority(), id, 2, 'control');
+	await service.open(authority(), id, 1, 'view-only', true);
+	assert.deepEqual(modes, ['view-only', 'control', 'view-only']);
 });
 function fakeVnc({ badAuth = false } = {}) {
 	const source = new PassThrough(),
@@ -380,6 +406,25 @@ test('4.11 duplex backpressure holds writes and pauses frames at the readable bo
 	assert.equal(acknowledged, true);
 });
 
+test('a bot desktop stream admits no resize: the request is an unknown message and closes the stream', async (t) => {
+	const resize = Buffer.alloc(24);
+	resize[0] = 251;
+	resize.writeUInt16BE(1600, 2);
+	resize.writeUInt16BE(900, 4);
+	resize[6] = 1;
+	for (const mode of ['control', 'view-only'])
+		assert.throws(
+			() => new BotRfbClientFilter(mode).push(resize),
+			/unknown RFB client message/,
+		);
+	const f = await connect(t);
+	const relay = await f.service.open(authority(), id, 1, 'control');
+	await clientHandshake(relay);
+	const closed = once(relay, 'close');
+	relay.write(resize, () => undefined);
+	await closed;
+	assert.deepEqual(Buffer.concat(f.tunnels[0].writes).length, 0);
+});
 test('4.11 VNC challenge response matches the independent standard DES vector', () => {
 	const password = Buffer.from([
 		0xc8, 0x2c, 0xea, 0x9e, 0xd9, 0x3d, 0xfb, 0x8f,

@@ -54,7 +54,10 @@ function setup(t, host, options = {}) {
 		currentFingerprint: () => fingerprint,
 		closeHelper: async () => {},
 		stopSessions: async () => {},
-		bootstrap: async () => ({ vncPassword: 'fake-password' }),
+		bootstrap: async () => ({
+			vncPassword: 'fake-password',
+			vncViewPassword: 'view-password',
+		}),
 		socketGid: async () => 999,
 		secrets: async () => [],
 		now: () => Date.parse('2026-11-01T00:01:00Z'),

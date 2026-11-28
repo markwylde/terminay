@@ -156,3 +156,7 @@ of these decisions rest on. ADRs link into it with relative paths such as
 | [0143](./0143-the-workspace-plays-server-typed-audio-as-well-as-video.md) | The workspace plays server-typed audio as well as video | accepted | 2026-11-26 |
 | [0140](./0140-bot-sessions-have-no-time-limit-and-are-watched-by-check-ins.md) | Bot sessions have no time limit and are watched by check-in sessions | accepted | 2026-11-23 |
 | [0141](./0141-a-watched-root-that-goes-away-is-a-removal-and-lost-git-observation-re-arms-on-request.md) | A Git watch whose root goes away is a removal, and lost Git observation re-arms on request | accepted | 2026-11-24 |
+| [0145](./0145-the-server-desktop-is-one-whole-screen-display-terminay-owns-reachable-only-through-a-private-socket.md) | The server desktop is one whole-screen display Terminay owns, reachable only through a private socket | accepted | 2026-11-27 |
+| [0146](./0146-the-server-desktop-is-a-server-wide-trust-domain-with-one-controlling-client.md) | The server desktop is a server-wide trust domain with one controlling client | accepted | 2026-11-27 |
+| [0147](./0147-bot-and-server-desktops-share-one-remote-desktop-package-and-differ-only-in-connector-and-authority.md) | Bot and server desktops share one remote-desktop package and differ only in connector and authority | accepted | 2026-11-27 |
+| [0148](./0148-host-packages-are-installed-only-by-a-root-helper-with-a-fixed-command-line.md) | Host packages are installed only by a root helper with a fixed command line | accepted | 2026-11-27 |

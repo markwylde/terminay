@@ -1,0 +1,57 @@
+== os: Debian GNU/Linux 12 (bookworm) kind=systemd kernel=6.12.118+deb13-cloud-amd64
+RESULT [install] j INFO package set installed (109 packages configured)
+RESULT [install] j PASS no unit newly enabled or running
+RESULT [install] j PASS no new TCP/UDP listener after install
+RESULT [none] start PASS Xtigervnc pid=1569 version: 1.12.0+dfsg-8
+RESULT [none] start INFO process state: NoNewPrivs: 1 Seccomp: 0  netns=net:[4026532728] self=net:[4026532728]
+RESULT [none] a PASS no TCP/UDP listener for pid 1569 (all listeners in its netns: 1 lines: : )
+RESULT [none] c INFO baseline: reverse connection reached the listener (test detects it) []
+RESULT [none] c PASS cookie-holding X client connects
+RESULT [none] c PASS an ordinary program of the account still has network
+RESULT [netns] start PASS Xtigervnc pid=1706 version: 1.12.0+dfsg-8
+RESULT [netns] start INFO process state: NoNewPrivs: 1 Seccomp: 0  netns=net:[4026532788] self=net:[4026532728]
+RESULT [netns] a PASS no TCP/UDP listener for pid 1706 (all listeners in its netns: 1 lines: : )
+RESULT [netns] c PASS reverse connection refused [connecting to 127.0.0.1::5599 failed ]
+RESULT [netns] c PASS cookie-holding X client connects
+RESULT [netns] c PASS an ordinary program of the account still has network
+RESULT [netns] b PASS other account refused on X display
+RESULT [netns] b PASS other account refused on RFB socket (600 terminay in 700 dir)
+RESULT [netns] b INFO X sockets: path=X765  lock=/tmp/.X765-lock abstract=1
+RESULT [netns] d PASS viewer pointer refused, controller pointer applied
+RESULT [netns] d INFO clipboard view/legacy: (nothing);
+RESULT [netns] d INFO clipboard view/ext: ServerCutText ext actions=['caps', 'request', 'peek', 'notify', 'provide'] formats=0x1 bytes=4;(nothing);
+RESULT [netns] d INFO clipboard full/legacy: ServerCutText legacy len=12 data=b'spike-secret';
+RESULT [netns] d INFO clipboard full/ext: ServerCutText ext actions=['caps', 'request', 'peek', 'notify', 'provide'] formats=0x1 bytes=4;ServerCutText ext actions=['provide'] formats=0x1 bytes=25;ServerCutText ext actions=['provide'] formats=0x1 bytes=25;
+RESULT [netns] d PASS view-only connection received no clipboard content (legacy and extended, including after an explicit request)
+RESULT [netns] d INFO full connection received clipboard content (test detects it)
+RESULT [netns] e INFO held key+button during=2, after its connection closed=1
+RESULT [netns] e PASS nothing held after close plus the release step (during=2 after-close=1 after-release=0)
+RESULT [netns] f PASS desktop is 1600x900
+RESULT [netns] f INFO after view-only resize request desktop is 1600x900
+RESULT [netns] g PASS session processes running; TCP/UDP listeners owned by any visible process: 0
+RESULT [netns] h PASS xterm viewable and received typed input through RFB
+RESULT [netns] i PASS after unit restart: same display pid 1706, same xterm 1934, same xfwm4 1717, one display, socket and lock present, display answers
+RESULT [seccomp] start PASS Xtigervnc pid=2011 version: 1.12.0+dfsg-8
+RESULT [seccomp] start INFO process state: NoNewPrivs: 1 Seccomp: 2  netns=net:[4026532728] self=net:[4026532728]
+RESULT [seccomp] a PASS no TCP/UDP listener for pid 2011 (all listeners in its netns: 1 lines: : )
+RESULT [seccomp] c PASS reverse connection refused [connecting to 127.0.0.1::5599 failed ]
+RESULT [seccomp] c PASS cookie-holding X client connects
+RESULT [seccomp] c PASS an ordinary program of the account still has network
+RESULT [seccomp] b PASS other account refused on X display
+RESULT [seccomp] b PASS other account refused on RFB socket (600 terminay in 700 dir)
+RESULT [seccomp] b INFO X sockets: path=X765  lock=/tmp/.X765-lock abstract=1
+RESULT [seccomp] d PASS viewer pointer refused, controller pointer applied
+RESULT [seccomp] d INFO clipboard view/legacy: (nothing);
+RESULT [seccomp] d INFO clipboard view/ext: ServerCutText ext actions=['caps', 'request', 'peek', 'notify', 'provide'] formats=0x1 bytes=4;(nothing);
+RESULT [seccomp] d INFO clipboard full/legacy: ServerCutText legacy len=12 data=b'spike-secret';
+RESULT [seccomp] d INFO clipboard full/ext: ServerCutText ext actions=['caps', 'request', 'peek', 'notify', 'provide'] formats=0x1 bytes=4;ServerCutText ext actions=['provide'] formats=0x1 bytes=25;ServerCutText ext actions=['provide'] formats=0x1 bytes=25;
+RESULT [seccomp] d PASS view-only connection received no clipboard content (legacy and extended, including after an explicit request)
+RESULT [seccomp] d INFO full connection received clipboard content (test detects it)
+RESULT [seccomp] e INFO held key+button during=2, after its connection closed=1
+RESULT [seccomp] e PASS nothing held after close plus the release step (during=2 after-close=1 after-release=0)
+RESULT [seccomp] f PASS desktop is 1600x900
+RESULT [seccomp] f INFO after view-only resize request desktop is 1600x900
+RESULT [seccomp] g PASS session processes running; TCP/UDP listeners owned by any visible process: 0
+RESULT [seccomp] h PASS xterm viewable and received typed input through RFB
+RESULT [seccomp] i PASS after unit restart: same display pid 2011, same xterm 2237, same xfwm4 2022, one display, socket and lock present, display answers
+== done

@@ -25,6 +25,20 @@
         "NODE_ENV"
       ]
     },
+    "@terminay/remote-desktop#build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/docker/terminay-bot/session/**",
+        "$TURBO_ROOT$/scripts/stage-desktop-session.mjs"
+      ],
+      "outputs": [
+        "dist/**",
+        "*.tsbuildinfo"
+      ]
+    },
     "@terminay/server-core#build": {
       "dependsOn": [
         "^build"
@@ -98,6 +112,7 @@
     "@terminay/client-core#test:ci": {
       "dependsOn": [
         "@terminay/protocol-conformance#build",
+        "@terminay/remote-desktop#build",
         "^build",
         "build"
       ],
@@ -147,6 +162,7 @@
         "@terminay/extension-api#build",
         "@terminay/protocol#build",
         "@terminay/protocol-conformance#build",
+        "@terminay/remote-desktop#build",
         "@terminay/responsive-ui#build",
         "@terminay/server#build",
         "@terminay/server-core#build",
@@ -197,6 +213,7 @@
         "@terminay/extension-api#build",
         "@terminay/protocol#build",
         "@terminay/protocol-conformance#build",
+        "@terminay/remote-desktop#build",
         "@terminay/responsive-ui#build",
         "@terminay/server#build",
         "@terminay/server-core#build",

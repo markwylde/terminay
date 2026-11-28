@@ -1,8 +1,10 @@
 import {
+	DESKTOP_SETUP_SERVICE_UNIT_NAME,
 	INSTALL_LATEST_SERVICE_UNIT_NAME,
 	type InstallLayout,
 	UPGRADE_SERVICE_UNIT_NAME,
 } from './layout.js';
+import { DESKTOP_SETUP_HELPER_ENVIRONMENT } from './desktop.js';
 
 /**
  * Which helper pair a unit belongs to: `upgrade` only ever moves forward;
@@ -307,6 +309,59 @@ Group=root
 Environment=${UPGRADE_HELPER_ENVIRONMENT}=1
 ExecStart=${layout.currentLink}/bin/terminay daemon upgrade --system${latest ? ' --allow-downgrade' : ''}
 TimeoutStartSec=30min
+StandardOutput=journal
+StandardError=journal
+`;
+}
+
+/** A desktop-setup run is given this long to start and finish. */
+export const DESKTOP_SETUP_DEADLINE = '20min';
+
+/**
+ * The desktop-setup helper: the same arrangement as the upgrade helper, for
+ * installing what the server desktop needs. The path unit watches a file the
+ * run-as account can change; the service runs one fixed command as root and
+ * never reads that file, so its content chooses nothing.
+ */
+export function renderDesktopSetupPathUnit(layout: InstallLayout): string {
+	const helper = requireHelper(layout);
+	return `[Unit]
+Description=Terminay Server desktop setup request
+Documentation=https://terminay.com/docs/installation
+
+[Path]
+PathChanged=${helper.desktopRequestFile}
+Unit=${DESKTOP_SETUP_SERVICE_UNIT_NAME}
+
+[Install]
+WantedBy=multi-user.target
+`;
+}
+
+export function renderDesktopSetupServiceUnit(layout: InstallLayout): string {
+	requireHelper(layout);
+	// The run lasts at least ten seconds (`HELPER_MINIMUM_RUN_MS`), and a
+	// oneshot that is running is not started again, so touching the trigger
+	// in a loop starts it a few times a minute at most. The start limit is
+	// the backstop behind that, set where an honest caller never reaches it.
+	return `[Unit]
+Description=Terminay Server desktop setup
+Documentation=https://terminay.com/docs/installation
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=10min
+StartLimitBurst=60
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=${DESKTOP_SETUP_HELPER_ENVIRONMENT}=1
+ExecStart=${layout.currentLink}/bin/terminay daemon desktop install
+TimeoutStartSec=${DESKTOP_SETUP_DEADLINE}
+RuntimeDirectory=terminay-desktop-setup
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 StandardOutput=journal
 StandardError=journal
 `;

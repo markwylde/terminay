@@ -1,0 +1,647 @@
+/* The server desktop window. Colours follow the rest of the workspace chrome. */
+
+.server-desktop,
+.server-desktop__state {
+	--sd-text: #d6e3f0;
+	--sd-faint: rgba(214, 227, 240, 0.62);
+	--sd-line: rgba(255, 255, 255, 0.08);
+	--sd-accent: #3b82f6;
+	--sd-danger: #ffb3b3;
+	color: var(--sd-text);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+/* Running: one slim toolbar, then the desktop edge to edge. */
+.server-desktop {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	box-sizing: border-box;
+}
+
+.server-desktop__bar {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+	min-height: 38px;
+	padding: 4px 8px 4px 12px;
+	border-bottom: 1px solid var(--sd-line);
+	box-sizing: border-box;
+}
+
+.server-desktop__grow {
+	flex: 1;
+}
+
+.server-desktop__mode {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--sd-faint);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.server-desktop__mode > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.server-desktop__mode--control {
+	color: #9ec5ff;
+}
+
+.server-desktop__notice {
+	overflow: hidden;
+	color: #ffd58a;
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.server-desktop__clipboard {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--sd-faint);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.server-desktop__clipboard[data-server-desktop-sharing="active"] {
+	color: #8fd5a6;
+}
+
+.server-desktop button,
+.server-desktop__state button {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 6px;
+	min-height: 26px;
+	padding: 0 10px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.04);
+	color: inherit;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.server-desktop button:hover:not(:disabled),
+.server-desktop__state button:hover:not(:disabled) {
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.server-desktop button:disabled,
+.server-desktop__state button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.server-desktop button:focus-visible,
+.server-desktop__state button:focus-visible {
+	outline: 2px solid #5b9dff;
+	outline-offset: 1px;
+}
+
+.server-desktop .server-desktop__quiet {
+	border-color: transparent;
+	background: transparent;
+	color: var(--sd-faint);
+}
+
+.server-desktop .server-desktop__accent,
+.server-desktop__state .server-desktop__primary {
+	border-color: var(--sd-accent);
+	background: var(--sd-accent);
+	color: #fff;
+}
+
+.server-desktop .server-desktop__accent:hover:not(:disabled),
+.server-desktop__state .server-desktop__primary:hover:not(:disabled) {
+	border-color: #2563eb;
+	background: #2563eb;
+}
+
+.server-desktop .server-desktop__icon-button {
+	justify-content: center;
+	width: 28px;
+	padding: 0;
+	border-color: transparent;
+	background: transparent;
+}
+
+.server-desktop .server-desktop__icon-button[aria-expanded="true"] {
+	background: rgba(255, 255, 255, 0.1);
+}
+
+/* The options menu. */
+.server-desktop__menu-anchor {
+	position: relative;
+	flex: none;
+}
+
+.server-desktop__menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	width: 280px;
+	padding: 6px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 8px;
+	background: #171a1f;
+	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+	box-sizing: border-box;
+}
+
+.server-desktop__menu[hidden] {
+	display: none;
+}
+
+.server-desktop__menu-info {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 6px 8px 8px;
+	color: var(--sd-faint);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.server-desktop__display {
+	color: var(--sd-text);
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	user-select: all;
+}
+
+.server-desktop__menu hr {
+	width: 100%;
+	height: 1px;
+	margin: 2px 0 4px;
+	border: 0;
+	background: var(--sd-line);
+}
+
+.server-desktop .server-desktop__menu button {
+	justify-content: flex-start;
+	width: 100%;
+	min-height: 30px;
+	border-color: transparent;
+	background: transparent;
+	font-size: 13px;
+}
+
+.server-desktop .server-desktop__menu button:hover:not(:disabled),
+.server-desktop .server-desktop__menu button:focus-visible {
+	outline: none;
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.server-desktop .server-desktop__danger {
+	color: var(--sd-danger);
+}
+
+.server-desktop__confirm .server-desktop__danger {
+	border-color: rgba(255, 106, 106, 0.5);
+}
+
+.server-desktop__confirm {
+	display: flex;
+	flex: none;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid rgba(255, 213, 138, 0.3);
+	background: rgba(255, 213, 138, 0.06);
+	color: #ffd58a;
+}
+
+.server-desktop__confirm > span {
+	flex: 1 1 240px;
+	color: var(--sd-text);
+}
+
+/* The desktop itself, edge to edge. */
+.server-desktop__frame {
+	position: relative;
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	background: #0d0f12;
+}
+
+.server-desktop-vnc {
+	position: relative;
+	flex: 1;
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.server-desktop-vnc__layer {
+	position: absolute;
+	inset: 0;
+}
+
+/* Invisible editable target for the paste shortcut; see desktopClipboard.ts. */
+.server-desktop-vnc__paste-catcher {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	opacity: 0;
+	resize: none;
+	pointer-events: none;
+	caret-color: transparent;
+}
+
+.server-desktop__overlay {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	padding: 24px;
+	background: rgba(13, 15, 18, 0.82);
+	text-align: center;
+}
+
+.server-desktop__overlay p {
+	max-width: 420px;
+	margin: 0;
+}
+
+.server-desktop__faint {
+	color: var(--sd-faint);
+	font-size: 12px;
+}
+
+/* Every state but a running desktop: one centred card. */
+.server-desktop__state {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	min-height: 0;
+	padding: 24px;
+	overflow: auto;
+	box-sizing: border-box;
+}
+
+.server-desktop__card {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	width: 100%;
+	max-width: 460px;
+	padding: 28px;
+	border: 1px solid var(--sd-line);
+	border-radius: 12px;
+	background: rgba(255, 255, 255, 0.025);
+	box-sizing: border-box;
+}
+
+.server-desktop__badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 12px;
+	background: rgba(59, 130, 246, 0.14);
+	color: #9ec5ff;
+}
+
+.server-desktop__badge--unsupported,
+.server-desktop__badge--off {
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--sd-faint);
+}
+
+.server-desktop__badge--failed {
+	background: rgba(255, 106, 106, 0.12);
+	color: #ff8a8a;
+}
+
+.server-desktop__state h3 {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 600;
+	color: #fff;
+}
+
+.server-desktop__state p {
+	margin: 0;
+	color: var(--sd-faint);
+	overflow-wrap: anywhere;
+}
+
+.server-desktop__actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.server-desktop__actions:empty {
+	display: none;
+}
+
+.server-desktop__state .server-desktop__actions button {
+	min-height: 32px;
+	padding: 0 14px;
+	font-size: 13px;
+}
+
+.server-desktop__state .server-desktop__reason,
+.server-desktop__reason {
+	margin: 0;
+	padding: 8px 10px;
+	border: 1px solid rgba(255, 106, 106, 0.35);
+	border-radius: 6px;
+	color: var(--sd-danger);
+	font-size: 12px;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
+.server-desktop__command {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 6px;
+	background: rgba(0, 0, 0, 0.25);
+}
+
+.server-desktop__command code {
+	flex: 1;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 12px;
+	overflow-wrap: anywhere;
+	user-select: all;
+}
+
+.server-desktop__progress {
+	height: 6px;
+	overflow: hidden;
+	border-radius: 3px;
+	background: rgba(255, 255, 255, 0.1);
+}
+
+.server-desktop__progress > span {
+	display: block;
+	height: 100%;
+	border-radius: 3px;
+	background: var(--sd-accent);
+	transition: width 200ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.server-desktop__progress > span {
+		transition: none;
+	}
+}
+
+.server-desktop__steps {
+	display: grid;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.server-desktop__steps li {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: rgba(214, 227, 240, 0.45);
+}
+
+.server-desktop__steps li::before {
+	content: "";
+	flex: none;
+	width: 8px;
+	height: 8px;
+	border: 1px solid currentColor;
+	border-radius: 50%;
+	box-sizing: border-box;
+}
+
+.server-desktop__steps li[data-step-state="done"] {
+	color: rgba(214, 227, 240, 0.8);
+}
+
+.server-desktop__steps li[data-step-state="done"]::before {
+	border-color: #8fd5a6;
+	background: #8fd5a6;
+}
+
+.server-desktop__steps li[data-step-state="current"] {
+	color: #fff;
+	font-weight: 600;
+}
+
+.server-desktop__steps li[data-step-state="current"]::before {
+	border-color: var(--sd-accent);
+	background: var(--sd-accent);
+	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+.server-desktop__steps li[data-step-state="failed"] {
+	color: var(--sd-danger);
+}
+
+.server-desktop__steps li[data-step-state="failed"]::before {
+	border-color: #ff6a6a;
+	background: #ff6a6a;
+}
+
+/* Narrow windows drop the clipboard label; phones get full touch targets. */
+@media (max-width: 720px) {
+	.server-desktop__clipboard-label {
+		display: none;
+	}
+}
+
+@media (max-width: 640px) {
+	.server-desktop button,
+	.server-desktop__state button {
+		min-height: 40px;
+	}
+
+	.server-desktop__mode > span {
+		display: none;
+	}
+}
+
+/* --- One viewer, many places ------------------------------------------- */
+
+/* The live viewer's element, wherever it is. */
+.server-desktop-hub {
+	position: absolute;
+	inset: 0;
+	display: flex;
+}
+
+/* Where the viewer waits, at the desktop's own size, while no tab shows it. */
+.server-desktop-hub-parking {
+	position: fixed;
+	top: 0;
+	left: -20000px;
+	width: 1280px;
+	height: 800px;
+	overflow: hidden;
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.server-desktop__slot {
+	position: absolute;
+	inset: 0;
+}
+
+.server-desktop__slot[hidden] {
+	display: none;
+}
+
+.server-desktop__mirror {
+	display: block;
+	width: 100%;
+	height: 100%;
+	background: #0d0f12;
+}
+
+.server-desktop__mirror[role="button"] {
+	cursor: pointer;
+}
+
+.server-desktop__mirror:focus-visible {
+	outline: 2px solid #5b9dff;
+	outline-offset: -2px;
+}
+
+.server-desktop--tab {
+	width: 100%;
+	background: #0d0f12;
+}
+
+.server-desktop__menu-heading {
+	padding: 4px 8px 2px;
+	color: var(--sd-faint);
+	font-size: 11px;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+.server-desktop__menu-emoji {
+	width: 13px;
+	text-align: center;
+}
+
+/* --- The header dropdown ------------------------------------------------ */
+
+.server-desktop-status {
+	position: relative;
+}
+
+.server-desktop-dropdown {
+	/* Hangs from its button like the other header popovers, so their shared
+	   caret meets its top edge. */
+	position: absolute;
+	top: calc(100% + 3px);
+	right: 4px;
+	z-index: 80;
+	width: 380px;
+	max-width: calc(100vw - 24px);
+	height: auto;
+	overflow: visible;
+	border: 1px solid var(--header-popover-border);
+	border-radius: 10px;
+	background: var(--header-popover-surface);
+	box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+	text-align: left;
+	transform-origin: top right;
+	animation: header-popover-in 110ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.server-desktop-dropdown {
+		animation: none;
+	}
+}
+
+.server-desktop-dropdown__head {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 10px 12px 8px;
+}
+
+.server-desktop-dropdown__title {
+	color: #fff;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.server-desktop-dropdown__mode {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--sd-faint);
+	font-size: 12px;
+}
+
+.server-desktop-dropdown__preview {
+	position: relative;
+	aspect-ratio: 16 / 10;
+	margin: 0 12px;
+	overflow: hidden;
+	border: 1px solid var(--sd-line);
+	border-radius: 6px;
+	background: #0d0f12;
+}
+
+.server-desktop-dropdown__preview .server-desktop__overlay {
+	gap: 8px;
+	padding: 12px;
+	font-size: 12px;
+}
+
+.server-desktop__bar--compact {
+	min-height: 0;
+	padding: 10px 12px;
+	border-bottom: 0;
+}
+
+.server-desktop-dropdown .server-desktop__state {
+	height: auto;
+	padding: 0;
+}
+
+.server-desktop-dropdown .server-desktop__card {
+	max-width: none;
+	padding: 18px;
+	border: 0;
+	background: transparent;
+}

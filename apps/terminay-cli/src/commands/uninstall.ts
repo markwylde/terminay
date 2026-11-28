@@ -15,6 +15,7 @@ import {
 	isInteractive,
 	type PromptStreams,
 } from '../prompt.js';
+import { removeDesktopSetupHelper } from '../desktopHelper.js';
 
 /**
  * `daemon uninstall` — remove the service, keep the data.
@@ -65,13 +66,16 @@ export async function runUninstall(
 	// The server binary ends them, because it owns the holder's protocol.
 	await endTerminalSessions(context).catch((error: unknown) => {
 		write(
-			`Could not end running terminal sessions (${error instanceof Error ? error.message : String(error)}). Any that remain end on their own after the configured limit.`,
+			`Could not end running terminal sessions or the server desktop (${error instanceof Error ? error.message : String(error)}). Sessions that remain end on their own after the configured limit; a desktop that remains ends when its data directory is removed or the host restarts.`,
 		);
 	});
 	await systemd.disable();
 	await rm(layout.unitPath, { force: true });
 	// The upgrade helper goes with the service it upgrades: a watch left armed
 	// would start an upgrader that is about to be removed.
+	// The desktop-setup helper first: it shares the upgrade helper's request
+	// directory. A running desktop was ended above, with the terminal sessions.
+	await removeDesktopSetupHelper({ layout, systemd });
 	await removeUpgradeHelper({ layout, systemd });
 	// The file only: unloading the profile would unconfine bot containers that
 	// are still running. The loaded copy is gone at the next boot (ADR-0120).

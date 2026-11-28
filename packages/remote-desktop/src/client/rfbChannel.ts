@@ -1,13 +1,18 @@
 /**
- * A bot desktop stream as the WebSocket-like channel noVNC attaches to.
+ * A desktop stream as the WebSocket-like channel noVNC attaches to.
  *
  * The server relays RFB through the Terminay connection: it authenticates to
- * the bot's VNC service itself and offers this client security None, so the
- * password never reaches the renderer. Reads are pulled one at a time; writes
- * go out in order.
+ * the desktop's VNC service itself and offers this client security None, so
+ * the password never reaches the renderer. Reads are pulled one at a time;
+ * writes go out in order.
  */
 
-import type { BotByteStreamClient } from '@terminay/client-core';
+/** The part of a pull byte stream the channel uses. */
+export interface RfbByteStream {
+	read(): AsyncIterable<Uint8Array>;
+	write(bytes: Uint8Array): Promise<void>;
+	close(): Promise<void>;
+}
 
 type MessageHandler = (event: { data: ArrayBuffer }) => void;
 
@@ -26,7 +31,7 @@ export class RfbStreamChannel {
 	send: (data: ArrayBuffer | Uint8Array) => void;
 	close: () => void;
 
-	constructor(stream: BotByteStreamClient) {
+	constructor(stream: RfbByteStream) {
 		let queue = Promise.resolve();
 		this.send = (data) => {
 			if (this.readyState !== 'open') return;

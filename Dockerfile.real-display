@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1.7
+
+# Where the remote-desktop tests that need a real display server run. One
+# image per Debian release, because the two ship different TigerVNC versions
+# (bookworm 1.12, trixie 1.15) and the desktop must behave on both.
+#
+# The repository is mounted at run time (scripts/run-real-display-tests.sh);
+# nothing from it is baked in.
+
+ARG DOCKER_HUB=docker.io/library
+ARG DEBIAN_RELEASE=bookworm
+
+FROM ${DOCKER_HUB}/node:24.15.0-${DEBIAN_RELEASE}-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The server desktop's own package set, then the tools tests use to read what
+# the display holds.
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends \
+    tigervnc-standalone-server tigervnc-tools xfwm4 xfce4-panel xfce4-settings \
+    xfce4-terminal xfdesktop4 x11-xserver-utils dbus-x11 xauth \
+    fonts-dejavu-core fonts-noto-color-emoji adwaita-icon-theme \
+    python3 python3-seccomp \
+    xdotool xinput xclip x11-utils xterm procps iproute2 \
+  && rm -rf /var/lib/apt/lists/*
+
+# A second account, for tests that another account is refused. The tests
+# themselves run as whoever starts the container.
+RUN useradd --create-home --shell /bin/bash other
+
+WORKDIR /workspace

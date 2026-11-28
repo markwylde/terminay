@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Start the display server unable to open a network connection.
+
+Xvnc's VNC extension lets any X client ask the display server to dial out to
+a listening viewer, which no listener flag prevents and which would carry the
+screen outside Terminay. So the display server is started behind a seccomp
+filter that refuses to create IP sockets. Unix sockets, which the display and
+its RFB socket use, are untouched, and only this one process is restricted:
+programs on the display keep their network.
+
+It needs no privilege and no user namespace.
+
+    terminay-display-launcher <program> [arguments...]
+        install the filter, then become <program>
+
+    terminay-display-launcher --probe
+        install the filter and check that it holds; exit 0 only if an IP
+        socket is then refused
+"""
+import errno
+import os
+import socket
+import sys
+
+
+def deny_network():
+    import seccomp
+
+    rules = seccomp.SyscallFilter(defaction=seccomp.ALLOW)
+    for family in (socket.AF_INET, socket.AF_INET6):
+        rules.add_rule(
+            seccomp.ERRNO(errno.EACCES), "socket", seccomp.Arg(0, seccomp.EQ, family)
+        )
+    rules.load()
+
+
+def refused(family):
+    try:
+        socket.socket(family, socket.SOCK_STREAM).close()
+    except PermissionError:
+        return True
+    except OSError as error:
+        # A host with no IPv6 refuses it for its own reason; that is as good.
+        return error.errno == errno.EAFNOSUPPORT
+    return False
+
+
+def main(argv):
+    if len(argv) < 2:
+        return 2
+    try:
+        deny_network()
+    except Exception as error:  # noqa: BLE001 - any failure means no filter
+        sys.stderr.write("terminay-display-launcher: no network filter: %s\n" % error)
+        return 70
+    # Never start the display server on trust: see the filter refuse first.
+    if not (refused(socket.AF_INET) and refused(socket.AF_INET6)):
+        sys.stderr.write("terminay-display-launcher: the network filter does not hold\n")
+        return 70
+    if argv[1] == "--probe":
+        return 0 if len(argv) == 2 else 2
+    os.execv(argv[1], argv[1:])
+    return 71
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

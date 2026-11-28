@@ -195,3 +195,4 @@ export * from './worktreeCapture.js';
 
 export * from './scheduleEngine/index.js';
 export * from './botService/index.js';
+export * from './serverDesktop/index.js';

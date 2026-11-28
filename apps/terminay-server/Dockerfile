@@ -13,6 +13,7 @@ COPY packages/client-core/package.json ./packages/client-core/package.json
 COPY packages/cron/package.json ./packages/cron/package.json
 COPY packages/protocol/package.json ./packages/protocol/package.json
 COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/package.json
+COPY packages/remote-desktop/package.json ./packages/remote-desktop/package.json
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
 COPY packages/ui-bundle/package.json ./packages/ui-bundle/package.json
@@ -59,6 +60,8 @@ COPY --from=build --chown=10001:10001 /workspace/packages/protocol/package.json 
 COPY --from=build --chown=10001:10001 /workspace/packages/protocol/dist ./packages/protocol/dist
 COPY --from=build --chown=10001:10001 /workspace/packages/cron/package.json ./packages/cron/package.json
 COPY --from=build --chown=10001:10001 /workspace/packages/cron/dist ./packages/cron/dist
+COPY --from=build --chown=10001:10001 /workspace/packages/remote-desktop/package.json ./packages/remote-desktop/package.json
+COPY --from=build --chown=10001:10001 /workspace/packages/remote-desktop/dist ./packages/remote-desktop/dist
 COPY --from=build --chown=10001:10001 /workspace/packages/server-core/package.json ./packages/server-core/package.json
 COPY --from=build --chown=10001:10001 /workspace/packages/server-core/dist ./packages/server-core/dist
 COPY --from=build --chown=10001:10001 /workspace/packages/ui-bundle/package.json ./packages/ui-bundle/package.json

@@ -1,6 +1,7 @@
 import {
 	FEATURE_CAPABILITIES,
 	type FeatureCapability,
+	SERVER_DESKTOP_PREFIX,
 	SERVER_UPGRADE_OPERATIONS,
 } from '@terminay/protocol';
 
@@ -87,6 +88,11 @@ export function capabilityOf(
 		].includes(operation)
 	)
 		return FEATURE_CAPABILITIES.botSources;
+	// The server desktop is a feature a server may not serve. Everything
+	// under its prefix belongs to it, before the bare `server` namespace of
+	// the connection mechanics is considered.
+	if (operation.startsWith(SERVER_DESKTOP_PREFIX))
+		return FEATURE_CAPABILITIES.serverDesktop;
 	// The view mirror is negotiated apart from the windows it mirrors.
 	if (operation.startsWith('app-windows.mirror.'))
 		return FEATURE_CAPABILITIES.appWindowMirror;

@@ -1,6 +1,28 @@
-import type { TerminayHostClipboardSnapshot } from '@terminay/protocol';
-import type { DesktopClipboardSharing } from '../../host/nativeActions';
 import { type ClipboardRfb, clipboardTextForHost } from './desktopClipboard.ts';
+
+/** The device clipboard as its host last reported it to one sharing session. */
+export interface HostClipboardSnapshot {
+	readonly token: string;
+	readonly revision: number;
+	readonly active: boolean;
+	readonly text?: string;
+	readonly tooLarge?: boolean;
+}
+
+/** The host's two-way clipboard sync, when the host offers one. */
+export interface DesktopClipboardSharing {
+	start(
+		token: string,
+		changed: (snapshot: HostClipboardSnapshot) => void,
+	): Promise<HostClipboardSnapshot | undefined>;
+	stop(token: string): Promise<void>;
+	write(
+		token: string,
+		revision: number,
+		text: string,
+	): Promise<HostClipboardSnapshot>;
+	dispose(): void;
+}
 
 const canonical = (text: string) => text.replace(/\r\n|\r/g, '\n');
 
@@ -19,7 +41,7 @@ export function attachDesktopClipboardSharing(
 	let initialized = false;
 	let disposed = false;
 	let queue = Promise.resolve();
-	const receive = (snapshot: TerminayHostClipboardSnapshot) => {
+	const receive = (snapshot: HostClipboardSnapshot) => {
 		if (disposed || snapshot.token !== token || snapshot.revision < revision)
 			return;
 		if (!snapshot.active) {

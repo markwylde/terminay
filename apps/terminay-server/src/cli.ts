@@ -144,6 +144,14 @@ import {
 } from './index.js';
 import { placeControlSocket } from './mcp/controlSocketPlacement.js';
 import {
+	createStandaloneServerDesktop,
+	endStandaloneServerDesktop,
+} from './serverDesktop.js';
+import {
+	createServerDesktopSetup,
+	defaultDesktopSetupHost,
+} from './serverDesktopSetup.js';
+import {
 	createMcpHost,
 	type McpHost,
 	withoutInheritedControlEnvironment,
@@ -1228,8 +1236,50 @@ async function createServerComposition(
 		}
 		return unavailable;
 	};
+	// The server desktop (server-desktop.v1): composed by every standalone
+	// server. Who is behind a connection is read from the paired devices.
+	const serverDesktop = await createStandaloneServerDesktop({
+		dataRoot: options.dataRoot,
+		home: homedir(),
+		temporaryDirectory: tmpdir(),
+		eventJournal,
+		// How this install asks root for the desktop's packages: the helper
+		// beside the upgrade helper, the image's own CLI, or an operator.
+		setup: createServerDesktopSetup(
+			defaultDesktopSetupHost({
+				env: process.env,
+				upgradeRequestFile: async () => {
+					const report = await releaseUpgraderFromEnvironment(
+						process.env,
+					)?.check();
+					return report?.trigger.kind === 'request-file'
+						? report.trigger.path
+						: undefined;
+				},
+			}),
+		),
+		deviceName: (context) => {
+			const status = remoteAccess()?.status() as
+				| {
+						readonly devices?: readonly {
+							readonly deviceId?: string;
+							readonly deviceName?: string;
+						}[];
+						readonly connections?: readonly {
+							readonly deviceId?: string;
+							readonly deviceName?: string;
+						}[];
+				  }
+				| undefined;
+			if (context.deviceId === undefined) return undefined;
+			return [...(status?.connections ?? []), ...(status?.devices ?? [])].find(
+				(device) => device.deviceId === context.deviceId,
+			)?.deviceName;
+		},
+	});
 	composition = createServerCoreComposition({
 		...(bots ? { bots } : {}),
+		...(serverDesktop ? { serverDesktop } : {}),
 		connectionMetrics: {
 			file: resolve(options.dataRoot, CONNECTION_METRICS_FILE),
 		},
@@ -1484,6 +1534,9 @@ async function createServerComposition(
 			},
 		},
 	});
+	// A desktop that is set up and on runs whenever the server runs. Starting
+	// it never holds up the server.
+	void serverDesktop?.start();
 	return Object.freeze({
 		core: composition,
 		eventJournal,
@@ -2276,11 +2329,18 @@ async function runEndSessionsCommand(options: ServerCliOptions): Promise<void> {
 	const remaining = readHolderRecords(options.dataRoot).filter((record) =>
 		holderProcessIsAlive(record.pid),
 	);
+	// The server desktop outlives its server the same way, and is ended the
+	// same way: through its holder's handshake, never by signalling a process.
+	const desktop = await endStandaloneServerDesktop({
+		dataRoot: options.dataRoot,
+		temporaryDirectory: tmpdir(),
+	});
 	process.stdout.write(
 		`${JSON.stringify({
 			holders: before.length,
 			sessions: held.length,
 			remaining: remaining.length,
+			desktop,
 		})}\n`,
 	);
 	if (remaining.length > 0) {

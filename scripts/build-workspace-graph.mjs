@@ -17,8 +17,13 @@ const workspaces = {
 		tsconfig: 'packages/protocol/tsconfig.json',
 		outputDirectory: 'packages/protocol/dist',
 	},
+	'@terminay/remote-desktop': {
+		dependencies: [],
+		tsconfig: 'packages/remote-desktop/tsconfig.json',
+		outputDirectory: 'packages/remote-desktop/dist',
+	},
 	'@terminay/client-core': {
-		dependencies: ['@terminay/protocol'],
+		dependencies: ['@terminay/protocol', '@terminay/remote-desktop'],
 		tsconfig: 'packages/client-core/tsconfig.json',
 		outputDirectory: 'packages/client-core/dist',
 	},
@@ -41,6 +46,7 @@ const workspaces = {
 		dependencies: [
 			'@terminay/cron',
 			'@terminay/protocol',
+			'@terminay/remote-desktop',
 			'@terminay/extension-api',
 			'@terminay/ui-bundle',
 		],

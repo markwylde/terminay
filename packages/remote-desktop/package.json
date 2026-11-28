@@ -1,0 +1,54 @@
+{
+	"name": "@terminay/remote-desktop",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./server": {
+			"types": "./dist/server/index.d.ts",
+			"import": "./dist/server/index.js",
+			"default": "./dist/server/index.js"
+		},
+		"./client": {
+			"types": "./dist/client/index.d.ts",
+			"import": "./dist/client/index.js",
+			"default": "./dist/client/index.js"
+		},
+		"./ui": {
+			"types": "./dist/ui/index.d.ts",
+			"import": "./dist/ui/index.js",
+			"default": "./dist/ui/index.js"
+		},
+		"./session": {
+			"types": "./dist/session/index.d.ts",
+			"import": "./dist/session/index.js",
+			"default": "./dist/session/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"peerDependencies": {
+		"@novnc/novnc": "1.7.0",
+		"react": ">=18"
+	},
+	"peerDependenciesMeta": {
+		"@novnc/novnc": {
+			"optional": true
+		},
+		"react": {
+			"optional": true
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json && node ../../scripts/stage-desktop-session.mjs",
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"test": "npm run build && npm run test:ci",
+		"test:ci": "node --test --test-force-exit --test-timeout=120000 test/*.test.mjs && node --test --test-force-exit --test-timeout=120000 --experimental-strip-types src/ui/*.test.ts"
+	}
+}

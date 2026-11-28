@@ -32,6 +32,7 @@ COPY --chown=node:node packages/client-core/package.json packages/client-core/pa
 COPY --chown=node:node packages/cron/package.json packages/cron/package.json
 COPY --chown=node:node packages/extension-api/package.json packages/extension-api/package.json
 COPY --chown=node:node packages/protocol-conformance/package.json packages/protocol-conformance/package.json
+COPY --chown=node:node packages/remote-desktop/package.json packages/remote-desktop/package.json
 COPY --chown=node:node packages/protocol/package.json packages/protocol/package.json
 COPY --chown=node:node packages/responsive-ui/package.json packages/responsive-ui/package.json
 COPY --chown=node:node packages/server-core/package.json packages/server-core/package.json

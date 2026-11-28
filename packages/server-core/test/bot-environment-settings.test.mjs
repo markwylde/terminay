@@ -24,7 +24,7 @@ function setup(t, options = {}) {
 		currentFingerprint: () => 'fingerprint',
 		closeHelper: async () => {},
 		stopSessions: async () => {},
-		bootstrap: async () => ({ vncPassword: 'fake' }),
+		bootstrap: async () => ({ vncPassword: 'fake', vncViewPassword: 'view' }),
 		socketGid: async () => 999,
 		secrets: async () => [],
 		timers: clock,

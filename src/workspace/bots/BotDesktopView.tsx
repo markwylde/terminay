@@ -7,26 +7,33 @@
  * the viewer also sets noVNC's own view-only flag.
  */
 
-import RFB from '@novnc/novnc';
 import { BotIoClient } from '@terminay/client-core';
 import type { BotDesktopMode, BotProfile } from '@terminay/protocol';
-import { Eye, Maximize2, MousePointer2, RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-	desktopClipboardSharing,
-	desktopClipboardUploadRoute,
-	writeClipboardText,
-} from '../../host/nativeActions';
-import { attachDesktopClipboard } from './desktopClipboard';
-import { attachDesktopClipboardSharing } from './desktopClipboardSharing';
-import { RfbStreamChannel } from './rfbChannel';
+	RemoteDesktopCanvas,
+	type RemoteDesktopClassNames,
+	type RemoteDesktopClipboardHost,
+	type RemoteDesktopSharingState,
+	type RemoteDesktopState,
+} from '@terminay/remote-desktop/ui';
+import { Eye, Maximize2, MousePointer2, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { desktopClipboardHost } from '../../host/desktopClipboardHost';
 import { refusalText, type ServerBots } from './useServerBots';
 
-type SharingState = 'syncing' | 'active' | 'inactive' | 'unavailable';
+type SharingState = RemoteDesktopSharingState;
 
-type DesktopState = 'connecting' | 'open' | 'closed' | 'failed';
+type DesktopState = RemoteDesktopState;
 
-let generation = 0;
+const classNames: RemoteDesktopClassNames = {
+	root: 'bots-vnc',
+	thumbnail: 'bots-vnc--thumb',
+	layer: 'bots-vnc__layer',
+	pasteCatcher: 'bots-vnc__paste-catcher',
+};
+
+/** The device clipboard as this host offers it to a desktop. */
+const clipboardHost: RemoteDesktopClipboardHost = desktopClipboardHost;
 
 export function BotDesktopCanvas({
 	server,
@@ -47,194 +54,43 @@ export function BotDesktopCanvas({
 	onPasteTooLarge?: () => void;
 	onSharing?: (state: SharingState) => void;
 }>) {
-	const host = useRef<HTMLDivElement>(null);
 	const io = useMemo(
 		() => new BotIoClient(server.transport as never),
 		[server.transport],
 	);
-	const report = useRef(onState);
-	report.current = onState;
-	const tooLarge = useRef(onPasteTooLarge);
-	tooLarge.current = onPasteTooLarge;
-	const sharingReport = useRef(onSharing);
-	sharingReport.current = onSharing;
-	// The thumbnail is always view-only. Otherwise each mode is its own
-	// server stream, so the server enforces view-only.
-	const streamMode: BotDesktopMode = thumbnail ? 'view-only' : mode;
-	// Connections drawn into stacked layers. A new stream draws hidden behind
-	// the one on screen and replaces it once connected, so switching modes or
-	// reconnecting never flashes an empty frame.
-	const layers = useRef<DesktopLayer[]>([]);
-
-	useEffect(() => {
-		const root = host.current;
-		if (root === null) return;
-		const el = document.createElement('div');
-		el.className = 'bots-vnc__layer';
-		el.style.visibility = layers.current.length > 0 ? 'hidden' : 'visible';
-		root.appendChild(el);
-		const layer: DesktopLayer = { el, shown: false };
-		layers.current.push(layer);
-		const others = () => layers.current.filter((l) => l !== layer);
-		const show = () => {
-			if (layer.retired) return;
-			layer.shown = true;
-			el.style.visibility = 'visible';
-			for (const old of others()) retire(layers.current, old);
-			report.current?.('open');
-		};
-		if (layers.current.length === 1) report.current?.('connecting');
-		io.desktop(bot.id, ++generation, streamMode, thumbnail)
-			.then((stream) => {
-				if (layer.retired) {
-					void stream.close();
-					return;
-				}
-				const channel = new RfbStreamChannel(stream);
-				const rfb = new RFB(el, channel, { shared: true });
-				layer.rfb = rfb;
-				layer.channel = channel;
-				rfb.viewOnly = streamMode === 'view-only';
-				rfb.scaleViewport = true;
-				rfb.resizeSession = false;
-				rfb.focusOnClick = !thumbnail;
-				rfb.background = '#0d0f12';
-				// Clipboard sharing is control mode only (ADR-0129). View-only
-				// streams never read or write either clipboard.
-				if (streamMode === 'control' && !thumbnail) {
-					const clipboardHost = desktopClipboardSharing();
-					let sharingState: SharingState = clipboardHost
-						? 'syncing'
-						: 'unavailable';
-					const sharing = clipboardHost
-						? attachDesktopClipboardSharing(rfb, clipboardHost, {
-								onState: (next) => {
-									sharingState = next;
-									sharingReport.current?.(next);
-								},
-								onTooLarge: () => tooLarge.current?.(),
-							})
-						: undefined;
-					layer.sharing = sharing;
-					sharingReport.current?.(sharingState);
-					const select = () => {
-						if (!sharing?.selected()) sharing?.claim();
-					};
-					el.addEventListener('pointerdown', select, { capture: true });
-					el.addEventListener('focusin', select, { capture: true });
-					layer.detachSharing = () => {
-						el.removeEventListener('pointerdown', select, { capture: true });
-						el.removeEventListener('focusin', select, { capture: true });
-						sharing?.dispose();
-					};
-					rfb.addEventListener('connect', () => sharing?.claim());
-					// The paste shortcut lands here: an editable target is what
-					// makes Chromium (and macOS Edit › Paste) raise a native paste.
-					const catcher = document.createElement('textarea');
-					catcher.className = 'bots-vnc__paste-catcher';
-					catcher.tabIndex = -1;
-					catcher.setAttribute('aria-hidden', 'true');
-					catcher.autocomplete = 'off';
-					catcher.spellcheck = false;
-					el.appendChild(catcher);
-					layer.detachClipboard = attachDesktopClipboard(el, rfb, {
-						sharingOwnsClipboard: () =>
-							sharing !== undefined && sharingState !== 'unavailable',
-						isMac: /mac|iphone|ipad|ipod/i.test(navigator.platform),
-						focusedInside: () => el.contains(document.activeElement),
-						documentFocused: () => document.hasFocus(),
-						visible: () => document.visibilityState === 'visible',
-						writeHostClipboard: writeClipboardText,
-						onPasteTooLarge: () => tooLarge.current?.(),
-						pasteRoot: document,
-						readHostText: readDesktopClipboardText(),
-						catcher: {
-							focus: () => catcher.focus({ preventScroll: true }),
-							restore: () => {
-								catcher.value = '';
-								if (document.activeElement === catcher) rfb.focus();
-							},
-						},
-					});
-				}
-				// Give noVNC a moment to paint its first frame before swapping.
-				rfb.addEventListener('connect', () => setTimeout(show, 150));
-				rfb.addEventListener('disconnect', () => {
-					if (layer.retired) return;
-					retire(layers.current, layer);
-					if (layers.current.length === 0) report.current?.('closed');
-				});
-				channel.start();
-			})
-			.catch((cause: unknown) => {
-				if (layer.retired) return;
-				// Never leave a stream of the wrong mode on screen.
-				for (const l of [...layers.current]) retire(layers.current, l);
-				report.current?.('failed', refusalText(cause));
-			});
-		return () => {
-			// A layer still connecting is abandoned. The one on screen stays
-			// until its replacement connects, or until the canvas unmounts.
-			layer.detachSharing?.();
-			layer.detachClipboard?.();
-			if (!layer.shown) retire(layers.current, layer);
-		};
-	}, [io, bot.id, streamMode, thumbnail, attempt]);
-
-	useEffect(
-		() => () => {
-			for (const l of [...layers.current]) retire(layers.current, l);
-		},
-		[],
+	const open = useCallback(
+		(generation: number, streamMode: BotDesktopMode, thumb: boolean) =>
+			io.desktop(bot.id, generation, streamMode, thumb),
+		[io, bot.id],
 	);
-
 	return (
-		<div
-			className={`bots-vnc${thumbnail ? ' bots-vnc--thumb' : ''}`}
-			ref={host}
-			data-terminay-bot-desktop-mode={mode}
+		<RemoteDesktopCanvas
+			open={open}
+			streamKey={`${clientKey(io)}:${bot.id}`}
+			mode={mode}
+			thumbnail={thumbnail}
+			attempt={attempt}
+			clipboard={clipboardHost}
+			classNames={classNames}
+			describeFailure={refusalText}
+			rootAttributes={{ 'data-terminay-bot-desktop-mode': mode }}
+			onState={onState}
+			onPasteTooLarge={onPasteTooLarge}
+			onSharing={onSharing}
 		/>
 	);
 }
 
-/** Desktop's clipboard read for the paste shortcut: text only, never copied
- * files or images. Undefined in a browser, which uses the native paste. */
-function readDesktopClipboardText():
-	| (() => Promise<string | undefined>)
-	| undefined {
-	const route = desktopClipboardUploadRoute();
-	if (route === undefined) return undefined;
-	return async () => {
-		const contents = await route.read();
-		return contents.kind === 'text' ? contents.text : undefined;
-	};
-}
-
-type DesktopLayer = {
-	el: HTMLDivElement;
-	shown: boolean;
-	retired?: boolean;
-	rfb?: RFB;
-	channel?: RfbStreamChannel;
-	detachClipboard?: () => void;
-	detachSharing?: () => void;
-	sharing?: ReturnType<typeof attachDesktopClipboardSharing>;
-};
-
-function retire(list: DesktopLayer[], layer: DesktopLayer): void {
-	if (layer.retired) return;
-	layer.retired = true;
-	const at = list.indexOf(layer);
-	if (at >= 0) list.splice(at, 1);
-	layer.detachClipboard?.();
-	layer.detachSharing?.();
-	try {
-		layer.rfb?.disconnect();
-	} catch {
-		// Already gone.
+/** A new client, which a new transport makes, is a new desktop stream. */
+const clientKeys = new WeakMap<object, number>();
+let clientCount = 0;
+function clientKey(client: object): number {
+	let key = clientKeys.get(client);
+	if (key === undefined) {
+		key = ++clientCount;
+		clientKeys.set(client, key);
 	}
-	layer.channel?.close();
-	layer.el.remove();
+	return key;
 }
 
 export function BotDesktopView({

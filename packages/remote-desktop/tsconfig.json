@@ -1,0 +1,18 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"exactOptionalPropertyTypes": false,
+		"rootDir": "src",
+		"outDir": "dist",
+		"jsx": "react-jsx",
+		"rewriteRelativeImportExtensions": true,
+		"declaration": true,
+		"incremental": true,
+		"declarationMap": true,
+		"sourceMap": true,
+		"noEmitOnError": true,
+		"types": ["node"]
+	},
+	"include": ["src/**/*.ts", "src/**/*.tsx"],
+	"exclude": ["src/**/*.test.ts"]
+}
