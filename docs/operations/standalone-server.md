@@ -1098,10 +1098,15 @@ packages with `apt-get install --no-install-recommends` and nothing else:
 tigervnc-standalone-server tigervnc-tools xfwm4 xfce4-panel xfce4-settings
 xfce4-terminal xfdesktop4 x11-xserver-utils dbus-x11 xauth fonts-dejavu-core
 fonts-noto-color-emoji adwaita-icon-theme python3 python3-seccomp
+chromium firefox-esr
 ```
 
-None of them enables or starts a service, and no browser or other application
-is installed: install the programs you want to run yourself. The dropdown shows
+None of them enables or starts a service. The last two are browsers, about
+700 MB between them, so `chromium` and `firefox` are there to run; install any
+other program you want yourself. The desktop does not need the browsers: a
+server whose desktop was set up before they were part of setup keeps working,
+`terminay daemon doctor` says which one is absent, and running setup again
+adds it. The dropdown shows
 each step and a progress bar. You can close it; setup carries on, and the
 dropdown shows where it has got to when you open it again.
 
@@ -1161,6 +1166,12 @@ menu:
 ```bash
 DISPLAY=:765 firefox
 ```
+
+In a container, Chromium may exit as soon as it starts, saying `No usable
+sandbox!`. Its sandbox needs to create a user namespace, and Docker's default
+confinement refuses that to an unprivileged account. Firefox starts there, so
+use Firefox in a container. Terminay never starts a browser with its sandbox
+turned off.
 
 The number is 765 unless something else already has it, in which case
 Terminay takes the next free one and leaves the other display alone. A server

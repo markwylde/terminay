@@ -11,6 +11,7 @@ import {
 } from '../context.js';
 import {
 	defaultDesktopInstallHost,
+	missingDesktopBrowsers,
 	missingDesktopPrograms,
 	osReleaseId,
 } from '../desktop.js';
@@ -63,6 +64,8 @@ export interface DesktopFacts {
 	readonly debian: () => Promise<boolean>;
 	/** What the desktop needs that is not installed. */
 	readonly missing: () => Promise<readonly string[]>;
+	/** The browsers setup installs that are not installed. */
+	readonly missingBrowsers?: () => Promise<readonly string[]>;
 	readonly processes: () => Promise<readonly DesktopProcess[]>;
 	/** Whether this process may read a file. */
 	readonly readable: (path: string) => Promise<boolean>;
@@ -77,6 +80,7 @@ function defaultDesktopFacts(): DesktopFacts {
 			host.platform === 'linux' &&
 			osReleaseId(await host.osRelease()) === 'debian',
 		missing: () => missingDesktopPrograms(host),
+		missingBrowsers: () => missingDesktopBrowsers(host),
 		readable: (path) =>
 			access(path, constants.R_OK).then(
 				() => true,
@@ -154,6 +158,13 @@ async function desktopCheck(
 			skipped: true,
 			detail: `not set up: missing ${missing.join(', ')}${helper}; to set it up: sudo terminay daemon desktop install`,
 		};
+	// The desktop runs without a browser, so a missing one is said and is not
+	// a failure.
+	const browsers = (await facts.missingBrowsers?.()) ?? [];
+	const present =
+		browsers.length === 0
+			? 'set up, every program present'
+			: `set up, without ${browsers.join(' and ')} (sudo terminay daemon desktop install adds ${browsers.length === 1 ? 'it' : 'them'})`;
 	const servers = (await facts.processes()).filter((process) =>
 		isTerminayDisplayServer(process.argv),
 	);
@@ -161,7 +172,7 @@ async function desktopCheck(
 		return {
 			name,
 			ok: true,
-			detail: `set up, every program present${helper}; no desktop is running`,
+			detail: `${present}${helper}; no desktop is running`,
 		};
 	const pids = (list: readonly DesktopProcess[]) =>
 		list.map((process) => process.pid).join(', ');

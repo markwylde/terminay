@@ -85,6 +85,28 @@ outside this run's scope.
 - A replacement container from the same image, with a fresh data volume,
   offered Set up desktop again.
 
+## Browsers (run)
+
+On a live Debian 13 standalone server whose desktop was already set up on
+display 765, and in plain `debian:trixie-slim` containers.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| The host before | `command -v chromium`; `command -v firefox-esr` | no Chromium; Firefox present, installed by hand |
+| The two packages, as setup installs them | `apt-get install --yes --no-install-recommends -- chromium firefox-esr` as root | status 0, `No services need to be restarted` |
+| Neither ships a unit | `dpkg -L chromium chromium-common firefox-esr`, searched for `systemd`, `init.d`, and `/etc/xdg/autostart` | nothing |
+| Chromium on the desktop | `chromium --auto-open-devtools-for-tabs about:blank` from a terminal with `DISPLAY=:765` | the browser process and eight renderers running on the display |
+| Firefox on the desktop | `firefox-esr --devtools about:blank` from the same terminal | running, no display error |
+| Size | `du -sh /usr/lib/chromium /usr/lib/firefox-esr` in a container | 382M and 295M |
+| Chromium in a container, default seccomp | `chromium --headless --dump-dom about:blank` as an unprivileged account, with and without `chromium-sandbox` | `No usable sandbox!`, aborted |
+| Chromium in a container, seccomp lifted | the same, in a container run with `--security-opt seccomp=unconfined` | `Check failed: . : Permission denied (13)`, aborted |
+| Firefox in the same container | `firefox-esr --headless --screenshot /tmp/x.png about:blank` | wrote the screenshot; logged that it could not create a user namespace |
+
+The packages were installed on the host with `apt-get` directly, not through
+`terminay daemon desktop install`. The command's own path is covered by the
+CLI tests and by the systemd job, which now asserts that both browsers are
+present after a real install.
+
 ## Not run
 
 - **A real Debian 13 system-scope install on a real host.** The only such host

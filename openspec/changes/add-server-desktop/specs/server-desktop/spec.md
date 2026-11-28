@@ -329,7 +329,7 @@ A view-only stream SHALL carry no clipboard content in either direction. The ser
 
 ### Requirement: The desktop session
 
-The desktop SHALL run a window manager, a panel with an applications menu and a list of open windows, and a terminal launcher, using the same session configuration as the bot desktop. A program started on the display SHALL run as the server account with that account's own home and files. Setup SHALL NOT install a browser or any application beyond the desktop session itself.
+The desktop SHALL run a window manager, a panel with an applications menu and a list of open windows, and a terminal launcher, using the same session configuration as the bot desktop. A program started on the display SHALL run as the server account with that account's own home and files. Setup SHALL install the Chromium and Firefox browsers alongside the desktop session, and no other application. The desktop SHALL run whether or not a browser is installed: a missing browser SHALL NOT change the desktop's state.
 
 #### Scenario: Running a graphical program
 
@@ -340,6 +340,16 @@ The desktop SHALL run a window manager, a panel with an applications menu and a 
 
 - **WHEN** two graphical programs are open
 - **THEN** the user can switch between them from the panel and move, resize, and close each window
+
+#### Scenario: Browser after setup
+
+- **WHEN** setup has completed and a user runs `chromium` or `firefox` from a terminal that has the desktop's display environment
+- **THEN** the browser's window appears on the desktop
+
+#### Scenario: Desktop without a browser
+
+- **WHEN** the desktop's own programs are present and neither browser is installed
+- **THEN** the desktop starts and its state is not `needs-setup`
 
 ### Requirement: The desktop outlives a server restart
 
