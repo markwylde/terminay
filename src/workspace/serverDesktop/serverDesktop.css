@@ -566,19 +566,29 @@
 }
 
 .server-desktop-dropdown {
+	/* Hangs from its button like the other header popovers, so their shared
+	   caret meets its top edge. */
 	position: absolute;
-	top: calc(100% + 8px);
-	right: 0;
-	z-index: 60;
+	top: calc(100% + 3px);
+	right: 4px;
+	z-index: 80;
 	width: 380px;
 	max-width: calc(100vw - 24px);
 	height: auto;
 	overflow: visible;
-	border: 1px solid rgba(255, 255, 255, 0.12);
+	border: 1px solid var(--header-popover-border);
 	border-radius: 10px;
-	background: #14171c;
-	box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+	background: var(--header-popover-surface);
+	box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
 	text-align: left;
+	transform-origin: top right;
+	animation: header-popover-in 110ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.server-desktop-dropdown {
+		animation: none;
+	}
 }
 
 .server-desktop-dropdown__head {
